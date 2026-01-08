@@ -13,6 +13,9 @@ type Model struct {
 	orchestrator *orchestrator.Orchestrator
 	session      *orchestrator.Session
 
+	// Ultra-plan mode (nil if not in ultra-plan mode)
+	ultraPlan *UltraPlanState
+
 	// UI state
 	activeTab      int
 	width          int
@@ -68,6 +71,11 @@ type Model struct {
 	filterCustom     string          // Custom filter pattern
 	filterRegex      *regexp.Regexp  // Compiled custom filter regex
 	outputScroll     int             // Scroll position in output (for search navigation)
+}
+
+// IsUltraPlanMode returns true if the model is in ultra-plan mode
+func (m Model) IsUltraPlanMode() bool {
+	return m.ultraPlan != nil
 }
 
 // NewModel creates a new TUI model
