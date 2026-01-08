@@ -456,3 +456,51 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 
 	return false, m, nil
 }
+
+// handleUltraPlanCoordinatorCompletion handles auto-parsing when the planning coordinator completes
+// Returns true if this was an ultra-plan coordinator completion that was handled
+func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance) bool {
+	// Not in ultra-plan mode
+	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return false
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil {
+		return false
+	}
+
+	// Only auto-parse during planning phase
+	if session.Phase != orchestrator.PhasePlanning {
+		return false
+	}
+
+	// Check if this is the coordinator instance
+	if session.CoordinatorID != inst.ID {
+		return false
+	}
+
+	// Auto-parse the plan from output
+	output := m.outputs[inst.ID]
+	if output == "" {
+		m.errorMessage = "Planning completed but no output found"
+		return true
+	}
+
+	plan, err := orchestrator.ParsePlanFromOutput(output, session.Objective)
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Planning completed but failed to parse plan: %v", err)
+		return true
+	}
+
+	if err := m.ultraPlan.coordinator.SetPlan(plan); err != nil {
+		m.errorMessage = fmt.Sprintf("Planning completed but plan is invalid: %v", err)
+		return true
+	}
+
+	// Success! Show a helpful message
+	m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Press [v] to view, [e] to execute.",
+		len(plan.Tasks), len(plan.ExecutionOrder))
+
+	return true
+}
