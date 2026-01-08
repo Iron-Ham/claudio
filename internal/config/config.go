@@ -57,6 +57,20 @@ type PRConfig struct {
 	AutoRebase bool `mapstructure:"auto_rebase"`
 	// UseAI uses Claude to generate PR title and description (default: true)
 	UseAI bool `mapstructure:"use_ai"`
+	// Template is a custom PR body template using Go text/template syntax
+	Template string `mapstructure:"template"`
+	// Reviewers configuration for automatic reviewer assignment
+	Reviewers ReviewerConfig `mapstructure:"reviewers"`
+	// Labels to add to all PRs by default
+	Labels []string `mapstructure:"labels"`
+}
+
+// ReviewerConfig controls automatic reviewer assignment
+type ReviewerConfig struct {
+	// Default reviewers to always assign
+	Default []string `mapstructure:"default"`
+	// ByPath maps file path patterns to reviewers (glob patterns supported)
+	ByPath map[string][]string `mapstructure:"by_path"`
 }
 
 // Default returns a Config with sensible default values
@@ -80,6 +94,12 @@ func Default() *Config {
 			Draft:      false,
 			AutoRebase: true,
 			UseAI:      true,
+			Template:   "",
+			Reviewers: ReviewerConfig{
+				Default: []string{},
+				ByPath:  map[string][]string{},
+			},
+			Labels: []string{},
 		},
 	}
 }
@@ -112,6 +132,10 @@ func SetDefaults() {
 	viper.SetDefault("pr.draft", defaults.PR.Draft)
 	viper.SetDefault("pr.auto_rebase", defaults.PR.AutoRebase)
 	viper.SetDefault("pr.use_ai", defaults.PR.UseAI)
+	viper.SetDefault("pr.template", defaults.PR.Template)
+	viper.SetDefault("pr.reviewers.default", defaults.PR.Reviewers.Default)
+	viper.SetDefault("pr.reviewers.by_path", defaults.PR.Reviewers.ByPath)
+	viper.SetDefault("pr.labels", defaults.PR.Labels)
 }
 
 // Load reads the configuration from viper into a Config struct

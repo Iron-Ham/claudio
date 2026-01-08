@@ -24,12 +24,15 @@ If no instance ID is provided and there's only one instance, it will be used aut
 }
 
 var (
-	prDraft      bool
-	prNoPush     bool
-	prNoAI       bool
-	prNoRebase   bool
-	prTitle      string
-	prBody       string
+	prDraft     bool
+	prNoPush    bool
+	prNoAI      bool
+	prNoRebase  bool
+	prTitle     string
+	prBody      string
+	prReviewers []string
+	prLabels    []string
+	prCloses    []string
 )
 
 func init() {
@@ -40,6 +43,9 @@ func init() {
 	prCmd.Flags().BoolVar(&prNoRebase, "no-rebase", false, "Skip rebasing on main before creating PR")
 	prCmd.Flags().StringVarP(&prTitle, "title", "t", "", "Override the PR title")
 	prCmd.Flags().StringVarP(&prBody, "body", "b", "", "Override the PR body")
+	prCmd.Flags().StringSliceVarP(&prReviewers, "reviewer", "r", nil, "Add reviewers (can be specified multiple times)")
+	prCmd.Flags().StringSliceVarP(&prLabels, "label", "l", nil, "Add labels (can be specified multiple times)")
+	prCmd.Flags().StringSliceVar(&prCloses, "closes", nil, "Link issues to close (e.g., --closes 42)")
 }
 
 func runPR(cmd *cobra.Command, args []string) error {
@@ -160,8 +166,19 @@ func runPR(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Extract issue references from task description
+	linkedIssue := pr.ExtractIssueReference(inst.Task)
+
+	// Collect issues from --closes flag and task description
+	var closesIssues []string
+	closesIssues = append(closesIssues, prCloses...)
+	if linkedIssue != "" && !containsIssue(closesIssues, linkedIssue) {
+		closesIssues = append(closesIssues, linkedIssue)
+	}
+
 	// Generate or use provided PR content
 	var title, body string
+	var aiSummary string
 
 	if prTitle != "" && prBody != "" {
 		// User provided both title and body
@@ -205,6 +222,7 @@ func runPR(cmd *cobra.Command, args []string) error {
 
 		title = content.Title
 		body = content.Body
+		aiSummary = content.Body
 
 		// Allow overrides
 		if prTitle != "" {
@@ -215,26 +233,101 @@ func runPR(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Apply custom template if configured
+	if cfg.PR.Template != "" && prBody == "" {
+		commitLog, _ := wt.GetCommitLog(inst.WorktreePath)
+		templateData := pr.TemplateData{
+			AISummary:    aiSummary,
+			Task:         inst.Task,
+			Branch:       inst.Branch,
+			ChangedFiles: changedFiles,
+			CommitLog:    commitLog,
+			LinkedIssue:  linkedIssue,
+			InstanceID:   inst.ID,
+		}
+
+		renderedBody, err := pr.RenderTemplate(cfg.PR.Template, templateData)
+		if err != nil {
+			fmt.Printf("Warning: failed to render PR template: %v\n", err)
+		} else {
+			body = renderedBody
+		}
+	}
+
+	// Append closes clause if we have linked issues
+	if len(closesIssues) > 0 {
+		closesClause := pr.FormatClosesClause(closesIssues)
+		if !strings.Contains(body, closesClause) {
+			body = body + "\n\n" + closesClause
+		}
+	}
+
+	// Resolve reviewers: combine config defaults, path-based rules, and CLI flags
+	reviewers := pr.ResolveReviewers(changedFiles, cfg.PR.Reviewers.Default, cfg.PR.Reviewers.ByPath)
+	// Add CLI-specified reviewers
+	for _, r := range prReviewers {
+		r = strings.TrimPrefix(r, "@")
+		if !containsString(reviewers, r) {
+			reviewers = append(reviewers, r)
+		}
+	}
+
+	// Resolve labels: combine config defaults and CLI flags
+	labels := append([]string{}, cfg.PR.Labels...)
+	for _, l := range prLabels {
+		if !containsString(labels, l) {
+			labels = append(labels, l)
+		}
+	}
+
 	fmt.Printf("\nTitle: %s\n", title)
 	fmt.Println("\nBody:")
 	fmt.Println(strings.Repeat("-", 40))
 	fmt.Println(body)
 	fmt.Println(strings.Repeat("-", 40))
 
-	// Create the PR
-	fmt.Println("\nCreating pull request...")
-	var prURL string
-	if useDraft {
-		prURL, err = pr.CreatePRDraft(title, body, inst.Branch)
-	} else {
-		prURL, err = pr.CreatePR(title, body, inst.Branch)
+	if len(reviewers) > 0 {
+		fmt.Printf("\nReviewers: %s\n", strings.Join(reviewers, ", "))
 	}
+	if len(labels) > 0 {
+		fmt.Printf("Labels: %s\n", strings.Join(labels, ", "))
+	}
+
+	// Create the PR using the unified Create function
+	fmt.Println("\nCreating pull request...")
+	prURL, err := pr.Create(pr.PROptions{
+		Title:     title,
+		Body:      body,
+		Branch:    inst.Branch,
+		Draft:     useDraft,
+		Reviewers: reviewers,
+		Labels:    labels,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create PR: %w", err)
 	}
 
 	fmt.Printf("\nPull request created: %s\n", prURL)
 	return nil
+}
+
+func containsString(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+func containsIssue(issues []string, issue string) bool {
+	issue = strings.TrimPrefix(issue, "#")
+	for _, i := range issues {
+		if strings.TrimPrefix(i, "#") == issue {
+			return true
+		}
+	}
+	return false
 }
 
 func truncateString(s string, maxLen int) string {
