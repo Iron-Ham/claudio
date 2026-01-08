@@ -412,6 +412,26 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, nil
+
+	case "C":
+		// Clear all completed instances
+		removed, err := m.orchestrator.ClearCompletedInstances(m.session)
+		if err != nil {
+			m.errorMessage = err.Error()
+		} else if removed == 0 {
+			m.infoMessage = "No completed instances to clear"
+		} else {
+			m.infoMessage = fmt.Sprintf("Cleared %d completed instance(s)", removed)
+			// Adjust active tab if needed
+			if m.activeTab >= m.instanceCount() {
+				m.activeTab = m.instanceCount() - 1
+				if m.activeTab < 0 {
+					m.activeTab = 0
+				}
+			}
+		}
+		m.errorMessage = "" // Clear any error
+		return m, nil
 	}
 
 	return m, nil
@@ -1008,6 +1028,7 @@ Instance Control:
   s          Start selected instance
   p          Pause/resume instance
   x          Stop instance
+  C          Clear completed instances
   r          Show PR creation command
   d          Show diff preview
 
@@ -1251,6 +1272,7 @@ func (m Model) renderHelp() string {
 		styles.HelpKey.Render("[i]") + " input",
 		styles.HelpKey.Render("[p]") + " pause",
 		styles.HelpKey.Render("[x]") + " stop",
+		styles.HelpKey.Render("[C]") + " clear",
 		styles.HelpKey.Render("[d]") + " diff",
 		styles.HelpKey.Render("[r]") + " pr",
 		styles.HelpKey.Render("[?]") + " help",
