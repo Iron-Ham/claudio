@@ -1320,6 +1320,7 @@ func (m Model) handleTemplateDropdown(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// "/" is after a newline
 				m.taskInput = m.taskInput[:lastNewline+1] + selected.Description
 			}
+			m.taskInputCursor = len([]rune(m.taskInput))
 		}
 		m.showTemplates = false
 		m.templateFilter = ""
@@ -1344,12 +1345,14 @@ func (m Model) handleTemplateDropdown(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.templateFilter = m.templateFilter[:len(m.templateFilter)-1]
 			if len(m.taskInput) > 0 {
 				m.taskInput = m.taskInput[:len(m.taskInput)-1]
+				m.taskInputCursor = len([]rune(m.taskInput))
 			}
 			m.templateSelected = 0 // Reset selection on filter change
 		} else {
 			// Remove the "/" and close dropdown
 			if len(m.taskInput) > 0 {
 				m.taskInput = m.taskInput[:len(m.taskInput)-1]
+				m.taskInputCursor = len([]rune(m.taskInput))
 			}
 			m.showTemplates = false
 		}
@@ -1361,6 +1364,7 @@ func (m Model) handleTemplateDropdown(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if char == " " {
 			m.showTemplates = false
 			m.taskInput += " "
+			m.taskInputCursor = len([]rune(m.taskInput))
 			m.templateFilter = ""
 			m.templateSelected = 0
 			return m, nil
@@ -1368,6 +1372,7 @@ func (m Model) handleTemplateDropdown(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Add to both filter and taskInput
 		m.templateFilter += char
 		m.taskInput += char
+		m.taskInputCursor = len([]rune(m.taskInput))
 		m.templateSelected = 0 // Reset selection on filter change
 		// If no templates match, close dropdown
 		if len(FilterTemplates(m.templateFilter)) == 0 {
@@ -2313,8 +2318,16 @@ func (m Model) renderAddTask(width int) string {
 
 	// Render text with cursor at the correct position
 	runes := []rune(m.taskInput)
-	beforeCursor := string(runes[:m.taskInputCursor])
-	afterCursor := string(runes[m.taskInputCursor:])
+	// Clamp cursor to valid bounds as a safety measure
+	cursor := m.taskInputCursor
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor > len(runes) {
+		cursor = len(runes)
+	}
+	beforeCursor := string(runes[:cursor])
+	afterCursor := string(runes[cursor:])
 
 	// Build the display with cursor indicator
 	// The cursor line gets a ">" prefix, other lines get "  " prefix

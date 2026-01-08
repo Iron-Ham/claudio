@@ -490,3 +490,54 @@ func TestIsWordChar(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderAddTaskCursorBounds(t *testing.T) {
+	// This test verifies that renderAddTask doesn't panic when cursor is out of bounds
+	// Regression test for: https://github.com/Iron-Ham/claudio/issues/XX
+	// The bug occurred when backspacing in slash-command mode caused cursor > len(text)
+	tests := []struct {
+		name   string
+		input  string
+		cursor int
+	}{
+		{
+			name:   "cursor beyond empty string",
+			input:  "",
+			cursor: 1, // This was the panic case: [1:0]
+		},
+		{
+			name:   "cursor way beyond string length",
+			input:  "ab",
+			cursor: 10,
+		},
+		{
+			name:   "negative cursor",
+			input:  "hello",
+			cursor: -5,
+		},
+		{
+			name:   "cursor at exact length (valid)",
+			input:  "hello",
+			cursor: 5,
+		},
+		{
+			name:   "cursor at beginning (valid)",
+			input:  "hello",
+			cursor: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				taskInput:       tt.input,
+				taskInputCursor: tt.cursor,
+			}
+			// This should not panic
+			result := m.renderAddTask(80)
+			if result == "" {
+				t.Error("renderAddTask returned empty string")
+			}
+		})
+	}
+}
