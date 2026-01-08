@@ -8,9 +8,10 @@ var (
 	SecondaryColor = lipgloss.Color("#10B981") // Green
 	WarningColor   = lipgloss.Color("#F59E0B") // Amber
 	ErrorColor     = lipgloss.Color("#EF4444") // Red
-	MutedColor     = lipgloss.Color("#6B7280") // Gray
+	MutedColor     = lipgloss.Color("#9CA3AF") // Gray (brighter for readability)
 	SurfaceColor   = lipgloss.Color("#1F2937") // Dark surface
 	TextColor      = lipgloss.Color("#F9FAFB") // Light text
+	BorderColor    = lipgloss.Color("#4B5563") // Slightly dimmer gray for borders
 
 	// Convenience styles for colors
 	Primary   = lipgloss.NewStyle().Foreground(PrimaryColor)
@@ -23,12 +24,12 @@ var (
 
 	// Status colors
 	StatusWorking    = lipgloss.Color("#10B981") // Green
-	StatusPending    = lipgloss.Color("#6B7280") // Gray
+	StatusPending    = lipgloss.Color("#9CA3AF") // Gray (brighter for readability)
 	StatusInput      = lipgloss.Color("#F59E0B") // Amber
-	StatusPaused     = lipgloss.Color("#3B82F6") // Blue
-	StatusComplete   = lipgloss.Color("#8B5CF6") // Purple
+	StatusPaused     = lipgloss.Color("#60A5FA") // Blue (brighter for readability)
+	StatusComplete   = lipgloss.Color("#A78BFA") // Purple (brighter for readability)
 	StatusError      = lipgloss.Color("#EF4444") // Red
-	StatusCreatingPR = lipgloss.Color("#EC4899") // Pink - creating PR
+	StatusCreatingPR = lipgloss.Color("#F472B6") // Pink (brighter for readability)
 
 	// Base styles
 	Title = lipgloss.NewStyle().
@@ -65,7 +66,7 @@ var (
 	// Content area
 	ContentBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(MutedColor).
+			BorderForeground(BorderColor).
 			Padding(1, 2)
 
 	// Help bar
@@ -80,7 +81,7 @@ var (
 	// Output area
 	OutputArea = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(MutedColor)
+			BorderForeground(BorderColor)
 
 	// Header
 	Header = lipgloss.NewStyle().
@@ -88,7 +89,7 @@ var (
 		Foreground(PrimaryColor).
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderBottom(true).
-		BorderForeground(MutedColor).
+		BorderForeground(BorderColor).
 		MarginBottom(1).
 		PaddingBottom(1)
 
@@ -106,7 +107,7 @@ var (
 	// Sidebar styles
 	Sidebar = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(MutedColor).
+		BorderForeground(BorderColor).
 		Padding(1, 1)
 
 	SidebarItem = lipgloss.NewStyle().
@@ -217,12 +218,12 @@ var (
 			Bold(true)
 
 	SearchMatch = lipgloss.NewStyle().
-			Background(lipgloss.Color("#FCD34D")). // Yellow highlight
-			Foreground(lipgloss.Color("#1F2937"))  // Dark text on yellow
+			Background(lipgloss.Color("#854D0E")). // Dark yellow/amber background
+			Foreground(lipgloss.Color("#FEF3C7"))  // Light cream text for contrast
 
 	SearchCurrentMatch = lipgloss.NewStyle().
-				Background(lipgloss.Color("#F97316")). // Orange for current match
-				Foreground(lipgloss.Color("#1F2937")).  // Dark text
+				Background(lipgloss.Color("#C2410C")). // Dark orange for current match
+				Foreground(lipgloss.Color("#FFF7ED")).  // Light orange-white text
 				Bold(true)
 
 	SearchInfo = lipgloss.NewStyle().
