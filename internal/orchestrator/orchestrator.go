@@ -549,3 +549,32 @@ func (o *Orchestrator) GetInstance(id string) *Instance {
 func (o *Orchestrator) GetInstanceDiff(worktreePath string) (string, error) {
 	return o.wt.GetDiffAgainstMain(worktreePath)
 }
+
+// ClearCompletedInstances removes all instances with StatusCompleted from the session
+// Returns the number of instances removed and any error encountered
+func (o *Orchestrator) ClearCompletedInstances(session *Session) (int, error) {
+	// Collect IDs of completed instances first (to avoid modifying slice while iterating)
+	var completedIDs []string
+	for _, inst := range session.Instances {
+		if inst.Status == StatusCompleted {
+			completedIDs = append(completedIDs, inst.ID)
+		}
+	}
+
+	if len(completedIDs) == 0 {
+		return 0, nil
+	}
+
+	// Remove each completed instance (force=true since they're already completed)
+	removed := 0
+	for _, id := range completedIDs {
+		if err := o.RemoveInstance(session, id, true); err != nil {
+			// Log warning but continue with other removals
+			fmt.Fprintf(os.Stderr, "Warning: failed to remove instance %s: %v\n", id, err)
+			continue
+		}
+		removed++
+	}
+
+	return removed, nil
+}
