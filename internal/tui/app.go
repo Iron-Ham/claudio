@@ -122,6 +122,17 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Handle task input mode
 	if m.addingTask {
+		// Check for Shift+Enter first (adds newline)
+		if msg.Type == tea.KeyEnter && msg.Alt {
+			// Alt+Enter as fallback for terminals that don't support Shift+Enter
+			m.taskInput += "\n"
+			return m, nil
+		}
+		if msg.String() == "shift+enter" {
+			m.taskInput += "\n"
+			return m, nil
+		}
+
 		switch msg.Type {
 		case tea.KeyEsc:
 			m.addingTask = false
@@ -480,9 +491,21 @@ func (m Model) renderAddTask() string {
 	b.WriteString(styles.Title.Render("Add New Instance"))
 	b.WriteString("\n\n")
 	b.WriteString("Enter task description:\n\n")
-	b.WriteString("> " + m.taskInput + "█")
+
+	// Handle multiline display
+	lines := strings.Split(m.taskInput, "\n")
+	for i, line := range lines {
+		if i == len(lines)-1 {
+			b.WriteString("> " + line + "█")
+		} else {
+			b.WriteString("  " + line + "\n")
+		}
+	}
+
 	b.WriteString("\n\n")
-	b.WriteString(styles.Muted.Render("Press Enter to add, Esc to cancel"))
+	b.WriteString(styles.Muted.Render("Enter") + " submit  " +
+		styles.Muted.Render("Shift+Enter") + " newline  " +
+		styles.Muted.Render("Esc") + " cancel")
 
 	return styles.ContentBox.Width(m.width - 4).Render(b.String())
 }
