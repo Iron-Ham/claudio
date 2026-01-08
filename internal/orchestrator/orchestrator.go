@@ -183,6 +183,64 @@ func (o *Orchestrator) StopInstance(inst *Instance) error {
 	return o.saveSession()
 }
 
+// RemoveInstance stops and removes a specific instance, including its worktree and branch
+func (o *Orchestrator) RemoveInstance(session *Session, instanceID string, force bool) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Find the instance
+	var inst *Instance
+	var instIndex int
+	for i, instance := range session.Instances {
+		if instance.ID == instanceID {
+			inst = instance
+			instIndex = i
+			break
+		}
+	}
+
+	if inst == nil {
+		return fmt.Errorf("instance %s not found", instanceID)
+	}
+
+	// Check for uncommitted changes if not forcing
+	if !force {
+		hasChanges, err := o.wt.HasUncommittedChanges(inst.WorktreePath)
+		if err == nil && hasChanges {
+			return fmt.Errorf("instance %s has uncommitted changes. Use --force to remove anyway", instanceID)
+		}
+	}
+
+	// Stop the instance if running
+	if mgr, ok := o.instances[inst.ID]; ok {
+		mgr.Stop()
+		delete(o.instances, inst.ID)
+	}
+
+	// Remove worktree
+	if err := o.wt.Remove(inst.WorktreePath); err != nil {
+		// Log but don't fail - the directory might already be gone
+		fmt.Fprintf(os.Stderr, "Warning: failed to remove worktree: %v\n", err)
+	}
+
+	// Delete branch
+	if err := o.wt.DeleteBranch(inst.Branch); err != nil {
+		// Log but don't fail - the branch might already be gone
+		fmt.Fprintf(os.Stderr, "Warning: failed to delete branch: %v\n", err)
+	}
+
+	// Remove from session
+	session.Instances = append(session.Instances[:instIndex], session.Instances[instIndex+1:]...)
+
+	// Update context
+	if err := o.updateContext(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update context: %v\n", err)
+	}
+
+	// Save session
+	return o.saveSession()
+}
+
 // StopSession stops all instances and optionally cleans up
 func (o *Orchestrator) StopSession(session *Session, force bool) error {
 	o.mu.Lock()
