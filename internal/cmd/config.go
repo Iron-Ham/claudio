@@ -50,7 +50,6 @@ Valid keys:
                                 Options: prompt, keep_branch, merge_staging, merge_main, auto_pr
   tui.auto_focus_on_input     - Auto-focus new instances (true/false)
   tui.max_output_lines        - Max output lines to display
-  session.max_instances       - Max simultaneous instances
   instance.output_buffer_size - Output buffer size in bytes
   instance.capture_interval_ms - Output capture interval in milliseconds
   instance.tmux_width         - tmux pane width
@@ -137,10 +136,6 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  auto_focus_on_input: %v\n", cfg.TUI.AutoFocusOnInput)
 	fmt.Printf("  max_output_lines: %d\n", cfg.TUI.MaxOutputLines)
 
-	// Session settings
-	fmt.Println("session:")
-	fmt.Printf("  max_instances: %d\n", cfg.Session.MaxInstances)
-
 	// Instance settings
 	fmt.Println("instance:")
 	fmt.Printf("  output_buffer_size: %d\n", cfg.Instance.OutputBufferSize)
@@ -166,7 +161,6 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		"completion.default_action":    "string",
 		"tui.auto_focus_on_input":      "bool",
 		"tui.max_output_lines":         "int",
-		"session.max_instances":        "int",
 		"instance.output_buffer_size":  "int",
 		"instance.capture_interval_ms": "int",
 		"instance.tmux_width":          "int",
@@ -256,11 +250,6 @@ tui:
   auto_focus_on_input: true
   # Maximum number of output lines to display per instance
   max_output_lines: 1000
-
-# Session settings
-session:
-  # Maximum number of instances that can run simultaneously
-  max_instances: 10
 
 # Instance settings (advanced)
 instance:
@@ -362,7 +351,6 @@ func runConfigReset(cmd *cobra.Command, args []string) error {
 		"completion.default_action":    defaults.Completion.DefaultAction,
 		"tui.auto_focus_on_input":      defaults.TUI.AutoFocusOnInput,
 		"tui.max_output_lines":         defaults.TUI.MaxOutputLines,
-		"session.max_instances":        defaults.Session.MaxInstances,
 		"instance.output_buffer_size":  defaults.Instance.OutputBufferSize,
 		"instance.capture_interval_ms": defaults.Instance.CaptureIntervalMs,
 		"instance.tmux_width":          defaults.Instance.TmuxWidth,
