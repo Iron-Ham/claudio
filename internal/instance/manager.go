@@ -207,8 +207,8 @@ func (m *Manager) Start() error {
 		"-y", fmt.Sprintf("%d", m.config.TmuxHeight), // height
 	)
 	createCmd.Dir = m.workdir
-	// Ensure TERM supports colors
-	createCmd.Env = append(createCmd.Env, "TERM=xterm-256color")
+	// Inherit full environment (required for Claude credentials) and ensure TERM supports colors
+	createCmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	if err := createCmd.Run(); err != nil {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
