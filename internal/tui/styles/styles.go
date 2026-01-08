@@ -22,12 +22,13 @@ var (
 	Text      = lipgloss.NewStyle().Foreground(TextColor)
 
 	// Status colors
-	StatusWorking  = lipgloss.Color("#10B981") // Green
-	StatusPending  = lipgloss.Color("#6B7280") // Gray
-	StatusInput    = lipgloss.Color("#F59E0B") // Amber
-	StatusPaused   = lipgloss.Color("#3B82F6") // Blue
-	StatusComplete = lipgloss.Color("#8B5CF6") // Purple
-	StatusError    = lipgloss.Color("#EF4444") // Red
+	StatusWorking    = lipgloss.Color("#10B981") // Green
+	StatusPending    = lipgloss.Color("#6B7280") // Gray
+	StatusInput      = lipgloss.Color("#F59E0B") // Amber
+	StatusPaused     = lipgloss.Color("#3B82F6") // Blue
+	StatusComplete   = lipgloss.Color("#8B5CF6") // Purple
+	StatusError      = lipgloss.Color("#EF4444") // Red
+	StatusCreatingPR = lipgloss.Color("#EC4899") // Pink - creating PR
 
 	// Base styles
 	Title = lipgloss.NewStyle().
@@ -269,6 +270,8 @@ func StatusColor(status string) lipgloss.Color {
 		return StatusComplete
 	case "error":
 		return StatusError
+	case "creating_pr":
+		return StatusCreatingPR
 	default:
 		return MutedColor
 	}

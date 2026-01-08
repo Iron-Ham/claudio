@@ -25,6 +25,7 @@ type Orchestrator struct {
 
 	session          *Session
 	instances        map[string]*instance.Manager
+	prWorkflows      map[string]*instance.PRWorkflow
 	wt               *worktree.Manager
 	conflictDetector *conflict.Detector
 	config           *config.Config
@@ -33,6 +34,9 @@ type Orchestrator struct {
 	// These are updated when the TUI window resizes
 	displayWidth  int
 	displayHeight int
+
+	// Callback for when PR workflow completes and instance should be removed
+	prCompleteCallback func(instanceID string, success bool)
 
 	mu sync.RWMutex
 }
@@ -63,6 +67,7 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		claudioDir:       claudioDir,
 		worktreeDir:      worktreeDir,
 		instances:        make(map[string]*instance.Manager),
+		prWorkflows:      make(map[string]*instance.PRWorkflow),
 		wt:               wt,
 		conflictDetector: detector,
 		config:           cfg,
@@ -351,6 +356,93 @@ func (o *Orchestrator) StopInstance(inst *Instance) error {
 	return o.saveSession()
 }
 
+// StopInstanceWithAutoPR stops an instance and optionally starts PR workflow
+// Returns true if PR workflow was started, false if instance was just stopped
+func (o *Orchestrator) StopInstanceWithAutoPR(inst *Instance) (bool, error) {
+	// First, stop the Claude instance
+	if err := o.StopInstance(inst); err != nil {
+		return false, err
+	}
+
+	// Check if auto PR is enabled
+	if !o.config.PR.AutoPROnStop {
+		return false, nil
+	}
+
+	// Start the PR workflow
+	if err := o.StartPRWorkflow(inst); err != nil {
+		return false, fmt.Errorf("failed to start PR workflow: %w", err)
+	}
+
+	return true, nil
+}
+
+// StartPRWorkflow starts the commit-push-PR workflow for an instance
+func (o *Orchestrator) StartPRWorkflow(inst *Instance) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Create PR workflow configuration from orchestrator config
+	cfg := instance.PRWorkflowConfig{
+		UseAI:      o.config.PR.UseAI,
+		Draft:      o.config.PR.Draft,
+		AutoRebase: o.config.PR.AutoRebase,
+		TmuxWidth:  o.displayWidth,
+		TmuxHeight: o.displayHeight,
+	}
+
+	// Use config defaults if display dimensions not set
+	if cfg.TmuxWidth == 0 {
+		cfg.TmuxWidth = o.config.Instance.TmuxWidth
+	}
+	if cfg.TmuxHeight == 0 {
+		cfg.TmuxHeight = o.config.Instance.TmuxHeight
+	}
+
+	// Create and start PR workflow
+	workflow := instance.NewPRWorkflow(inst.ID, inst.WorktreePath, inst.Branch, inst.Task, cfg)
+	workflow.SetCallback(o.handlePRWorkflowComplete)
+
+	if err := workflow.Start(); err != nil {
+		return err
+	}
+
+	o.prWorkflows[inst.ID] = workflow
+	inst.Status = StatusCreatingPR
+
+	return o.saveSession()
+}
+
+// handlePRWorkflowComplete handles PR workflow completion
+func (o *Orchestrator) handlePRWorkflowComplete(instanceID string, success bool, output string) {
+	o.mu.Lock()
+	// Clean up PR workflow
+	delete(o.prWorkflows, instanceID)
+
+	// Get the callback before unlocking
+	callback := o.prCompleteCallback
+	o.mu.Unlock()
+
+	// Notify via callback if set
+	if callback != nil {
+		callback(instanceID, success)
+	}
+}
+
+// SetPRCompleteCallback sets the callback for PR workflow completion
+func (o *Orchestrator) SetPRCompleteCallback(cb func(instanceID string, success bool)) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.prCompleteCallback = cb
+}
+
+// GetPRWorkflow returns the PR workflow for an instance, if any
+func (o *Orchestrator) GetPRWorkflow(id string) *instance.PRWorkflow {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.prWorkflows[id]
+}
+
 // RemoveInstance stops and removes a specific instance, including its worktree and branch
 func (o *Orchestrator) RemoveInstance(session *Session, instanceID string, force bool) error {
 	o.mu.Lock()
@@ -383,6 +475,12 @@ func (o *Orchestrator) RemoveInstance(session *Session, instanceID string, force
 	if mgr, ok := o.instances[inst.ID]; ok {
 		mgr.Stop()
 		delete(o.instances, inst.ID)
+	}
+
+	// Stop PR workflow if running
+	if workflow, ok := o.prWorkflows[inst.ID]; ok {
+		workflow.Stop()
+		delete(o.prWorkflows, inst.ID)
 	}
 
 	// Remove worktree
@@ -425,6 +523,12 @@ func (o *Orchestrator) StopSession(session *Session, force bool) error {
 			mgr.Stop()
 		}
 	}
+
+	// Stop all PR workflows
+	for _, workflow := range o.prWorkflows {
+		workflow.Stop()
+	}
+	o.prWorkflows = make(map[string]*instance.PRWorkflow)
 
 	// Clean up worktrees if forced
 	if force {
