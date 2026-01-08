@@ -134,13 +134,19 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.handleTemplateDropdown(msg)
 		}
 
-		// Check for Shift+Enter first (adds newline)
+		// Check for newline shortcuts (shift+enter, alt+enter, or ctrl+j)
+		// Note: shift+enter only works in terminals that support extended keyboard
+		// protocols (Kitty, iTerm2, WezTerm, Ghostty). Alt+Enter and Ctrl+J work
+		// universally as fallbacks.
 		if msg.Type == tea.KeyEnter && msg.Alt {
-			// Alt+Enter as fallback for terminals that don't support Shift+Enter
 			m.taskInput += "\n"
 			return m, nil
 		}
 		if msg.String() == "shift+enter" {
+			m.taskInput += "\n"
+			return m, nil
+		}
+		if msg.Type == tea.KeyCtrlJ {
 			m.taskInput += "\n"
 			return m, nil
 		}
