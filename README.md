@@ -2,9 +2,22 @@
 
 A CLI/TUI tool for running multiple Claude Code instances simultaneously on a single project using git worktrees.
 
+[![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://iron-ham.github.io/claudio/)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Iron-Ham/claudio)](https://goreportcard.com/report/github.com/Iron-Ham/claudio)
+
 ## Overview
 
 Claudio enables parallel AI-assisted development by orchestrating multiple Claude Code instances, each working in isolated git worktrees. A central orchestrator coordinates the work, tracks what each instance is doing, and helps prevent conflicts.
+
+## Documentation
+
+**[Full documentation is available here →](https://iron-ham.github.io/claudio/)**
+
+- [User Guide](https://iron-ham.github.io/claudio/guide/) - Comprehensive documentation
+- [Tutorials](https://iron-ham.github.io/claudio/tutorials/) - Step-by-step workflows
+- [CLI Reference](https://iron-ham.github.io/claudio/reference/cli/) - All commands
+- [Configuration](https://iron-ham.github.io/claudio/reference/configuration/) - All options
+- [FAQ](https://iron-ham.github.io/claudio/faq/) - Common questions
 
 ## Features
 
@@ -13,12 +26,18 @@ Claudio enables parallel AI-assisted development by orchestrating multiple Claud
 - **TUI Dashboard** - Real-time view of all instances with output streaming
 - **Shared Context** - Instances can see what others are working on via auto-generated context files
 - **Process Control** - Start, pause, resume, and stop instances
+- **Conflict Detection** - Detect when instances modify the same files
+- **PR Automation** - AI-generated pull requests with smart reviewer assignment
+- **Cost Tracking** - Monitor token usage and API costs
+- **Session Recovery** - Resume sessions after disconnection
 
 ## Requirements
 
 - Go 1.21+
 - Git
+- tmux
 - [Claude Code](https://claude.ai/claude-code) CLI installed and authenticated
+- [GitHub CLI](https://cli.github.com/) (optional, for PR creation)
 
 ## Installation
 
