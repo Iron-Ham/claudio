@@ -217,6 +217,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		// Update outputs from instances
 		m.updateOutputs()
+		// Check for plan file during planning phase (proactive detection)
+		m.checkForPlanFile()
 		// Clear info message after display (will show for ~100ms per tick, so a few ticks)
 		// We'll let it persist for a bit by not clearing immediately
 		return m, tick()
