@@ -911,6 +911,66 @@ func (o *Orchestrator) GetInstanceDiff(worktreePath string) (string, error) {
 	return o.wt.GetDiffAgainstMain(worktreePath)
 }
 
+// ReconnectInstance attempts to reconnect to a stopped or paused instance
+// If the tmux session still exists, it reconnects to it
+// If not, it restarts Claude with the same task in the existing worktree
+func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
+	o.mu.Lock()
+	mgr, ok := o.instances[inst.ID]
+	o.mu.Unlock()
+
+	// If no manager exists yet, create one
+	if !ok {
+		mgr = instance.NewManagerWithConfig(inst.ID, inst.WorktreePath, inst.Task, o.instanceManagerConfig())
+		o.mu.Lock()
+		o.instances[inst.ID] = mgr
+		o.mu.Unlock()
+	}
+
+	// Configure state change callback
+	mgr.SetStateCallback(func(id string, state instance.WaitingState) {
+		switch state {
+		case instance.StateCompleted:
+			o.handleInstanceExit(id)
+		case instance.StateWaitingInput, instance.StateWaitingQuestion, instance.StateWaitingPermission:
+			o.handleInstanceWaitingInput(id)
+		}
+	})
+
+	// Configure metrics callback
+	mgr.SetMetricsCallback(func(id string, metrics *instance.ParsedMetrics) {
+		o.handleInstanceMetrics(id, metrics)
+	})
+
+	// Check if the tmux session still exists
+	if mgr.TmuxSessionExists() {
+		// Reconnect to the existing session
+		if err := mgr.Reconnect(); err != nil {
+			return fmt.Errorf("failed to reconnect to existing session: %w", err)
+		}
+	} else {
+		// Session doesn't exist - start a fresh one with the same task
+		if err := mgr.Start(); err != nil {
+			return fmt.Errorf("failed to restart instance: %w", err)
+		}
+	}
+
+	inst.Status = StatusWorking
+	inst.PID = mgr.PID()
+	inst.TmuxSession = mgr.SessionName()
+
+	// Update start time for metrics
+	now := mgr.StartTime()
+	if inst.Metrics == nil {
+		inst.Metrics = &Metrics{StartTime: now}
+	} else {
+		inst.Metrics.StartTime = now
+		inst.Metrics.EndTime = nil // Clear end time since we're restarting
+	}
+
+	return o.saveSession()
+}
+
 // ClearCompletedInstances removes all instances with StatusCompleted from the session
 // Returns the number of instances removed and any error encountered
 func (o *Orchestrator) ClearCompletedInstances(session *Session) (int, error) {

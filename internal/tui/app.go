@@ -439,6 +439,28 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "R":
+		// Reconnect to a stopped/paused/completed instance
+		if inst := m.activeInstance(); inst != nil {
+			// Only allow reconnecting to non-running instances
+			if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
+				m.infoMessage = "Instance is already running. Use [p] to pause/resume or [x] to stop."
+				return m, nil
+			}
+			if inst.Status == orchestrator.StatusCreatingPR {
+				m.infoMessage = "Instance is creating PR. Wait for it to complete."
+				return m, nil
+			}
+			// Attempt to reconnect
+			if err := m.orchestrator.ReconnectInstance(inst); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to reconnect: %v", err)
+			} else {
+				m.infoMessage = fmt.Sprintf("Reconnected to instance %s", inst.ID)
+				m.errorMessage = "" // Clear any error
+			}
+		}
+		return m, nil
+
 	case "enter", "i":
 		// Enter input mode for the active instance
 		if inst := m.activeInstance(); inst != nil {
@@ -1971,6 +1993,7 @@ Instance Control:
   s          Start selected instance
   p          Pause/resume instance
   x          Stop instance
+  R          Reconnect to stopped/paused instance
   C          Clear completed instances
   r          Show PR creation command
   d          Show diff preview
@@ -2261,9 +2284,9 @@ func (m Model) renderHelp() string {
 		styles.HelpKey.Render("[Tab]") + " switch",
 		styles.HelpKey.Render("[a]") + " add",
 		styles.HelpKey.Render("[s]") + " start",
+		styles.HelpKey.Render("[R]") + " reconnect",
 		styles.HelpKey.Render("[i]") + " input",
 		styles.HelpKey.Render("[/]") + " search",
-		styles.HelpKey.Render("[F]") + " filter",
 		styles.HelpKey.Render("[d]") + " diff",
 		styles.HelpKey.Render("[m]") + " stats",
 		styles.HelpKey.Render("[r]") + " pr",
