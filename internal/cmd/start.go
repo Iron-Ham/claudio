@@ -7,6 +7,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var startCmd = &cobra.Command{
@@ -43,6 +44,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 	session, err := orch.StartSession(sessionName)
 	if err != nil {
 		return fmt.Errorf("failed to start session: %w", err)
+	}
+
+	// Get terminal dimensions and set them on the orchestrator before launching TUI
+	// This ensures that any instances started from the TUI have the correct initial size
+	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+		contentWidth, contentHeight := tui.CalculateContentDimensions(termWidth, termHeight)
+		if contentWidth > 0 && contentHeight > 0 {
+			orch.SetDisplayDimensions(contentWidth, contentHeight)
+		}
 	}
 
 	// Launch TUI
