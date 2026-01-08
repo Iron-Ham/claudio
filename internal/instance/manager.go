@@ -1,42 +1,40 @@
 package instance
 
 import (
-	"bufio"
 	"fmt"
-	"io"
-	"os"
 	"os/exec"
+	"strings"
 	"sync"
-	"syscall"
+	"time"
 )
 
-// Manager handles a single Claude Code instance
+// Manager handles a single Claude Code instance running in a tmux session
 type Manager struct {
-	id        string
-	workdir   string
-	task      string
-	cmd       *exec.Cmd
-	stdin     io.WriteCloser
-	stdout    io.ReadCloser
-	stderr    io.ReadCloser
-	outputBuf *RingBuffer
-	mu        sync.RWMutex
-	running   bool
-	doneChan  chan struct{}
+	id          string
+	workdir     string
+	task        string
+	sessionName string
+	outputBuf   *RingBuffer
+	mu          sync.RWMutex
+	running     bool
+	paused      bool
+	doneChan    chan struct{}
+	captureTick *time.Ticker
 }
 
 // NewManager creates a new instance manager
 func NewManager(id, workdir, task string) *Manager {
 	return &Manager{
-		id:        id,
-		workdir:   workdir,
-		task:      task,
-		outputBuf: NewRingBuffer(100000), // 100KB output buffer
-		doneChan:  make(chan struct{}),
+		id:          id,
+		workdir:     workdir,
+		task:        task,
+		sessionName: fmt.Sprintf("claudio-%s", id),
+		outputBuf:   NewRingBuffer(100000), // 100KB output buffer
+		doneChan:    make(chan struct{}),
 	}
 }
 
-// Start launches the Claude Code process
+// Start launches the Claude Code process in a tmux session
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -45,65 +43,108 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("instance already running")
 	}
 
-	// Create the claude command with --print for non-interactive mode
-	// This gives us clean, isolated output without terminal interference
-	m.cmd = exec.Command("claude",
-		"--print",
-		"--output-format", "text",
-		"--dangerously-skip-permissions",
-		m.task,
+	// Kill any existing session with this name (cleanup from previous run)
+	exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+
+	// Create a new detached tmux session
+	// We set the default-terminal to support colors and use a large history
+	createCmd := exec.Command("tmux",
+		"new-session",
+		"-d",                      // detached
+		"-s", m.sessionName,       // session name
+		"-x", "200",               // width
+		"-y", "50",                // height
 	)
-	m.cmd.Dir = m.workdir
-
-	// Set up environment - no TERM to prevent ANSI escape sequences
-	env := os.Environ()
-	m.cmd.Env = append(env, "NO_COLOR=1")
-
-	// Create a new process group so it's isolated from our terminal
-	m.cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
+	createCmd.Dir = m.workdir
+	if err := createCmd.Run(); err != nil {
+		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
-	// Set up pipes
-	var err error
-	m.stdin, err = m.cmd.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("failed to create stdin pipe: %w", err)
-	}
+	// Set up the tmux session environment
+	exec.Command("tmux", "set-option", "-t", m.sessionName, "history-limit", "10000").Run()
 
-	m.stdout, err = m.cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("failed to create stdout pipe: %w", err)
-	}
-
-	m.stderr, err = m.cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to create stderr pipe: %w", err)
-	}
-
-	// Start the process
-	if err := m.cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start claude: %w", err)
+	// Send the claude command to the tmux session
+	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions %q", m.task)
+	sendCmd := exec.Command("tmux",
+		"send-keys",
+		"-t", m.sessionName,
+		claudeCmd,
+		"Enter",
+	)
+	if err := sendCmd.Run(); err != nil {
+		// Clean up the session if we failed to start claude
+		exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+		return fmt.Errorf("failed to start claude in tmux session: %w", err)
 	}
 
 	m.running = true
+	m.paused = false
 
-	// Start output readers
-	go m.readPipe(m.stdout, "")
-	go m.readPipe(m.stderr, "[stderr] ")
-
-	// Wait for process in background
-	go func() {
-		m.cmd.Wait()
-		m.mu.Lock()
-		m.running = false
-		m.mu.Unlock()
-	}()
+	// Start background goroutine to capture output periodically
+	m.captureTick = time.NewTicker(100 * time.Millisecond)
+	go m.captureLoop()
 
 	return nil
 }
 
-// Stop terminates the Claude process
+// captureLoop periodically captures output from the tmux session
+func (m *Manager) captureLoop() {
+	// Track what we've already captured to avoid duplicates
+	lastLineCount := 0
+
+	for {
+		select {
+		case <-m.doneChan:
+			return
+		case <-m.captureTick.C:
+			m.mu.RLock()
+			if !m.running || m.paused {
+				m.mu.RUnlock()
+				continue
+			}
+			sessionName := m.sessionName
+			m.mu.RUnlock()
+
+			// Capture the entire visible pane plus scrollback
+			// -p prints to stdout, -S - starts from beginning of history
+			captureCmd := exec.Command("tmux",
+				"capture-pane",
+				"-t", sessionName,
+				"-p",      // print to stdout
+				"-S", "-", // start from beginning of scrollback
+				"-E", "-", // end at bottom of scrollback
+			)
+			output, err := captureCmd.Output()
+			if err != nil {
+				continue
+			}
+
+			// Count lines to detect new content
+			lines := strings.Split(string(output), "\n")
+			lineCount := len(lines)
+
+			// Only update if we have new content
+			if lineCount != lastLineCount || (lineCount > 0 && lastLineCount == 0) {
+				// Store the full captured output
+				m.outputBuf.Reset()
+				m.outputBuf.Write(output)
+				lastLineCount = lineCount
+			}
+
+			// Check if the session is still running
+			checkCmd := exec.Command("tmux", "has-session", "-t", sessionName)
+			if checkCmd.Run() != nil {
+				// Session ended
+				m.mu.Lock()
+				m.running = false
+				m.mu.Unlock()
+				return
+			}
+		}
+	}
+}
+
+// Stop terminates the tmux session
 func (m *Manager) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -112,64 +153,120 @@ func (m *Manager) Stop() error {
 		return nil
 	}
 
-	// Signal stop
+	// Signal stop to capture loop
 	select {
 	case <-m.doneChan:
 	default:
 		close(m.doneChan)
 	}
 
-	// Close stdin to signal EOF
-	if m.stdin != nil {
-		m.stdin.Close()
+	// Stop the ticker
+	if m.captureTick != nil {
+		m.captureTick.Stop()
 	}
 
-	// Try graceful termination first
-	if m.cmd.Process != nil {
-		m.cmd.Process.Signal(syscall.SIGTERM)
-	}
+	// Send Ctrl+C to gracefully stop Claude first
+	exec.Command("tmux", "send-keys", "-t", m.sessionName, "C-c").Run()
+	time.Sleep(500 * time.Millisecond)
 
-	// Wait for process (with timeout handled by caller if needed)
-	if m.cmd != nil {
-		m.cmd.Wait()
-	}
+	// Kill the tmux session
+	exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
 
 	m.running = false
 	return nil
 }
 
-// Pause sends SIGSTOP to pause the process
+// Pause pauses output capture (tmux session continues running)
 func (m *Manager) Pause() error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	if !m.running || m.cmd.Process == nil {
+	if !m.running {
 		return nil
 	}
 
-	return m.cmd.Process.Signal(syscall.SIGSTOP)
+	m.paused = true
+	return nil
 }
 
-// Resume sends SIGCONT to resume the process
+// Resume resumes output capture
 func (m *Manager) Resume() error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	if !m.running || m.cmd.Process == nil {
+	if !m.running {
 		return nil
 	}
 
-	return m.cmd.Process.Signal(syscall.SIGCONT)
+	m.paused = false
+	return nil
 }
 
-// SendInput sends input to the Claude process (limited in --print mode)
+// SendInput sends input to the tmux session
 func (m *Manager) SendInput(data []byte) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if m.stdin != nil {
-		m.stdin.Write(data)
+	if !m.running {
+		return
 	}
+
+	// Convert bytes to string for send-keys
+	input := string(data)
+
+	// Handle special characters
+	// tmux send-keys interprets certain prefixes specially
+	// We need to handle newlines, control characters, etc.
+	for _, r := range input {
+		var key string
+		switch r {
+		case '\r', '\n':
+			key = "Enter"
+		case '\t':
+			key = "Tab"
+		case '\x7f', '\b': // backspace
+			key = "BSpace"
+		case '\x1b': // escape
+			key = "Escape"
+		case ' ':
+			key = "Space"
+		default:
+			if r < 32 {
+				// Control character: Ctrl+letter
+				key = fmt.Sprintf("C-%c", r+'a'-1)
+			} else {
+				// Regular character - send literally
+				key = string(r)
+			}
+		}
+
+		exec.Command("tmux", "send-keys", "-t", m.sessionName, "-l", key).Run()
+	}
+}
+
+// SendKey sends a special key to the tmux session
+func (m *Manager) SendKey(key string) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if !m.running {
+		return
+	}
+
+	exec.Command("tmux", "send-keys", "-t", m.sessionName, key).Run()
+}
+
+// SendLiteral sends literal text to the tmux session (no interpretation)
+func (m *Manager) SendLiteral(text string) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if !m.running {
+		return
+	}
+
+	// -l flag sends keys literally without interpretation
+	exec.Command("tmux", "send-keys", "-t", m.sessionName, "-l", text).Run()
 }
 
 // GetOutput returns all buffered output
@@ -184,15 +281,16 @@ func (m *Manager) Running() bool {
 	return m.running
 }
 
-// PID returns the process ID
-func (m *Manager) PID() int {
+// Paused returns whether the instance is paused
+func (m *Manager) Paused() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.paused
+}
 
-	if m.cmd != nil && m.cmd.Process != nil {
-		return m.cmd.Process.Pid
-	}
-	return 0
+// SessionName returns the tmux session name
+func (m *Manager) SessionName() string {
+	return m.sessionName
 }
 
 // ID returns the instance ID
@@ -200,20 +298,29 @@ func (m *Manager) ID() string {
 	return m.id
 }
 
-// readPipe reads from a pipe and stores in buffer
-func (m *Manager) readPipe(r io.Reader, prefix string) {
-	scanner := bufio.NewScanner(r)
-	// Increase buffer size for long lines
-	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
+// PID returns the process ID of the shell in the tmux session
+func (m *Manager) PID() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	for scanner.Scan() {
-		select {
-		case <-m.doneChan:
-			return
-		default:
-			line := prefix + scanner.Text() + "\n"
-			m.outputBuf.Write([]byte(line))
-		}
+	if !m.running {
+		return 0
 	}
+
+	// Get the PID from tmux
+	cmd := exec.Command("tmux", "display-message", "-t", m.sessionName, "-p", "#{pane_pid}")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+
+	var pid int
+	fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &pid)
+	return pid
+}
+
+// AttachCommand returns the command to attach to this instance's tmux session
+// This allows users to attach directly if needed
+func (m *Manager) AttachCommand() string {
+	return fmt.Sprintf("tmux attach -t %s", m.sessionName)
 }

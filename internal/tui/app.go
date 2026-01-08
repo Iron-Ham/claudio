@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
@@ -101,6 +102,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeypress processes keyboard input
 func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle input mode - forward keys to the active instance's tmux session
+	if m.inputMode {
+		// Ctrl+] exits input mode (traditional telnet escape)
+		if msg.Type == tea.KeyCtrlCloseBracket {
+			m.inputMode = false
+			return m, nil
+		}
+
+		// Forward the key to the active instance's tmux session
+		if inst := m.activeInstance(); inst != nil {
+			mgr := m.orchestrator.GetInstanceManager(inst.ID)
+			if mgr != nil && mgr.Running() {
+				m.sendKeyToTmux(mgr, msg)
+			}
+		}
+		return m, nil
+	}
+
 	// Handle task input mode
 	if m.addingTask {
 		switch msg.Type {
@@ -200,9 +219,66 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "enter", "i":
+		// Enter input mode for the active instance
+		if inst := m.activeInstance(); inst != nil {
+			mgr := m.orchestrator.GetInstanceManager(inst.ID)
+			if mgr != nil && mgr.Running() {
+				m.inputMode = true
+			}
+		}
+		return m, nil
+
+	case "t":
+		// Show tmux attach command for the active instance
+		if inst := m.activeInstance(); inst != nil {
+			mgr := m.orchestrator.GetInstanceManager(inst.ID)
+			if mgr != nil {
+				m.errorMessage = "Attach with: " + mgr.AttachCommand()
+			}
+		}
+		return m, nil
 	}
 
 	return m, nil
+}
+
+// sendKeyToTmux sends a key event to the tmux session
+func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		mgr.SendKey("Enter")
+	case tea.KeyBackspace:
+		mgr.SendKey("BSpace")
+	case tea.KeyTab:
+		mgr.SendKey("Tab")
+	case tea.KeySpace:
+		mgr.SendKey("Space")
+	case tea.KeyEsc:
+		mgr.SendKey("Escape")
+	case tea.KeyUp:
+		mgr.SendKey("Up")
+	case tea.KeyDown:
+		mgr.SendKey("Down")
+	case tea.KeyRight:
+		mgr.SendKey("Right")
+	case tea.KeyLeft:
+		mgr.SendKey("Left")
+	case tea.KeyCtrlC:
+		mgr.SendKey("C-c")
+	case tea.KeyCtrlD:
+		mgr.SendKey("C-d")
+	case tea.KeyCtrlZ:
+		mgr.SendKey("C-z")
+	case tea.KeyRunes:
+		// Send literal characters
+		mgr.SendLiteral(string(msg.Runes))
+	default:
+		// Try to handle other keys
+		if s := msg.String(); len(s) == 1 {
+			mgr.SendLiteral(s)
+		}
+	}
 }
 
 // updateOutputs fetches latest output from all instances
@@ -342,16 +418,33 @@ func (m Model) renderInstance(inst *orchestrator.Instance) string {
 	b.WriteString(styles.Subtitle.Render("Task: " + inst.Task))
 	b.WriteString("\n")
 
-	// Show running status
+	// Show running/input mode status
 	mgr := m.orchestrator.GetInstanceManager(inst.ID)
 	if mgr != nil && mgr.Running() {
-		runningBanner := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(styles.TextColor).
-			Background(styles.SecondaryColor).
-			Padding(0, 1).
-			Render("RUNNING")
-		b.WriteString(runningBanner + "  " + styles.Muted.Render("Claude is working autonomously"))
+		if m.inputMode {
+			// Show active input mode indicator
+			inputBanner := lipgloss.NewStyle().
+				Bold(true).
+				Foreground(styles.TextColor).
+				Background(styles.WarningColor).
+				Padding(0, 1).
+				Render("INPUT MODE")
+			hint := inputBanner + "  " + styles.Muted.Render("Press ") +
+				styles.HelpKey.Render("Ctrl+]") + styles.Muted.Render(" to exit")
+			b.WriteString(hint)
+		} else {
+			// Show hint to enter input mode
+			runningBanner := lipgloss.NewStyle().
+				Bold(true).
+				Foreground(styles.TextColor).
+				Background(styles.SecondaryColor).
+				Padding(0, 1).
+				Render("RUNNING")
+			hint := runningBanner + "  " + styles.Muted.Render("Press ") +
+				styles.HelpKey.Render("[i]") + styles.Muted.Render(" to interact  ") +
+				styles.HelpKey.Render("[t]") + styles.Muted.Render(" for tmux attach cmd")
+			b.WriteString(hint)
+		}
 	}
 	b.WriteString("\n")
 
@@ -408,22 +501,40 @@ Instance Control:
   p          Pause/resume instance
   x          Stop instance
 
+Input Mode:
+  i / Enter  Enter input mode (interact with Claude)
+  Ctrl+]     Exit input mode
+  t          Show tmux attach command
+
 General:
   ?          Toggle help
   q          Quit
 
-Note: Instances run autonomously in --print mode.
-Each instance works independently on its assigned task.
+Each Claude instance runs in its own tmux session.
+In input mode, ALL keystrokes are forwarded to Claude.
+Press Ctrl+] to return to navigation mode.
+
+You can also attach directly to a session with:
+  tmux attach -t claudio-<instance-id>
 `
 	return styles.ContentBox.Width(m.width - 4).Render(help)
 }
 
 // renderHelp renders the help bar
 func (m Model) renderHelp() string {
+	if m.inputMode {
+		return styles.HelpBar.Render(
+			styles.Warning.Bold(true).Render("INPUT MODE") + "  " +
+				styles.HelpKey.Render("[Ctrl+]]") + " exit input mode  " +
+				"All keystrokes forwarded to Claude",
+		)
+	}
+
 	keys := []string{
 		styles.HelpKey.Render("[1-9]") + " select",
 		styles.HelpKey.Render("[a]") + " add",
 		styles.HelpKey.Render("[s]") + " start",
+		styles.HelpKey.Render("[i]") + " input",
 		styles.HelpKey.Render("[p]") + " pause",
 		styles.HelpKey.Render("[x]") + " stop",
 		styles.HelpKey.Render("[?]") + " help",
