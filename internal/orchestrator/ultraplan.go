@@ -16,12 +16,13 @@ import (
 type UltraPlanPhase string
 
 const (
-	PhasePlanning   UltraPlanPhase = "planning"
-	PhaseRefresh    UltraPlanPhase = "context_refresh"
-	PhaseExecuting  UltraPlanPhase = "executing"
-	PhaseSynthesis  UltraPlanPhase = "synthesis"
-	PhaseComplete   UltraPlanPhase = "complete"
-	PhaseFailed     UltraPlanPhase = "failed"
+	PhasePlanning      UltraPlanPhase = "planning"
+	PhaseRefresh       UltraPlanPhase = "context_refresh"
+	PhaseExecuting     UltraPlanPhase = "executing"
+	PhaseSynthesis     UltraPlanPhase = "synthesis"
+	PhaseConsolidating UltraPlanPhase = "consolidating"
+	PhaseComplete      UltraPlanPhase = "complete"
+	PhaseFailed        UltraPlanPhase = "failed"
 )
 
 // TaskComplexity represents the estimated complexity of a planned task
@@ -63,15 +64,25 @@ type UltraPlanConfig struct {
 	DryRun        bool `json:"dry_run"`         // Run planning only, don't execute
 	NoSynthesis   bool `json:"no_synthesis"`    // Skip synthesis phase after execution
 	AutoApprove   bool `json:"auto_approve"`    // Auto-approve spawned tasks without confirmation
+
+	// Consolidation settings
+	ConsolidationMode ConsolidationMode `json:"consolidation_mode,omitempty"` // "stacked" or "single"
+	CreateDraftPRs    bool              `json:"create_draft_prs"`             // Create PRs as drafts
+	PRLabels          []string          `json:"pr_labels,omitempty"`          // Labels to add to PRs
+	BranchPrefix      string            `json:"branch_prefix,omitempty"`      // Branch prefix for consolidated branches
 }
 
 // DefaultUltraPlanConfig returns the default configuration
 func DefaultUltraPlanConfig() UltraPlanConfig {
 	return UltraPlanConfig{
-		MaxParallel:   3,
-		DryRun:        false,
-		NoSynthesis:   false,
-		AutoApprove:   false,
+		MaxParallel:       3,
+		DryRun:            false,
+		NoSynthesis:       false,
+		AutoApprove:       false,
+		ConsolidationMode: ModeStackedPRs,
+		CreateDraftPRs:    true,
+		PRLabels:          []string{"ultraplan"},
+		BranchPrefix:      "", // Uses config.Branch.Prefix if empty
 	}
 }
 
@@ -91,6 +102,10 @@ type UltraPlanSession struct {
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
 	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
 	Error           string            `json:"error,omitempty"`             // Error message if failed
+
+	// Consolidation results (persisted for recovery and display)
+	Consolidation *ConsolidationState `json:"consolidation,omitempty"`
+	PRUrls        []string            `json:"pr_urls,omitempty"`
 }
 
 // NewUltraPlanSession creates a new ultra-plan session

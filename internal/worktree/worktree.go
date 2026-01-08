@@ -324,3 +324,222 @@ func (m *Manager) findMainBranch() string {
 	// Fall back to 'master'
 	return "master"
 }
+
+// FindMainBranch is the exported version of findMainBranch
+func (m *Manager) FindMainBranch() string {
+	return m.findMainBranch()
+}
+
+// CreateBranchFrom creates a new branch from a specified base branch (without creating a worktree)
+func (m *Manager) CreateBranchFrom(branchName, baseBranch string) error {
+	cmd := exec.Command("git", "branch", branchName, baseBranch)
+	cmd.Dir = m.repoDir
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to create branch %s from %s: %w\n%s", branchName, baseBranch, err, string(output))
+	}
+
+	return nil
+}
+
+// CreateWorktreeFromBranch creates a worktree from an existing branch
+func (m *Manager) CreateWorktreeFromBranch(path, branch string) error {
+	cmd := exec.Command("git", "worktree", "add", path, branch)
+	cmd.Dir = m.repoDir
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to create worktree from branch %s: %w\n%s", branch, err, string(output))
+	}
+
+	return nil
+}
+
+// HasCommitsBeyond returns true if the branch has commits beyond the base branch
+func (m *Manager) HasCommitsBeyond(path, baseBranch string) (bool, error) {
+	cmd := exec.Command("git", "rev-list", "--count", baseBranch+"..HEAD")
+	cmd.Dir = path
+
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("failed to count commits: %w", err)
+	}
+
+	count := 0
+	_, _ = fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &count)
+	return count > 0, nil
+}
+
+// GetCommitsBetween returns the commit SHAs between base and head (exclusive of base)
+func (m *Manager) GetCommitsBetween(path, baseBranch, headBranch string) ([]string, error) {
+	cmd := exec.Command("git", "rev-list", "--reverse", baseBranch+".."+headBranch)
+	cmd.Dir = path
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get commits: %w", err)
+	}
+
+	lines := strings.TrimSpace(string(output))
+	if lines == "" {
+		return []string{}, nil
+	}
+
+	return strings.Split(lines, "\n"), nil
+}
+
+// CherryPickBranch cherry-picks all commits from sourceBranch that aren't in the current branch
+// It cherry-picks commits one by one in order (oldest first)
+func (m *Manager) CherryPickBranch(path, sourceBranch string) error {
+	mainBranch := m.findMainBranch()
+
+	// Get commits from source branch that are beyond main
+	commits, err := m.GetCommitsBetween(path, mainBranch, sourceBranch)
+	if err != nil {
+		return fmt.Errorf("failed to get commits from %s: %w", sourceBranch, err)
+	}
+
+	if len(commits) == 0 {
+		return nil // Nothing to cherry-pick
+	}
+
+	// Cherry-pick each commit
+	for _, commit := range commits {
+		cmd := exec.Command("git", "cherry-pick", commit)
+		cmd.Dir = path
+
+		if output, err := cmd.CombinedOutput(); err != nil {
+			// Check for conflicts
+			if strings.Contains(string(output), "CONFLICT") || strings.Contains(string(output), "could not apply") {
+				return &CherryPickConflictError{
+					Commit:       commit,
+					SourceBranch: sourceBranch,
+					Output:       string(output),
+				}
+			}
+			return fmt.Errorf("failed to cherry-pick commit %s: %w\n%s", commit, err, string(output))
+		}
+	}
+
+	return nil
+}
+
+// CherryPickConflictError represents a conflict during cherry-pick
+type CherryPickConflictError struct {
+	Commit       string
+	SourceBranch string
+	Output       string
+}
+
+func (e *CherryPickConflictError) Error() string {
+	return fmt.Sprintf("cherry-pick conflict on commit %s from %s", e.Commit, e.SourceBranch)
+}
+
+// AbortCherryPick aborts an in-progress cherry-pick
+func (m *Manager) AbortCherryPick(path string) error {
+	cmd := exec.Command("git", "cherry-pick", "--abort")
+	cmd.Dir = path
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to abort cherry-pick: %w\n%s", err, string(output))
+	}
+
+	return nil
+}
+
+// ContinueCherryPick continues cherry-pick after conflict resolution
+func (m *Manager) ContinueCherryPick(path string) error {
+	cmd := exec.Command("git", "cherry-pick", "--continue")
+	cmd.Dir = path
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to continue cherry-pick: %w\n%s", err, string(output))
+	}
+
+	return nil
+}
+
+// CheckCherryPickConflicts checks if cherry-picking a branch would cause conflicts
+// Returns a list of files that would conflict, or empty if clean
+func (m *Manager) CheckCherryPickConflicts(path, sourceBranch string) ([]string, error) {
+	mainBranch := m.findMainBranch()
+
+	// Get commits from source branch
+	commits, err := m.GetCommitsBetween(path, mainBranch, sourceBranch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get commits: %w", err)
+	}
+
+	if len(commits) == 0 {
+		return []string{}, nil
+	}
+
+	// Get current HEAD
+	headCmd := exec.Command("git", "rev-parse", "HEAD")
+	headCmd.Dir = path
+	headOutput, err := headCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HEAD: %w", err)
+	}
+	currentHead := strings.TrimSpace(string(headOutput))
+
+	// Try a dry-run by doing cherry-pick --no-commit and checking for conflicts
+	// We'll need to reset afterwards
+	var conflictFiles []string
+
+	for _, commit := range commits {
+		// Try cherry-pick with --no-commit
+		cpCmd := exec.Command("git", "cherry-pick", "--no-commit", commit)
+		cpCmd.Dir = path
+		output, err := cpCmd.CombinedOutput()
+
+		if err != nil {
+			if strings.Contains(string(output), "CONFLICT") {
+				// Get conflicting files
+				statusCmd := exec.Command("git", "diff", "--name-only", "--diff-filter=U")
+				statusCmd.Dir = path
+				statusOutput, _ := statusCmd.Output()
+				files := strings.Split(strings.TrimSpace(string(statusOutput)), "\n")
+				for _, f := range files {
+					if f != "" {
+						conflictFiles = append(conflictFiles, f)
+					}
+				}
+			}
+			// Abort and reset
+			_ = m.AbortCherryPick(path)
+			break
+		}
+	}
+
+	// Reset to original HEAD (clean up our dry run)
+	resetCmd := exec.Command("git", "reset", "--hard", currentHead)
+	resetCmd.Dir = path
+	_ = resetCmd.Run()
+
+	return conflictFiles, nil
+}
+
+// GetConflictingFiles returns files with merge conflicts in a worktree
+func (m *Manager) GetConflictingFiles(path string) ([]string, error) {
+	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=U")
+	cmd.Dir = path
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get conflicting files: %w", err)
+	}
+
+	lines := strings.TrimSpace(string(output))
+	if lines == "" {
+		return []string{}, nil
+	}
+
+	return strings.Split(lines, "\n"), nil
+}
+
+// IsCherryPickInProgress returns true if a cherry-pick is in progress
+func (m *Manager) IsCherryPickInProgress(path string) bool {
+	cherryPickHead := filepath.Join(path, ".git", "CHERRY_PICK_HEAD")
+	_, err := os.Stat(cherryPickHead)
+	return err == nil
+}

@@ -191,3 +191,35 @@ func CreatePRDraft(title, body, branch string) (string, error) {
 		Draft:  true,
 	})
 }
+
+// CreateStackedPR creates a GitHub PR with a specific base branch (for stacked PRs)
+// This allows creating PRs that target a branch other than the repository default
+func CreateStackedPR(opts PROptions, baseBranch string) (string, error) {
+	args := []string{"pr", "create",
+		"--title", opts.Title,
+		"--body", opts.Body,
+		"--head", opts.Branch,
+		"--base", baseBranch,
+	}
+
+	if opts.Draft {
+		args = append(args, "--draft")
+	}
+
+	for _, reviewer := range opts.Reviewers {
+		args = append(args, "--reviewer", reviewer)
+	}
+
+	for _, label := range opts.Labels {
+		args = append(args, "--label", label)
+	}
+
+	cmd := exec.Command("gh", args...)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to create stacked PR: %w\n%s", err, string(output))
+	}
+
+	return strings.TrimSpace(string(output)), nil
+}

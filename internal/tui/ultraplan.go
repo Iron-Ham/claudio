@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
@@ -68,6 +70,11 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 	// During planning phase, show a planning-specific sidebar
 	if session.Plan == nil {
 		return m.renderPlanningSidebar(width, height, session)
+	}
+
+	// During consolidation phase, show consolidation-specific sidebar
+	if session.Phase == orchestrator.PhaseConsolidating && session.Consolidation != nil {
+		return m.renderConsolidationSidebar(width, height, session)
 	}
 
 	var b strings.Builder
@@ -341,8 +348,17 @@ func (m Model) renderUltraPlanHelp() string {
 	case orchestrator.PhaseSynthesis:
 		keys = append(keys, "[v] toggle plan view")
 
+	case orchestrator.PhaseConsolidating:
+		keys = append(keys, "[v] toggle plan view")
+		if session.Consolidation != nil && session.Consolidation.Phase == orchestrator.ConsolidationPaused {
+			keys = append(keys, "[r] resume")
+		}
+
 	case orchestrator.PhaseComplete, orchestrator.PhaseFailed:
 		keys = append(keys, "[v] view plan")
+		if len(session.PRUrls) > 0 {
+			keys = append(keys, "[o] open PR")
+		}
 	}
 
 	return styles.HelpBar.Width(m.width).Render(strings.Join(keys, "  "))
@@ -375,6 +391,8 @@ func phaseToString(phase orchestrator.UltraPlanPhase) string {
 		return "EXECUTING"
 	case orchestrator.PhaseSynthesis:
 		return "SYNTHESIS"
+	case orchestrator.PhaseConsolidating:
+		return "CONSOLIDATING"
 	case orchestrator.PhaseComplete:
 		return "COMPLETE"
 	case orchestrator.PhaseFailed:
@@ -395,6 +413,8 @@ func phaseStyle(phase orchestrator.UltraPlanPhase) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(styles.BlueColor).Bold(true)
 	case orchestrator.PhaseSynthesis:
 		return lipgloss.NewStyle().Foreground(styles.PurpleColor)
+	case orchestrator.PhaseConsolidating:
+		return lipgloss.NewStyle().Foreground(styles.YellowColor).Bold(true)
 	case orchestrator.PhaseComplete:
 		return lipgloss.NewStyle().Foreground(styles.GreenColor)
 	case orchestrator.PhaseFailed:
@@ -511,6 +531,28 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 					m.infoMessage = fmt.Sprintf("Task %d not yet started (blocked)", idx+1)
 				}
 			}
+		}
+		return true, m, nil
+
+	case "o":
+		// Open first PR URL in browser (when PRs have been created)
+		if len(session.PRUrls) > 0 {
+			prURL := session.PRUrls[0]
+			if err := openURL(prURL); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to open PR: %v", err)
+			} else {
+				m.infoMessage = fmt.Sprintf("Opened PR in browser")
+			}
+		}
+		return true, m, nil
+
+	case "r":
+		// Resume paused consolidation
+		if session.Phase == orchestrator.PhaseConsolidating &&
+			session.Consolidation != nil &&
+			session.Consolidation.Phase == orchestrator.ConsolidationPaused {
+			// TODO: Implement resume functionality when coordinator exposes it
+			m.infoMessage = "Resuming consolidation..."
 		}
 		return true, m, nil
 	}
@@ -768,4 +810,171 @@ func (m Model) renderPlanningSidebar(width int, height int, session *orchestrato
 	b.WriteString(styles.Muted.Render("an execution plan."))
 
 	return styles.Sidebar.Width(width - 2).Render(b.String())
+}
+
+// renderConsolidationSidebar renders the sidebar during the consolidation phase
+func (m Model) renderConsolidationSidebar(width int, height int, session *orchestrator.UltraPlanSession) string {
+	var b strings.Builder
+	state := session.Consolidation
+
+	// Title with phase indicator
+	b.WriteString(styles.SidebarTitle.Render("Consolidation"))
+	b.WriteString("\n\n")
+
+	// Phase status
+	phaseIcon := consolidationPhaseIcon(state.Phase)
+	phaseDesc := consolidationPhaseDesc(state.Phase)
+	statusLine := fmt.Sprintf("%s %s", phaseIcon, phaseDesc)
+	b.WriteString(statusLine)
+	b.WriteString("\n\n")
+
+	// Progress: Groups
+	if state.TotalGroups > 0 {
+		groupProgress := fmt.Sprintf("Groups: %d/%d", state.CurrentGroup, state.TotalGroups)
+		b.WriteString(styles.Muted.Render(groupProgress))
+		b.WriteString("\n")
+
+		// Show group branches created
+		for i, branch := range state.GroupBranches {
+			prefix := "  ✓ "
+			if i == state.CurrentGroup-1 && state.Phase != orchestrator.ConsolidationComplete {
+				prefix = "  ⟳ "
+			}
+			// Truncate branch name to fit sidebar
+			branchDisplay := truncate(branch, width-8)
+			b.WriteString(styles.Muted.Render(prefix + branchDisplay))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	// Current task being merged
+	if state.CurrentTask != "" {
+		b.WriteString(styles.Muted.Render("Merging:"))
+		b.WriteString("\n")
+		taskDisplay := truncate(state.CurrentTask, width-6)
+		b.WriteString(styles.Muted.Render("  " + taskDisplay))
+		b.WriteString("\n\n")
+	}
+
+	// PRs created
+	if len(state.PRUrls) > 0 {
+		b.WriteString(styles.SidebarTitle.Render("Pull Requests"))
+		b.WriteString("\n")
+		for i, prURL := range state.PRUrls {
+			prefix := "  ✓ "
+			// Extract PR number from URL (e.g., ".../pull/123")
+			prDisplay := fmt.Sprintf("PR #%d", i+1)
+			if idx := strings.LastIndex(prURL, "/"); idx >= 0 {
+				prDisplay = "PR " + prURL[idx+1:]
+			}
+			b.WriteString(styles.Muted.Render(prefix + prDisplay))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
+	// Conflict info (if paused)
+	if state.Phase == orchestrator.ConsolidationPaused && len(state.ConflictFiles) > 0 {
+		b.WriteString(lipgloss.NewStyle().Foreground(styles.RedColor).Render("⚠ Conflict Detected"))
+		b.WriteString("\n\n")
+		b.WriteString(styles.Muted.Render("Files:"))
+		b.WriteString("\n")
+		maxFiles := 5
+		for i, file := range state.ConflictFiles {
+			if i >= maxFiles {
+				remaining := len(state.ConflictFiles) - maxFiles
+				b.WriteString(styles.Muted.Render(fmt.Sprintf("  ... +%d more", remaining)))
+				b.WriteString("\n")
+				break
+			}
+			fileDisplay := truncate(file, width-6)
+			b.WriteString(styles.Muted.Render("  " + fileDisplay))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		b.WriteString(styles.Muted.Render("Press [r] to resume"))
+		b.WriteString("\n")
+	}
+
+	// Error message
+	if state.Error != "" {
+		b.WriteString(lipgloss.NewStyle().Foreground(styles.RedColor).Render("Error:"))
+		b.WriteString("\n")
+		errDisplay := truncate(state.Error, width-4)
+		b.WriteString(styles.Muted.Render(errDisplay))
+		b.WriteString("\n")
+	}
+
+	return styles.Sidebar.Width(width - 2).Render(b.String())
+}
+
+// consolidationPhaseIcon returns an icon for the consolidation phase
+func consolidationPhaseIcon(phase orchestrator.ConsolidationPhase) string {
+	switch phase {
+	case orchestrator.ConsolidationIdle:
+		return "○"
+	case orchestrator.ConsolidationDetecting:
+		return "⟳"
+	case orchestrator.ConsolidationCreatingBranches:
+		return "⟳"
+	case orchestrator.ConsolidationMergingTasks:
+		return "⟳"
+	case orchestrator.ConsolidationPushing:
+		return "⟳"
+	case orchestrator.ConsolidationCreatingPRs:
+		return "⟳"
+	case orchestrator.ConsolidationPaused:
+		return "⏸"
+	case orchestrator.ConsolidationComplete:
+		return "✓"
+	case orchestrator.ConsolidationFailed:
+		return "✗"
+	default:
+		return "○"
+	}
+}
+
+// consolidationPhaseDesc returns a human-readable description for the consolidation phase
+func consolidationPhaseDesc(phase orchestrator.ConsolidationPhase) string {
+	switch phase {
+	case orchestrator.ConsolidationIdle:
+		return "Waiting..."
+	case orchestrator.ConsolidationDetecting:
+		return "Detecting conflicts..."
+	case orchestrator.ConsolidationCreatingBranches:
+		return "Creating branches..."
+	case orchestrator.ConsolidationMergingTasks:
+		return "Merging tasks..."
+	case orchestrator.ConsolidationPushing:
+		return "Pushing to remote..."
+	case orchestrator.ConsolidationCreatingPRs:
+		return "Creating PRs..."
+	case orchestrator.ConsolidationPaused:
+		return "Paused (conflict)"
+	case orchestrator.ConsolidationComplete:
+		return "Complete"
+	case orchestrator.ConsolidationFailed:
+		return "Failed"
+	default:
+		return string(phase)
+	}
+}
+
+// openURL opens the given URL in the default browser
+func openURL(url string) error {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		cmd = exec.Command("xdg-open", url)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	default:
+		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+
+	return cmd.Start()
 }

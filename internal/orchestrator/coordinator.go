@@ -525,8 +525,180 @@ func (c *Coordinator) RunSynthesis() error {
 		return fmt.Errorf("failed to start synthesis instance: %w", err)
 	}
 
-	// The TUI will handle the rest
+	// Monitor the synthesis instance for completion
+	// When it completes, automatically trigger consolidation
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.monitorSynthesisInstance(inst.ID)
+	}()
+
 	return nil
+}
+
+// monitorSynthesisInstance monitors the synthesis instance and triggers consolidation when complete
+func (c *Coordinator) monitorSynthesisInstance(instanceID string) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+
+		case <-ticker.C:
+			inst := c.orch.GetInstance(instanceID)
+			if inst == nil {
+				// Instance gone, assume complete
+				c.onSynthesisComplete()
+				return
+			}
+
+			switch inst.Status {
+			case StatusCompleted, StatusWaitingInput:
+				// Synthesis complete - trigger consolidation or finish
+				c.onSynthesisComplete()
+				return
+
+			case StatusError, StatusTimeout, StatusStuck:
+				// Synthesis failed
+				session := c.Session()
+				c.mu.Lock()
+				session.Phase = PhaseFailed
+				session.Error = fmt.Sprintf("synthesis failed: %s", inst.Status)
+				c.mu.Unlock()
+				_ = c.orch.SaveSession()
+				c.notifyComplete(false, session.Error)
+				return
+			}
+		}
+	}
+}
+
+// onSynthesisComplete handles synthesis completion and triggers consolidation
+func (c *Coordinator) onSynthesisComplete() {
+	session := c.Session()
+
+	// Check if consolidation is configured
+	if session.Config.ConsolidationMode != "" {
+		if err := c.StartConsolidation(); err != nil {
+			// Consolidation failed to start
+			c.mu.Lock()
+			session.Phase = PhaseFailed
+			session.Error = fmt.Sprintf("consolidation failed: %v", err)
+			c.mu.Unlock()
+			_ = c.orch.SaveSession()
+			c.notifyComplete(false, session.Error)
+		}
+		return
+	}
+
+	// No consolidation - mark complete
+	c.mu.Lock()
+	session.Phase = PhaseComplete
+	now := time.Now()
+	session.CompletedAt = &now
+	c.mu.Unlock()
+	_ = c.orch.SaveSession()
+	c.notifyComplete(true, "All tasks completed and synthesized")
+}
+
+// StartConsolidation begins the consolidation phase
+func (c *Coordinator) StartConsolidation() error {
+	session := c.Session()
+	c.notifyPhaseChange(PhaseConsolidating)
+
+	// Build consolidation config
+	config := ConsolidationConfig{
+		Mode:           session.Config.ConsolidationMode,
+		BranchPrefix:   session.Config.BranchPrefix,
+		CreateDraftPRs: session.Config.CreateDraftPRs,
+		PRLabels:       session.Config.PRLabels,
+	}
+
+	// Use branch prefix from global config if not set
+	if config.BranchPrefix == "" {
+		config.BranchPrefix = c.orch.config.Branch.Prefix
+	}
+	if config.BranchPrefix == "" {
+		config.BranchPrefix = "Iron-Ham"
+	}
+
+	// Create consolidator
+	consolidator := NewConsolidator(c.orch, session, c.baseSession, config)
+
+	// Set up event callback to update session state
+	consolidator.SetEventCallback(func(event ConsolidationEvent) {
+		// Update session's consolidation state on events
+		c.mu.Lock()
+		session.Consolidation = consolidator.State()
+		c.mu.Unlock()
+		_ = c.orch.SaveSession()
+	})
+
+	// Run consolidation in a goroutine
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		if err := consolidator.Run(); err != nil {
+			c.handleConsolidationError(err, consolidator)
+		} else {
+			c.finishConsolidation(consolidator)
+		}
+	}()
+
+	return nil
+}
+
+// handleConsolidationError handles a consolidation error
+func (c *Coordinator) handleConsolidationError(err error, consolidator *Consolidator) {
+	session := c.Session()
+
+	// Check if it's a conflict error (consolidation is paused)
+	if _, ok := err.(*ConflictError); ok {
+		// Consolidation is paused waiting for resolution
+		c.mu.Lock()
+		session.Consolidation = consolidator.State()
+		c.mu.Unlock()
+		_ = c.orch.SaveSession()
+		// Don't mark as failed - it's paused
+		return
+	}
+
+	// Actual error
+	c.mu.Lock()
+	session.Phase = PhaseFailed
+	session.Error = fmt.Sprintf("consolidation failed: %v", err)
+	session.Consolidation = consolidator.State()
+	c.mu.Unlock()
+	_ = c.orch.SaveSession()
+	c.notifyComplete(false, session.Error)
+}
+
+// finishConsolidation completes the ultraplan after successful consolidation
+func (c *Coordinator) finishConsolidation(consolidator *Consolidator) {
+	session := c.Session()
+
+	c.mu.Lock()
+	session.Phase = PhaseComplete
+	now := time.Now()
+	session.CompletedAt = &now
+	session.Consolidation = consolidator.State()
+	session.PRUrls = consolidator.State().PRUrls
+	c.mu.Unlock()
+	_ = c.orch.SaveSession()
+
+	prCount := len(session.PRUrls)
+	c.notifyComplete(true, fmt.Sprintf("Completed: %d PR(s) created", prCount))
+}
+
+// GetConsolidation returns the current consolidation state
+func (c *Coordinator) GetConsolidation() *ConsolidationState {
+	session := c.Session()
+	if session == nil {
+		return nil
+	}
+	return session.Consolidation
 }
 
 // buildSynthesisPrompt creates the prompt for the synthesis phase
