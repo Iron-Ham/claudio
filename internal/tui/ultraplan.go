@@ -6,6 +6,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -385,4 +386,74 @@ func complexityIndicator(complexity orchestrator.TaskComplexity) string {
 	default:
 		return "○"
 	}
+}
+
+// handleUltraPlanKeypress handles ultra-plan specific key presses
+// Returns (handled, model, cmd) where handled indicates if the key was processed
+func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
+	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return false, m, nil
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil {
+		return false, m, nil
+	}
+
+	switch msg.String() {
+	case "v":
+		// Toggle plan view (only when plan is available)
+		if session.Plan != nil {
+			m.ultraPlan.showPlanView = !m.ultraPlan.showPlanView
+		}
+		return true, m, nil
+
+	case "p":
+		// Parse plan from coordinator output (only during planning phase)
+		if session.Phase == orchestrator.PhasePlanning {
+			// Get the coordinator instance output
+			if session.CoordinatorID != "" {
+				inst := m.orchestrator.GetInstance(session.CoordinatorID)
+				if inst != nil {
+					output := m.outputs[inst.ID]
+					if output != "" {
+						plan, err := orchestrator.ParsePlanFromOutput(output, session.Objective)
+						if err != nil {
+							m.errorMessage = fmt.Sprintf("Failed to parse plan: %v", err)
+						} else {
+							if err := m.ultraPlan.coordinator.SetPlan(plan); err != nil {
+								m.errorMessage = fmt.Sprintf("Invalid plan: %v", err)
+							} else {
+								m.infoMessage = fmt.Sprintf("Plan parsed: %d tasks in %d groups", len(plan.Tasks), len(plan.ExecutionOrder))
+							}
+						}
+					} else {
+						m.infoMessage = "No output yet - wait for planning to complete"
+					}
+				}
+			}
+		}
+		return true, m, nil
+
+	case "e":
+		// Start execution (only during refresh phase when plan is ready)
+		if session.Phase == orchestrator.PhaseRefresh && session.Plan != nil {
+			if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to start execution: %v", err)
+			} else {
+				m.infoMessage = "Execution started"
+			}
+		}
+		return true, m, nil
+
+	case "c":
+		// Cancel execution (only during executing phase)
+		if session.Phase == orchestrator.PhaseExecuting {
+			m.ultraPlan.coordinator.Cancel()
+			m.infoMessage = "Execution cancelled"
+		}
+		return true, m, nil
+	}
+
+	return false, m, nil
 }

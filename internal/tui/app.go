@@ -415,6 +415,14 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Normal mode - clear info message on most actions
 	m.infoMessage = ""
 
+	// Handle ultra-plan mode specific keys first
+	if m.IsUltraPlanMode() {
+		handled, model, cmd := m.handleUltraPlanKeypress(msg)
+		if handled {
+			return model, cmd
+		}
+	}
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.quitting = true
@@ -1491,8 +1499,13 @@ func (m Model) View() string {
 
 	var b strings.Builder
 
-	// Header
-	header := m.renderHeader()
+	// Header - use ultra-plan header if in ultra-plan mode
+	var header string
+	if m.IsUltraPlanMode() {
+		header = m.renderUltraPlanHeader()
+	} else {
+		header = m.renderHeader()
+	}
 	b.WriteString(header)
 	b.WriteString("\n")
 
@@ -1507,8 +1520,15 @@ func (m Model) View() string {
 	mainAreaHeight := m.height - 6 // Header + help bar + margins
 
 	// Sidebar + Content area (horizontal layout)
-	sidebar := m.renderSidebar(effectiveSidebarWidth, mainAreaHeight)
-	content := m.renderContent(mainContentWidth)
+	// Use ultra-plan specific rendering if in ultra-plan mode
+	var sidebar, content string
+	if m.IsUltraPlanMode() {
+		sidebar = m.renderUltraPlanSidebar(effectiveSidebarWidth, mainAreaHeight)
+		content = m.renderUltraPlanContent(mainContentWidth)
+	} else {
+		sidebar = m.renderSidebar(effectiveSidebarWidth, mainAreaHeight)
+		content = m.renderContent(mainContentWidth)
+	}
 
 	// Apply height constraints to both panels and join horizontally
 	// Using MaxHeight to ensure content doesn't overflow bounds
@@ -1542,9 +1562,13 @@ func (m Model) View() string {
 		b.WriteString(styles.ErrorMsg.Render("Error: " + m.errorMessage))
 	}
 
-	// Help/status bar
+	// Help/status bar - use ultra-plan help if in ultra-plan mode
 	b.WriteString("\n")
-	b.WriteString(m.renderHelp())
+	if m.IsUltraPlanMode() {
+		b.WriteString(m.renderUltraPlanHelp())
+	} else {
+		b.WriteString(m.renderHelp())
+	}
 
 	return b.String()
 }
