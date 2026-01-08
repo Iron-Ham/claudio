@@ -13,8 +13,9 @@ import (
 
 // UltraPlanState holds ultra-plan specific UI state
 type UltraPlanState struct {
-	coordinator  *orchestrator.Coordinator
-	showPlanView bool // Toggle between plan view and normal output view
+	coordinator     *orchestrator.Coordinator
+	showPlanView    bool // Toggle between plan view and normal output view
+	selectedTaskIdx int  // Currently selected task index for navigation
 }
 
 // renderUltraPlanHeader renders the ultra-plan header with phase and progress
@@ -81,6 +82,7 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 	availableLines := height - reservedLines
 
 	lineCount := 0
+	taskIdx := 0 // Track flat task index for selection highlighting
 	for groupIdx, group := range plan.ExecutionOrder {
 		if lineCount >= availableLines {
 			break
@@ -104,10 +106,21 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 				continue
 			}
 
-			taskLine := m.renderTaskLine(session, task, width-4)
+			// Find flat index for this task
+			flatIdx := -1
+			for i, t := range plan.Tasks {
+				if t.ID == taskID {
+					flatIdx = i
+					break
+				}
+			}
+
+			selected := m.ultraPlan != nil && flatIdx == m.ultraPlan.selectedTaskIdx
+			taskLine := m.renderTaskLine(session, task, width-4, selected)
 			b.WriteString(taskLine)
 			b.WriteString("\n")
 			lineCount++
+			taskIdx++
 		}
 	}
 
@@ -173,7 +186,7 @@ func (m Model) getGroupStatus(session *orchestrator.UltraPlanSession, group []st
 }
 
 // renderTaskLine renders a single task line in the sidebar
-func (m Model) renderTaskLine(session *orchestrator.UltraPlanSession, task *orchestrator.PlannedTask, maxWidth int) string {
+func (m Model) renderTaskLine(session *orchestrator.UltraPlanSession, task *orchestrator.PlannedTask, maxWidth int, selected bool) string {
 	// Determine task status
 	status := "○" // pending
 	statusStyle := styles.Muted
@@ -203,7 +216,17 @@ func (m Model) renderTaskLine(session *orchestrator.UltraPlanSession, task *orch
 	titleLen := maxWidth - 4 // status + space + padding
 	title := truncate(task.Title, titleLen)
 
-	return fmt.Sprintf("  %s %s", statusStyle.Render(status), title)
+	line := fmt.Sprintf("  %s %s", statusStyle.Render(status), title)
+
+	// Highlight selected task
+	if selected {
+		line = lipgloss.NewStyle().
+			Background(styles.PrimaryColor).
+			Foreground(styles.TextColor).
+			Render(line)
+	}
+
+	return line
 }
 
 // renderUltraPlanContent renders the content area for ultra-plan mode
@@ -309,6 +332,9 @@ func (m Model) renderUltraPlanHelp() string {
 		keys = append(keys, "[e] start execution")
 
 	case orchestrator.PhaseExecuting:
+		keys = append(keys, "[tab] next task")
+		keys = append(keys, "[1-9] select task")
+		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
 		keys = append(keys, "[c] cancel")
 
@@ -451,9 +477,68 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 			m.infoMessage = "Execution cancelled"
 		}
 		return true, m, nil
+
+	case "tab", "l":
+		// Navigate to next task during execution
+		if session.Phase == orchestrator.PhaseExecuting && session.Plan != nil {
+			taskCount := len(session.Plan.Tasks)
+			if taskCount > 0 {
+				m.ultraPlan.selectedTaskIdx = (m.ultraPlan.selectedTaskIdx + 1) % taskCount
+				m.selectTaskInstance(session)
+			}
+		}
+		return true, m, nil
+
+	case "shift+tab", "h":
+		// Navigate to previous task during execution
+		if session.Phase == orchestrator.PhaseExecuting && session.Plan != nil {
+			taskCount := len(session.Plan.Tasks)
+			if taskCount > 0 {
+				m.ultraPlan.selectedTaskIdx = (m.ultraPlan.selectedTaskIdx - 1 + taskCount) % taskCount
+				m.selectTaskInstance(session)
+			}
+		}
+		return true, m, nil
+
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		// Jump to task by number during execution
+		if session.Phase == orchestrator.PhaseExecuting && session.Plan != nil {
+			idx := int(msg.String()[0] - '1')
+			if idx < len(session.Plan.Tasks) {
+				m.ultraPlan.selectedTaskIdx = idx
+				m.selectTaskInstance(session)
+			}
+		}
+		return true, m, nil
 	}
 
 	return false, m, nil
+}
+
+// selectTaskInstance switches to the instance associated with the currently selected task
+func (m *Model) selectTaskInstance(session *orchestrator.UltraPlanSession) {
+	if session.Plan == nil || m.ultraPlan.selectedTaskIdx >= len(session.Plan.Tasks) {
+		return
+	}
+
+	task := &session.Plan.Tasks[m.ultraPlan.selectedTaskIdx]
+	instanceID, ok := session.TaskToInstance[task.ID]
+	if !ok {
+		m.infoMessage = fmt.Sprintf("Task %s not yet started", task.Title)
+		return
+	}
+
+	// Find the instance index in session.Instances
+	for i, inst := range m.session.Instances {
+		if inst.ID == instanceID {
+			m.activeTab = i
+			m.ensureActiveVisible()
+			m.infoMessage = fmt.Sprintf("Viewing: %s", task.Title)
+			return
+		}
+	}
+
+	m.infoMessage = fmt.Sprintf("Instance for task %s not found", task.Title)
 }
 
 // handleUltraPlanCoordinatorCompletion handles auto-parsing when the planning coordinator completes
