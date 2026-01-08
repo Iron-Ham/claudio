@@ -2053,8 +2053,10 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	b.WriteString(styles.InstanceInfo.Render(info))
 	b.WriteString("\n")
 
-	// Task
-	b.WriteString(styles.Subtitle.Render("Task: " + inst.Task))
+	// Task (limit to 5 lines to prevent dominating the view)
+	const maxTaskLines = 5
+	taskDisplay := truncateLines(inst.Task, maxTaskLines)
+	b.WriteString(styles.Subtitle.Render("Task: " + taskDisplay))
 	b.WriteString("\n")
 
 	// Resource metrics (if available and config enabled)
@@ -2788,6 +2790,15 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-3] + "..."
+}
+
+// truncateLines limits text to maxLines, adding ellipsis if truncated
+func truncateLines(s string, maxLines int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= maxLines {
+		return s
+	}
+	return strings.Join(lines[:maxLines], "\n") + "\n..."
 }
 
 // formatInstanceMetrics formats metrics for a single instance
