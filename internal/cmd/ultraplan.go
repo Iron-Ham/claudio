@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui"
 	"github.com/spf13/cobra"
@@ -79,21 +80,14 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Create orchestrator
-	orch, err := orchestrator.New(cwd)
+	// Generate a new session ID for this ultraplan
+	sessionID := orchestrator.GenerateID()
+	cfg := config.Get()
+
+	// Create orchestrator with multi-session support
+	orch, err := orchestrator.NewWithSession(cwd, sessionID, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create orchestrator: %w", err)
-	}
-
-	// Check for existing session
-	if orch.HasExistingSession() {
-		action, err := promptUltraplanSessionAction()
-		if err != nil {
-			return err
-		}
-		if action == "quit" {
-			return nil
-		}
 	}
 
 	// Start a new session for the ultra-plan
@@ -181,32 +175,6 @@ func promptObjective() (string, error) {
 	}
 
 	return input, nil
-}
-
-// promptUltraplanSessionAction prompts what to do with existing session
-func promptUltraplanSessionAction() (string, error) {
-	fmt.Println("\nAn existing session was found.")
-	fmt.Println("Ultra-plan requires a fresh session.")
-	fmt.Println("  [c] Continue - Replace existing session with ultra-plan")
-	fmt.Println("  [q] Quit     - Exit without changes")
-	fmt.Print("\nChoice [c/q]: ")
-
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("failed to read input: %w", err)
-	}
-
-	input = strings.TrimSpace(strings.ToLower(input))
-
-	switch input {
-	case "c", "continue", "":
-		return "continue", nil
-	case "q", "quit":
-		return "quit", nil
-	default:
-		return "continue", nil
-	}
 }
 
 // loadPlanFile loads a plan from a JSON file
