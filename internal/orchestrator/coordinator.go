@@ -232,6 +232,10 @@ func (c *Coordinator) SetPlan(plan *PlanSpec) error {
 	_ = c.orch.SaveSession()
 
 	c.notifyPlanReady(plan)
+
+	// Transition to refresh phase (plan ready, waiting for execution)
+	c.notifyPhaseChange(PhaseRefresh)
+
 	return nil
 }
 
