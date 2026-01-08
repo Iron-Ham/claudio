@@ -93,16 +93,17 @@ type UltraPlanSession struct {
 	Plan            *PlanSpec         `json:"plan,omitempty"`
 	Phase           UltraPlanPhase    `json:"phase"`
 	Config          UltraPlanConfig   `json:"config"`
-	CoordinatorID  string            `json:"coordinator_id,omitempty"` // Instance ID of the planning coordinator
-	SynthesisID    string            `json:"synthesis_id,omitempty"`   // Instance ID of the synthesis reviewer
-	TaskToInstance map[string]string `json:"task_to_instance"`         // PlannedTask.ID -> Instance.ID
+	CoordinatorID   string            `json:"coordinator_id,omitempty"`   // Instance ID of the planning coordinator
+	SynthesisID     string            `json:"synthesis_id,omitempty"`     // Instance ID of the synthesis reviewer
+	ConsolidationID string            `json:"consolidation_id,omitempty"` // Instance ID of the consolidation agent
+	TaskToInstance  map[string]string `json:"task_to_instance"`           // PlannedTask.ID -> Instance.ID
 	CompletedTasks  []string          `json:"completed_tasks"`
 	FailedTasks     []string          `json:"failed_tasks"`
-	CurrentGroup    int               `json:"current_group"`               // Index into ExecutionOrder
+	CurrentGroup    int               `json:"current_group"`      // Index into ExecutionOrder
 	Created         time.Time         `json:"created"`
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
 	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
-	Error           string            `json:"error,omitempty"`             // Error message if failed
+	Error           string            `json:"error,omitempty"` // Error message if failed
 
 	// Consolidation results (persisted for recovery and display)
 	Consolidation *ConsolidationState `json:"consolidation,omitempty"`
@@ -610,3 +611,55 @@ const SynthesisPromptTemplate = `You are reviewing the results of a parallel exe
 4. **Summarize** what was accomplished
 
 If there are any issues that need manual resolution, clearly list them. Otherwise, confirm that the objective has been successfully achieved.`
+
+// ConsolidationPromptTemplate is the prompt used for the consolidation phase
+// This prompts Claude to consolidate task branches into group branches and create PRs
+const ConsolidationPromptTemplate = `You are consolidating completed ultraplan task branches into pull requests.
+
+## Objective
+%s
+
+## Branch Configuration
+- Branch prefix: %s
+- Main branch: %s
+- Consolidation mode: %s
+- Create drafts: %v
+
+## Execution Groups and Task Branches
+%s
+
+## Instructions
+
+Your job is to consolidate all the task branches into group branches and create pull requests.
+
+### For Stacked PRs Mode
+1. For each execution group (starting from group 1):
+   - Create a consolidated branch from the appropriate base:
+     - Group 1: branch from main
+     - Group N: branch from group N-1's branch
+   - Cherry-pick all task commits from that group's task branches
+   - Push the consolidated branch
+   - Create a PR with appropriate title and description
+
+2. PRs should be stacked: each PR's base is the previous group's branch.
+
+### For Single PR Mode
+1. Create one consolidated branch from main
+2. Cherry-pick all task commits in execution order
+3. Push the branch and create a single PR
+
+### Commands to Use
+- Use ` + "`" + `git cherry-pick` + "`" + ` to bring commits from task branches
+- Use ` + "`" + `git push -u origin <branch>` + "`" + ` to push branches
+- Use ` + "`" + `gh pr create` + "`" + ` to create pull requests
+- If cherry-pick has conflicts, resolve them or report them clearly
+
+### PR Format
+Title: "ultraplan: group N - <objective summary>" (for stacked) or "ultraplan: <objective summary>" (for single)
+Body should include:
+- The objective
+- Which tasks are included
+- For stacked PRs: note the merge order dependency
+
+### On Completion
+Report the URLs of all created PRs.`

@@ -608,53 +608,141 @@ func (c *Coordinator) onSynthesisComplete() {
 }
 
 // StartConsolidation begins the consolidation phase
+// This creates a Claude instance that performs branch consolidation and PR creation
 func (c *Coordinator) StartConsolidation() error {
 	session := c.Session()
 	c.notifyPhaseChange(PhaseConsolidating)
 
-	// Build consolidation config
-	config := ConsolidationConfig{
-		Mode:           session.Config.ConsolidationMode,
-		BranchPrefix:   session.Config.BranchPrefix,
-		CreateDraftPRs: session.Config.CreateDraftPRs,
-		PRLabels:       session.Config.PRLabels,
+	// Initialize consolidation state
+	c.mu.Lock()
+	session.Consolidation = &ConsolidationState{
+		Phase:       ConsolidationCreatingBranches,
+		TotalGroups: len(session.Plan.ExecutionOrder),
+	}
+	c.mu.Unlock()
+
+	// Build the consolidation prompt
+	prompt := c.buildConsolidationPrompt()
+
+	// Create a consolidation instance
+	inst, err := c.orch.AddInstance(c.baseSession, prompt)
+	if err != nil {
+		return fmt.Errorf("failed to create consolidation instance: %w", err)
 	}
 
-	// Use branch prefix from global config if not set
-	if config.BranchPrefix == "" {
-		config.BranchPrefix = c.orch.config.Branch.Prefix
+	// Store the consolidation instance ID for TUI visibility
+	session.ConsolidationID = inst.ID
+
+	// Start the instance
+	if err := c.orch.StartInstance(inst); err != nil {
+		return fmt.Errorf("failed to start consolidation instance: %w", err)
 	}
-	if config.BranchPrefix == "" {
-		config.BranchPrefix = "Iron-Ham"
-	}
 
-	// Create consolidator
-	consolidator := NewConsolidator(c.orch, session, c.baseSession, config)
-
-	// Set up event callback to update session state
-	consolidator.SetEventCallback(func(event ConsolidationEvent) {
-		// Update session's consolidation state on events
-		c.mu.Lock()
-		session.Consolidation = consolidator.State()
-		c.mu.Unlock()
-		_ = c.orch.SaveSession()
-	})
-
-	// Run consolidation in a goroutine
+	// Monitor the consolidation instance for completion
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		if err := consolidator.Run(); err != nil {
-			c.handleConsolidationError(err, consolidator)
-		} else {
-			c.finishConsolidation(consolidator)
-		}
+		c.monitorConsolidationInstance(inst.ID)
 	}()
 
 	return nil
 }
 
-// handleConsolidationError handles a consolidation error
+// buildConsolidationPrompt creates the prompt for the consolidation phase
+func (c *Coordinator) buildConsolidationPrompt() string {
+	session := c.Session()
+
+	// Get branch configuration
+	branchPrefix := session.Config.BranchPrefix
+	if branchPrefix == "" {
+		branchPrefix = c.orch.config.Branch.Prefix
+	}
+	if branchPrefix == "" {
+		branchPrefix = "Iron-Ham"
+	}
+
+	mainBranch := c.orch.wt.FindMainBranch()
+	mode := string(session.Config.ConsolidationMode)
+	createDrafts := session.Config.CreateDraftPRs
+
+	// Build the execution groups and task branches information
+	var groupsInfo strings.Builder
+	for groupIdx, taskIDs := range session.Plan.ExecutionOrder {
+		groupsInfo.WriteString(fmt.Sprintf("\n### Group %d\n", groupIdx+1))
+		for _, taskID := range taskIDs {
+			task := session.GetTask(taskID)
+			if task == nil {
+				continue
+			}
+
+			// Find the branch for this task
+			branchName := "unknown"
+			for _, inst := range c.baseSession.Instances {
+				if strings.Contains(inst.Task, taskID) || strings.Contains(inst.Branch, slugify(task.Title)) {
+					branchName = inst.Branch
+					break
+				}
+			}
+
+			groupsInfo.WriteString(fmt.Sprintf("- Task: %s (%s)\n", task.Title, taskID))
+			groupsInfo.WriteString(fmt.Sprintf("  Branch: %s\n", branchName))
+		}
+	}
+
+	return fmt.Sprintf(ConsolidationPromptTemplate,
+		session.Objective,
+		branchPrefix,
+		mainBranch,
+		mode,
+		createDrafts,
+		groupsInfo.String(),
+	)
+}
+
+// monitorConsolidationInstance monitors the consolidation instance and completes when done
+func (c *Coordinator) monitorConsolidationInstance(instanceID string) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+
+		case <-ticker.C:
+			inst := c.orch.GetInstance(instanceID)
+			if inst == nil {
+				// Instance gone, assume complete
+				c.finishConsolidation()
+				return
+			}
+
+			switch inst.Status {
+			case StatusCompleted, StatusWaitingInput:
+				// Consolidation complete
+				c.finishConsolidation()
+				return
+
+			case StatusError, StatusTimeout, StatusStuck:
+				// Consolidation failed
+				session := c.Session()
+				c.mu.Lock()
+				session.Phase = PhaseFailed
+				session.Error = fmt.Sprintf("consolidation failed: %s", inst.Status)
+				if session.Consolidation != nil {
+					session.Consolidation.Phase = ConsolidationFailed
+					session.Consolidation.Error = string(inst.Status)
+				}
+				c.mu.Unlock()
+				_ = c.orch.SaveSession()
+				c.notifyComplete(false, session.Error)
+				return
+			}
+		}
+	}
+}
+
+// handleConsolidationError handles a consolidation error (legacy, kept for compatibility)
 func (c *Coordinator) handleConsolidationError(err error, consolidator *Consolidator) {
 	session := c.Session()
 
@@ -680,15 +768,18 @@ func (c *Coordinator) handleConsolidationError(err error, consolidator *Consolid
 }
 
 // finishConsolidation completes the ultraplan after successful consolidation
-func (c *Coordinator) finishConsolidation(consolidator *Consolidator) {
+func (c *Coordinator) finishConsolidation() {
 	session := c.Session()
 
 	c.mu.Lock()
 	session.Phase = PhaseComplete
 	now := time.Now()
 	session.CompletedAt = &now
-	session.Consolidation = consolidator.State()
-	session.PRUrls = consolidator.State().PRUrls
+	if session.Consolidation != nil {
+		session.Consolidation.Phase = ConsolidationComplete
+		completedAt := time.Now()
+		session.Consolidation.CompletedAt = &completedAt
+	}
 	c.mu.Unlock()
 	_ = c.orch.SaveSession()
 
