@@ -102,6 +102,38 @@ var (
 			Foreground(MutedColor).
 			MarginBottom(1)
 
+	// Sidebar styles
+	Sidebar = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(MutedColor).
+		Padding(1, 1)
+
+	SidebarItem = lipgloss.NewStyle().
+			Padding(0, 1).
+			MarginBottom(0)
+
+	SidebarItemActive = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(TextColor).
+				Background(PrimaryColor).
+				Padding(0, 1).
+				MarginBottom(0)
+
+	SidebarItemInputNeeded = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(TextColor).
+				Background(WarningColor).
+				Padding(0, 1).
+				MarginBottom(0)
+
+	SidebarTitle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(PrimaryColor).
+			MarginBottom(1)
+
+	StatusDot = lipgloss.NewStyle().
+			MarginRight(1)
+
 	// Error message
 	ErrorMsg = lipgloss.NewStyle().
 			Foreground(ErrorColor).
