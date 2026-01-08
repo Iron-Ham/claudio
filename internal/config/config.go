@@ -34,8 +34,7 @@ type TUIConfig struct {
 
 // SessionConfig controls session behavior
 type SessionConfig struct {
-	// MaxInstances limits how many instances can run simultaneously
-	MaxInstances int `mapstructure:"max_instances"`
+	// Placeholder for future session settings
 }
 
 // InstanceConfig controls instance behavior
@@ -70,9 +69,7 @@ func Default() *Config {
 			AutoFocusOnInput: true,
 			MaxOutputLines:   1000,
 		},
-		Session: SessionConfig{
-			MaxInstances: 10,
-		},
+		Session: SessionConfig{},
 		Instance: InstanceConfig{
 			OutputBufferSize:  100000, // 100KB
 			CaptureIntervalMs: 100,
@@ -103,8 +100,7 @@ func SetDefaults() {
 	viper.SetDefault("tui.auto_focus_on_input", defaults.TUI.AutoFocusOnInput)
 	viper.SetDefault("tui.max_output_lines", defaults.TUI.MaxOutputLines)
 
-	// Session defaults
-	viper.SetDefault("session.max_instances", defaults.Session.MaxInstances)
+	// Session defaults (currently empty)
 
 	// Instance defaults
 	viper.SetDefault("instance.output_buffer_size", defaults.Instance.OutputBufferSize)

@@ -245,12 +245,14 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab", "l":
 		if m.instanceCount() > 0 {
 			m.activeTab = (m.activeTab + 1) % m.instanceCount()
+			m.ensureActiveVisible()
 		}
 		return m, nil
 
 	case "shift+tab", "h":
 		if m.instanceCount() > 0 {
 			m.activeTab = (m.activeTab - 1 + m.instanceCount()) % m.instanceCount()
+			m.ensureActiveVisible()
 		}
 		return m, nil
 
@@ -258,6 +260,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		idx := int(msg.String()[0] - '1')
 		if idx < m.instanceCount() {
 			m.activeTab = idx
+			m.ensureActiveVisible()
 		}
 		return m, nil
 
@@ -360,18 +363,28 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "j", "down":
-		// Scroll down in diff view
+		// Scroll down in diff view, or navigate to next instance
 		if m.showDiff {
 			m.diffScroll++
 			return m, nil
 		}
+		if m.instanceCount() > 0 {
+			m.activeTab = (m.activeTab + 1) % m.instanceCount()
+			m.ensureActiveVisible()
+		}
 		return m, nil
 
 	case "k", "up":
-		// Scroll up in diff view
-		if m.showDiff && m.diffScroll > 0 {
-			m.diffScroll--
+		// Scroll up in diff view, or navigate to previous instance
+		if m.showDiff {
+			if m.diffScroll > 0 {
+				m.diffScroll--
+			}
 			return m, nil
+		}
+		if m.instanceCount() > 0 {
+			m.activeTab = (m.activeTab - 1 + m.instanceCount()) % m.instanceCount()
+			m.ensureActiveVisible()
 		}
 		return m, nil
 
@@ -636,12 +649,12 @@ func (m Model) View() string {
 	}
 	mainContentWidth := m.width - effectiveSidebarWidth - 3 // 3 for gap between panels
 
-	// Sidebar + Content area (horizontal layout)
-	sidebar := m.renderSidebar(effectiveSidebarWidth)
-	content := m.renderContent(mainContentWidth)
-
 	// Calculate available height for the main area
 	mainAreaHeight := m.height - 6 // Header + help bar + margins
+
+	// Sidebar + Content area (horizontal layout)
+	sidebar := m.renderSidebar(effectiveSidebarWidth, mainAreaHeight)
+	content := m.renderContent(mainContentWidth)
 
 	// Apply height to both panels and join horizontally
 	sidebarStyled := lipgloss.NewStyle().
@@ -689,8 +702,8 @@ func (m Model) renderHeader() string {
 	return styles.Header.Width(m.width).Render(title)
 }
 
-// renderSidebar renders the instance sidebar
-func (m Model) renderSidebar(width int) string {
+// renderSidebar renders the instance sidebar with pagination support
+func (m Model) renderSidebar(width int, height int) string {
 	var b strings.Builder
 
 	// Sidebar title
@@ -702,6 +715,25 @@ func (m Model) renderSidebar(width int) string {
 		b.WriteString("\n")
 		b.WriteString(styles.Muted.Render("Press [a] to add"))
 	} else {
+		// Calculate available slots for instances
+		// Reserve: 1 for title, 1 for blank line, 1 for add hint, 2 for scroll indicators, plus border padding
+		reservedLines := 6
+		availableSlots := height - reservedLines
+		if availableSlots < 3 {
+			availableSlots = 3 // Minimum to show at least a few instances
+		}
+
+		totalInstances := m.instanceCount()
+		hasMoreAbove := m.sidebarScrollOffset > 0
+		hasMoreBelow := m.sidebarScrollOffset+availableSlots < totalInstances
+
+		// Show scroll up indicator if there are instances above
+		if hasMoreAbove {
+			scrollUp := styles.Muted.Render(fmt.Sprintf("▲ %d more above", m.sidebarScrollOffset))
+			b.WriteString(scrollUp)
+			b.WriteString("\n")
+		}
+
 		// Build a set of instance IDs that have conflicts
 		conflictingInstances := make(map[string]bool)
 		for _, c := range m.conflicts {
@@ -710,43 +742,39 @@ func (m Model) renderSidebar(width int) string {
 			}
 		}
 
-		// Separate active and completed instances
-		var activeInstances, completedInstances []int
-		for i, inst := range m.session.Instances {
-			if inst.Status == orchestrator.StatusCompleted || inst.Status == orchestrator.StatusError {
-				completedInstances = append(completedInstances, i)
-			} else {
-				activeInstances = append(activeInstances, i)
-			}
+		// Calculate the visible range
+		startIdx := m.sidebarScrollOffset
+		endIdx := m.sidebarScrollOffset + availableSlots
+		if endIdx > totalInstances {
+			endIdx = totalInstances
 		}
 
-		// Render active instances
-		for _, i := range activeInstances {
+		// Render visible instances using helper
+		for i := startIdx; i < endIdx; i++ {
 			inst := m.session.Instances[i]
 			b.WriteString(m.renderSidebarInstance(i, inst, conflictingInstances, width))
 			b.WriteString("\n")
 		}
 
-		// Render completed section if there are completed instances
-		if len(completedInstances) > 0 {
-			if len(activeInstances) > 0 {
-				b.WriteString("\n")
-			}
-			b.WriteString(styles.SidebarSectionTitle.Render("Completed"))
+		// Show scroll down indicator if there are instances below
+		if hasMoreBelow {
+			remaining := totalInstances - endIdx
+			scrollDown := styles.Muted.Render(fmt.Sprintf("▼ %d more below", remaining))
+			b.WriteString(scrollDown)
 			b.WriteString("\n")
-
-			for _, i := range completedInstances {
-				inst := m.session.Instances[i]
-				b.WriteString(m.renderSidebarInstance(i, inst, conflictingInstances, width))
-				b.WriteString("\n")
-			}
 		}
 	}
 
 	b.WriteString("\n")
-	// Add instance hint
-	addHint := styles.Muted.Render("[a]") + " " + styles.Muted.Render("Add new")
-	b.WriteString(addHint)
+	// Add instance hint with navigation help when paginated
+	if m.instanceCount() > 0 {
+		addHint := styles.Muted.Render("[a]") + " " + styles.Muted.Render("add") + "  " +
+			styles.Muted.Render("[↑↓]") + " " + styles.Muted.Render("nav")
+		b.WriteString(addHint)
+	} else {
+		addHint := styles.Muted.Render("[a]") + " " + styles.Muted.Render("Add new")
+		b.WriteString(addHint)
+	}
 
 	// Wrap in sidebar box
 	return styles.Sidebar.Width(width - 2).Render(b.String())
@@ -969,9 +997,11 @@ func (m Model) renderHelpPanel(width int) string {
 Keyboard Shortcuts
 
 Navigation:
-  1-9        Select instance by number
+  ↑ / k      Previous instance
+  ↓ / j      Next instance
   Tab / l    Next instance
   Shift+Tab  Previous instance
+  1-9        Select instance by number
 
 Instance Control:
   a          Add new instance
@@ -1215,7 +1245,7 @@ func (m Model) renderHelp() string {
 	}
 
 	keys := []string{
-		styles.HelpKey.Render("[1-9]") + " select",
+		styles.HelpKey.Render("[↑↓/jk]") + " nav",
 		styles.HelpKey.Render("[a]") + " add",
 		styles.HelpKey.Render("[s]") + " start",
 		styles.HelpKey.Render("[i]") + " input",

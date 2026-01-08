@@ -169,7 +169,7 @@ claudio config
 
 # Set individual values
 claudio config set completion.default_action auto_pr
-claudio config set session.max_instances 5
+claudio config set tui.auto_focus_on_input false
 ```
 
 ### Configuration Options
@@ -189,11 +189,6 @@ tui:
   auto_focus_on_input: true
   # Maximum number of output lines to display per instance
   max_output_lines: 1000
-
-# Session settings
-session:
-  # Maximum number of instances that can run simultaneously
-  max_instances: 10
 
 # Instance settings (advanced)
 instance:

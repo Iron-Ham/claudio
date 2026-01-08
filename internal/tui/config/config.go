@@ -87,18 +87,6 @@ func New() Model {
 			},
 		},
 		{
-			Name: "Session",
-			Items: []ConfigItem{
-				{
-					Key:         "session.max_instances",
-					Label:       "Max Instances",
-					Description: "Maximum simultaneous instances allowed",
-					Type:        "int",
-					Category:    "session",
-				},
-			},
-		},
-		{
 			Name: "Instance",
 			Items: []ConfigItem{
 				{
@@ -570,7 +558,6 @@ func (m *Model) resetCurrentToDefault() {
 		"completion.default_action":    defaults.Completion.DefaultAction,
 		"tui.auto_focus_on_input":      defaults.TUI.AutoFocusOnInput,
 		"tui.max_output_lines":         defaults.TUI.MaxOutputLines,
-		"session.max_instances":        defaults.Session.MaxInstances,
 		"instance.output_buffer_size":  defaults.Instance.OutputBufferSize,
 		"instance.capture_interval_ms": defaults.Instance.CaptureIntervalMs,
 		"instance.tmux_width":          defaults.Instance.TmuxWidth,
