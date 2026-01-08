@@ -21,6 +21,10 @@ type UltraPlanState struct {
 	needsNotification      bool                            // Set when user input is needed (checked on tick)
 	lastNotifiedPhase      orchestrator.UltraPlanPhase     // Prevent duplicate notifications for same phase
 	lastConsolidationPhase orchestrator.ConsolidationPhase // Track consolidation phase for pause detection
+
+	// Phase-aware navigation state
+	navigableInstances []string // Ordered list of navigable instance IDs
+	selectedNavIdx     int      // Index into navigableInstances
 }
 
 // checkForPhaseNotification checks if the ultraplan phase changed to one that needs user attention
@@ -135,7 +139,7 @@ func (m Model) renderUltraPlanHeader() string {
 	return b.String()
 }
 
-// renderUltraPlanSidebar renders the task-oriented sidebar for ultra-plan mode
+// renderUltraPlanSidebar renders a unified sidebar showing all phases with their instances
 func (m Model) renderUltraPlanSidebar(width int, height int) string {
 	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
 		return m.renderSidebar(width, height)
@@ -146,85 +150,160 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 		return m.renderSidebar(width, height)
 	}
 
-	// During planning phase, show a planning-specific sidebar
-	if session.Plan == nil {
-		return m.renderPlanningSidebar(width, height, session)
-	}
-
-	// During synthesis phase, show synthesis-specific sidebar
-	if session.Phase == orchestrator.PhaseSynthesis {
-		return m.renderSynthesisSidebar(width, height, session)
-	}
-
-	// During consolidation phase, show consolidation-specific sidebar
-	if session.Phase == orchestrator.PhaseConsolidating && session.Consolidation != nil {
-		return m.renderConsolidationSidebar(width, height, session)
-	}
-
 	var b strings.Builder
-
-	// Title
-	b.WriteString(styles.SidebarTitle.Render("Execution Plan"))
-	b.WriteString("\n")
-
-	// Show execution groups
-	plan := session.Plan
-	reservedLines := 5
-	availableLines := height - reservedLines
-
 	lineCount := 0
-	taskIdx := 0 // Track flat task index for selection highlighting
-	for groupIdx, group := range plan.ExecutionOrder {
-		if lineCount >= availableLines {
-			break
-		}
+	availableLines := height - 4
 
-		// Group header
-		groupStatus := m.getGroupStatus(session, group)
-		groupHeader := fmt.Sprintf("Group %d %s", groupIdx+1, groupStatus)
-		b.WriteString(styles.Muted.Render(groupHeader))
+	// ========== PLANNING SECTION ==========
+	planningComplete := session.Phase != orchestrator.PhasePlanning
+	planningStatus := m.getPhaseSectionStatus(orchestrator.PhasePlanning, session)
+	planningHeader := fmt.Sprintf("▼ PLANNING %s", planningStatus)
+	b.WriteString(styles.SidebarTitle.Render(planningHeader))
+	b.WriteString("\n")
+	lineCount++
+
+	// Show coordinator instance
+	if session.CoordinatorID != "" && lineCount < availableLines {
+		inst := m.orchestrator.GetInstance(session.CoordinatorID)
+		selected := m.isInstanceSelected(session.CoordinatorID)
+		navigable := planningComplete || (inst != nil && inst.Status != orchestrator.StatusPending)
+		line := m.renderPhaseInstanceLine(inst, "Coordinator", selected, navigable, width-4)
+		b.WriteString(line)
+		b.WriteString("\n")
+		lineCount++
+	}
+	b.WriteString("\n")
+	lineCount++
+
+	// ========== EXECUTION SECTION ==========
+	if session.Plan != nil && lineCount < availableLines {
+		executionStarted := session.Phase == orchestrator.PhaseExecuting ||
+			session.Phase == orchestrator.PhaseSynthesis ||
+			session.Phase == orchestrator.PhaseConsolidating ||
+			session.Phase == orchestrator.PhaseComplete
+
+		execStatus := m.getPhaseSectionStatus(orchestrator.PhaseExecuting, session)
+		execHeader := fmt.Sprintf("▼ EXECUTION %s", execStatus)
+		b.WriteString(styles.SidebarTitle.Render(execHeader))
 		b.WriteString("\n")
 		lineCount++
 
-		// Tasks in group
-		for _, taskID := range group {
-			if lineCount >= availableLines {
+		// Show execution groups with tasks
+		for groupIdx, group := range session.Plan.ExecutionOrder {
+			if lineCount >= availableLines-4 { // Reserve space for synthesis/consolidation
+				b.WriteString(styles.Muted.Render("  ...more"))
+				b.WriteString("\n")
+				lineCount++
 				break
 			}
 
-			task := session.GetTask(taskID)
-			if task == nil {
-				continue
+			// Group header
+			groupStatus := m.getGroupStatus(session, group)
+			groupHeader := fmt.Sprintf("  Group %d %s", groupIdx+1, groupStatus)
+			if !executionStarted {
+				b.WriteString(styles.Muted.Render(groupHeader))
+			} else {
+				b.WriteString(groupHeader)
 			}
-
-			// Find flat index for this task
-			flatIdx := -1
-			for i, t := range plan.Tasks {
-				if t.ID == taskID {
-					flatIdx = i
-					break
-				}
-			}
-
-			selected := m.ultraPlan != nil && flatIdx == m.ultraPlan.selectedTaskIdx
-			taskLine := m.renderTaskLine(session, task, width-4, selected)
-			b.WriteString(taskLine)
 			b.WriteString("\n")
 			lineCount++
-			taskIdx++
+
+			// Tasks in group (compact view)
+			for _, taskID := range group {
+				if lineCount >= availableLines-4 {
+					break
+				}
+
+				task := session.GetTask(taskID)
+				if task == nil {
+					continue
+				}
+
+				instID := session.TaskToInstance[taskID]
+				selected := m.isInstanceSelected(instID)
+				navigable := instID != ""
+				taskLine := m.renderExecutionTaskLine(session, task, instID, selected, navigable, width-6)
+				b.WriteString(taskLine)
+				b.WriteString("\n")
+				lineCount++
+			}
 		}
+		b.WriteString("\n")
+		lineCount++
 	}
 
-	// Summary at bottom
-	b.WriteString("\n")
-	completed := len(session.CompletedTasks)
-	total := len(session.Plan.Tasks)
-	failed := len(session.FailedTasks)
-	summary := fmt.Sprintf("Done: %d/%d", completed, total)
-	if failed > 0 {
-		summary += fmt.Sprintf(" Failed: %d", failed)
+	// ========== SYNTHESIS SECTION ==========
+	if lineCount < availableLines {
+		synthesisStarted := session.Phase == orchestrator.PhaseSynthesis ||
+			session.Phase == orchestrator.PhaseConsolidating ||
+			session.Phase == orchestrator.PhaseComplete
+
+		synthStatus := m.getPhaseSectionStatus(orchestrator.PhaseSynthesis, session)
+		synthHeader := fmt.Sprintf("▼ SYNTHESIS %s", synthStatus)
+		if !synthesisStarted && session.SynthesisID == "" {
+			b.WriteString(styles.Muted.Render(synthHeader))
+		} else {
+			b.WriteString(styles.SidebarTitle.Render(synthHeader))
+		}
+		b.WriteString("\n")
+		lineCount++
+
+		// Show synthesis instance
+		if session.SynthesisID != "" && lineCount < availableLines {
+			inst := m.orchestrator.GetInstance(session.SynthesisID)
+			selected := m.isInstanceSelected(session.SynthesisID)
+			navigable := true // Always navigable once created
+			line := m.renderPhaseInstanceLine(inst, "Reviewer", selected, navigable, width-4)
+			b.WriteString(line)
+			b.WriteString("\n")
+			lineCount++
+		} else if !synthesisStarted && lineCount < availableLines {
+			b.WriteString(styles.Muted.Render("  ○ Pending"))
+			b.WriteString("\n")
+			lineCount++
+		}
+		b.WriteString("\n")
+		lineCount++
 	}
-	b.WriteString(styles.Muted.Render(summary))
+
+	// ========== CONSOLIDATION SECTION ==========
+	if session.Config.ConsolidationMode != "" && lineCount < availableLines {
+		consolidationStarted := session.Phase == orchestrator.PhaseConsolidating ||
+			session.Phase == orchestrator.PhaseComplete
+
+		consStatus := m.getPhaseSectionStatus(orchestrator.PhaseConsolidating, session)
+		consHeader := fmt.Sprintf("▼ CONSOLIDATION %s", consStatus)
+		if !consolidationStarted && session.ConsolidationID == "" {
+			b.WriteString(styles.Muted.Render(consHeader))
+		} else {
+			b.WriteString(styles.SidebarTitle.Render(consHeader))
+		}
+		b.WriteString("\n")
+		lineCount++
+
+		// Show consolidation instance
+		if session.ConsolidationID != "" && lineCount < availableLines {
+			inst := m.orchestrator.GetInstance(session.ConsolidationID)
+			selected := m.isInstanceSelected(session.ConsolidationID)
+			navigable := true // Always navigable once created
+			line := m.renderPhaseInstanceLine(inst, "Consolidator", selected, navigable, width-4)
+			b.WriteString(line)
+			b.WriteString("\n")
+			lineCount++
+
+			// Show PR count if available
+			if len(session.PRUrls) > 0 && lineCount < availableLines {
+				prLine := fmt.Sprintf("    %d PR(s) created", len(session.PRUrls))
+				b.WriteString(styles.Muted.Render(prLine))
+				b.WriteString("\n")
+				lineCount++
+			}
+		} else if !consolidationStarted && lineCount < availableLines {
+			b.WriteString(styles.Muted.Render("  ○ Pending"))
+			b.WriteString("\n")
+			lineCount++
+		}
+	}
 
 	return styles.Sidebar.Width(width - 2).Render(b.String())
 }
@@ -274,6 +353,334 @@ func (m Model) getGroupStatus(session *orchestrator.UltraPlanSession, group []st
 		return "⟳"
 	}
 	return "○"
+}
+
+// getPhaseSectionStatus returns a status indicator for a phase section header
+func (m Model) getPhaseSectionStatus(phase orchestrator.UltraPlanPhase, session *orchestrator.UltraPlanSession) string {
+	switch phase {
+	case orchestrator.PhasePlanning:
+		if session.Phase == orchestrator.PhasePlanning {
+			return "[⟳]"
+		}
+		if session.Plan != nil {
+			return "[✓]"
+		}
+		return "[○]"
+
+	case orchestrator.PhaseExecuting:
+		if session.Plan == nil {
+			return "[○]"
+		}
+		completed := len(session.CompletedTasks)
+		total := len(session.Plan.Tasks)
+		if session.Phase == orchestrator.PhaseExecuting {
+			return fmt.Sprintf("[%d/%d]", completed, total)
+		}
+		if completed == total && total > 0 {
+			return "[✓]"
+		}
+		if completed > 0 {
+			return fmt.Sprintf("[%d/%d]", completed, total)
+		}
+		return "[○]"
+
+	case orchestrator.PhaseSynthesis:
+		if session.Phase == orchestrator.PhaseSynthesis {
+			return "[⟳]"
+		}
+		if session.Phase == orchestrator.PhaseConsolidating || session.Phase == orchestrator.PhaseComplete {
+			return "[✓]"
+		}
+		return "[○]"
+
+	case orchestrator.PhaseConsolidating:
+		if session.Phase == orchestrator.PhaseConsolidating {
+			return "[⟳]"
+		}
+		if session.Phase == orchestrator.PhaseComplete && len(session.PRUrls) > 0 {
+			return "[✓]"
+		}
+		if session.Phase == orchestrator.PhaseComplete {
+			return "[✓]"
+		}
+		return "[○]"
+
+	default:
+		return ""
+	}
+}
+
+// isInstanceSelected checks if the given instance ID is currently selected in the TUI
+func (m Model) isInstanceSelected(instanceID string) bool {
+	if instanceID == "" {
+		return false
+	}
+	if m.activeTab >= 0 && m.activeTab < len(m.session.Instances) {
+		return m.session.Instances[m.activeTab].ID == instanceID
+	}
+	return false
+}
+
+// renderPhaseInstanceLine renders a line for a phase instance (coordinator, synthesis, consolidation)
+func (m Model) renderPhaseInstanceLine(inst *orchestrator.Instance, name string, selected, navigable bool, maxWidth int) string {
+	var statusIcon string
+	var statusStyle lipgloss.Style
+
+	if inst == nil {
+		statusIcon = "○"
+		statusStyle = styles.Muted
+	} else {
+		switch inst.Status {
+		case orchestrator.StatusWorking:
+			statusIcon = "⟳"
+			statusStyle = lipgloss.NewStyle().Foreground(styles.BlueColor)
+		case orchestrator.StatusCompleted, orchestrator.StatusWaitingInput:
+			statusIcon = "✓"
+			statusStyle = lipgloss.NewStyle().Foreground(styles.GreenColor)
+		case orchestrator.StatusError, orchestrator.StatusStuck, orchestrator.StatusTimeout:
+			statusIcon = "✗"
+			statusStyle = lipgloss.NewStyle().Foreground(styles.RedColor)
+		case orchestrator.StatusPending:
+			statusIcon = "○"
+			statusStyle = styles.Muted
+		default:
+			statusIcon = "◌"
+			statusStyle = styles.Muted
+		}
+	}
+
+	line := fmt.Sprintf("  %s %s", statusStyle.Render(statusIcon), name)
+
+	// Apply styling based on navigability and selection
+	if selected {
+		line = lipgloss.NewStyle().
+			Background(styles.PrimaryColor).
+			Foreground(styles.TextColor).
+			Render(line)
+	} else if !navigable {
+		line = styles.Muted.Render(line)
+	}
+
+	return line
+}
+
+// renderExecutionTaskLine renders a task line in the execution section
+func (m Model) renderExecutionTaskLine(session *orchestrator.UltraPlanSession, task *orchestrator.PlannedTask, instanceID string, selected, navigable bool, maxWidth int) string {
+	// Determine task status
+	var statusIcon string
+	var statusStyle lipgloss.Style
+
+	// Check if completed
+	for _, ct := range session.CompletedTasks {
+		if ct == task.ID {
+			statusIcon = "✓"
+			statusStyle = lipgloss.NewStyle().Foreground(styles.GreenColor)
+			break
+		}
+	}
+
+	// Check if failed
+	if statusIcon == "" {
+		for _, ft := range session.FailedTasks {
+			if ft == task.ID {
+				statusIcon = "✗"
+				statusStyle = lipgloss.NewStyle().Foreground(styles.RedColor)
+				break
+			}
+		}
+	}
+
+	// Check if running
+	if statusIcon == "" && instanceID != "" {
+		statusIcon = "⟳"
+		statusStyle = lipgloss.NewStyle().Foreground(styles.BlueColor)
+	}
+
+	// Default: pending
+	if statusIcon == "" {
+		statusIcon = "○"
+		statusStyle = styles.Muted
+	}
+
+	// Build line with truncated title
+	titleLen := maxWidth - 6 // status + spaces
+	title := truncate(task.Title, titleLen)
+	line := fmt.Sprintf("    %s %s", statusStyle.Render(statusIcon), title)
+
+	// Apply styling
+	if selected {
+		line = lipgloss.NewStyle().
+			Background(styles.PrimaryColor).
+			Foreground(styles.TextColor).
+			Render(line)
+	} else if !navigable {
+		line = styles.Muted.Render(line)
+	}
+
+	return line
+}
+
+// getNavigableInstances returns an ordered list of instance IDs that can be navigated to.
+// Only includes instances from phases that have started or completed.
+// Order: Planning → Execution tasks (in order) → Synthesis → Consolidation
+func (m *Model) getNavigableInstances() []string {
+	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return nil
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil {
+		return nil
+	}
+
+	var instances []string
+
+	// Planning - navigable once started (has instance)
+	if session.CoordinatorID != "" {
+		inst := m.orchestrator.GetInstance(session.CoordinatorID)
+		if inst != nil && inst.Status != orchestrator.StatusPending {
+			instances = append(instances, session.CoordinatorID)
+		}
+	}
+
+	// Execution - navigable for tasks with instances (started or completed)
+	if session.Plan != nil {
+		// Add in execution order
+		for _, group := range session.Plan.ExecutionOrder {
+			for _, taskID := range group {
+				// Check if task has an instance (either still in TaskToInstance or was completed)
+				if instID, ok := session.TaskToInstance[taskID]; ok && instID != "" {
+					instances = append(instances, instID)
+				} else {
+					// Task might be completed - find instance by checking completed tasks
+					for _, completedTaskID := range session.CompletedTasks {
+						if completedTaskID == taskID {
+							// Find instance for this completed task
+							for _, inst := range m.session.Instances {
+								if strings.Contains(inst.Task, taskID) {
+									instances = append(instances, inst.ID)
+									break
+								}
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Synthesis - navigable once created
+	if session.SynthesisID != "" {
+		instances = append(instances, session.SynthesisID)
+	}
+
+	// Consolidation - navigable once created
+	if session.ConsolidationID != "" {
+		instances = append(instances, session.ConsolidationID)
+	}
+
+	return instances
+}
+
+// updateNavigableInstances updates the list of navigable instances
+func (m *Model) updateNavigableInstances() {
+	if m.ultraPlan == nil {
+		return
+	}
+	m.ultraPlan.navigableInstances = m.getNavigableInstances()
+}
+
+// navigateToNextInstance navigates to the next navigable instance
+// direction: +1 for next, -1 for previous
+func (m *Model) navigateToNextInstance(direction int) bool {
+	if m.ultraPlan == nil {
+		return false
+	}
+
+	// Update the navigable instances list
+	m.updateNavigableInstances()
+	instances := m.ultraPlan.navigableInstances
+
+	if len(instances) == 0 {
+		return false
+	}
+
+	// Find current position in the list
+	currentIdx := -1
+	if m.activeTab >= 0 && m.activeTab < len(m.session.Instances) {
+		currentInstID := m.session.Instances[m.activeTab].ID
+		for i, instID := range instances {
+			if instID == currentInstID {
+				currentIdx = i
+				break
+			}
+		}
+	}
+
+	// Calculate next index with wrapping
+	var nextIdx int
+	if currentIdx < 0 {
+		// Not currently on a navigable instance, start from beginning or end
+		if direction > 0 {
+			nextIdx = 0
+		} else {
+			nextIdx = len(instances) - 1
+		}
+	} else {
+		nextIdx = (currentIdx + direction + len(instances)) % len(instances)
+	}
+
+	// Find the instance in session.Instances and switch to it
+	targetInstID := instances[nextIdx]
+	for i, inst := range m.session.Instances {
+		if inst.ID == targetInstID {
+			m.activeTab = i
+			m.ultraPlan.selectedNavIdx = nextIdx
+			m.ensureActiveVisible()
+			return true
+		}
+	}
+
+	return false
+}
+
+// selectInstanceByID selects an instance by its ID, if it's navigable
+func (m *Model) selectInstanceByID(instanceID string) bool {
+	if m.ultraPlan == nil || instanceID == "" {
+		return false
+	}
+
+	// Update the navigable instances list
+	m.updateNavigableInstances()
+	instances := m.ultraPlan.navigableInstances
+
+	// Check if this instance is navigable
+	isNavigable := false
+	navIdx := 0
+	for i, instID := range instances {
+		if instID == instanceID {
+			isNavigable = true
+			navIdx = i
+			break
+		}
+	}
+
+	if !isNavigable {
+		return false
+	}
+
+	// Find and select the instance
+	for i, inst := range m.session.Instances {
+		if inst.ID == instanceID {
+			m.activeTab = i
+			m.ultraPlan.selectedNavIdx = navIdx
+			m.ensureActiveVisible()
+			return true
+		}
+	}
+
+	return false
 }
 
 // renderTaskLine renders a single task line in the sidebar
@@ -583,22 +990,16 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 		return true, m, nil
 
 	case "tab", "l":
-		// Navigate to next runnable task during execution (skip blocked tasks)
-		if session.Phase == orchestrator.PhaseExecuting && session.Plan != nil {
-			if nextIdx := m.findNextRunnableTask(session, 1); nextIdx >= 0 {
-				m.ultraPlan.selectedTaskIdx = nextIdx
-				m.selectTaskInstance(session)
-			}
+		// Navigate to next navigable instance across all phases
+		if m.navigateToNextInstance(1) {
+			m.infoMessage = ""
 		}
 		return true, m, nil
 
 	case "shift+tab", "h":
-		// Navigate to previous runnable task during execution (skip blocked tasks)
-		if session.Phase == orchestrator.PhaseExecuting && session.Plan != nil {
-			if prevIdx := m.findNextRunnableTask(session, -1); prevIdx >= 0 {
-				m.ultraPlan.selectedTaskIdx = prevIdx
-				m.selectTaskInstance(session)
-			}
+		// Navigate to previous navigable instance across all phases
+		if m.navigateToNextInstance(-1) {
+			m.infoMessage = ""
 		}
 		return true, m, nil
 
