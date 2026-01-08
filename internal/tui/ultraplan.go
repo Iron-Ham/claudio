@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
@@ -412,26 +413,20 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 		return true, m, nil
 
 	case "p":
-		// Parse plan from coordinator output (only during planning phase)
+		// Parse plan from file or coordinator output (only during planning phase)
 		if session.Phase == orchestrator.PhasePlanning {
-			// Get the coordinator instance output
 			if session.CoordinatorID != "" {
 				inst := m.orchestrator.GetInstance(session.CoordinatorID)
 				if inst != nil {
-					output := m.outputs[inst.ID]
-					if output != "" {
-						plan, err := orchestrator.ParsePlanFromOutput(output, session.Objective)
-						if err != nil {
-							m.errorMessage = fmt.Sprintf("Failed to parse plan: %v", err)
-						} else {
-							if err := m.ultraPlan.coordinator.SetPlan(plan); err != nil {
-								m.errorMessage = fmt.Sprintf("Invalid plan: %v", err)
-							} else {
-								m.infoMessage = fmt.Sprintf("Plan parsed: %d tasks in %d groups", len(plan.Tasks), len(plan.ExecutionOrder))
-							}
-						}
+					plan, err := m.tryParsePlan(inst, session)
+					if err != nil {
+						m.errorMessage = fmt.Sprintf("Failed to parse plan: %v", err)
 					} else {
-						m.infoMessage = "No output yet - wait for planning to complete"
+						if err := m.ultraPlan.coordinator.SetPlan(plan); err != nil {
+							m.errorMessage = fmt.Sprintf("Invalid plan: %v", err)
+						} else {
+							m.infoMessage = fmt.Sprintf("Plan parsed: %d tasks in %d groups", len(plan.Tasks), len(plan.ExecutionOrder))
+						}
 					}
 				}
 			}
@@ -484,14 +479,8 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 		return false
 	}
 
-	// Auto-parse the plan from output
-	output := m.outputs[inst.ID]
-	if output == "" {
-		m.errorMessage = "Planning completed but no output found"
-		return true
-	}
-
-	plan, err := orchestrator.ParsePlanFromOutput(output, session.Objective)
+	// Try to parse the plan (file-based first, then output fallback)
+	plan, err := m.tryParsePlan(inst, session)
 	if err != nil {
 		m.errorMessage = fmt.Sprintf("Planning completed but failed to parse plan: %v", err)
 		return true
@@ -504,6 +493,70 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 
 	// Success! Show a helpful message
 	m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Press [v] to view, [e] to execute.",
+		len(plan.Tasks), len(plan.ExecutionOrder))
+
+	return true
+}
+
+// tryParsePlan attempts to parse a plan, trying file-based parsing first, then output parsing
+func (m *Model) tryParsePlan(inst *orchestrator.Instance, session *orchestrator.UltraPlanSession) (*orchestrator.PlanSpec, error) {
+	// Try file-based parsing first (preferred)
+	planPath := orchestrator.PlanFilePath(inst.WorktreePath)
+	if _, err := os.Stat(planPath); err == nil {
+		plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
+		if err == nil {
+			return plan, nil
+		}
+		// File exists but parsing failed - report this specific error
+		return nil, fmt.Errorf("plan file exists but is invalid: %w", err)
+	}
+
+	// Fall back to output parsing (for backwards compatibility)
+	output := m.outputs[inst.ID]
+	if output == "" {
+		return nil, fmt.Errorf("no plan file found and no output available")
+	}
+
+	return orchestrator.ParsePlanFromOutput(output, session.Objective)
+}
+
+// checkForPlanFile checks if the plan file exists and parses it (called during tick updates)
+// Returns true if a plan was found and successfully parsed
+func (m *Model) checkForPlanFile() bool {
+	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return false
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil || session.Phase != orchestrator.PhasePlanning || session.Plan != nil {
+		return false
+	}
+
+	// Get the coordinator instance
+	inst := m.orchestrator.GetInstance(session.CoordinatorID)
+	if inst == nil {
+		return false
+	}
+
+	// Check if plan file exists
+	planPath := orchestrator.PlanFilePath(inst.WorktreePath)
+	if _, err := os.Stat(planPath); err != nil {
+		return false
+	}
+
+	// Parse the plan
+	plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
+	if err != nil {
+		// Don't show error yet - file might be partially written
+		return false
+	}
+
+	if err := m.ultraPlan.coordinator.SetPlan(plan); err != nil {
+		return false
+	}
+
+	// Success!
+	m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Press [v] to view, [e] to execute.",
 		len(plan.Tasks), len(plan.ExecutionOrder))
 
 	return true

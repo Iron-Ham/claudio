@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -385,6 +387,57 @@ func ParsePlanFromOutput(output string, objective string) (*PlanSpec, error) {
 	return plan, nil
 }
 
+// ParsePlanFromFile reads and parses a plan from a JSON file
+func ParsePlanFromFile(filepath string, objective string) (*PlanSpec, error) {
+	data, err := os.ReadFile(filepath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read plan file: %w", err)
+	}
+
+	// Parse the JSON
+	var rawPlan struct {
+		Summary     string        `json:"summary"`
+		Tasks       []PlannedTask `json:"tasks"`
+		Insights    []string      `json:"insights"`
+		Constraints []string      `json:"constraints"`
+	}
+
+	if err := json.Unmarshal(data, &rawPlan); err != nil {
+		return nil, fmt.Errorf("failed to parse plan JSON: %w", err)
+	}
+
+	if len(rawPlan.Tasks) == 0 {
+		return nil, fmt.Errorf("plan contains no tasks")
+	}
+
+	// Build the PlanSpec
+	plan := &PlanSpec{
+		ID:              generateID(),
+		Objective:       objective,
+		Summary:         rawPlan.Summary,
+		Tasks:           rawPlan.Tasks,
+		Insights:        rawPlan.Insights,
+		Constraints:     rawPlan.Constraints,
+		DependencyGraph: make(map[string][]string),
+		CreatedAt:       time.Now(),
+	}
+
+	// Build dependency graph
+	for _, task := range plan.Tasks {
+		plan.DependencyGraph[task.ID] = task.DependsOn
+	}
+
+	// Calculate execution order (topological sort with parallel grouping)
+	plan.ExecutionOrder = calculateExecutionOrder(plan.Tasks, plan.DependencyGraph)
+
+	return plan, nil
+}
+
+// PlanFilePath returns the full path to the plan file for a given worktree
+func PlanFilePath(worktreePath string) string {
+	return filepath.Join(worktreePath, PlanFileName)
+}
+
 // calculateExecutionOrder performs a topological sort and groups tasks that can run in parallel
 func calculateExecutionOrder(tasks []PlannedTask, deps map[string][]string) [][]string {
 	// Build in-degree map
@@ -484,6 +537,9 @@ func ValidatePlan(plan *PlanSpec) error {
 	return nil
 }
 
+// PlanFileName is the name of the file where the planning agent writes its plan
+const PlanFileName = ".claudio-plan.json"
+
 // PlanningPromptTemplate is the prompt used for the planning phase
 const PlanningPromptTemplate = `You are a senior software architect planning a complex task.
 
@@ -492,50 +548,31 @@ const PlanningPromptTemplate = `You are a senior software architect planning a c
 
 ## Instructions
 
-1. **Explore** the codebase thoroughly to understand:
-   - Project structure and architecture
-   - Existing patterns and conventions
-   - Areas that will be affected by this task
+1. **Explore** the codebase to understand its structure and patterns
+2. **Decompose** the objective into discrete, parallelizable tasks
+3. **Write your plan** to the file ` + "`" + PlanFileName + "`" + ` in JSON format
 
-2. **Decompose** the objective into discrete, well-scoped tasks that can be:
-   - Executed independently where possible
-   - Assigned clear file ownership to avoid conflicts
-   - Verified for completion
+## Plan JSON Schema
 
-3. **Identify Dependencies**: Determine which tasks must complete before others can begin
-
-4. **Output** your plan in the following JSON format (wrapped in <plan></plan> tags):
-
-<plan>
-{
-  "summary": "Brief executive summary of the approach",
-  "tasks": [
-    {
-      "id": "task-1",
-      "title": "Short title",
-      "description": "Detailed instructions for executing this task. Be specific about what needs to be done, what files to modify, and what the expected outcome is.",
-      "files": ["path/to/file1.go", "path/to/file2.go"],
-      "depends_on": [],
-      "priority": 1,
-      "est_complexity": "medium"
-    }
-  ],
-  "insights": ["Key finding 1", "Key finding 2"],
-  "constraints": ["Risk or constraint 1"]
-}
-</plan>
+Write a JSON file with this structure:
+- "summary": Brief executive summary (string)
+- "tasks": Array of task objects, each with:
+  - "id": Unique identifier like "task-1-setup" (string)
+  - "title": Short title (string)
+  - "description": Detailed instructions for another Claude instance to execute independently (string)
+  - "files": Files this task will modify (array of strings)
+  - "depends_on": IDs of tasks that must complete first (array of strings, empty for independent tasks)
+  - "priority": Lower = higher priority within dependency level (number)
+  - "est_complexity": "low", "medium", or "high" (string)
+- "insights": Key findings about the codebase (array of strings)
+- "constraints": Risks or constraints to consider (array of strings)
 
 ## Guidelines
 
-- **Granularity**: Prefer more granular tasks that can run in parallel over fewer large sequential tasks
-- **File Ownership**: Assign clear file ownership to tasks to avoid merge conflicts
-- **Independence**: Maximize tasks that can run concurrently (empty depends_on)
-- **Clarity**: Each task description should be complete enough for another Claude instance to execute independently
-- **IDs**: Use descriptive IDs like "task-1-add-models" or "setup-config"
-- **Priority**: Lower numbers = higher priority within a dependency level
-- **Complexity**: Use "low" for simple changes, "medium" for moderate work, "high" for complex tasks
-
-Think deeply about the optimal decomposition. The quality of parallel execution depends on good planning.`
+- Prefer granular tasks that can run in parallel over large sequential ones
+- Assign clear file ownership to avoid merge conflicts
+- Each task description should be complete enough for independent execution
+- Use Write tool to create the plan file when ready`
 
 // SynthesisPromptTemplate is the prompt used for the synthesis phase
 const SynthesisPromptTemplate = `You are reviewing the results of a parallel execution plan.
