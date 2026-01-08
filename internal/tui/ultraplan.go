@@ -528,10 +528,12 @@ func (m Model) renderPlanningSidebar(width int, height int, session *orchestrato
 				statusIcon = "⟳"
 			case orchestrator.StatusCompleted:
 				statusIcon = "✓"
-			case orchestrator.StatusError:
+			case orchestrator.StatusError, orchestrator.StatusStuck, orchestrator.StatusTimeout:
 				statusIcon = "✗"
-			default:
+			case orchestrator.StatusPending:
 				statusIcon = "○"
+			default:
+				statusIcon = "◌"
 			}
 
 			// Coordinator line
@@ -552,8 +554,14 @@ func (m Model) renderPlanningSidebar(width int, height int, session *orchestrato
 				statusDesc = "Planning complete"
 			case orchestrator.StatusError:
 				statusDesc = "Planning failed"
-			default:
+			case orchestrator.StatusStuck:
+				statusDesc = "Stuck - no activity"
+			case orchestrator.StatusTimeout:
+				statusDesc = "Timed out"
+			case orchestrator.StatusPending:
 				statusDesc = "Starting..."
+			default:
+				statusDesc = fmt.Sprintf("Status: %s", inst.Status)
 			}
 			b.WriteString(styles.Muted.Render("  " + statusDesc))
 			b.WriteString("\n")
