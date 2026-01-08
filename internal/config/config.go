@@ -15,6 +15,7 @@ type Config struct {
 	Session    SessionConfig    `mapstructure:"session"`
 	Instance   InstanceConfig   `mapstructure:"instance"`
 	PR         PRConfig         `mapstructure:"pr"`
+	Cleanup    CleanupConfig    `mapstructure:"cleanup"`
 }
 
 // CompletionConfig controls what happens when an instance completes
@@ -73,6 +74,14 @@ type ReviewerConfig struct {
 	ByPath map[string][]string `mapstructure:"by_path"`
 }
 
+// CleanupConfig controls automatic and manual cleanup behavior
+type CleanupConfig struct {
+	// WarnOnStale shows a warning on start if stale resources exist (default: true)
+	WarnOnStale bool `mapstructure:"warn_on_stale"`
+	// KeepRemoteBranches prevents deletion of branches that exist on remote (default: true)
+	KeepRemoteBranches bool `mapstructure:"keep_remote_branches"`
+}
+
 // Default returns a Config with sensible default values
 func Default() *Config {
 	return &Config{
@@ -100,6 +109,10 @@ func Default() *Config {
 				ByPath:  map[string][]string{},
 			},
 			Labels: []string{},
+		},
+		Cleanup: CleanupConfig{
+			WarnOnStale:        true,
+			KeepRemoteBranches: true,
 		},
 	}
 }
@@ -136,6 +149,10 @@ func SetDefaults() {
 	viper.SetDefault("pr.reviewers.default", defaults.PR.Reviewers.Default)
 	viper.SetDefault("pr.reviewers.by_path", defaults.PR.Reviewers.ByPath)
 	viper.SetDefault("pr.labels", defaults.PR.Labels)
+
+	// Cleanup defaults
+	viper.SetDefault("cleanup.warn_on_stale", defaults.Cleanup.WarnOnStale)
+	viper.SetDefault("cleanup.keep_remote_branches", defaults.Cleanup.KeepRemoteBranches)
 }
 
 // Load reads the configuration from viper into a Config struct
