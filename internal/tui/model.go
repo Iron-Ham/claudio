@@ -21,8 +21,9 @@ type Model struct {
 	quitting       bool
 	showHelp       bool
 	showConflicts  bool // When true, show detailed conflict view
-	addingTask     bool
-	taskInput      string
+	addingTask      bool
+	taskInput       string
+	taskInputCursor int // Cursor position within taskInput (0 = before first char)
 	errorMessage   string
 	infoMessage    string // Non-error status message
 	warningMessage string // Warning message (e.g., file conflicts)
@@ -247,4 +248,116 @@ func (m Model) hasNewOutput(instanceID string) bool {
 		return false
 	}
 	return currentLines > previousLines
+}
+
+// Task input cursor helper methods
+
+// taskInputInsert inserts text at the current cursor position
+func (m *Model) taskInputInsert(text string) {
+	runes := []rune(m.taskInput)
+	m.taskInput = string(runes[:m.taskInputCursor]) + text + string(runes[m.taskInputCursor:])
+	m.taskInputCursor += len([]rune(text))
+}
+
+// taskInputDeleteBack deletes n runes before the cursor
+func (m *Model) taskInputDeleteBack(n int) {
+	if m.taskInputCursor == 0 {
+		return
+	}
+	runes := []rune(m.taskInput)
+	deleteCount := n
+	if deleteCount > m.taskInputCursor {
+		deleteCount = m.taskInputCursor
+	}
+	m.taskInput = string(runes[:m.taskInputCursor-deleteCount]) + string(runes[m.taskInputCursor:])
+	m.taskInputCursor -= deleteCount
+}
+
+// taskInputDeleteForward deletes n runes after the cursor
+func (m *Model) taskInputDeleteForward(n int) {
+	runes := []rune(m.taskInput)
+	if m.taskInputCursor >= len(runes) {
+		return
+	}
+	deleteCount := n
+	if m.taskInputCursor+deleteCount > len(runes) {
+		deleteCount = len(runes) - m.taskInputCursor
+	}
+	m.taskInput = string(runes[:m.taskInputCursor]) + string(runes[m.taskInputCursor+deleteCount:])
+}
+
+// taskInputMoveCursor moves cursor by n runes (negative = left, positive = right)
+func (m *Model) taskInputMoveCursor(n int) {
+	runes := []rune(m.taskInput)
+	newPos := m.taskInputCursor + n
+	if newPos < 0 {
+		newPos = 0
+	}
+	if newPos > len(runes) {
+		newPos = len(runes)
+	}
+	m.taskInputCursor = newPos
+}
+
+// taskInputFindPrevWordBoundary finds the position of the previous word boundary
+func (m *Model) taskInputFindPrevWordBoundary() int {
+	if m.taskInputCursor == 0 {
+		return 0
+	}
+	runes := []rune(m.taskInput)
+	pos := m.taskInputCursor - 1
+
+	// Skip any whitespace/punctuation immediately before cursor
+	for pos > 0 && !isWordChar(runes[pos]) {
+		pos--
+	}
+	// Move back through the word
+	for pos > 0 && isWordChar(runes[pos-1]) {
+		pos--
+	}
+	return pos
+}
+
+// taskInputFindNextWordBoundary finds the position of the next word boundary
+func (m *Model) taskInputFindNextWordBoundary() int {
+	runes := []rune(m.taskInput)
+	if m.taskInputCursor >= len(runes) {
+		return len(runes)
+	}
+	pos := m.taskInputCursor
+
+	// Skip current word
+	for pos < len(runes) && isWordChar(runes[pos]) {
+		pos++
+	}
+	// Skip whitespace/punctuation to reach next word
+	for pos < len(runes) && !isWordChar(runes[pos]) {
+		pos++
+	}
+	return pos
+}
+
+// taskInputFindLineStart finds the start of the current line
+func (m *Model) taskInputFindLineStart() int {
+	runes := []rune(m.taskInput)
+	pos := m.taskInputCursor
+	for pos > 0 && runes[pos-1] != '\n' {
+		pos--
+	}
+	return pos
+}
+
+// taskInputFindLineEnd finds the end of the current line
+func (m *Model) taskInputFindLineEnd() int {
+	runes := []rune(m.taskInput)
+	pos := m.taskInputCursor
+	for pos < len(runes) && runes[pos] != '\n' {
+		pos++
+	}
+	return pos
+}
+
+// isWordChar returns true if the rune is considered part of a word
+func isWordChar(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
 }
