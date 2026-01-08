@@ -38,6 +38,9 @@ type Orchestrator struct {
 	// Callback for when PR workflow completes and instance should be removed
 	prCompleteCallback func(instanceID string, success bool)
 
+	// Callback for when a PR URL is detected in instance output (inline PR creation)
+	prOpenedCallback func(instanceID string)
+
 	mu sync.RWMutex
 }
 
@@ -162,6 +165,8 @@ func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
 					o.handleInstanceExit(id)
 				case instance.StateWaitingInput, instance.StateWaitingQuestion, instance.StateWaitingPermission:
 					o.handleInstanceWaitingInput(id)
+				case instance.StatePROpened:
+					o.handleInstancePROpened(id)
 				}
 			})
 
@@ -309,6 +314,8 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 			o.handleInstanceExit(id)
 		case instance.StateWaitingInput, instance.StateWaitingQuestion, instance.StateWaitingPermission:
 			o.handleInstanceWaitingInput(id)
+		case instance.StatePROpened:
+			o.handleInstancePROpened(id)
 		}
 	})
 
@@ -434,6 +441,13 @@ func (o *Orchestrator) SetPRCompleteCallback(cb func(instanceID string, success 
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.prCompleteCallback = cb
+}
+
+// SetPROpenedCallback sets the callback for when a PR URL is detected in instance output
+func (o *Orchestrator) SetPROpenedCallback(cb func(instanceID string)) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.prOpenedCallback = cb
 }
 
 // GetPRWorkflow returns the PR workflow for an instance, if any
@@ -867,6 +881,18 @@ func (o *Orchestrator) handleInstanceWaitingInput(id string) {
 		inst.Status = StatusWaitingInput
 		o.saveSession()
 		o.executeNotification("notifications.on_waiting_input", inst)
+	}
+}
+
+// handleInstancePROpened handles when a PR URL is detected in instance output
+func (o *Orchestrator) handleInstancePROpened(id string) {
+	o.mu.RLock()
+	callback := o.prOpenedCallback
+	o.mu.RUnlock()
+
+	// Notify via callback if set (TUI will handle the removal)
+	if callback != nil {
+		callback(id)
 	}
 }
 

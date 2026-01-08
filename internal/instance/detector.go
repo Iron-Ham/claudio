@@ -21,6 +21,8 @@ const (
 	StateCompleted
 	// StateError means Claude encountered an error
 	StateError
+	// StatePROpened means Claude opened a pull request (PR URL detected in output)
+	StatePROpened
 )
 
 // String returns a human-readable string for the waiting state
@@ -38,6 +40,8 @@ func (s WaitingState) String() string {
 		return "completed"
 	case StateError:
 		return "error"
+	case StatePROpened:
+		return "pr_opened"
 	default:
 		return "unknown"
 	}
@@ -56,6 +60,7 @@ type Detector struct {
 	completionPatterns []*regexp.Regexp
 	errorPatterns      []*regexp.Regexp
 	workingPatterns    []*regexp.Regexp
+	prOpenedPatterns   []*regexp.Regexp
 }
 
 // NewDetector creates a new output state detector
@@ -118,12 +123,20 @@ func NewDetector() *Detector {
 		`⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏`, // Spinner characters
 	}
 
+	// PR opened patterns - detect when a pull request URL appears in output
+	// This indicates Claude has successfully created a PR via gh pr create
+	prOpenedStrings := []string{
+		// GitHub PR URL pattern: https://github.com/owner/repo/pull/123
+		`https://github\.com/[^/]+/[^/]+/pull/\d+`,
+	}
+
 	// Compile all patterns
 	d.permissionPatterns = compilePatterns(permissionStrings)
 	d.questionPatterns = compilePatterns(questionStrings)
 	d.completionPatterns = compilePatterns(completionStrings)
 	d.errorPatterns = compilePatterns(errorStrings)
 	d.workingPatterns = compilePatterns(workingStrings)
+	d.prOpenedPatterns = compilePatterns(prOpenedStrings)
 
 	return d
 }
@@ -164,6 +177,13 @@ func (d *Detector) Detect(output []byte) WaitingState {
 	// don't report as waiting even if there's a question in the output history
 	if d.matchesAny(recentText, d.workingPatterns) {
 		return StateWorking
+	}
+
+	// Check for PR opened (highest priority - PR URL in output means work is done)
+	// We check the full text buffer, not just recent lines, since the PR URL
+	// might scroll up as Claude continues to output text after creating the PR
+	if d.matchesAny(text, d.prOpenedPatterns) {
+		return StatePROpened
 	}
 
 	// Check for errors
