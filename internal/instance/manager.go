@@ -334,10 +334,18 @@ func (m *Manager) captureLoop() {
 			// Check if the session is still running
 			checkCmd := exec.Command("tmux", "has-session", "-t", sessionName)
 			if checkCmd.Run() != nil {
-				// Session ended
+				// Session ended - notify completion and stop
 				m.mu.Lock()
 				m.running = false
+				callback := m.stateCallback
+				instanceID := m.id
+				m.currentState = StateCompleted
 				m.mu.Unlock()
+
+				// Fire the completion callback so coordinator knows task is done
+				if callback != nil {
+					callback(instanceID, StateCompleted)
+				}
 				return
 			}
 		}
