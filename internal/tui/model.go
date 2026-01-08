@@ -156,8 +156,14 @@ func (m Model) getOutputMaxLines() int {
 }
 
 // getOutputLineCount returns the total number of lines in the output for an instance
-func (m Model) getOutputLineCount(instanceID string) int {
+// This counts lines after filtering is applied to match what the user sees
+func (m *Model) getOutputLineCount(instanceID string) int {
 	output := m.outputs[instanceID]
+	if output == "" {
+		return 0
+	}
+	// Apply filters to match what's displayed
+	output = m.filterOutput(output)
 	if output == "" {
 		return 0
 	}
@@ -172,7 +178,7 @@ func (m Model) getOutputLineCount(instanceID string) int {
 }
 
 // getOutputMaxScroll returns the maximum scroll offset for an instance
-func (m Model) getOutputMaxScroll(instanceID string) int {
+func (m *Model) getOutputMaxScroll(instanceID string) int {
 	totalLines := m.getOutputLineCount(instanceID)
 	maxLines := m.getOutputMaxLines()
 	maxScroll := totalLines - maxLines
