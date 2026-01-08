@@ -78,6 +78,11 @@ func (a *App) Run() error {
 		})
 	})
 
+	// Set up bell callback to forward terminal bells to the parent terminal
+	a.orchestrator.SetBellCallback(func(instanceID string) {
+		a.program.Send(bellMsg{instanceID: instanceID})
+	})
+
 	_, err := a.program.Run()
 
 	// Clean up signal handler
@@ -132,12 +137,27 @@ type timeoutMsg struct {
 	timeoutType instance.TimeoutType
 }
 
+type bellMsg struct {
+	instanceID string
+}
+
 // Commands
 
 func tick() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+// ringBell returns a command that outputs a terminal bell character
+// This forwards bells from tmux sessions to the parent terminal
+func ringBell() tea.Cmd {
+	return func() tea.Msg {
+		// Write the bell character directly to stdout
+		// This works even when Bubbletea is in alt-screen mode
+		_, _ = os.Stdout.Write([]byte{'\a'})
+		return nil
+	}
 }
 
 // Init initializes the model
@@ -229,6 +249,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.infoMessage = fmt.Sprintf("Instance %s is %s - use Ctrl+R to restart or Ctrl+K to kill", inst.ID, statusText)
 		}
 		return m, nil
+
+	case bellMsg:
+		// Terminal bell detected in a tmux session - forward it to the parent terminal
+		return m, ringBell()
 	}
 
 	return m, nil
