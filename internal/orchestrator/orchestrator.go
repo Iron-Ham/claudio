@@ -670,6 +670,12 @@ func (o *Orchestrator) saveSession() error {
 	return os.WriteFile(sessionFile, data, 0644)
 }
 
+// SaveSession is a public wrapper for saveSession, used by components
+// like the Coordinator that need to trigger session persistence
+func (o *Orchestrator) SaveSession() error {
+	return o.saveSession()
+}
+
 // updateContext updates the shared context file in all worktrees
 func (o *Orchestrator) updateContext() error {
 	if o.session == nil {
@@ -962,7 +968,7 @@ func (o *Orchestrator) handleInstanceTimeout(id string, timeoutType instance.Tim
 		inst.Metrics.EndTime = &now
 	}
 
-	o.saveSession()
+	_ = o.saveSession()
 
 	// Notify via callback if set (TUI will handle the display)
 	o.mu.RLock()

@@ -12,9 +12,8 @@ import (
 
 // UltraPlanState holds ultra-plan specific UI state
 type UltraPlanState struct {
-	coordinator   *orchestrator.Coordinator
-	planScrollPos int // Scroll position in the plan view
-	showPlanView  bool // Toggle between plan view and normal output view
+	coordinator  *orchestrator.Coordinator
+	showPlanView bool // Toggle between plan view and normal output view
 }
 
 // renderUltraPlanHeader renders the ultra-plan header with phase and progress

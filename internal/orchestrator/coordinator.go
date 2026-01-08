@@ -96,6 +96,9 @@ func (c *Coordinator) Plan() *PlanSpec {
 func (c *Coordinator) notifyPhaseChange(phase UltraPlanPhase) {
 	c.manager.SetPhase(phase)
 
+	// Persist the phase change
+	_ = c.orch.SaveSession()
+
 	c.mu.RLock()
 	cb := c.callbacks
 	c.mu.RUnlock()
@@ -122,6 +125,9 @@ func (c *Coordinator) notifyTaskStart(taskID, instanceID string) {
 func (c *Coordinator) notifyTaskComplete(taskID string) {
 	c.manager.MarkTaskComplete(taskID)
 
+	// Persist the task completion
+	_ = c.orch.SaveSession()
+
 	c.mu.RLock()
 	cb := c.callbacks
 	c.mu.RUnlock()
@@ -134,6 +140,9 @@ func (c *Coordinator) notifyTaskComplete(taskID string) {
 // notifyTaskFailed notifies callbacks of task failure
 func (c *Coordinator) notifyTaskFailed(taskID, reason string) {
 	c.manager.MarkTaskFailed(taskID, reason)
+
+	// Persist the task failure
+	_ = c.orch.SaveSession()
 
 	c.mu.RLock()
 	cb := c.callbacks
@@ -218,6 +227,9 @@ func (c *Coordinator) SetPlan(plan *PlanSpec) error {
 	c.mu.Lock()
 	c.manager.session.Plan = plan
 	c.mu.Unlock()
+
+	// Persist the plan
+	_ = c.orch.SaveSession()
 
 	c.notifyPlanReady(plan)
 	return nil
@@ -453,6 +465,9 @@ func (c *Coordinator) finishExecution() {
 		session.Error = fmt.Sprintf("%d task(s) failed", len(session.FailedTasks))
 		c.mu.Unlock()
 
+		// Persist the failure state
+		_ = c.orch.SaveSession()
+
 		c.notifyComplete(false, session.Error)
 		return
 	}
@@ -465,12 +480,15 @@ func (c *Coordinator) finishExecution() {
 		session.CompletedAt = &now
 		c.mu.Unlock()
 
+		// Persist the completion state
+		_ = c.orch.SaveSession()
+
 		c.notifyComplete(true, "All tasks completed (synthesis skipped)")
 		return
 	}
 
 	// Start synthesis phase
-	c.RunSynthesis()
+	_ = c.RunSynthesis()
 }
 
 // RunSynthesis executes the synthesis phase
@@ -553,6 +571,9 @@ func (c *Coordinator) Cancel() {
 	session.Phase = PhaseFailed
 	session.Error = "cancelled by user"
 	c.mu.Unlock()
+
+	// Persist the cancellation state
+	_ = c.orch.SaveSession()
 }
 
 // Wait waits for the ultra-plan to complete

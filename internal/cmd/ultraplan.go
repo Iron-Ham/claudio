@@ -137,6 +137,9 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 		ultraSession.Phase = orchestrator.PhaseRefresh // Skip to refresh if plan provided
 	}
 
+	// Link ultra-plan session to main session for persistence
+	session.UltraPlan = ultraSession
+
 	// Create coordinator
 	coordinator := orchestrator.NewCoordinator(orch, session, ultraSession)
 

@@ -97,7 +97,21 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Printf("\nSession: %s (ID: %s)\n", session.Name, session.ID)
 			fmt.Printf("Created: %s\n", session.Created.Format(time.RFC822))
-			fmt.Printf("Instances: %d\n\n", len(session.Instances))
+			fmt.Printf("Instances: %d\n", len(session.Instances))
+
+			// Show ultra-plan info if present
+			if session.UltraPlan != nil {
+				fmt.Printf("\nUltra-Plan Mode:\n")
+				fmt.Printf("  Phase: %s\n", session.UltraPlan.Phase)
+				fmt.Printf("  Objective: %s\n", truncateTask(session.UltraPlan.Objective, 50))
+				if session.UltraPlan.Plan != nil {
+					fmt.Printf("  Tasks: %d total, %d completed, %d failed\n",
+						len(session.UltraPlan.Plan.Tasks),
+						len(session.UltraPlan.CompletedTasks),
+						len(session.UltraPlan.FailedTasks))
+				}
+			}
+			fmt.Println()
 
 			if len(session.Instances) > 0 {
 				fmt.Println("Instances:")
@@ -179,6 +193,19 @@ func runSessionsRecover(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Check for ultra-plan session
+	if session.UltraPlan != nil {
+		fmt.Printf("\nUltra-plan session detected:\n")
+		fmt.Printf("  Phase: %s\n", session.UltraPlan.Phase)
+		fmt.Printf("  Objective: %s\n", truncateTask(session.UltraPlan.Objective, 50))
+		if session.UltraPlan.Plan != nil {
+			fmt.Printf("  Tasks: %d total, %d completed, %d failed\n",
+				len(session.UltraPlan.Plan.Tasks),
+				len(session.UltraPlan.CompletedTasks),
+				len(session.UltraPlan.FailedTasks))
+		}
+	}
+
 	// Get terminal dimensions and set them on the orchestrator before launching TUI
 	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
 		contentWidth, contentHeight := tui.CalculateContentDimensions(termWidth, termHeight)
@@ -189,8 +216,16 @@ func runSessionsRecover(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("\nLaunching TUI...")
 
-	// Launch TUI
-	app := tui.New(orch, session)
+	// Launch TUI - use ultra-plan mode if session has ultra-plan state
+	var app *tui.App
+	if session.UltraPlan != nil {
+		// Recreate coordinator for ultra-plan session
+		coordinator := orchestrator.NewCoordinator(orch, session, session.UltraPlan)
+		app = tui.NewWithUltraPlan(orch, session, coordinator)
+	} else {
+		app = tui.New(orch, session)
+	}
+
 	if err := app.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
