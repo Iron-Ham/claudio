@@ -17,6 +17,8 @@ const (
 	StatusCompleted    InstanceStatus = "completed"
 	StatusError        InstanceStatus = "error"
 	StatusCreatingPR   InstanceStatus = "creating_pr"
+	StatusStuck        InstanceStatus = "stuck"   // No activity for configured timeout period
+	StatusTimeout      InstanceStatus = "timeout" // Total runtime exceeded configured limit
 )
 
 // Metrics tracks resource usage and costs for an instance

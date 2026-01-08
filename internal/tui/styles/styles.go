@@ -30,6 +30,8 @@ var (
 	StatusComplete   = lipgloss.Color("#A78BFA") // Purple (brighter for readability)
 	StatusError      = lipgloss.Color("#EF4444") // Red
 	StatusCreatingPR = lipgloss.Color("#F472B6") // Pink (brighter for readability)
+	StatusStuck      = lipgloss.Color("#FB923C") // Orange - for stuck/no activity
+	StatusTimeout    = lipgloss.Color("#DC2626") // Dark red - for timeout exceeded
 
 	// Base styles
 	Title = lipgloss.NewStyle().
@@ -273,7 +275,37 @@ func StatusColor(status string) lipgloss.Color {
 		return StatusError
 	case "creating_pr":
 		return StatusCreatingPR
+	case "stuck":
+		return StatusStuck
+	case "timeout":
+		return StatusTimeout
 	default:
 		return MutedColor
+	}
+}
+
+// StatusIcon returns an icon for a given status
+func StatusIcon(status string) string {
+	switch status {
+	case "working":
+		return "●"
+	case "pending":
+		return "○"
+	case "waiting_input":
+		return "?"
+	case "paused":
+		return "⏸"
+	case "completed":
+		return "✓"
+	case "error":
+		return "✗"
+	case "creating_pr":
+		return "↗"
+	case "stuck":
+		return "⏱" // Timer icon for stuck/no activity
+	case "timeout":
+		return "⏰" // Alarm icon for timeout exceeded
+	default:
+		return "●"
 	}
 }

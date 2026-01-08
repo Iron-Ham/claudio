@@ -117,6 +117,27 @@ func New() Model {
 					Type:        "int",
 					Category:    "instance",
 				},
+				{
+					Key:         "instance.activity_timeout_minutes",
+					Label:       "Activity Timeout (min)",
+					Description: "Minutes of no output before marking as stuck (0 = disabled)",
+					Type:        "int",
+					Category:    "instance",
+				},
+				{
+					Key:         "instance.completion_timeout_minutes",
+					Label:       "Max Runtime (min)",
+					Description: "Maximum runtime in minutes before timeout (0 = disabled)",
+					Type:        "int",
+					Category:    "instance",
+				},
+				{
+					Key:         "instance.stale_detection",
+					Label:       "Stale Detection",
+					Description: "Detect stuck loops producing identical output",
+					Type:        "bool",
+					Category:    "instance",
+				},
 			},
 		},
 		{
@@ -563,17 +584,20 @@ func (m *Model) resetCurrentToDefault() {
 
 	// Map of keys to default values
 	defaultValues := map[string]interface{}{
-		"completion.default_action":    defaults.Completion.DefaultAction,
-		"tui.auto_focus_on_input":      defaults.TUI.AutoFocusOnInput,
-		"tui.max_output_lines":         defaults.TUI.MaxOutputLines,
-		"instance.output_buffer_size":  defaults.Instance.OutputBufferSize,
-		"instance.capture_interval_ms": defaults.Instance.CaptureIntervalMs,
-		"instance.tmux_width":          defaults.Instance.TmuxWidth,
-		"instance.tmux_height":         defaults.Instance.TmuxHeight,
-		"pr.draft":                     defaults.PR.Draft,
-		"pr.auto_rebase":               defaults.PR.AutoRebase,
-		"pr.use_ai":                    defaults.PR.UseAI,
-		"pr.auto_pr_on_stop":           defaults.PR.AutoPROnStop,
+		"completion.default_action":             defaults.Completion.DefaultAction,
+		"tui.auto_focus_on_input":               defaults.TUI.AutoFocusOnInput,
+		"tui.max_output_lines":                  defaults.TUI.MaxOutputLines,
+		"instance.output_buffer_size":           defaults.Instance.OutputBufferSize,
+		"instance.capture_interval_ms":          defaults.Instance.CaptureIntervalMs,
+		"instance.tmux_width":                   defaults.Instance.TmuxWidth,
+		"instance.tmux_height":                  defaults.Instance.TmuxHeight,
+		"instance.activity_timeout_minutes":     defaults.Instance.ActivityTimeoutMinutes,
+		"instance.completion_timeout_minutes":   defaults.Instance.CompletionTimeoutMinutes,
+		"instance.stale_detection":              defaults.Instance.StaleDetection,
+		"pr.draft":                              defaults.PR.Draft,
+		"pr.auto_rebase":                        defaults.PR.AutoRebase,
+		"pr.use_ai":                             defaults.PR.UseAI,
+		"pr.auto_pr_on_stop":                    defaults.PR.AutoPROnStop,
 	}
 
 	if defaultVal, ok := defaultValues[item.Key]; ok {

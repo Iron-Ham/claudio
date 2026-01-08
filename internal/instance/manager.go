@@ -11,21 +11,39 @@ import (
 // StateChangeCallback is called when the detected waiting state changes
 type StateChangeCallback func(instanceID string, state WaitingState)
 
+// TimeoutType represents the type of timeout that occurred
+type TimeoutType int
+
+const (
+	TimeoutActivity   TimeoutType = iota // No activity for configured period
+	TimeoutCompletion                    // Total runtime exceeded limit
+	TimeoutStale                         // Repeated output detected (stuck in loop)
+)
+
+// TimeoutCallback is called when a timeout condition is detected
+type TimeoutCallback func(instanceID string, timeoutType TimeoutType)
+
 // ManagerConfig holds configuration for instance management
 type ManagerConfig struct {
-	OutputBufferSize  int
-	CaptureIntervalMs int
-	TmuxWidth         int
-	TmuxHeight        int
+	OutputBufferSize         int
+	CaptureIntervalMs        int
+	TmuxWidth                int
+	TmuxHeight               int
+	ActivityTimeoutMinutes   int  // 0 = disabled
+	CompletionTimeoutMinutes int  // 0 = disabled
+	StaleDetection           bool // Enable repeated output detection
 }
 
 // DefaultManagerConfig returns the default manager configuration
 func DefaultManagerConfig() ManagerConfig {
 	return ManagerConfig{
-		OutputBufferSize:  100000, // 100KB
-		CaptureIntervalMs: 100,
-		TmuxWidth:         200,
-		TmuxHeight:        50,
+		OutputBufferSize:         100000, // 100KB
+		CaptureIntervalMs:        100,
+		TmuxWidth:                200,
+		TmuxHeight:               50,
+		ActivityTimeoutMinutes:   30,  // 30 minutes of no activity
+		CompletionTimeoutMinutes: 120, // 2 hours max runtime
+		StaleDetection:           true,
 	}
 }
 
@@ -56,6 +74,14 @@ type Manager struct {
 	currentMetrics  *ParsedMetrics
 	metricsCallback MetricsChangeCallback
 	startTime       *time.Time
+
+	// Timeout tracking
+	lastActivityTime    time.Time      // Last time output changed
+	lastOutputHash      string         // Hash of last output for change detection
+	repeatedOutputCount int            // Count of consecutive identical outputs (for stale detection)
+	timeoutCallback     TimeoutCallback
+	timedOut            bool           // Whether a timeout has been triggered
+	timeoutType         TimeoutType    // Type of timeout that was triggered
 }
 
 // NewManager creates a new instance manager with default configuration
@@ -93,6 +119,13 @@ func (m *Manager) SetMetricsCallback(cb MetricsChangeCallback) {
 	m.metricsCallback = cb
 }
 
+// SetTimeoutCallback sets a callback that will be invoked when a timeout is detected
+func (m *Manager) SetTimeoutCallback(cb TimeoutCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.timeoutCallback = cb
+}
+
 // CurrentMetrics returns the currently parsed metrics
 func (m *Manager) CurrentMetrics() *ParsedMetrics {
 	m.mu.RLock()
@@ -112,6 +145,29 @@ func (m *Manager) CurrentState() WaitingState {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.currentState
+}
+
+// TimedOut returns whether the instance has timed out and the type of timeout
+func (m *Manager) TimedOut() (bool, TimeoutType) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.timedOut, m.timeoutType
+}
+
+// LastActivityTime returns when the instance last had output activity
+func (m *Manager) LastActivityTime() time.Time {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastActivityTime
+}
+
+// ClearTimeout resets the timeout state (for recovery/restart scenarios)
+func (m *Manager) ClearTimeout() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.timedOut = false
+	m.repeatedOutputCount = 0
+	m.lastActivityTime = time.Now()
 }
 
 // Start launches the Claude Code process in a tmux session
@@ -161,10 +217,13 @@ func (m *Manager) Start() error {
 
 	m.running = true
 	m.paused = false
+	m.timedOut = false
+	m.repeatedOutputCount = 0
 
 	// Record start time for duration tracking
 	now := time.Now()
 	m.startTime = &now
+	m.lastActivityTime = now
 
 	// Start background goroutine to capture output periodically
 	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)
@@ -189,7 +248,13 @@ func (m *Manager) captureLoop() {
 				continue
 			}
 			sessionName := m.sessionName
+			timedOut := m.timedOut
 			m.mu.RUnlock()
+
+			// Skip processing if already timed out
+			if timedOut {
+				continue
+			}
 
 			// Capture the entire visible pane plus scrollback
 			// -p prints to stdout, -S - starts from beginning of history
@@ -212,11 +277,29 @@ func (m *Manager) captureLoop() {
 			if currentOutput != lastOutput {
 				m.outputBuf.Reset()
 				_, _ = m.outputBuf.Write(output)
+
+				// Update activity tracking
+				m.mu.Lock()
+				m.lastActivityTime = time.Now()
+				m.lastOutputHash = lastOutput
+				m.repeatedOutputCount = 0
+				m.mu.Unlock()
+
 				lastOutput = currentOutput
 
 				// Detect waiting state from the new output
 				m.detectAndNotifyState(output)
+			} else {
+				// Output hasn't changed - check for stale detection
+				m.mu.Lock()
+				if m.config.StaleDetection {
+					m.repeatedOutputCount++
+				}
+				m.mu.Unlock()
 			}
+
+			// Check for timeout conditions
+			m.checkTimeouts()
 
 			// Check if the session is still running
 			checkCmd := exec.Command("tmux", "has-session", "-t", sessionName)
@@ -228,6 +311,59 @@ func (m *Manager) captureLoop() {
 				return
 			}
 		}
+	}
+}
+
+// checkTimeouts checks for various timeout conditions and triggers callbacks
+func (m *Manager) checkTimeouts() {
+	m.mu.Lock()
+	if m.timedOut || !m.running || m.paused {
+		m.mu.Unlock()
+		return
+	}
+
+	now := time.Now()
+	callback := m.timeoutCallback
+	instanceID := m.id
+	var triggeredTimeout *TimeoutType
+
+	// Check completion timeout (total runtime)
+	if m.config.CompletionTimeoutMinutes > 0 && m.startTime != nil {
+		completionTimeout := time.Duration(m.config.CompletionTimeoutMinutes) * time.Minute
+		if now.Sub(*m.startTime) > completionTimeout {
+			t := TimeoutCompletion
+			triggeredTimeout = &t
+			m.timedOut = true
+			m.timeoutType = TimeoutCompletion
+		}
+	}
+
+	// Check activity timeout (no output changes)
+	if triggeredTimeout == nil && m.config.ActivityTimeoutMinutes > 0 {
+		activityTimeout := time.Duration(m.config.ActivityTimeoutMinutes) * time.Minute
+		if now.Sub(m.lastActivityTime) > activityTimeout {
+			t := TimeoutActivity
+			triggeredTimeout = &t
+			m.timedOut = true
+			m.timeoutType = TimeoutActivity
+		}
+	}
+
+	// Check for stale detection (repeated identical output)
+	// Trigger if we've seen the same output 600 times (1 minute at 100ms interval)
+	// This catches stuck loops producing identical output
+	if triggeredTimeout == nil && m.config.StaleDetection && m.repeatedOutputCount > 600 {
+		t := TimeoutStale
+		triggeredTimeout = &t
+		m.timedOut = true
+		m.timeoutType = TimeoutStale
+	}
+
+	m.mu.Unlock()
+
+	// Invoke callback outside of lock to prevent deadlocks
+	if triggeredTimeout != nil && callback != nil {
+		callback(instanceID, *triggeredTimeout)
 	}
 }
 
@@ -518,6 +654,9 @@ func (m *Manager) Reconnect() error {
 
 	m.running = true
 	m.paused = false
+	m.timedOut = false
+	m.repeatedOutputCount = 0
+	m.lastActivityTime = time.Now()
 	m.doneChan = make(chan struct{})
 
 	// Start background goroutine to capture output periodically

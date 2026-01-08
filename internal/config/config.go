@@ -50,6 +50,12 @@ type InstanceConfig struct {
 	TmuxWidth int `mapstructure:"tmux_width"`
 	// TmuxHeight is the height of the tmux pane
 	TmuxHeight int `mapstructure:"tmux_height"`
+	// ActivityTimeoutMinutes is the number of minutes of no new output before marking as stuck (0 = disabled)
+	ActivityTimeoutMinutes int `mapstructure:"activity_timeout_minutes"`
+	// CompletionTimeoutMinutes is the maximum total runtime in minutes before marking as timeout (0 = disabled)
+	CompletionTimeoutMinutes int `mapstructure:"completion_timeout_minutes"`
+	// StaleDetection enables detection of stuck instances via output pattern analysis
+	StaleDetection bool `mapstructure:"stale_detection"`
 }
 
 // BranchConfig controls branch naming conventions
@@ -121,10 +127,13 @@ func Default() *Config {
 		},
 		Session: SessionConfig{},
 		Instance: InstanceConfig{
-			OutputBufferSize:  100000, // 100KB
-			CaptureIntervalMs: 100,
-			TmuxWidth:         200,
-			TmuxHeight:        50,
+			OutputBufferSize:         100000, // 100KB
+			CaptureIntervalMs:        100,
+			TmuxWidth:                200,
+			TmuxHeight:               50,
+			ActivityTimeoutMinutes:   30,  // 30 minutes of no activity
+			CompletionTimeoutMinutes: 120, // 2 hours max runtime
+			StaleDetection:           true,
 		},
 		Branch: BranchConfig{
 			Prefix:    "claudio",
@@ -160,6 +169,16 @@ func (c *InstanceConfig) CaptureInterval() time.Duration {
 	return time.Duration(c.CaptureIntervalMs) * time.Millisecond
 }
 
+// ActivityTimeout returns the activity timeout as a time.Duration (0 means disabled)
+func (c *InstanceConfig) ActivityTimeout() time.Duration {
+	return time.Duration(c.ActivityTimeoutMinutes) * time.Minute
+}
+
+// CompletionTimeout returns the completion timeout as a time.Duration (0 means disabled)
+func (c *InstanceConfig) CompletionTimeout() time.Duration {
+	return time.Duration(c.CompletionTimeoutMinutes) * time.Minute
+}
+
 // SetDefaults registers default values with viper
 func SetDefaults() {
 	defaults := Default()
@@ -178,6 +197,9 @@ func SetDefaults() {
 	viper.SetDefault("instance.capture_interval_ms", defaults.Instance.CaptureIntervalMs)
 	viper.SetDefault("instance.tmux_width", defaults.Instance.TmuxWidth)
 	viper.SetDefault("instance.tmux_height", defaults.Instance.TmuxHeight)
+	viper.SetDefault("instance.activity_timeout_minutes", defaults.Instance.ActivityTimeoutMinutes)
+	viper.SetDefault("instance.completion_timeout_minutes", defaults.Instance.CompletionTimeoutMinutes)
+	viper.SetDefault("instance.stale_detection", defaults.Instance.StaleDetection)
 
 	// Branch defaults
 	viper.SetDefault("branch.prefix", defaults.Branch.Prefix)
