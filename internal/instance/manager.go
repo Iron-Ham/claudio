@@ -11,6 +11,24 @@ import (
 // StateChangeCallback is called when the detected waiting state changes
 type StateChangeCallback func(instanceID string, state WaitingState)
 
+// ManagerConfig holds configuration for instance management
+type ManagerConfig struct {
+	OutputBufferSize  int
+	CaptureIntervalMs int
+	TmuxWidth         int
+	TmuxHeight        int
+}
+
+// DefaultManagerConfig returns the default manager configuration
+func DefaultManagerConfig() ManagerConfig {
+	return ManagerConfig{
+		OutputBufferSize:  100000, // 100KB
+		CaptureIntervalMs: 100,
+		TmuxWidth:         200,
+		TmuxHeight:        50,
+	}
+}
+
 // Manager handles a single Claude Code instance running in a tmux session
 type Manager struct {
 	id          string
@@ -23,6 +41,7 @@ type Manager struct {
 	paused      bool
 	doneChan    chan struct{}
 	captureTick *time.Ticker
+	config      ManagerConfig
 
 	// State detection
 	detector      *Detector
@@ -30,15 +49,21 @@ type Manager struct {
 	stateCallback StateChangeCallback
 }
 
-// NewManager creates a new instance manager
+// NewManager creates a new instance manager with default configuration
 func NewManager(id, workdir, task string) *Manager {
+	return NewManagerWithConfig(id, workdir, task, DefaultManagerConfig())
+}
+
+// NewManagerWithConfig creates a new instance manager with the given configuration
+func NewManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager {
 	return &Manager{
 		id:           id,
 		workdir:      workdir,
 		task:         task,
 		sessionName:  fmt.Sprintf("claudio-%s", id),
-		outputBuf:    NewRingBuffer(100000), // 100KB output buffer
+		outputBuf:    NewRingBuffer(cfg.OutputBufferSize),
 		doneChan:     make(chan struct{}),
+		config:       cfg,
 		detector:     NewDetector(),
 		currentState: StateWorking,
 	}
@@ -73,10 +98,10 @@ func (m *Manager) Start() error {
 	// Create a new detached tmux session with color support
 	createCmd := exec.Command("tmux",
 		"new-session",
-		"-d",                      // detached
-		"-s", m.sessionName,       // session name
-		"-x", "200",               // width
-		"-y", "50",                // height
+		"-d",                                      // detached
+		"-s", m.sessionName,                       // session name
+		"-x", fmt.Sprintf("%d", m.config.TmuxWidth),  // width
+		"-y", fmt.Sprintf("%d", m.config.TmuxHeight), // height
 	)
 	createCmd.Dir = m.workdir
 	// Ensure TERM supports colors
@@ -107,7 +132,7 @@ func (m *Manager) Start() error {
 	m.paused = false
 
 	// Start background goroutine to capture output periodically
-	m.captureTick = time.NewTicker(100 * time.Millisecond)
+	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)
 	go m.captureLoop()
 
 	return nil

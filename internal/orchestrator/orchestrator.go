@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/worktree"
@@ -23,12 +24,18 @@ type Orchestrator struct {
 	instances        map[string]*instance.Manager
 	wt               *worktree.Manager
 	conflictDetector *conflict.Detector
+	config           *config.Config
 
 	mu sync.RWMutex
 }
 
 // New creates a new Orchestrator for the given repository
 func New(baseDir string) (*Orchestrator, error) {
+	return NewWithConfig(baseDir, config.Get())
+}
+
+// NewWithConfig creates a new Orchestrator with the given configuration
+func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 	claudioDir := filepath.Join(baseDir, ".claudio")
 	worktreeDir := filepath.Join(claudioDir, "worktrees")
 
@@ -50,6 +57,7 @@ func New(baseDir string) (*Orchestrator, error) {
 		instances:        make(map[string]*instance.Manager),
 		wt:               wt,
 		conflictDetector: detector,
+		config:           cfg,
 	}, nil
 }
 
@@ -141,8 +149,8 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 	// Add to session
 	session.Instances = append(session.Instances, inst)
 
-	// Create instance manager
-	mgr := instance.NewManager(inst.ID, inst.WorktreePath, task)
+	// Create instance manager with config
+	mgr := instance.NewManagerWithConfig(inst.ID, inst.WorktreePath, task, o.instanceManagerConfig())
 	o.instances[inst.ID] = mgr
 
 	// Register with conflict detector
@@ -172,7 +180,7 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 	o.mu.Unlock()
 
 	if !ok {
-		mgr = instance.NewManager(inst.ID, inst.WorktreePath, inst.Task)
+		mgr = instance.NewManagerWithConfig(inst.ID, inst.WorktreePath, inst.Task, o.instanceManagerConfig())
 		o.mu.Lock()
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
@@ -302,6 +310,21 @@ func (o *Orchestrator) GetInstanceManager(id string) *instance.Manager {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 	return o.instances[id]
+}
+
+// Config returns the orchestrator's configuration
+func (o *Orchestrator) Config() *config.Config {
+	return o.config
+}
+
+// instanceManagerConfig converts the orchestrator config to instance.ManagerConfig
+func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
+	return instance.ManagerConfig{
+		OutputBufferSize:  o.config.Instance.OutputBufferSize,
+		CaptureIntervalMs: o.config.Instance.CaptureIntervalMs,
+		TmuxWidth:         o.config.Instance.TmuxWidth,
+		TmuxHeight:        o.config.Instance.TmuxHeight,
+	}
 }
 
 // Session returns the current session

@@ -150,27 +150,81 @@ This helps Claude instances be aware of parallel work and avoid conflicts.
 
 ## Configuration
 
-Claudio looks for configuration in:
-- `~/.config/claudio/config.yaml`
-- `~/.claudio.yaml`
-- `./claudio.yaml`
+Claudio can be configured via a YAML config file or environment variables.
 
-Example configuration:
+### Config File Locations
+
+Claudio searches for config files in this order:
+1. `~/.config/claudio/config.yaml` (recommended)
+2. `./config.yaml` (current directory)
+
+### Creating a Config File
+
+```bash
+# Create a config file with defaults and comments
+claudio config init
+
+# Or view current configuration
+claudio config
+
+# Set individual values
+claudio config set completion.default_action auto_pr
+claudio config set session.max_instances 5
+```
+
+### Configuration Options
 
 ```yaml
-# Default behavior when instance completes
-completion:
-  default_action: "prompt"  # "keep_branch" | "merge_staging" | "merge_main" | "prompt"
+# Claudio Configuration
+# ~/.config/claudio/config.yaml
 
-# TUI preferences
+# Action when an instance completes its task
+# Options: prompt, keep_branch, merge_staging, merge_main, auto_pr
+completion:
+  default_action: prompt
+
+# TUI (terminal user interface) settings
 tui:
+  # Automatically focus new instances for input
   auto_focus_on_input: true
+  # Maximum number of output lines to display per instance
   max_output_lines: 1000
 
-# Session defaults
+# Session settings
 session:
+  # Maximum number of instances that can run simultaneously
   max_instances: 10
+
+# Instance settings (advanced)
+instance:
+  # Output buffer size in bytes (default: 100KB)
+  output_buffer_size: 100000
+  # How often to capture output from tmux in milliseconds
+  capture_interval_ms: 100
+  # tmux pane dimensions
+  tmux_width: 200
+  tmux_height: 50
 ```
+
+### Environment Variables
+
+All config options can be set via environment variables with the `CLAUDIO_` prefix.
+Use underscores instead of dots for nested keys:
+
+```bash
+export CLAUDIO_COMPLETION_DEFAULT_ACTION=auto_pr
+export CLAUDIO_TUI_MAX_OUTPUT_LINES=2000
+export CLAUDIO_SESSION_MAX_INSTANCES=5
+```
+
+### Config Commands
+
+| Command | Description |
+|---------|-------------|
+| `claudio config` | Show current configuration |
+| `claudio config init` | Create a default config file |
+| `claudio config set <key> <value>` | Set a configuration value |
+| `claudio config path` | Show config file locations |
 
 ## Development
 
