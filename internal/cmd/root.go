@@ -43,6 +43,9 @@ func initConfig() {
 		viper.AddConfigPath(".")
 	}
 
+	// Set defaults for notification settings
+	viper.SetDefault("notifications.idle_timeout", "3s")
+
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("CLAUDIO")
 	// Replace dots with underscores for nested keys in env vars

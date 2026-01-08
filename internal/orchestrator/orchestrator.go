@@ -4,14 +4,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/worktree"
+	"github.com/spf13/viper"
 )
 
 // Orchestrator manages the Claudio session and coordinates instances
@@ -190,6 +193,21 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
 	}
+
+	// Configure notification callbacks
+	idleTimeout := viper.GetDuration("notifications.idle_timeout")
+	if idleTimeout == 0 {
+		idleTimeout = 3 * time.Second // Default to 3 seconds
+	}
+	mgr.SetIdleTimeout(idleTimeout)
+
+	mgr.SetExitCallback(func(id string) {
+		o.handleInstanceExit(id)
+	})
+
+	mgr.SetWaitingInputCallback(func(id string) {
+		o.handleInstanceWaitingInput(id)
+	})
 
 	if err := mgr.Start(); err != nil {
 		return fmt.Errorf("failed to start instance: %w", err)
@@ -464,4 +482,61 @@ func slugify(text string) string {
 	slug = strings.TrimSuffix(slug, "-")
 
 	return slug
+}
+
+// handleInstanceExit handles when a Claude instance process exits
+func (o *Orchestrator) handleInstanceExit(id string) {
+	inst := o.GetInstance(id)
+	if inst != nil {
+		inst.Status = StatusCompleted
+		inst.PID = 0
+		o.saveSession()
+		o.executeNotification("notifications.on_completion", inst)
+	}
+}
+
+// handleInstanceWaitingInput handles when a Claude instance is waiting for input
+func (o *Orchestrator) handleInstanceWaitingInput(id string) {
+	inst := o.GetInstance(id)
+	if inst != nil {
+		inst.Status = StatusWaitingInput
+		o.saveSession()
+		o.executeNotification("notifications.on_waiting_input", inst)
+	}
+}
+
+// executeNotification executes a notification command from config
+func (o *Orchestrator) executeNotification(configKey string, inst *Instance) {
+	cmd := viper.GetString(configKey)
+	if cmd == "" {
+		return
+	}
+
+	// Replace placeholders
+	cmd = strings.ReplaceAll(cmd, "{id}", inst.ID)
+	cmd = strings.ReplaceAll(cmd, "{task}", inst.Task)
+	cmd = strings.ReplaceAll(cmd, "{branch}", inst.Branch)
+	cmd = strings.ReplaceAll(cmd, "{status}", string(inst.Status))
+
+	// Execute asynchronously to not block
+	go func() {
+		exec.Command("sh", "-c", cmd).Run()
+	}()
+}
+
+// GetInstance returns an instance by ID from the current session
+func (o *Orchestrator) GetInstance(id string) *Instance {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
+	if o.session == nil {
+		return nil
+	}
+
+	for _, inst := range o.session.Instances {
+		if inst.ID == id {
+			return inst
+		}
+	}
+	return nil
 }
