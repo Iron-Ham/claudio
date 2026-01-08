@@ -42,6 +42,11 @@ type Model struct {
 	diffContent string // Cached diff content for the active instance
 	diffScroll  int    // Scroll offset for navigating the diff
 
+	// Output scroll state (per instance)
+	outputScrolls    map[string]int  // Instance ID -> scroll offset
+	outputAutoScroll map[string]bool // Instance ID -> auto-scroll enabled (follows new output)
+	outputLineCount  map[string]int  // Instance ID -> previous line count (to detect new output)
+
 	// Sidebar pagination
 	sidebarScrollOffset int // Index of the first visible instance in sidebar
 }
@@ -49,9 +54,12 @@ type Model struct {
 // NewModel creates a new TUI model
 func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session) Model {
 	return Model{
-		orchestrator: orch,
-		session:      session,
-		outputs:      make(map[string]string),
+		orchestrator:     orch,
+		session:          session,
+		outputs:          make(map[string]string),
+		outputScrolls:    make(map[string]int),
+		outputAutoScroll: make(map[string]bool),
+		outputLineCount:  make(map[string]int),
 	}
 }
 
@@ -107,4 +115,109 @@ func (m *Model) ensureActiveVisible() {
 	if m.sidebarScrollOffset > maxOffset {
 		m.sidebarScrollOffset = maxOffset
 	}
+}
+
+// Output scroll helper methods
+
+// getOutputMaxLines returns the maximum number of lines visible in the output area
+func (m Model) getOutputMaxLines() int {
+	maxLines := m.height - 12
+	if maxLines < 5 {
+		maxLines = 5
+	}
+	return maxLines
+}
+
+// getOutputLineCount returns the total number of lines in the output for an instance
+func (m Model) getOutputLineCount(instanceID string) int {
+	output := m.outputs[instanceID]
+	if output == "" {
+		return 0
+	}
+	// Count newlines + 1 for last line
+	count := 1
+	for _, c := range output {
+		if c == '\n' {
+			count++
+		}
+	}
+	return count
+}
+
+// getOutputMaxScroll returns the maximum scroll offset for an instance
+func (m Model) getOutputMaxScroll(instanceID string) int {
+	totalLines := m.getOutputLineCount(instanceID)
+	maxLines := m.getOutputMaxLines()
+	maxScroll := totalLines - maxLines
+	if maxScroll < 0 {
+		return 0
+	}
+	return maxScroll
+}
+
+// isOutputAutoScroll returns whether auto-scroll is enabled for an instance (defaults to true)
+func (m Model) isOutputAutoScroll(instanceID string) bool {
+	if autoScroll, exists := m.outputAutoScroll[instanceID]; exists {
+		return autoScroll
+	}
+	return true // Default to auto-scroll enabled
+}
+
+// scrollOutputUp scrolls the output up by n lines and disables auto-scroll
+func (m *Model) scrollOutputUp(instanceID string, n int) {
+	currentScroll := m.outputScrolls[instanceID]
+	newScroll := currentScroll - n
+	if newScroll < 0 {
+		newScroll = 0
+	}
+	m.outputScrolls[instanceID] = newScroll
+	// Disable auto-scroll when user scrolls up
+	m.outputAutoScroll[instanceID] = false
+}
+
+// scrollOutputDown scrolls the output down by n lines
+func (m *Model) scrollOutputDown(instanceID string, n int) {
+	currentScroll := m.outputScrolls[instanceID]
+	maxScroll := m.getOutputMaxScroll(instanceID)
+	newScroll := currentScroll + n
+	if newScroll > maxScroll {
+		newScroll = maxScroll
+	}
+	m.outputScrolls[instanceID] = newScroll
+	// If at bottom, re-enable auto-scroll
+	if newScroll >= maxScroll {
+		m.outputAutoScroll[instanceID] = true
+	}
+}
+
+// scrollOutputToTop scrolls to the top of the output and disables auto-scroll
+func (m *Model) scrollOutputToTop(instanceID string) {
+	m.outputScrolls[instanceID] = 0
+	m.outputAutoScroll[instanceID] = false
+}
+
+// scrollOutputToBottom scrolls to the bottom and re-enables auto-scroll
+func (m *Model) scrollOutputToBottom(instanceID string) {
+	m.outputScrolls[instanceID] = m.getOutputMaxScroll(instanceID)
+	m.outputAutoScroll[instanceID] = true
+}
+
+// updateOutputScroll updates scroll position based on new output (if auto-scroll is enabled)
+func (m *Model) updateOutputScroll(instanceID string) {
+	if m.isOutputAutoScroll(instanceID) {
+		// Auto-scroll to bottom
+		m.outputScrolls[instanceID] = m.getOutputMaxScroll(instanceID)
+	}
+	// Update line count for detecting new output
+	m.outputLineCount[instanceID] = m.getOutputLineCount(instanceID)
+}
+
+// hasNewOutput returns true if there's new output since last update
+func (m Model) hasNewOutput(instanceID string) bool {
+	currentLines := m.getOutputLineCount(instanceID)
+	previousLines, exists := m.outputLineCount[instanceID]
+	if !exists {
+		return false
+	}
+	return currentLines > previousLines
 }
