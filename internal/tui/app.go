@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -156,6 +157,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeypress processes keyboard input
 func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle search mode - typing search pattern
+	if m.searchMode {
+		return m.handleSearchInput(msg)
+	}
+
+	// Handle filter mode - selecting categories
+	if m.filterMode {
+		return m.handleFilterInput(msg)
+	}
+
 	// Handle input mode - forward keys to the active instance's tmux session
 	if m.inputMode {
 		// Ctrl+] exits input mode (traditional telnet escape)
@@ -536,6 +547,40 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Toggle stats/metrics panel
 		m.showStats = !m.showStats
 		return m, nil
+
+	case "/":
+		// Enter search mode
+		m.searchMode = true
+		m.searchPattern = ""
+		m.searchMatches = nil
+		m.searchCurrent = 0
+		return m, nil
+
+	case "n":
+		// Next search match
+		if m.searchPattern != "" && len(m.searchMatches) > 0 {
+			m.searchCurrent = (m.searchCurrent + 1) % len(m.searchMatches)
+			m.scrollToMatch()
+		}
+		return m, nil
+
+	case "N":
+		// Previous search match
+		if m.searchPattern != "" && len(m.searchMatches) > 0 {
+			m.searchCurrent = (m.searchCurrent - 1 + len(m.searchMatches)) % len(m.searchMatches)
+			m.scrollToMatch()
+		}
+		return m, nil
+
+	case "ctrl+/":
+		// Clear search
+		m.clearSearch()
+		return m, nil
+
+	case "F":
+		// Enter filter mode
+		m.filterMode = true
+		return m, nil
 	}
 
 	return m, nil
@@ -821,6 +866,285 @@ func (m Model) handleTemplateDropdown(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// handleSearchInput handles keyboard input when in search mode
+func (m Model) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		// Cancel search mode (keep existing pattern if any)
+		m.searchMode = false
+		return m, nil
+
+	case tea.KeyEnter:
+		// Execute search and exit search mode
+		m.executeSearch()
+		m.searchMode = false
+		return m, nil
+
+	case tea.KeyBackspace:
+		if len(m.searchPattern) > 0 {
+			m.searchPattern = m.searchPattern[:len(m.searchPattern)-1]
+			// Live search as user types
+			m.executeSearch()
+		}
+		return m, nil
+
+	case tea.KeyRunes:
+		m.searchPattern += string(msg.Runes)
+		// Live search as user types
+		m.executeSearch()
+		return m, nil
+
+	case tea.KeySpace:
+		m.searchPattern += " "
+		m.executeSearch()
+		return m, nil
+	}
+
+	return m, nil
+}
+
+// handleFilterInput handles keyboard input when in filter mode
+func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "F", "q":
+		m.filterMode = false
+		return m, nil
+
+	case "e", "1":
+		m.filterCategories["errors"] = !m.filterCategories["errors"]
+		return m, nil
+
+	case "w", "2":
+		m.filterCategories["warnings"] = !m.filterCategories["warnings"]
+		return m, nil
+
+	case "t", "3":
+		m.filterCategories["tools"] = !m.filterCategories["tools"]
+		return m, nil
+
+	case "h", "4":
+		m.filterCategories["thinking"] = !m.filterCategories["thinking"]
+		return m, nil
+
+	case "p", "5":
+		m.filterCategories["progress"] = !m.filterCategories["progress"]
+		return m, nil
+
+	case "a":
+		// Toggle all categories
+		allEnabled := true
+		for _, v := range m.filterCategories {
+			if !v {
+				allEnabled = false
+				break
+			}
+		}
+		for k := range m.filterCategories {
+			m.filterCategories[k] = !allEnabled
+		}
+		return m, nil
+
+	case "c":
+		// Clear custom filter
+		m.filterCustom = ""
+		m.filterRegex = nil
+		return m, nil
+	}
+
+	// Handle custom filter input
+	switch msg.Type {
+	case tea.KeyBackspace:
+		if len(m.filterCustom) > 0 {
+			m.filterCustom = m.filterCustom[:len(m.filterCustom)-1]
+			m.compileFilterRegex()
+		}
+		return m, nil
+
+	case tea.KeyRunes:
+		// Check if it's not a shortcut key
+		char := string(msg.Runes)
+		if char != "e" && char != "w" && char != "t" && char != "h" && char != "p" && char != "a" && char != "c" {
+			m.filterCustom += char
+			m.compileFilterRegex()
+		}
+		return m, nil
+
+	case tea.KeySpace:
+		m.filterCustom += " "
+		m.compileFilterRegex()
+		return m, nil
+	}
+
+	return m, nil
+}
+
+// executeSearch compiles the search pattern and finds all matches
+func (m *Model) executeSearch() {
+	if m.searchPattern == "" {
+		m.searchMatches = nil
+		m.searchRegex = nil
+		return
+	}
+
+	inst := m.activeInstance()
+	if inst == nil {
+		return
+	}
+
+	output := m.outputs[inst.ID]
+	if output == "" {
+		return
+	}
+
+	// Try to compile as regex if it starts with r:
+	if strings.HasPrefix(m.searchPattern, "r:") {
+		pattern := m.searchPattern[2:]
+		re, err := regexp.Compile("(?i)" + pattern)
+		if err != nil {
+			m.searchRegex = nil
+			m.searchMatches = nil
+			return
+		}
+		m.searchRegex = re
+	} else {
+		// Literal search (case-insensitive)
+		m.searchRegex = regexp.MustCompile("(?i)" + regexp.QuoteMeta(m.searchPattern))
+	}
+
+	// Find all matching lines
+	lines := strings.Split(output, "\n")
+	m.searchMatches = nil
+	for i, line := range lines {
+		if m.searchRegex.MatchString(line) {
+			m.searchMatches = append(m.searchMatches, i)
+		}
+	}
+
+	// Set current match
+	if len(m.searchMatches) > 0 {
+		m.searchCurrent = 0
+		m.scrollToMatch()
+	}
+}
+
+// clearSearch clears the current search
+func (m *Model) clearSearch() {
+	m.searchPattern = ""
+	m.searchRegex = nil
+	m.searchMatches = nil
+	m.searchCurrent = 0
+	m.outputScroll = 0
+}
+
+// scrollToMatch adjusts output scroll to show the current match
+func (m *Model) scrollToMatch() {
+	if len(m.searchMatches) == 0 || m.searchCurrent >= len(m.searchMatches) {
+		return
+	}
+
+	matchLine := m.searchMatches[m.searchCurrent]
+	maxLines := m.height - 12
+	if maxLines < 5 {
+		maxLines = 5
+	}
+
+	// Center the match in the visible area
+	m.outputScroll = matchLine - maxLines/2
+	if m.outputScroll < 0 {
+		m.outputScroll = 0
+	}
+}
+
+// compileFilterRegex compiles the custom filter pattern
+func (m *Model) compileFilterRegex() {
+	if m.filterCustom == "" {
+		m.filterRegex = nil
+		return
+	}
+
+	re, err := regexp.Compile("(?i)" + m.filterCustom)
+	if err != nil {
+		m.filterRegex = nil
+		return
+	}
+	m.filterRegex = re
+}
+
+// filterOutput applies category and custom filters to output
+func (m *Model) filterOutput(output string) string {
+	// If all categories enabled and no custom filter, return as-is
+	allEnabled := true
+	for _, v := range m.filterCategories {
+		if !v {
+			allEnabled = false
+			break
+		}
+	}
+	if allEnabled && m.filterRegex == nil {
+		return output
+	}
+
+	lines := strings.Split(output, "\n")
+	var filtered []string
+
+	for _, line := range lines {
+		if m.shouldShowLine(line) {
+			filtered = append(filtered, line)
+		}
+	}
+
+	return strings.Join(filtered, "\n")
+}
+
+// shouldShowLine determines if a line should be shown based on filters
+func (m *Model) shouldShowLine(line string) bool {
+	// Custom filter takes precedence
+	if m.filterRegex != nil {
+		return m.filterRegex.MatchString(line)
+	}
+
+	lineLower := strings.ToLower(line)
+
+	// Check category filters
+	if !m.filterCategories["errors"] {
+		if strings.Contains(lineLower, "error") || strings.Contains(lineLower, "failed") ||
+			strings.Contains(lineLower, "exception") || strings.Contains(lineLower, "panic") {
+			return false
+		}
+	}
+
+	if !m.filterCategories["warnings"] {
+		if strings.Contains(lineLower, "warning") || strings.Contains(lineLower, "warn") {
+			return false
+		}
+	}
+
+	if !m.filterCategories["tools"] {
+		// Common Claude tool call patterns
+		if strings.Contains(lineLower, "read file") || strings.Contains(lineLower, "write file") ||
+			strings.Contains(lineLower, "bash") || strings.Contains(lineLower, "running") ||
+			strings.HasPrefix(line, "  ") && (strings.Contains(line, "(") || strings.Contains(line, "→")) {
+			return false
+		}
+	}
+
+	if !m.filterCategories["thinking"] {
+		if strings.Contains(lineLower, "thinking") || strings.Contains(lineLower, "let me") ||
+			strings.Contains(lineLower, "i'll") || strings.Contains(lineLower, "i will") {
+			return false
+		}
+	}
+
+	if !m.filterCategories["progress"] {
+		if strings.Contains(line, "...") || strings.Contains(line, "✓") ||
+			strings.Contains(line, "█") || strings.Contains(line, "░") {
+			return false
+		}
+	}
+
+	return true
 }
 
 // updateOutputs fetches latest output from all instances, updates their status, and checks for conflicts
@@ -1119,6 +1443,10 @@ func (m Model) renderContent(width int) string {
 		return m.renderStatsPanel(width)
 	}
 
+	if m.filterMode {
+		return m.renderFilterPanel(width)
+	}
+
 	inst := m.activeInstance()
 	if inst == nil {
 		return styles.ContentBox.Width(width - 4).Render(
@@ -1195,6 +1523,9 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 		return b.String()
 	}
 
+	// Apply filters
+	output = m.filterOutput(output)
+
 	// Split output into lines and apply scroll
 	lines := strings.Split(output, "\n")
 	totalLines := len(lines)
@@ -1217,13 +1548,20 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	}
 
 	// Get visible lines
-	var visibleOutput string
+	var visibleLines []string
 	if totalLines <= maxLines {
 		// No scrolling needed, show all
-		visibleOutput = output
+		visibleLines = lines
 	} else {
-		visibleOutput = strings.Join(lines[startLine:endLine], "\n")
+		visibleLines = lines[startLine:endLine]
 	}
+
+	// Apply search highlighting
+	if m.searchRegex != nil && m.searchPattern != "" {
+		visibleLines = m.highlightSearchMatches(visibleLines, startLine)
+	}
+
+	visibleOutput := strings.Join(visibleLines, "\n")
 
 	// Build scroll indicator
 	var scrollIndicator string
@@ -1264,7 +1602,165 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 
 	b.WriteString(outputBox)
 
+	// Show search bar if in search mode or has active search
+	if m.searchMode || m.searchPattern != "" {
+		b.WriteString("\n")
+		b.WriteString(m.renderSearchBar())
+	}
+
 	return b.String()
+}
+
+// highlightSearchMatches highlights search matches in visible lines
+func (m Model) highlightSearchMatches(lines []string, startLine int) []string {
+	if m.searchRegex == nil {
+		return lines
+	}
+
+	result := make([]string, len(lines))
+	for i, line := range lines {
+		lineNum := startLine + i
+		isCurrentMatchLine := false
+
+		// Check if this line contains the current match
+		if len(m.searchMatches) > 0 && m.searchCurrent < len(m.searchMatches) {
+			if lineNum == m.searchMatches[m.searchCurrent] {
+				isCurrentMatchLine = true
+			}
+		}
+
+		// Find and highlight all matches in this line
+		matches := m.searchRegex.FindAllStringIndex(line, -1)
+		if len(matches) == 0 {
+			result[i] = line
+			continue
+		}
+
+		var highlighted strings.Builder
+		lastEnd := 0
+		for j, match := range matches {
+			// Add text before match
+			highlighted.WriteString(line[lastEnd:match[0]])
+
+			// Highlight the match
+			matchText := line[match[0]:match[1]]
+			if isCurrentMatchLine && j == 0 {
+				// Current match gets special highlighting
+				highlighted.WriteString(styles.SearchCurrentMatch.Render(matchText))
+			} else {
+				highlighted.WriteString(styles.SearchMatch.Render(matchText))
+			}
+			lastEnd = match[1]
+		}
+		// Add remaining text after last match
+		highlighted.WriteString(line[lastEnd:])
+		result[i] = highlighted.String()
+	}
+
+	return result
+}
+
+// renderSearchBar renders the search input bar
+func (m Model) renderSearchBar() string {
+	var b strings.Builder
+
+	// Search prompt
+	b.WriteString(styles.SearchPrompt.Render("/"))
+	b.WriteString(styles.SearchInput.Render(m.searchPattern))
+
+	if m.searchMode {
+		b.WriteString("█") // Cursor
+	}
+
+	// Match info
+	if m.searchPattern != "" {
+		if len(m.searchMatches) > 0 {
+			info := fmt.Sprintf(" [%d/%d]", m.searchCurrent+1, len(m.searchMatches))
+			b.WriteString(styles.SearchInfo.Render(info))
+			b.WriteString(styles.Muted.Render("  n/N next/prev"))
+		} else if !m.searchMode {
+			b.WriteString(styles.SearchInfo.Render(" No matches"))
+		}
+		if !m.searchMode {
+			b.WriteString(styles.Muted.Render("  Ctrl+/ clear"))
+		}
+	}
+
+	return styles.SearchBar.Render(b.String())
+}
+
+// renderFilterPanel renders the filter configuration panel
+func (m Model) renderFilterPanel(width int) string {
+	var b strings.Builder
+
+	b.WriteString(styles.Title.Render("Output Filters"))
+	b.WriteString("\n\n")
+	b.WriteString(styles.Muted.Render("Toggle categories to show/hide specific output types:"))
+	b.WriteString("\n\n")
+
+	// Category checkboxes
+	categories := []struct {
+		key      string
+		label    string
+		shortcut string
+	}{
+		{"errors", "Errors", "e/1"},
+		{"warnings", "Warnings", "w/2"},
+		{"tools", "Tool calls", "t/3"},
+		{"thinking", "Thinking", "h/4"},
+		{"progress", "Progress", "p/5"},
+	}
+
+	for _, cat := range categories {
+		var checkbox string
+		var labelStyle lipgloss.Style
+		if m.filterCategories[cat.key] {
+			checkbox = styles.FilterCheckbox.Render("[✓]")
+			labelStyle = styles.FilterCategoryEnabled
+		} else {
+			checkbox = styles.FilterCheckboxEmpty.Render("[ ]")
+			labelStyle = styles.FilterCategoryDisabled
+		}
+
+		line := fmt.Sprintf("%s %s %s",
+			checkbox,
+			labelStyle.Render(cat.label),
+			styles.Muted.Render("("+cat.shortcut+")"))
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("[a] Toggle all  [c] Clear custom filter"))
+	b.WriteString("\n\n")
+
+	// Custom filter input
+	b.WriteString(styles.Secondary.Render("Custom filter:"))
+	b.WriteString(" ")
+	if m.filterCustom != "" {
+		b.WriteString(styles.SearchInput.Render(m.filterCustom))
+	} else {
+		b.WriteString(styles.Muted.Render("(type to filter by pattern)"))
+	}
+	b.WriteString("\n\n")
+
+	// Help text
+	b.WriteString(styles.Muted.Render("Category descriptions:"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("  • Errors: Stack traces, error messages, failures"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("  • Warnings: Warning indicators"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("  • Tool calls: File operations, bash commands"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("  • Thinking: Claude's reasoning phrases"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("  • Progress: Progress indicators, spinners"))
+	b.WriteString("\n\n")
+
+	b.WriteString(styles.Muted.Render("Press [Esc] or [F] to close"))
+
+	return styles.ContentBox.Width(width - 4).Render(b.String())
 }
 
 // renderAddTask renders the add task input
@@ -1371,9 +1867,30 @@ Input Mode:
   Ctrl+]     Exit input mode
   t          Show tmux attach command
 
+Search & Filter:
+  /          Search output (type pattern, Enter to confirm)
+  n / N      Next / previous match
+  Ctrl+/     Clear search
+  F          Open filter panel
+  r:pattern  Regex search (prefix with r:)
+
 General:
   ?          Toggle help
   q          Quit
+
+Search Tips:
+  • Search is case-insensitive by default
+  • Use r: prefix for regex (e.g. /r:error.*file)
+  • Press n/N to cycle through matches
+  • Matches highlighted in yellow, current in orange
+
+Filter Categories:
+  Toggle in filter panel (F):
+  • Errors: Stack traces, error messages
+  • Warnings: Warning indicators
+  • Tool calls: File operations, bash commands
+  • Thinking: Claude's reasoning
+  • Progress: Progress indicators
 
 Input Mode Details:
   In input mode, all keystrokes are forwarded to Claude:
@@ -1606,14 +2123,34 @@ func (m Model) renderHelp() string {
 		)
 	}
 
+	if m.filterMode {
+		return styles.HelpBar.Render(
+			styles.Primary.Bold(true).Render("FILTER MODE") + "  " +
+				styles.HelpKey.Render("[e/w/t/h/p]") + " toggle categories  " +
+				styles.HelpKey.Render("[a]") + " all  " +
+				styles.HelpKey.Render("[c]") + " clear  " +
+				styles.HelpKey.Render("[Esc/F]") + " close",
+		)
+	}
+
+	if m.searchMode {
+		return styles.HelpBar.Render(
+			styles.Primary.Bold(true).Render("SEARCH") + "  " +
+				"Type pattern  " +
+				styles.HelpKey.Render("[Enter]") + " confirm  " +
+				styles.HelpKey.Render("[Esc]") + " cancel  " +
+				styles.Muted.Render("r:pattern for regex"),
+		)
+	}
+
 	keys := []string{
 		styles.HelpKey.Render("[j/k]") + " scroll",
 		styles.HelpKey.Render("[Tab]") + " switch",
 		styles.HelpKey.Render("[a]") + " add",
 		styles.HelpKey.Render("[s]") + " start",
 		styles.HelpKey.Render("[i]") + " input",
-		styles.HelpKey.Render("[p]") + " pause",
-		styles.HelpKey.Render("[x]") + " stop",
+		styles.HelpKey.Render("[/]") + " search",
+		styles.HelpKey.Render("[F]") + " filter",
 		styles.HelpKey.Render("[d]") + " diff",
 		styles.HelpKey.Render("[m]") + " stats",
 		styles.HelpKey.Render("[r]") + " pr",
@@ -1625,6 +2162,12 @@ func (m Model) renderHelp() string {
 	if len(m.conflicts) > 0 {
 		conflictKey := styles.Warning.Bold(true).Render("[c]") + styles.Warning.Render(" conflicts")
 		keys = append([]string{conflictKey}, keys...)
+	}
+
+	// Add search status indicator if search is active
+	if m.searchPattern != "" && len(m.searchMatches) > 0 {
+		searchStatus := styles.Secondary.Render(fmt.Sprintf("[%d/%d]", m.searchCurrent+1, len(m.searchMatches)))
+		keys = append(keys, searchStatus+" "+styles.HelpKey.Render("[n/N]")+" match")
 	}
 
 	return styles.HelpBar.Render(strings.Join(keys, "  "))

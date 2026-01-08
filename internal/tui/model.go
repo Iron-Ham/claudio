@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"regexp"
+
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 )
@@ -51,8 +53,22 @@ type Model struct {
 	sidebarScrollOffset int // Index of the first visible instance in sidebar
 
 	// Resource metrics display
-	showStats       bool // When true, show the stats panel
-	budgetWarning   bool // True when session cost exceeds warning threshold
+	showStats     bool // When true, show the stats panel
+	budgetWarning bool // True when session cost exceeds warning threshold
+
+	// Search state
+	searchMode    bool           // Whether search mode is active (typing pattern)
+	searchPattern string         // Current search pattern
+	searchRegex   *regexp.Regexp // Compiled regex (nil for literal search)
+	searchMatches []int          // Line numbers containing matches
+	searchCurrent int            // Current match index (for n/N navigation)
+
+	// Filter state
+	filterMode       bool            // Whether filter mode is active
+	filterCategories map[string]bool // Which categories are enabled
+	filterCustom     string          // Custom filter pattern
+	filterRegex      *regexp.Regexp  // Compiled custom filter regex
+	outputScroll     int             // Scroll position in output (for search navigation)
 }
 
 // NewModel creates a new TUI model
@@ -64,6 +80,13 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session) Mo
 		outputScrolls:    make(map[string]int),
 		outputAutoScroll: make(map[string]bool),
 		outputLineCount:  make(map[string]int),
+		filterCategories: map[string]bool{
+			"errors":   true,
+			"warnings": true,
+			"tools":    true,
+			"thinking": true,
+			"progress": true,
+		},
 	}
 }
 
