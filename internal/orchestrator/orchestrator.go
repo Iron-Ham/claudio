@@ -256,9 +256,9 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 	// Create instance
 	inst := NewInstance(task)
 
-	// Generate branch name from task
+	// Generate branch name from task using configured naming convention
 	branchSlug := slugify(task)
-	inst.Branch = fmt.Sprintf("claudio/%s-%s", inst.ID, branchSlug)
+	inst.Branch = o.generateBranchName(inst.ID, branchSlug)
 
 	// Create worktree
 	wtPath := filepath.Join(o.worktreeDir, inst.ID)
@@ -696,6 +696,28 @@ func (o *Orchestrator) generateContextMarkdown() string {
 	sb.WriteString("- Check this context file for updates on what others are doing\n")
 
 	return sb.String()
+}
+
+// generateBranchName creates a branch name using the configured naming convention
+func (o *Orchestrator) generateBranchName(instanceID, slug string) string {
+	prefix := o.config.Branch.Prefix
+	if prefix == "" {
+		prefix = "claudio" // fallback default
+	}
+
+	if o.config.Branch.IncludeID {
+		return fmt.Sprintf("%s/%s-%s", prefix, instanceID, slug)
+	}
+	return fmt.Sprintf("%s/%s", prefix, slug)
+}
+
+// BranchPrefix returns the configured branch prefix for use by other packages
+func (o *Orchestrator) BranchPrefix() string {
+	prefix := o.config.Branch.Prefix
+	if prefix == "" {
+		return "claudio"
+	}
+	return prefix
 }
 
 // slugify creates a URL-friendly slug from text
