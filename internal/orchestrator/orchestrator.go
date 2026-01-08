@@ -41,6 +41,9 @@ type Orchestrator struct {
 	// Callback for when a PR URL is detected in instance output (inline PR creation)
 	prOpenedCallback func(instanceID string)
 
+	// Callback for when an instance timeout is detected
+	timeoutCallback func(instanceID string, timeoutType instance.TimeoutType)
+
 	mu sync.RWMutex
 }
 
@@ -168,6 +171,11 @@ func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
 				case instance.StatePROpened:
 					o.handleInstancePROpened(id)
 				}
+			})
+
+			// Configure timeout callback
+			mgr.SetTimeoutCallback(func(id string, timeoutType instance.TimeoutType) {
+				o.handleInstanceTimeout(id, timeoutType)
 			})
 
 			if err := mgr.Reconnect(); err == nil {
@@ -324,6 +332,11 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 		o.handleInstanceMetrics(id, metrics)
 	})
 
+	// Configure timeout callback
+	mgr.SetTimeoutCallback(func(id string, timeoutType instance.TimeoutType) {
+		o.handleInstanceTimeout(id, timeoutType)
+	})
+
 	if err := mgr.Start(); err != nil {
 		return fmt.Errorf("failed to start instance: %w", err)
 	}
@@ -448,6 +461,13 @@ func (o *Orchestrator) SetPROpenedCallback(cb func(instanceID string)) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.prOpenedCallback = cb
+}
+
+// SetTimeoutCallback sets the callback for when an instance timeout is detected
+func (o *Orchestrator) SetTimeoutCallback(cb func(instanceID string, timeoutType instance.TimeoutType)) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.timeoutCallback = cb
 }
 
 // GetPRWorkflow returns the PR workflow for an instance, if any
@@ -585,10 +605,13 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 	}
 
 	return instance.ManagerConfig{
-		OutputBufferSize:  o.config.Instance.OutputBufferSize,
-		CaptureIntervalMs: o.config.Instance.CaptureIntervalMs,
-		TmuxWidth:         width,
-		TmuxHeight:        height,
+		OutputBufferSize:         o.config.Instance.OutputBufferSize,
+		CaptureIntervalMs:        o.config.Instance.CaptureIntervalMs,
+		TmuxWidth:                width,
+		TmuxHeight:               height,
+		ActivityTimeoutMinutes:   o.config.Instance.ActivityTimeoutMinutes,
+		CompletionTimeoutMinutes: o.config.Instance.CompletionTimeoutMinutes,
+		StaleDetection:           o.config.Instance.StaleDetection,
 	}
 }
 
@@ -918,6 +941,39 @@ func (o *Orchestrator) handleInstancePROpened(id string) {
 	}
 }
 
+// handleInstanceTimeout handles when an instance timeout is detected
+func (o *Orchestrator) handleInstanceTimeout(id string, timeoutType instance.TimeoutType) {
+	inst := o.GetInstance(id)
+	if inst == nil {
+		return
+	}
+
+	// Update status based on timeout type
+	switch timeoutType {
+	case instance.TimeoutActivity, instance.TimeoutStale:
+		inst.Status = StatusStuck
+	case instance.TimeoutCompletion:
+		inst.Status = StatusTimeout
+	}
+
+	// Record end time for metrics
+	if inst.Metrics != nil {
+		now := time.Now()
+		inst.Metrics.EndTime = &now
+	}
+
+	o.saveSession()
+
+	// Notify via callback if set (TUI will handle the display)
+	o.mu.RLock()
+	callback := o.timeoutCallback
+	o.mu.RUnlock()
+
+	if callback != nil {
+		callback(id, timeoutType)
+	}
+}
+
 // executeNotification executes a notification command from config
 func (o *Orchestrator) executeNotification(configKey string, inst *Instance) {
 	cmd := viper.GetString(configKey)
@@ -988,6 +1044,11 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 	// Configure metrics callback
 	mgr.SetMetricsCallback(func(id string, metrics *instance.ParsedMetrics) {
 		o.handleInstanceMetrics(id, metrics)
+	})
+
+	// Configure timeout callback
+	mgr.SetTimeoutCallback(func(id string, timeoutType instance.TimeoutType) {
+		o.handleInstanceTimeout(id, timeoutType)
 	})
 
 	// Check if the tmux session still exists

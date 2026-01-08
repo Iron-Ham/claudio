@@ -70,6 +70,14 @@ func (a *App) Run() error {
 		})
 	})
 
+	// Set up timeout callback for stuck/timeout detection
+	a.orchestrator.SetTimeoutCallback(func(instanceID string, timeoutType instance.TimeoutType) {
+		a.program.Send(timeoutMsg{
+			instanceID:  instanceID,
+			timeoutType: timeoutType,
+		})
+	})
+
 	_, err := a.program.Run()
 
 	// Clean up signal handler
@@ -117,6 +125,11 @@ type prCompleteMsg struct {
 
 type prOpenedMsg struct {
 	instanceID string
+}
+
+type timeoutMsg struct {
+	instanceID  string
+	timeoutType instance.TimeoutType
 }
 
 // Commands
@@ -197,6 +210,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.infoMessage = fmt.Sprintf("PR opened - instance %s removed", msg.instanceID)
 			}
+		}
+		return m, nil
+
+	case timeoutMsg:
+		// Instance timeout detected - notify user
+		inst := m.session.GetInstance(msg.instanceID)
+		if inst != nil {
+			var statusText string
+			switch msg.timeoutType {
+			case instance.TimeoutActivity:
+				statusText = "stuck (no activity)"
+			case instance.TimeoutCompletion:
+				statusText = "timed out (max runtime exceeded)"
+			case instance.TimeoutStale:
+				statusText = "stuck (repeated output)"
+			}
+			m.warningMessage = fmt.Sprintf("Instance %s is %s - use Ctrl+R to restart or Ctrl+K to kill", inst.ID, statusText)
 		}
 		return m, nil
 	}
@@ -615,6 +645,57 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if inst := m.activeInstance(); inst != nil {
 			fullPage := m.getOutputMaxLines()
 			m.scrollOutputDown(inst.ID, fullPage)
+		}
+		return m, nil
+
+	case "ctrl+r":
+		// Restart instance with same task (useful for stuck/timeout instances)
+		if inst := m.activeInstance(); inst != nil {
+			// Only allow restarting stuck, timeout, completed, paused, or error instances
+			switch inst.Status {
+			case orchestrator.StatusWorking, orchestrator.StatusWaitingInput:
+				m.infoMessage = "Instance is running. Use [x] to stop it first, or [p] to pause."
+				return m, nil
+			case orchestrator.StatusCreatingPR:
+				m.infoMessage = "Instance is creating PR. Wait for it to complete."
+				return m, nil
+			}
+
+			// Stop the instance if it's still running in tmux
+			mgr := m.orchestrator.GetInstanceManager(inst.ID)
+			if mgr != nil {
+				mgr.Stop()
+				mgr.ClearTimeout() // Reset timeout state
+			}
+
+			// Restart with same task
+			if err := m.orchestrator.ReconnectInstance(inst); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to restart instance: %v", err)
+			} else {
+				m.infoMessage = fmt.Sprintf("Instance %s restarted with same task", inst.ID)
+			}
+		}
+		return m, nil
+
+	case "ctrl+k":
+		// Kill and remove instance (force remove)
+		if inst := m.activeInstance(); inst != nil {
+			// Stop the instance first
+			mgr := m.orchestrator.GetInstanceManager(inst.ID)
+			if mgr != nil {
+				mgr.Stop()
+			}
+
+			// Remove the instance
+			if err := m.orchestrator.RemoveInstance(m.session, inst.ID, true); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to remove instance: %v", err)
+			} else {
+				m.infoMessage = fmt.Sprintf("Instance %s killed and removed", inst.ID)
+				// Adjust active tab if needed
+				if m.activeTab >= len(m.session.Instances) && m.activeTab > 0 {
+					m.activeTab--
+				}
+			}
 		}
 		return m, nil
 
@@ -2039,6 +2120,8 @@ Instance Control:
   x          Stop instance
   D          Close/remove instance
   R          Reconnect to stopped/paused instance
+  Ctrl+R     Restart stuck/timed out instance
+  Ctrl+K     Kill and remove instance
   C          Clear completed instances
   r          Show PR creation command
   d          Show diff preview
