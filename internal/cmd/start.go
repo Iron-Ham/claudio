@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"golang.org/x/term"
 )
 
@@ -41,6 +44,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 	sessionName := ""
 	if len(args) > 0 {
 		sessionName = args[0]
+	}
+
+	// Check for stale resources if configured
+	if viper.GetBool("cleanup.warn_on_stale") {
+		checkStaleResourcesWarning(cwd)
 	}
 
 	// Create orchestrator
@@ -152,5 +160,44 @@ func promptSessionAction() (string, error) {
 	default:
 		fmt.Printf("Unknown option '%s', defaulting to recover\n", input)
 		return "recover", nil
+	}
+}
+
+// checkStaleResourcesWarning checks for stale resources and prints a warning if found
+func checkStaleResourcesWarning(baseDir string) {
+	worktreesDir := filepath.Join(baseDir, ".claudio", "worktrees")
+
+	var staleCount int
+
+	// Count stale worktrees (directories in worktrees/ with no active session)
+	entries, err := os.ReadDir(worktreesDir)
+	if err == nil {
+		staleCount += len(entries)
+	}
+
+	// Count stale branches
+	cmd := exec.Command("git", "-C", baseDir, "branch", "--list", "claudio/*")
+	if output, err := cmd.Output(); err == nil {
+		branches := strings.Split(strings.TrimSpace(string(output)), "\n")
+		for _, b := range branches {
+			if strings.TrimSpace(b) != "" {
+				staleCount++
+			}
+		}
+	}
+
+	// Count orphaned tmux sessions
+	tmuxCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	if output, err := tmuxCmd.Output(); err == nil {
+		sessions := strings.Split(strings.TrimSpace(string(output)), "\n")
+		for _, s := range sessions {
+			if strings.HasPrefix(strings.TrimSpace(s), "claudio-") {
+				staleCount++
+			}
+		}
+	}
+
+	if staleCount > 0 {
+		fmt.Printf("Warning: Found %d potentially stale resources. Run 'claudio cleanup --dry-run' to review.\n\n", staleCount)
 	}
 }
