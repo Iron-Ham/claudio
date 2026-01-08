@@ -38,18 +38,62 @@ func (m Model) renderUltraPlanHeader() string {
 
 	// Phase indicator
 	phaseStr := phaseToString(session.Phase)
-	phaseStyle := phaseStyle(session.Phase)
+	pStyle := phaseStyle(session.Phase)
 
-	// Progress bar
-	progress := session.Progress()
-	progressBar := renderProgressBar(int(progress), 20)
+	// Build phase-appropriate progress display
+	var progressDisplay string
+	switch session.Phase {
+	case orchestrator.PhasePlanning:
+		// During planning, show activity indicator instead of progress
+		progressDisplay = "analyzing codebase..."
+
+	case orchestrator.PhaseRefresh:
+		// Plan ready, waiting for user to start execution
+		progressDisplay = "plan ready"
+
+	case orchestrator.PhaseExecuting:
+		// During execution, show task progress
+		progress := session.Progress()
+		progressBar := renderProgressBar(int(progress), 20)
+		progressDisplay = fmt.Sprintf("%s %.0f%%", progressBar, progress)
+
+	case orchestrator.PhaseSynthesis:
+		// During synthesis, show that review is in progress
+		progressDisplay = "reviewing..."
+
+	case orchestrator.PhaseConsolidating:
+		// During consolidation, show consolidation progress if available
+		if session.Consolidation != nil && session.Consolidation.TotalGroups > 0 {
+			pct := float64(session.Consolidation.CurrentGroup) / float64(session.Consolidation.TotalGroups) * 100
+			progressBar := renderProgressBar(int(pct), 20)
+			progressDisplay = fmt.Sprintf("%s %.0f%%", progressBar, pct)
+		} else {
+			progressDisplay = "consolidating..."
+		}
+
+	case orchestrator.PhaseComplete:
+		// Show completion with PR count if available
+		if len(session.PRUrls) > 0 {
+			progressDisplay = fmt.Sprintf("%d PR(s) created", len(session.PRUrls))
+		} else {
+			progressBar := renderProgressBar(100, 20)
+			progressDisplay = fmt.Sprintf("%s 100%%", progressBar)
+		}
+
+	case orchestrator.PhaseFailed:
+		progressDisplay = "failed"
+
+	default:
+		progress := session.Progress()
+		progressBar := renderProgressBar(int(progress), 20)
+		progressDisplay = fmt.Sprintf("%s %.0f%%", progressBar, progress)
+	}
 
 	// Combine
-	header := fmt.Sprintf("%s  [%s]  %s %.0f%%",
+	header := fmt.Sprintf("%s  [%s]  %s",
 		title,
-		phaseStyle.Render(phaseStr),
-		progressBar,
-		progress,
+		pStyle.Render(phaseStr),
+		progressDisplay,
 	)
 
 	b.WriteString(styles.Header.Width(m.width).Render(header))
