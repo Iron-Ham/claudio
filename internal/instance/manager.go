@@ -29,6 +29,9 @@ func DefaultManagerConfig() ManagerConfig {
 	}
 }
 
+// MetricsChangeCallback is called when metrics are updated
+type MetricsChangeCallback func(instanceID string, metrics *ParsedMetrics)
+
 // Manager handles a single Claude Code instance running in a tmux session
 type Manager struct {
 	id          string
@@ -47,6 +50,12 @@ type Manager struct {
 	detector      *Detector
 	currentState  WaitingState
 	stateCallback StateChangeCallback
+
+	// Metrics tracking
+	metricsParser   *MetricsParser
+	currentMetrics  *ParsedMetrics
+	metricsCallback MetricsChangeCallback
+	startTime       *time.Time
 }
 
 // NewManager creates a new instance manager with default configuration
@@ -57,15 +66,16 @@ func NewManager(id, workdir, task string) *Manager {
 // NewManagerWithConfig creates a new instance manager with the given configuration
 func NewManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager {
 	return &Manager{
-		id:           id,
-		workdir:      workdir,
-		task:         task,
-		sessionName:  fmt.Sprintf("claudio-%s", id),
-		outputBuf:    NewRingBuffer(cfg.OutputBufferSize),
-		doneChan:     make(chan struct{}),
-		config:       cfg,
-		detector:     NewDetector(),
-		currentState: StateWorking,
+		id:            id,
+		workdir:       workdir,
+		task:          task,
+		sessionName:   fmt.Sprintf("claudio-%s", id),
+		outputBuf:     NewRingBuffer(cfg.OutputBufferSize),
+		doneChan:      make(chan struct{}),
+		config:        cfg,
+		detector:      NewDetector(),
+		currentState:  StateWorking,
+		metricsParser: NewMetricsParser(),
 	}
 }
 
@@ -74,6 +84,27 @@ func (m *Manager) SetStateCallback(cb StateChangeCallback) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stateCallback = cb
+}
+
+// SetMetricsCallback sets a callback that will be invoked when metrics are updated
+func (m *Manager) SetMetricsCallback(cb MetricsChangeCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.metricsCallback = cb
+}
+
+// CurrentMetrics returns the currently parsed metrics
+func (m *Manager) CurrentMetrics() *ParsedMetrics {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.currentMetrics
+}
+
+// StartTime returns when the instance was started
+func (m *Manager) StartTime() *time.Time {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.startTime
 }
 
 // CurrentState returns the currently detected waiting state
@@ -130,6 +161,10 @@ func (m *Manager) Start() error {
 
 	m.running = true
 	m.paused = false
+
+	// Record start time for duration tracking
+	now := time.Now()
+	m.startTime = &now
 
 	// Start background goroutine to capture output periodically
 	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)
@@ -213,6 +248,38 @@ func (m *Manager) detectAndNotifyState(output []byte) {
 	// Invoke callback outside of lock to prevent deadlocks
 	if newState != oldState && callback != nil {
 		callback(instanceID, newState)
+	}
+
+	// Parse and notify about metrics changes
+	m.parseAndNotifyMetrics(output)
+}
+
+// parseAndNotifyMetrics parses metrics from output and notifies if changed
+func (m *Manager) parseAndNotifyMetrics(output []byte) {
+	newMetrics := m.metricsParser.Parse(output)
+	if newMetrics == nil {
+		return
+	}
+
+	m.mu.Lock()
+	oldMetrics := m.currentMetrics
+	callback := m.metricsCallback
+	instanceID := m.id
+
+	// Check if metrics changed (simple comparison)
+	metricsChanged := oldMetrics == nil ||
+		newMetrics.InputTokens != oldMetrics.InputTokens ||
+		newMetrics.OutputTokens != oldMetrics.OutputTokens ||
+		newMetrics.Cost != oldMetrics.Cost
+
+	if metricsChanged {
+		m.currentMetrics = newMetrics
+	}
+	m.mu.Unlock()
+
+	// Invoke callback outside of lock to prevent deadlocks
+	if metricsChanged && callback != nil {
+		callback(instanceID, newMetrics)
 	}
 }
 

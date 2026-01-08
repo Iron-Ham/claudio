@@ -49,6 +49,10 @@ type Model struct {
 
 	// Sidebar pagination
 	sidebarScrollOffset int // Index of the first visible instance in sidebar
+
+	// Resource metrics display
+	showStats       bool // When true, show the stats panel
+	budgetWarning   bool // True when session cost exceeds warning threshold
 }
 
 // NewModel creates a new TUI model

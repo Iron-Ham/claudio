@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/conflict"
@@ -306,6 +307,11 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 		}
 	})
 
+	// Configure metrics callback for resource tracking
+	mgr.SetMetricsCallback(func(id string, metrics *instance.ParsedMetrics) {
+		o.handleInstanceMetrics(id, metrics)
+	})
+
 	if err := mgr.Start(); err != nil {
 		return fmt.Errorf("failed to start instance: %w", err)
 	}
@@ -313,6 +319,14 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 	inst.Status = StatusWorking
 	inst.PID = mgr.PID()
 	inst.TmuxSession = mgr.SessionName() // Save tmux session name for recovery
+
+	// Initialize metrics with start time
+	now := mgr.StartTime()
+	if inst.Metrics == nil {
+		inst.Metrics = &Metrics{StartTime: now}
+	} else {
+		inst.Metrics.StartTime = now
+	}
 
 	return o.saveSession()
 }
@@ -598,9 +612,148 @@ func (o *Orchestrator) handleInstanceExit(id string) {
 	if inst != nil {
 		inst.Status = StatusCompleted
 		inst.PID = 0
+		// Record end time for metrics
+		if inst.Metrics != nil {
+			now := time.Now()
+			inst.Metrics.EndTime = &now
+		}
 		o.saveSession()
 		o.executeNotification("notifications.on_completion", inst)
 	}
+}
+
+// handleInstanceMetrics updates instance metrics when they change
+func (o *Orchestrator) handleInstanceMetrics(id string, metrics *instance.ParsedMetrics) {
+	inst := o.GetInstance(id)
+	if inst == nil || metrics == nil {
+		return
+	}
+
+	// Update instance metrics
+	if inst.Metrics == nil {
+		inst.Metrics = &Metrics{}
+	}
+
+	inst.Metrics.InputTokens = metrics.InputTokens
+	inst.Metrics.OutputTokens = metrics.OutputTokens
+	inst.Metrics.CacheRead = metrics.CacheRead
+	inst.Metrics.CacheWrite = metrics.CacheWrite
+	inst.Metrics.APICalls = metrics.APICalls
+
+	// Use parsed cost if available, otherwise calculate from tokens
+	if metrics.Cost > 0 {
+		inst.Metrics.Cost = metrics.Cost
+	} else {
+		inst.Metrics.Cost = instance.CalculateCost(
+			metrics.InputTokens,
+			metrics.OutputTokens,
+			metrics.CacheRead,
+			metrics.CacheWrite,
+		)
+	}
+
+	// Check budget limits
+	o.checkBudgetLimits()
+
+	// Save session periodically (not on every metric update to avoid excessive I/O)
+	// The session will be saved when status changes occur
+}
+
+// checkBudgetLimits checks if any budget limits have been exceeded
+func (o *Orchestrator) checkBudgetLimits() {
+	if o.config == nil || o.session == nil {
+		return
+	}
+
+	// Get session totals
+	sessionMetrics := o.GetSessionMetrics()
+
+	// Check cost limit
+	if o.config.Resources.CostLimit > 0 && sessionMetrics.TotalCost >= o.config.Resources.CostLimit {
+		// Pause all running instances
+		for _, inst := range o.session.Instances {
+			if inst.Status == StatusWorking {
+				if mgr, ok := o.instances[inst.ID]; ok {
+					mgr.Pause()
+					inst.Status = StatusPaused
+				}
+			}
+		}
+		o.executeNotification("notifications.on_budget_limit", nil)
+	}
+
+	// Check cost warning threshold
+	if o.config.Resources.CostWarningThreshold > 0 && sessionMetrics.TotalCost >= o.config.Resources.CostWarningThreshold {
+		o.executeNotification("notifications.on_budget_warning", nil)
+	}
+
+	// Check per-instance token limit
+	if o.config.Resources.TokenLimitPerInstance > 0 {
+		for _, inst := range o.session.Instances {
+			if inst.Metrics != nil && inst.Status == StatusWorking {
+				if inst.Metrics.TotalTokens() >= o.config.Resources.TokenLimitPerInstance {
+					if mgr, ok := o.instances[inst.ID]; ok {
+						mgr.Pause()
+						inst.Status = StatusPaused
+					}
+				}
+			}
+		}
+	}
+}
+
+// SessionMetrics holds aggregated metrics for the entire session
+type SessionMetrics struct {
+	TotalInputTokens  int64
+	TotalOutputTokens int64
+	TotalCacheRead    int64
+	TotalCacheWrite   int64
+	TotalCost         float64
+	TotalAPICalls     int
+	TotalDuration     time.Duration
+	InstanceCount     int
+	ActiveCount       int
+}
+
+// GetSessionMetrics aggregates metrics across all instances in the session
+func (o *Orchestrator) GetSessionMetrics() *SessionMetrics {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
+	if o.session == nil {
+		return &SessionMetrics{}
+	}
+
+	metrics := &SessionMetrics{
+		InstanceCount: len(o.session.Instances),
+	}
+
+	for _, inst := range o.session.Instances {
+		if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
+			metrics.ActiveCount++
+		}
+
+		if inst.Metrics != nil {
+			metrics.TotalInputTokens += inst.Metrics.InputTokens
+			metrics.TotalOutputTokens += inst.Metrics.OutputTokens
+			metrics.TotalCacheRead += inst.Metrics.CacheRead
+			metrics.TotalCacheWrite += inst.Metrics.CacheWrite
+			metrics.TotalCost += inst.Metrics.Cost
+			metrics.TotalAPICalls += inst.Metrics.APICalls
+			metrics.TotalDuration += inst.Metrics.Duration()
+		}
+	}
+
+	return metrics
+}
+
+// GetInstanceMetrics returns the current metrics for a specific instance
+func (o *Orchestrator) GetInstanceMetrics(id string) *Metrics {
+	inst := o.GetInstance(id)
+	if inst == nil {
+		return nil
+	}
+	return inst.Metrics
 }
 
 // handleInstanceWaitingInput handles when a Claude instance is waiting for input

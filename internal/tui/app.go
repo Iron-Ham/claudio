@@ -526,6 +526,11 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.errorMessage = "" // Clear any error
 		return m, nil
+
+	case "m":
+		// Toggle stats/metrics panel
+		m.showStats = !m.showStats
+		return m, nil
 	}
 
 	return m, nil
@@ -1102,6 +1107,10 @@ func (m Model) renderContent(width int) string {
 		return m.renderConflictPanel(width)
 	}
 
+	if m.showStats {
+		return m.renderStatsPanel(width)
+	}
+
 	inst := m.activeInstance()
 	if inst == nil {
 		return styles.ContentBox.Width(width - 4).Render(
@@ -1127,6 +1136,14 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	// Task
 	b.WriteString(styles.Subtitle.Render("Task: " + inst.Task))
 	b.WriteString("\n")
+
+	// Resource metrics (if available and config enabled)
+	cfg := config.Get()
+	if cfg.Resources.ShowMetricsInSidebar && inst.Metrics != nil {
+		metricsLine := m.formatInstanceMetrics(inst.Metrics)
+		b.WriteString(styles.Muted.Render(metricsLine))
+		b.WriteString("\n")
+	}
 
 	// Show running/input mode status
 	mgr := m.orchestrator.GetInstanceManager(inst.ID)
@@ -1590,6 +1607,8 @@ func (m Model) renderHelp() string {
 		styles.HelpKey.Render("[p]") + " pause",
 		styles.HelpKey.Render("[x]") + " stop",
 		styles.HelpKey.Render("[d]") + " diff",
+		styles.HelpKey.Render("[m]") + " stats",
+		styles.HelpKey.Render("[r]") + " pr",
 		styles.HelpKey.Render("[?]") + " help",
 		styles.HelpKey.Render("[q]") + " quit",
 	}
@@ -1618,4 +1637,157 @@ func lastNLines(s string, n int) string {
 		return s
 	}
 	return strings.Join(lines[len(lines)-n:], "\n")
+}
+
+// formatInstanceMetrics formats metrics for a single instance
+func (m Model) formatInstanceMetrics(metrics *orchestrator.Metrics) string {
+	if metrics == nil {
+		return ""
+	}
+
+	parts := []string{}
+
+	// Token usage
+	if metrics.InputTokens > 0 || metrics.OutputTokens > 0 {
+		parts = append(parts, fmt.Sprintf("Tokens: %s in / %s out",
+			instance.FormatTokens(metrics.InputTokens),
+			instance.FormatTokens(metrics.OutputTokens)))
+	}
+
+	// Cost
+	if metrics.Cost > 0 {
+		parts = append(parts, instance.FormatCost(metrics.Cost))
+	}
+
+	// Duration
+	if duration := metrics.Duration(); duration > 0 {
+		parts = append(parts, formatDuration(duration))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return strings.Join(parts, "  │  ")
+}
+
+// formatDuration formats a duration for display
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+// renderStatsPanel renders the session statistics/metrics panel
+func (m Model) renderStatsPanel(width int) string {
+	var b strings.Builder
+
+	b.WriteString(styles.Title.Render("📊 Session Statistics"))
+	b.WriteString("\n\n")
+
+	if m.session == nil {
+		b.WriteString(styles.Muted.Render("No active session"))
+		return styles.ContentBox.Width(width - 4).Render(b.String())
+	}
+
+	// Get aggregated session metrics
+	sessionMetrics := m.orchestrator.GetSessionMetrics()
+
+	// Session summary
+	b.WriteString(styles.Subtitle.Render("Session Summary"))
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("  Total Instances: %d (%d active)\n",
+		sessionMetrics.InstanceCount, sessionMetrics.ActiveCount))
+	b.WriteString(fmt.Sprintf("  Session Started: %s\n",
+		m.session.Created.Format("2006-01-02 15:04:05")))
+	b.WriteString("\n")
+
+	// Token usage
+	b.WriteString(styles.Subtitle.Render("Token Usage"))
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("  Input:  %s\n", instance.FormatTokens(sessionMetrics.TotalInputTokens)))
+	b.WriteString(fmt.Sprintf("  Output: %s\n", instance.FormatTokens(sessionMetrics.TotalOutputTokens)))
+	totalTokens := sessionMetrics.TotalInputTokens + sessionMetrics.TotalOutputTokens
+	b.WriteString(fmt.Sprintf("  Total:  %s\n", instance.FormatTokens(totalTokens)))
+	if sessionMetrics.TotalCacheRead > 0 || sessionMetrics.TotalCacheWrite > 0 {
+		b.WriteString(fmt.Sprintf("  Cache:  %s read / %s write\n",
+			instance.FormatTokens(sessionMetrics.TotalCacheRead),
+			instance.FormatTokens(sessionMetrics.TotalCacheWrite)))
+	}
+	b.WriteString("\n")
+
+	// Cost summary
+	b.WriteString(styles.Subtitle.Render("Estimated Cost"))
+	b.WriteString("\n")
+	costStr := instance.FormatCost(sessionMetrics.TotalCost)
+	cfg := config.Get()
+	if cfg.Resources.CostWarningThreshold > 0 && sessionMetrics.TotalCost >= cfg.Resources.CostWarningThreshold {
+		b.WriteString(styles.Warning.Render(fmt.Sprintf("  Total: %s (⚠ exceeds warning threshold)", costStr)))
+	} else {
+		b.WriteString(fmt.Sprintf("  Total: %s\n", costStr))
+	}
+	if cfg.Resources.CostLimit > 0 {
+		b.WriteString(fmt.Sprintf("  Limit: %s\n", instance.FormatCost(cfg.Resources.CostLimit)))
+	}
+	b.WriteString("\n")
+
+	// Per-instance breakdown
+	b.WriteString(styles.Subtitle.Render("Top Instances by Cost"))
+	b.WriteString("\n")
+
+	// Sort instances by cost (simple bubble for small lists)
+	type instCost struct {
+		id   string
+		num  int
+		task string
+		cost float64
+	}
+	var costList []instCost
+	for i, inst := range m.session.Instances {
+		cost := 0.0
+		if inst.Metrics != nil {
+			cost = inst.Metrics.Cost
+		}
+		costList = append(costList, instCost{
+			id:   inst.ID,
+			num:  i + 1,
+			task: inst.Task,
+			cost: cost,
+		})
+	}
+	// Sort descending by cost
+	for i := 0; i < len(costList)-1; i++ {
+		for j := i + 1; j < len(costList); j++ {
+			if costList[j].cost > costList[i].cost {
+				costList[i], costList[j] = costList[j], costList[i]
+			}
+		}
+	}
+
+	// Show top 5
+	shown := 0
+	for _, ic := range costList {
+		if shown >= 5 {
+			break
+		}
+		if ic.cost > 0 {
+			taskTrunc := truncate(ic.task, width-25)
+			b.WriteString(fmt.Sprintf("  %d. [%d] %s: %s\n",
+				shown+1, ic.num, taskTrunc, instance.FormatCost(ic.cost)))
+			shown++
+		}
+	}
+	if shown == 0 {
+		b.WriteString(styles.Muted.Render("  No cost data available yet"))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("Press [m] to close this view"))
+
+	return styles.ContentBox.Width(width - 4).Render(b.String())
 }
