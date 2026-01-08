@@ -42,6 +42,12 @@ func (a *App) Run() error {
 	return err
 }
 
+// Layout constants
+const (
+	sidebarWidth    = 30 // Fixed sidebar width
+	sidebarMinWidth = 20 // Minimum sidebar width
+)
+
 // Messages
 
 type tickMsg time.Time
@@ -356,14 +362,33 @@ func (m Model) View() string {
 	b.WriteString(header)
 	b.WriteString("\n")
 
-	// Tabs
-	tabs := m.renderTabs()
-	b.WriteString(tabs)
-	b.WriteString("\n\n")
+	// Calculate widths for sidebar and main content
+	effectiveSidebarWidth := sidebarWidth
+	if m.width < 80 {
+		effectiveSidebarWidth = sidebarMinWidth
+	}
+	mainContentWidth := m.width - effectiveSidebarWidth - 3 // 3 for gap between panels
 
-	// Content area
-	content := m.renderContent()
-	b.WriteString(content)
+	// Sidebar + Content area (horizontal layout)
+	sidebar := m.renderSidebar(effectiveSidebarWidth)
+	content := m.renderContent(mainContentWidth)
+
+	// Calculate available height for the main area
+	mainAreaHeight := m.height - 6 // Header + help bar + margins
+
+	// Apply height to both panels and join horizontally
+	sidebarStyled := lipgloss.NewStyle().
+		Width(effectiveSidebarWidth).
+		Height(mainAreaHeight).
+		Render(sidebar)
+
+	contentStyled := lipgloss.NewStyle().
+		Width(mainContentWidth).
+		Height(mainAreaHeight).
+		Render(content)
+
+	mainArea := lipgloss.JoinHorizontal(lipgloss.Top, sidebarStyled, " ", contentStyled)
+	b.WriteString(mainArea)
 
 	// Conflict warning banner (always show if conflicts exist)
 	if len(m.conflicts) > 0 {
@@ -397,81 +422,105 @@ func (m Model) renderHeader() string {
 	return styles.Header.Width(m.width).Render(title)
 }
 
-// renderTabs renders the instance tabs
-func (m Model) renderTabs() string {
+// renderSidebar renders the instance sidebar
+func (m Model) renderSidebar(width int) string {
+	var b strings.Builder
+
+	// Sidebar title
+	b.WriteString(styles.SidebarTitle.Render("Instances"))
+	b.WriteString("\n")
+
 	if m.instanceCount() == 0 {
-		return styles.Muted.Render("No instances. Press [a] to add one.")
-	}
-
-	// Build a set of instance IDs that have conflicts
-	conflictingInstances := make(map[string]bool)
-	for _, c := range m.conflicts {
-		for _, instID := range c.Instances {
-			conflictingInstances[instID] = true
-		}
-	}
-
-	var tabs []string
-	for i, inst := range m.session.Instances {
-		// Add conflict indicator if instance has conflicts
-		label := fmt.Sprintf("[%d] %s", i+1, truncate(inst.Task, 20))
-		if conflictingInstances[inst.ID] {
-			label = fmt.Sprintf("[%d] ⚠ %s", i+1, truncate(inst.Task, 18))
-		}
-
-		var style lipgloss.Style
-		if i == m.activeTab {
-			if conflictingInstances[inst.ID] {
-				// Active tab with conflict - use warning background
-				style = styles.TabInputNeeded
-			} else if inst.Status == orchestrator.StatusWaitingInput {
-				style = styles.TabInputNeeded
-			} else {
-				style = styles.TabActive
-			}
-		} else {
-			if conflictingInstances[inst.ID] {
-				// Inactive but has conflict - use warning color
-				style = styles.TabInactive.Copy().Foreground(styles.WarningColor)
-			} else if inst.Status == orchestrator.StatusWaitingInput {
-				// Inactive but needs input - use warning color
-				style = styles.TabInactive.Copy().Foreground(styles.WarningColor)
-			} else {
-				style = styles.TabInactive
+		b.WriteString(styles.Muted.Render("No instances"))
+		b.WriteString("\n")
+		b.WriteString(styles.Muted.Render("Press [a] to add"))
+	} else {
+		// Build a set of instance IDs that have conflicts
+		conflictingInstances := make(map[string]bool)
+		for _, c := range m.conflicts {
+			for _, instID := range c.Instances {
+				conflictingInstances[instID] = true
 			}
 		}
 
-		tabs = append(tabs, style.Render(label))
+		// Render each instance as a list item
+		for i, inst := range m.session.Instances {
+			// Status indicator (colored dot)
+			statusColor := styles.StatusColor(string(inst.Status))
+			dot := lipgloss.NewStyle().Foreground(statusColor).Render("●")
+
+			// Instance number and truncated task
+			maxTaskLen := width - 8 // Account for number, dot, padding
+			if maxTaskLen < 10 {
+				maxTaskLen = 10
+			}
+			label := fmt.Sprintf("%d %s", i+1, truncate(inst.Task, maxTaskLen))
+			// Add conflict indicator if instance has conflicts
+			if conflictingInstances[inst.ID] {
+				label = fmt.Sprintf("%d ⚠ %s", i+1, truncate(inst.Task, maxTaskLen-2))
+			}
+
+			// Choose style based on active state and status
+			var itemStyle lipgloss.Style
+			if i == m.activeTab {
+				if conflictingInstances[inst.ID] {
+					// Active item with conflict - use warning background
+					itemStyle = styles.SidebarItemInputNeeded
+				} else if inst.Status == orchestrator.StatusWaitingInput {
+					itemStyle = styles.SidebarItemInputNeeded
+				} else {
+					itemStyle = styles.SidebarItemActive
+				}
+			} else {
+				itemStyle = styles.SidebarItem
+				if conflictingInstances[inst.ID] {
+					// Inactive but has conflict - use warning color
+					itemStyle = itemStyle.Copy().Foreground(styles.WarningColor)
+				} else if inst.Status == orchestrator.StatusWaitingInput {
+					itemStyle = itemStyle.Copy().Foreground(styles.WarningColor)
+				} else {
+					itemStyle = itemStyle.Copy().Foreground(styles.MutedColor)
+				}
+			}
+
+			// Combine dot and label
+			item := dot + " " + itemStyle.Render(label)
+			b.WriteString(item)
+			b.WriteString("\n")
+		}
 	}
 
-	// Add "+" tab
-	tabs = append(tabs, styles.TabInactive.Render("[+] Add"))
+	b.WriteString("\n")
+	// Add instance hint
+	addHint := styles.Muted.Render("[a]") + " " + styles.Muted.Render("Add new")
+	b.WriteString(addHint)
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, tabs...)
+	// Wrap in sidebar box
+	return styles.Sidebar.Width(width - 2).Render(b.String())
 }
 
 // renderContent renders the main content area
-func (m Model) renderContent() string {
+func (m Model) renderContent(width int) string {
 	if m.addingTask {
-		return m.renderAddTask()
+		return m.renderAddTask(width)
 	}
 
 	if m.showHelp {
-		return m.renderHelpPanel()
+		return m.renderHelpPanel(width)
 	}
 
 	inst := m.activeInstance()
 	if inst == nil {
-		return styles.ContentBox.Width(m.width - 4).Render(
+		return styles.ContentBox.Width(width - 4).Render(
 			"No instance selected.\n\nPress [a] to add a new Claude instance.",
 		)
 	}
 
-	return m.renderInstance(inst)
+	return m.renderInstance(inst, width)
 }
 
 // renderInstance renders the active instance view
-func (m Model) renderInstance(inst *orchestrator.Instance) string {
+func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	var b strings.Builder
 
 	// Instance info
@@ -523,14 +572,14 @@ func (m Model) renderInstance(inst *orchestrator.Instance) string {
 	}
 
 	// Limit output to visible area
-	maxLines := m.height - 16
+	maxLines := m.height - 12 // Adjusted for sidebar layout
 	if maxLines < 5 {
 		maxLines = 5
 	}
 	output = lastNLines(output, maxLines)
 
 	outputBox := styles.OutputArea.
-		Width(m.width - 6).
+		Width(width - 4).
 		Height(maxLines).
 		Render(output)
 
@@ -540,7 +589,7 @@ func (m Model) renderInstance(inst *orchestrator.Instance) string {
 }
 
 // renderAddTask renders the add task input
-func (m Model) renderAddTask() string {
+func (m Model) renderAddTask(width int) string {
 	var b strings.Builder
 
 	b.WriteString(styles.Title.Render("Add New Instance"))
@@ -562,11 +611,11 @@ func (m Model) renderAddTask() string {
 		styles.Muted.Render("Shift+Enter") + " newline  " +
 		styles.Muted.Render("Esc") + " cancel")
 
-	return styles.ContentBox.Width(m.width - 4).Render(b.String())
+	return styles.ContentBox.Width(width - 4).Render(b.String())
 }
 
 // renderHelpPanel renders the help overlay
-func (m Model) renderHelpPanel() string {
+func (m Model) renderHelpPanel(width int) string {
 	help := `
 Keyboard Shortcuts
 
@@ -597,7 +646,7 @@ Press Ctrl+] to return to navigation mode.
 You can also attach directly to a session with:
   tmux attach -t claudio-<instance-id>
 `
-	return styles.ContentBox.Width(m.width - 4).Render(help)
+	return styles.ContentBox.Width(width - 4).Render(help)
 }
 
 // renderConflictWarning renders the file conflict warning banner
