@@ -401,3 +401,32 @@ func (m *Manager) PID() int {
 func (m *Manager) AttachCommand() string {
 	return fmt.Sprintf("tmux attach -t %s", m.sessionName)
 }
+
+// Resize changes the tmux pane dimensions
+// This is useful when the display area changes (e.g., sidebar added/removed)
+func (m *Manager) Resize(width, height int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.running {
+		return nil
+	}
+
+	// Update stored config
+	m.config.TmuxWidth = width
+	m.config.TmuxHeight = height
+
+	// Resize the tmux window
+	// Note: We resize the window (not pane) since each session has one window
+	resizeCmd := exec.Command("tmux",
+		"resize-window",
+		"-t", m.sessionName,
+		"-x", fmt.Sprintf("%d", width),
+		"-y", fmt.Sprintf("%d", height),
+	)
+	if err := resizeCmd.Run(); err != nil {
+		return fmt.Errorf("failed to resize tmux session: %w", err)
+	}
+
+	return nil
+}

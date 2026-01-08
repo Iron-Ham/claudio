@@ -84,6 +84,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ready = true
+
+		// Calculate the content area width for tmux sessions
+		// This accounts for the sidebar taking up space
+		effectiveSidebarWidth := sidebarWidth
+		if m.width < 80 {
+			effectiveSidebarWidth = sidebarMinWidth
+		}
+		// Content width minus borders/padding (2 for border chars)
+		contentWidth := m.width - effectiveSidebarWidth - 3 - 2
+		// Content height minus header, help bar, and margins
+		contentHeight := m.height - 6
+
+		// Resize all running tmux sessions to match the content area
+		if m.orchestrator != nil && contentWidth > 0 && contentHeight > 0 {
+			m.orchestrator.ResizeAllInstances(contentWidth, contentHeight)
+		}
+
 		return m, nil
 
 	case tickMsg:
