@@ -348,10 +348,10 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			mgr := m.orchestrator.GetInstanceManager(inst.ID)
 			if mgr != nil {
 				if inst.Status == orchestrator.StatusPaused {
-					mgr.Resume()
+					_ = mgr.Resume()
 					inst.Status = orchestrator.StatusWorking
 				} else if inst.Status == orchestrator.StatusWorking {
-					mgr.Pause()
+					_ = mgr.Pause()
 					inst.Status = orchestrator.StatusPaused
 				}
 			}
@@ -1450,11 +1450,11 @@ func (m Model) renderSidebarInstance(i int, inst *orchestrator.Instance, conflic
 		itemStyle = styles.SidebarItem
 		if conflictingInstances[inst.ID] {
 			// Inactive but has conflict - use warning color
-			itemStyle = itemStyle.Copy().Foreground(styles.WarningColor)
+			itemStyle = itemStyle.Foreground(styles.WarningColor)
 		} else if inst.Status == orchestrator.StatusWaitingInput {
-			itemStyle = itemStyle.Copy().Foreground(styles.WarningColor)
+			itemStyle = itemStyle.Foreground(styles.WarningColor)
 		} else {
-			itemStyle = itemStyle.Copy().Foreground(styles.MutedColor)
+			itemStyle = itemStyle.Foreground(styles.MutedColor)
 		}
 	}
 
@@ -2221,14 +2221,6 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-3] + "..."
-}
-
-func lastNLines(s string, n int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) <= n {
-		return s
-	}
-	return strings.Join(lines[len(lines)-n:], "\n")
 }
 
 // formatInstanceMetrics formats metrics for a single instance

@@ -473,13 +473,13 @@ func (o *Orchestrator) RemoveInstance(session *Session, instanceID string, force
 
 	// Stop the instance if running
 	if mgr, ok := o.instances[inst.ID]; ok {
-		mgr.Stop()
+		_ = mgr.Stop()
 		delete(o.instances, inst.ID)
 	}
 
 	// Stop PR workflow if running
 	if workflow, ok := o.prWorkflows[inst.ID]; ok {
-		workflow.Stop()
+		_ = workflow.Stop()
 		delete(o.prWorkflows, inst.ID)
 	}
 
@@ -520,20 +520,20 @@ func (o *Orchestrator) StopSession(session *Session, force bool) error {
 	// Stop all instances
 	for _, inst := range session.Instances {
 		if mgr, ok := o.instances[inst.ID]; ok {
-			mgr.Stop()
+			_ = mgr.Stop()
 		}
 	}
 
 	// Stop all PR workflows
 	for _, workflow := range o.prWorkflows {
-		workflow.Stop()
+		_ = workflow.Stop()
 	}
 	o.prWorkflows = make(map[string]*instance.PRWorkflow)
 
 	// Clean up worktrees if forced
 	if force {
 		for _, inst := range session.Instances {
-			o.wt.Remove(inst.WorktreePath)
+			_ = o.wt.Remove(inst.WorktreePath)
 		}
 	}
 
@@ -613,7 +613,7 @@ func (o *Orchestrator) ResizeAllInstances(width, height int) {
 
 	for _, mgr := range o.instances {
 		if mgr != nil && mgr.Running() {
-			mgr.Resize(width, height)
+			_ = mgr.Resize(width, height)
 		}
 	}
 }
@@ -650,8 +650,8 @@ func (o *Orchestrator) updateContext() error {
 	// Write to each worktree
 	for _, inst := range o.session.Instances {
 		wtCtx := filepath.Join(inst.WorktreePath, ".claudio", "context.md")
-		os.MkdirAll(filepath.Dir(wtCtx), 0755)
-		os.WriteFile(wtCtx, []byte(ctx), 0644)
+		_ = os.MkdirAll(filepath.Dir(wtCtx), 0755)
+		_ = os.WriteFile(wtCtx, []byte(ctx), 0644)
 	}
 
 	return nil
@@ -721,7 +721,7 @@ func (o *Orchestrator) handleInstanceExit(id string) {
 			now := time.Now()
 			inst.Metrics.EndTime = &now
 		}
-		o.saveSession()
+		_ = o.saveSession()
 		o.executeNotification("notifications.on_completion", inst)
 	}
 }
@@ -778,7 +778,7 @@ func (o *Orchestrator) checkBudgetLimits() {
 		for _, inst := range o.session.Instances {
 			if inst.Status == StatusWorking {
 				if mgr, ok := o.instances[inst.ID]; ok {
-					mgr.Pause()
+					_ = mgr.Pause()
 					inst.Status = StatusPaused
 				}
 			}
@@ -797,7 +797,7 @@ func (o *Orchestrator) checkBudgetLimits() {
 			if inst.Metrics != nil && inst.Status == StatusWorking {
 				if inst.Metrics.TotalTokens() >= o.config.Resources.TokenLimitPerInstance {
 					if mgr, ok := o.instances[inst.ID]; ok {
-						mgr.Pause()
+						_ = mgr.Pause()
 						inst.Status = StatusPaused
 					}
 				}
@@ -865,7 +865,7 @@ func (o *Orchestrator) handleInstanceWaitingInput(id string) {
 	inst := o.GetInstance(id)
 	if inst != nil {
 		inst.Status = StatusWaitingInput
-		o.saveSession()
+		_ = o.saveSession()
 		o.executeNotification("notifications.on_waiting_input", inst)
 	}
 }
