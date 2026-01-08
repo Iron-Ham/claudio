@@ -313,6 +313,79 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case "d":
+		// Toggle diff preview for the active instance
+		if m.showDiff {
+			m.showDiff = false
+			m.diffContent = ""
+			m.diffScroll = 0
+			return m, nil
+		}
+		if inst := m.activeInstance(); inst != nil {
+			diff, err := m.orchestrator.GetInstanceDiff(inst.WorktreePath)
+			if err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to get diff: %v", err)
+			} else if diff == "" {
+				m.infoMessage = "No changes to show"
+			} else {
+				m.diffContent = diff
+				m.showDiff = true
+				m.diffScroll = 0
+			}
+		}
+		return m, nil
+
+	case "esc":
+		// Close diff panel if open
+		if m.showDiff {
+			m.showDiff = false
+			m.diffContent = ""
+			m.diffScroll = 0
+			return m, nil
+		}
+		return m, nil
+
+	case "j", "down":
+		// Scroll down in diff view
+		if m.showDiff {
+			m.diffScroll++
+			return m, nil
+		}
+		return m, nil
+
+	case "k", "up":
+		// Scroll up in diff view
+		if m.showDiff && m.diffScroll > 0 {
+			m.diffScroll--
+			return m, nil
+		}
+		return m, nil
+
+	case "g":
+		// Go to top of diff
+		if m.showDiff {
+			m.diffScroll = 0
+			return m, nil
+		}
+		return m, nil
+
+	case "G":
+		// Go to bottom of diff (handled in render by maxScroll)
+		if m.showDiff {
+			lines := strings.Split(m.diffContent, "\n")
+			maxLines := m.height - 14
+			if maxLines < 5 {
+				maxLines = 5
+			}
+			maxScroll := len(lines) - maxLines
+			if maxScroll < 0 {
+				maxScroll = 0
+			}
+			m.diffScroll = maxScroll
+			return m, nil
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -690,6 +763,10 @@ func (m Model) renderContent(width int) string {
 		return m.renderHelpPanel(width)
 	}
 
+	if m.showDiff {
+		return m.renderDiffPanel(width)
+	}
+
 	inst := m.activeInstance()
 	if inst == nil {
 		return styles.ContentBox.Width(width - 4).Render(
@@ -855,6 +932,7 @@ Instance Control:
   p          Pause/resume instance
   x          Stop instance
   r          Show PR creation command
+  d          Show diff preview
 
 Input Mode:
   i / Enter  Enter input mode (interact with Claude)
@@ -875,6 +953,99 @@ Creating Pull Requests:
   rebase on main, and create the PR on GitHub.
 `
 	return styles.ContentBox.Width(width - 4).Render(help)
+}
+
+// renderDiffPanel renders the diff preview panel with syntax highlighting
+func (m Model) renderDiffPanel(width int) string {
+	var b strings.Builder
+
+	// Header
+	inst := m.activeInstance()
+	if inst != nil {
+		b.WriteString(styles.Title.Render(fmt.Sprintf("Diff Preview: %s", inst.Branch)))
+	} else {
+		b.WriteString(styles.Title.Render("Diff Preview"))
+	}
+	b.WriteString("\n")
+
+	if m.diffContent == "" {
+		b.WriteString(styles.Muted.Render("No changes to display"))
+		return styles.ContentBox.Width(width - 4).Render(b.String())
+	}
+
+	// Calculate available height for diff content
+	maxLines := m.height - 14
+	if maxLines < 5 {
+		maxLines = 5
+	}
+
+	// Split diff into lines and apply scroll
+	lines := strings.Split(m.diffContent, "\n")
+	totalLines := len(lines)
+
+	// Clamp scroll position
+	maxScroll := totalLines - maxLines
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.diffScroll > maxScroll {
+		m.diffScroll = maxScroll
+	}
+
+	// Get visible lines
+	startLine := m.diffScroll
+	endLine := startLine + maxLines
+	if endLine > totalLines {
+		endLine = totalLines
+	}
+
+	visibleLines := lines[startLine:endLine]
+
+	// Apply syntax highlighting to each visible line
+	var highlighted []string
+	for _, line := range visibleLines {
+		highlighted = append(highlighted, m.highlightDiffLine(line))
+	}
+
+	// Show scroll indicator
+	scrollInfo := fmt.Sprintf("Lines %d-%d of %d", startLine+1, endLine, totalLines)
+	if totalLines > maxLines {
+		scrollInfo += "  " + styles.Muted.Render("[j/k scroll, g/G top/bottom, d/Esc close]")
+	} else {
+		scrollInfo += "  " + styles.Muted.Render("[d/Esc close]")
+	}
+	b.WriteString(styles.Muted.Render(scrollInfo))
+	b.WriteString("\n\n")
+
+	// Add the diff content
+	b.WriteString(strings.Join(highlighted, "\n"))
+
+	return styles.ContentBox.Width(width - 4).Render(b.String())
+}
+
+// highlightDiffLine applies syntax highlighting to a single diff line
+func (m Model) highlightDiffLine(line string) string {
+	if len(line) == 0 {
+		return line
+	}
+
+	// Check line prefix for diff syntax highlighting
+	switch {
+	case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+		return styles.DiffHeader.Render(line)
+	case strings.HasPrefix(line, "@@"):
+		return styles.DiffHunk.Render(line)
+	case strings.HasPrefix(line, "+"):
+		return styles.DiffAdd.Render(line)
+	case strings.HasPrefix(line, "-"):
+		return styles.DiffRemove.Render(line)
+	case strings.HasPrefix(line, "diff "):
+		return styles.DiffHeader.Render(line)
+	case strings.HasPrefix(line, "index "):
+		return styles.DiffHeader.Render(line)
+	default:
+		return styles.DiffContext.Render(line)
+	}
 }
 
 // renderConflictWarning renders the file conflict warning banner
@@ -929,6 +1100,15 @@ func (m Model) renderHelp() string {
 		)
 	}
 
+	if m.showDiff {
+		return styles.HelpBar.Render(
+			styles.Primary.Bold(true).Render("DIFF VIEW") + "  " +
+				styles.HelpKey.Render("[j/k]") + " scroll  " +
+				styles.HelpKey.Render("[g/G]") + " top/bottom  " +
+				styles.HelpKey.Render("[d/Esc]") + " close",
+		)
+	}
+
 	keys := []string{
 		styles.HelpKey.Render("[1-9]") + " select",
 		styles.HelpKey.Render("[a]") + " add",
@@ -936,6 +1116,7 @@ func (m Model) renderHelp() string {
 		styles.HelpKey.Render("[i]") + " input",
 		styles.HelpKey.Render("[p]") + " pause",
 		styles.HelpKey.Render("[x]") + " stop",
+		styles.HelpKey.Render("[d]") + " diff",
 		styles.HelpKey.Render("[r]") + " pr",
 		styles.HelpKey.Render("[?]") + " help",
 		styles.HelpKey.Render("[q]") + " quit",

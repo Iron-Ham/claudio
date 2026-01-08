@@ -35,6 +35,11 @@ type Model struct {
 
 	// Instance outputs (instance ID -> output string)
 	outputs map[string]string
+
+	// Diff preview state
+	showDiff    bool   // Whether the diff panel is visible
+	diffContent string // Cached diff content for the active instance
+	diffScroll  int    // Scroll offset for navigating the diff
 }
 
 // NewModel creates a new TUI model

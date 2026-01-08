@@ -534,3 +534,8 @@ func (o *Orchestrator) GetInstance(id string) *Instance {
 	}
 	return nil
 }
+
+// GetInstanceDiff returns the git diff for an instance against main
+func (o *Orchestrator) GetInstanceDiff(worktreePath string) (string, error) {
+	return o.wt.GetDiffAgainstMain(worktreePath)
+}

@@ -179,6 +179,23 @@ var (
 
 	DropdownName = lipgloss.NewStyle().
 			Foreground(MutedColor)
+
+	// Diff syntax highlighting styles
+	DiffAdd = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#22C55E")) // Green for additions
+
+	DiffRemove = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#EF4444")) // Red for removals
+
+	DiffHeader = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#60A5FA")). // Blue for diff headers
+			Bold(true)
+
+	DiffHunk = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#A78BFA")) // Purple for @@ hunk markers
+
+	DiffContext = lipgloss.NewStyle().
+			Foreground(MutedColor) // Gray for context lines
 )
 
 // StatusColor returns the color for a given status
