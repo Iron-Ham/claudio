@@ -1,41 +1,38 @@
 package instance
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"sync"
 	"syscall"
-
-	"github.com/creack/pty"
 )
 
 // Manager handles a single Claude Code instance
 type Manager struct {
-	id          string
-	workdir     string
-	task        string
-	cmd         *exec.Cmd
-	pty         *os.File
-	outputBuf   *RingBuffer
-	mu          sync.RWMutex
-	running     bool
-	inputChan   chan []byte
-	outputChan  chan []byte
-	doneChan    chan struct{}
+	id        string
+	workdir   string
+	task      string
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	stdout    io.ReadCloser
+	stderr    io.ReadCloser
+	outputBuf *RingBuffer
+	mu        sync.RWMutex
+	running   bool
+	doneChan  chan struct{}
 }
 
 // NewManager creates a new instance manager
 func NewManager(id, workdir, task string) *Manager {
 	return &Manager{
-		id:         id,
-		workdir:    workdir,
-		task:       task,
-		outputBuf:  NewRingBuffer(100000), // 100KB output buffer
-		inputChan:  make(chan []byte, 100),
-		outputChan: make(chan []byte, 1000),
-		doneChan:   make(chan struct{}),
+		id:        id,
+		workdir:   workdir,
+		task:      task,
+		outputBuf: NewRingBuffer(100000), // 100KB output buffer
+		doneChan:  make(chan struct{}),
 	}
 }
 
@@ -48,24 +45,60 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("instance already running")
 	}
 
-	// Create the claude command with the task as the initial prompt
-	m.cmd = exec.Command("claude", "--dangerously-skip-permissions", m.task)
+	// Create the claude command with --print for non-interactive mode
+	// This gives us clean, isolated output without terminal interference
+	m.cmd = exec.Command("claude",
+		"--print",
+		"--output-format", "text",
+		"--dangerously-skip-permissions",
+		m.task,
+	)
 	m.cmd.Dir = m.workdir
-	m.cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
-	// Start with PTY
-	ptmx, err := pty.Start(m.cmd)
+	// Set up environment - no TERM to prevent ANSI escape sequences
+	env := os.Environ()
+	m.cmd.Env = append(env, "NO_COLOR=1")
+
+	// Create a new process group so it's isolated from our terminal
+	m.cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+
+	// Set up pipes
+	var err error
+	m.stdin, err = m.cmd.StdinPipe()
 	if err != nil {
+		return fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
+
+	m.stdout, err = m.cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+
+	m.stderr, err = m.cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+
+	// Start the process
+	if err := m.cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start claude: %w", err)
 	}
-	m.pty = ptmx
+
 	m.running = true
 
-	// Start output reader goroutine
-	go m.readOutput()
+	// Start output readers
+	go m.readPipe(m.stdout, "")
+	go m.readPipe(m.stderr, "[stderr] ")
 
-	// Start input writer goroutine
-	go m.writeInput()
+	// Wait for process in background
+	go func() {
+		m.cmd.Wait()
+		m.mu.Lock()
+		m.running = false
+		m.mu.Unlock()
+	}()
 
 	return nil
 }
@@ -80,19 +113,23 @@ func (m *Manager) Stop() error {
 	}
 
 	// Signal stop
-	close(m.doneChan)
+	select {
+	case <-m.doneChan:
+	default:
+		close(m.doneChan)
+	}
+
+	// Close stdin to signal EOF
+	if m.stdin != nil {
+		m.stdin.Close()
+	}
 
 	// Try graceful termination first
 	if m.cmd.Process != nil {
 		m.cmd.Process.Signal(syscall.SIGTERM)
 	}
 
-	// Close PTY
-	if m.pty != nil {
-		m.pty.Close()
-	}
-
-	// Wait for process
+	// Wait for process (with timeout handled by caller if needed)
 	if m.cmd != nil {
 		m.cmd.Wait()
 	}
@@ -125,18 +162,14 @@ func (m *Manager) Resume() error {
 	return m.cmd.Process.Signal(syscall.SIGCONT)
 }
 
-// SendInput sends input to the Claude process
+// SendInput sends input to the Claude process (limited in --print mode)
 func (m *Manager) SendInput(data []byte) {
-	select {
-	case m.inputChan <- data:
-	default:
-		// Channel full, drop input
-	}
-}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-// Output returns the output channel
-func (m *Manager) Output() <-chan []byte {
-	return m.outputChan
+	if m.stdin != nil {
+		m.stdin.Write(data)
+	}
 }
 
 // GetOutput returns all buffered output
@@ -167,72 +200,20 @@ func (m *Manager) ID() string {
 	return m.id
 }
 
-// readOutput reads from PTY and broadcasts to channels
-func (m *Manager) readOutput() {
-	buf := make([]byte, 4096)
+// readPipe reads from a pipe and stores in buffer
+func (m *Manager) readPipe(r io.Reader, prefix string) {
+	scanner := bufio.NewScanner(r)
+	// Increase buffer size for long lines
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
 
-	for {
+	for scanner.Scan() {
 		select {
 		case <-m.doneChan:
 			return
 		default:
-			n, err := m.pty.Read(buf)
-			if err != nil {
-				if err != io.EOF {
-					// Log error but don't stop
-					fmt.Fprintf(os.Stderr, "read error: %v\n", err)
-				}
-				m.mu.Lock()
-				m.running = false
-				m.mu.Unlock()
-				return
-			}
-
-			if n > 0 {
-				data := make([]byte, n)
-				copy(data, buf[:n])
-
-				// Write to buffer
-				m.outputBuf.Write(data)
-
-				// Send to output channel (non-blocking)
-				select {
-				case m.outputChan <- data:
-				default:
-					// Channel full, drop this chunk
-				}
-			}
+			line := prefix + scanner.Text() + "\n"
+			m.outputBuf.Write([]byte(line))
 		}
 	}
-}
-
-// writeInput reads from input channel and writes to PTY
-func (m *Manager) writeInput() {
-	for {
-		select {
-		case <-m.doneChan:
-			return
-		case data := <-m.inputChan:
-			m.mu.RLock()
-			if m.pty != nil {
-				m.pty.Write(data)
-			}
-			m.mu.RUnlock()
-		}
-	}
-}
-
-// Resize resizes the PTY
-func (m *Manager) Resize(rows, cols int) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if m.pty == nil {
-		return nil
-	}
-
-	return pty.Setsize(m.pty, &pty.Winsize{
-		Rows: uint16(rows),
-		Cols: uint16(cols),
-	})
 }

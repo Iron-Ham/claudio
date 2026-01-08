@@ -101,26 +101,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeypress processes keyboard input
 func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Handle input mode - forward ALL keys to the active instance
-	if m.inputMode {
-		// Ctrl+] exits input mode (traditional telnet escape)
-		if msg.Type == tea.KeyCtrlCloseBracket {
-			m.inputMode = false
-			return m, nil
-		}
-
-		// Forward the key to the active instance
-		if inst := m.activeInstance(); inst != nil {
-			mgr := m.orchestrator.GetInstanceManager(inst.ID)
-			if mgr != nil && mgr.Running() {
-				// Convert key to proper terminal sequence
-				data := keyToBytes(msg)
-				mgr.SendInput(data)
-			}
-		}
-		return m, nil
-	}
-
 	// Handle task input mode
 	if m.addingTask {
 		switch msg.Type {
@@ -220,53 +200,9 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "enter", "i":
-		// Enter input mode for the active instance
-		if inst := m.activeInstance(); inst != nil {
-			mgr := m.orchestrator.GetInstanceManager(inst.ID)
-			if mgr != nil && mgr.Running() {
-				m.inputMode = true
-			}
-		}
-		return m, nil
 	}
 
 	return m, nil
-}
-
-// keyToBytes converts a tea.KeyMsg to the appropriate byte sequence for a PTY
-func keyToBytes(msg tea.KeyMsg) []byte {
-	switch msg.Type {
-	case tea.KeyEnter:
-		return []byte{'\r'}
-	case tea.KeyBackspace:
-		return []byte{127}
-	case tea.KeyTab:
-		return []byte{'\t'}
-	case tea.KeySpace:
-		return []byte{' '}
-	case tea.KeyEsc:
-		return []byte{27}
-	case tea.KeyUp:
-		return []byte{27, '[', 'A'}
-	case tea.KeyDown:
-		return []byte{27, '[', 'B'}
-	case tea.KeyRight:
-		return []byte{27, '[', 'C'}
-	case tea.KeyLeft:
-		return []byte{27, '[', 'D'}
-	case tea.KeyCtrlC:
-		return []byte{3}
-	case tea.KeyCtrlD:
-		return []byte{4}
-	case tea.KeyCtrlZ:
-		return []byte{26}
-	case tea.KeyRunes:
-		return []byte(string(msg.Runes))
-	default:
-		// For any other key, try to use its string representation
-		return []byte(msg.String())
-	}
 }
 
 // updateOutputs fetches latest output from all instances
@@ -406,27 +342,16 @@ func (m Model) renderInstance(inst *orchestrator.Instance) string {
 	b.WriteString(styles.Subtitle.Render("Task: " + inst.Task))
 	b.WriteString("\n")
 
-	// Show input mode status
+	// Show running status
 	mgr := m.orchestrator.GetInstanceManager(inst.ID)
 	if mgr != nil && mgr.Running() {
-		if m.inputMode {
-			// Show active input mode indicator
-			inputBanner := lipgloss.NewStyle().
-				Bold(true).
-				Foreground(styles.TextColor).
-				Background(styles.SecondaryColor).
-				Padding(0, 1).
-				Render("INPUT MODE ACTIVE")
-			hint := inputBanner + "  " + styles.Muted.Render("Press ") +
-				styles.HelpKey.Render("Ctrl+]") + styles.Muted.Render(" to exit")
-			b.WriteString(hint)
-		} else {
-			// Show hint to enter input mode
-			hint := styles.Muted.Render("Press ") +
-				styles.HelpKey.Render("[i]") + styles.Muted.Render(" or ") +
-				styles.HelpKey.Render("[Enter]") + styles.Muted.Render(" to interact with Claude")
-			b.WriteString(hint)
-		}
+		runningBanner := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(styles.TextColor).
+			Background(styles.SecondaryColor).
+			Padding(0, 1).
+			Render("RUNNING")
+		b.WriteString(runningBanner + "  " + styles.Muted.Render("Claude is working autonomously"))
 	}
 	b.WriteString("\n")
 
@@ -483,37 +408,24 @@ Instance Control:
   p          Pause/resume instance
   x          Stop instance
 
-Input Mode:
-  i / Enter  Enter input mode (forward keys to Claude)
-  Ctrl+]     Exit input mode
-
 General:
   ?          Toggle help
   q          Quit
 
-In input mode, ALL keystrokes (including Esc, arrows, Enter)
-are sent directly to the Claude instance. Press Ctrl+] to
-return to navigation mode.
+Note: Instances run autonomously in --print mode.
+Each instance works independently on its assigned task.
 `
 	return styles.ContentBox.Width(m.width - 4).Render(help)
 }
 
 // renderHelp renders the help bar
 func (m Model) renderHelp() string {
-	if m.inputMode {
-		return styles.HelpBar.Render(
-			styles.SuccessMsg.Render("INPUT MODE") + "  " +
-				styles.HelpKey.Render("[Ctrl+]]") + " exit input mode  " +
-				"All keystrokes forwarded to Claude",
-		)
-	}
-
 	keys := []string{
 		styles.HelpKey.Render("[1-9]") + " select",
 		styles.HelpKey.Render("[a]") + " add",
 		styles.HelpKey.Render("[s]") + " start",
-		styles.HelpKey.Render("[i/Enter]") + " input",
 		styles.HelpKey.Render("[p]") + " pause",
+		styles.HelpKey.Render("[x]") + " stop",
 		styles.HelpKey.Render("[?]") + " help",
 		styles.HelpKey.Render("[q]") + " quit",
 	}

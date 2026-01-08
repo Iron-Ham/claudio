@@ -20,7 +20,6 @@ type Model struct {
 	addingTask   bool
 	taskInput    string
 	errorMessage string
-	inputMode    bool // When true, all keys are forwarded to the active instance
 
 	// Instance outputs (instance ID -> output string)
 	outputs map[string]string
