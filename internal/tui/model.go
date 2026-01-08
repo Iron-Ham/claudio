@@ -31,6 +31,10 @@ type Model struct {
 	infoMessage  string // Non-error status message
 	inputMode    bool   // When true, all keys are forwarded to the active instance's tmux session
 
+	// Command mode state (vim-style ex commands with ':' prefix)
+	commandMode   bool   // When true, we're typing a command after ':'
+	commandBuffer string // The command being typed (without the ':' prefix)
+
 	// Template dropdown state
 	showTemplates    bool   // Whether the template dropdown is visible
 	templateFilter   string // Current filter text (after the "/")

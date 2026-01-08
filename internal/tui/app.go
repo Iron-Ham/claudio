@@ -436,6 +436,11 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Handle command mode (vim-style ex commands with ':' prefix)
+	if m.commandMode {
+		return m.handleCommandInput(msg)
+	}
+
 	// Normal mode - clear info message on most actions
 	m.infoMessage = ""
 
@@ -448,24 +453,18 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
+	case ":":
+		// Enter command mode (vim-style)
+		m.commandMode = true
+		m.commandBuffer = ""
+		return m, nil
+
 	case "q", "ctrl+c":
 		m.quitting = true
 		return m, tea.Quit
 
 	case "?":
 		m.showHelp = !m.showHelp
-		return m, nil
-
-	case "c":
-		// Toggle conflict detail view (only if conflicts exist)
-		if len(m.conflicts) > 0 {
-			m.showConflicts = !m.showConflicts
-		}
-		return m, nil
-
-	case "a":
-		m.addingTask = true
-		m.taskInput = ""
 		return m, nil
 
 	case "tab", "l":
@@ -490,116 +489,12 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "s":
-		// Start active instance
-		if inst := m.activeInstance(); inst != nil {
-			if err := m.orchestrator.StartInstance(inst); err != nil {
-				m.errorMessage = err.Error()
-			}
-		}
-		return m, nil
-
-	case "p":
-		// Pause/resume active instance
-		if inst := m.activeInstance(); inst != nil {
-			mgr := m.orchestrator.GetInstanceManager(inst.ID)
-			if mgr != nil {
-				switch inst.Status {
-				case orchestrator.StatusPaused:
-					_ = mgr.Resume()
-					inst.Status = orchestrator.StatusWorking
-				case orchestrator.StatusWorking:
-					_ = mgr.Pause()
-					inst.Status = orchestrator.StatusPaused
-				}
-			}
-		}
-		return m, nil
-
-	case "x":
-		// Stop active instance (with optional auto-PR workflow)
-		if inst := m.activeInstance(); inst != nil {
-			prStarted, err := m.orchestrator.StopInstanceWithAutoPR(inst)
-			if err != nil {
-				m.errorMessage = err.Error()
-			} else if prStarted {
-				m.infoMessage = fmt.Sprintf("Instance stopped. Creating PR for %s...", inst.ID)
-			} else {
-				// Suggest creating a PR after stopping (auto-PR not enabled)
-				m.infoMessage = fmt.Sprintf("Instance stopped. Create PR with: claudio pr %s", inst.ID)
-			}
-		}
-		return m, nil
-
-	case "r":
-		// Show PR creation command for active instance
-		if inst := m.activeInstance(); inst != nil {
-			m.infoMessage = fmt.Sprintf("Create PR: claudio pr %s  (add --draft for draft PR)", inst.ID)
-			m.errorMessage = "" // Clear any error
-		}
-		return m, nil
-
-	case "R":
-		// Reconnect to a stopped/paused/completed instance
-		if inst := m.activeInstance(); inst != nil {
-			// Only allow reconnecting to non-running instances
-			if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
-				m.infoMessage = "Instance is already running. Use [p] to pause/resume or [x] to stop."
-				return m, nil
-			}
-			if inst.Status == orchestrator.StatusCreatingPR {
-				m.infoMessage = "Instance is creating PR. Wait for it to complete."
-				return m, nil
-			}
-			// Attempt to reconnect
-			if err := m.orchestrator.ReconnectInstance(inst); err != nil {
-				m.errorMessage = fmt.Sprintf("Failed to reconnect: %v", err)
-			} else {
-				m.infoMessage = fmt.Sprintf("Reconnected to instance %s", inst.ID)
-				m.errorMessage = "" // Clear any error
-			}
-		}
-		return m, nil
-
 	case "enter", "i":
 		// Enter input mode for the active instance
 		if inst := m.activeInstance(); inst != nil {
 			mgr := m.orchestrator.GetInstanceManager(inst.ID)
 			if mgr != nil && mgr.Running() {
 				m.inputMode = true
-			}
-		}
-		return m, nil
-
-	case "t":
-		// Show tmux attach command for the active instance
-		if inst := m.activeInstance(); inst != nil {
-			mgr := m.orchestrator.GetInstanceManager(inst.ID)
-			if mgr != nil {
-				m.infoMessage = "Attach with: " + mgr.AttachCommand()
-				m.errorMessage = "" // Clear any error
-			}
-		}
-		return m, nil
-
-	case "d":
-		// Toggle diff preview for the active instance
-		if m.showDiff {
-			m.showDiff = false
-			m.diffContent = ""
-			m.diffScroll = 0
-			return m, nil
-		}
-		if inst := m.activeInstance(); inst != nil {
-			diff, err := m.orchestrator.GetInstanceDiff(inst.WorktreePath)
-			if err != nil {
-				m.errorMessage = fmt.Sprintf("Failed to get diff: %v", err)
-			} else if diff == "" {
-				m.infoMessage = "No changes to show"
-			} else {
-				m.diffContent = diff
-				m.showDiff = true
-				m.diffScroll = 0
 			}
 		}
 		return m, nil
@@ -700,7 +595,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Only allow restarting stuck, timeout, completed, paused, or error instances
 			switch inst.Status {
 			case orchestrator.StatusWorking, orchestrator.StatusWaitingInput:
-				m.infoMessage = "Instance is running. Use [x] to stop it first, or [p] to pause."
+				m.infoMessage = "Instance is running. Use [:x] to stop it first, or [:p] to pause."
 				return m, nil
 			case orchestrator.StatusCreatingPR:
 				m.infoMessage = "Instance is creating PR. Wait for it to complete."
@@ -782,52 +677,6 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "C":
-		// Clear all completed instances
-		removed, err := m.orchestrator.ClearCompletedInstances(m.session)
-		if err != nil {
-			m.errorMessage = err.Error()
-		} else if removed == 0 {
-			m.infoMessage = "No completed instances to clear"
-		} else {
-			m.infoMessage = fmt.Sprintf("Cleared %d completed instance(s)", removed)
-			// Adjust active tab if needed
-			if m.activeTab >= m.instanceCount() {
-				m.activeTab = m.instanceCount() - 1
-				if m.activeTab < 0 {
-					m.activeTab = 0
-				}
-			}
-			m.ensureActiveVisible()
-		}
-		m.errorMessage = "" // Clear any error
-		return m, nil
-
-	case "D":
-		// Close/remove active instance from sidebar
-		if inst := m.activeInstance(); inst != nil {
-			instanceID := inst.ID
-			if err := m.orchestrator.RemoveInstance(m.session, instanceID, true); err != nil {
-				m.errorMessage = fmt.Sprintf("Failed to remove instance: %v", err)
-			} else {
-				m.infoMessage = fmt.Sprintf("Removed instance %s", instanceID)
-				// Adjust active tab if needed
-				if m.activeTab >= m.instanceCount() {
-					m.activeTab = m.instanceCount() - 1
-					if m.activeTab < 0 {
-						m.activeTab = 0
-					}
-				}
-				m.ensureActiveVisible()
-			}
-		}
-		return m, nil
-
-	case "m":
-		// Toggle stats/metrics panel
-		m.showStats = !m.showStats
-		return m, nil
-
 	case "/":
 		// Enter search mode
 		m.searchMode = true
@@ -856,13 +705,396 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Clear search
 		m.clearSearch()
 		return m, nil
+	}
 
-	case "F":
-		// Enter filter mode
-		m.filterMode = true
+	return m, nil
+}
+
+// handleCommandInput handles keystrokes when in command mode (after pressing ':')
+func (m Model) handleCommandInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		// Exit command mode without executing
+		m.commandMode = false
+		m.commandBuffer = ""
+		return m, nil
+
+	case tea.KeyEnter:
+		// Execute the command and exit command mode
+		m.commandMode = false
+		cmd := m.commandBuffer
+		m.commandBuffer = ""
+		return m.executeCommand(cmd)
+
+	case tea.KeyBackspace, tea.KeyDelete:
+		// Delete last character from command buffer
+		if len(m.commandBuffer) > 0 {
+			m.commandBuffer = m.commandBuffer[:len(m.commandBuffer)-1]
+		}
+		// If buffer is empty after backspace, exit command mode
+		if len(m.commandBuffer) == 0 {
+			m.commandMode = false
+		}
+		return m, nil
+
+	case tea.KeySpace:
+		m.commandBuffer += " "
+		return m, nil
+
+	case tea.KeyRunes:
+		// Add typed characters to the command buffer
+		m.commandBuffer += string(msg.Runes)
 		return m, nil
 	}
 
+	return m, nil
+}
+
+// executeCommand parses and executes a vim-style command
+func (m Model) executeCommand(cmd string) (tea.Model, tea.Cmd) {
+	// Trim whitespace
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return m, nil
+	}
+
+	// Clear messages before executing
+	m.infoMessage = ""
+	m.errorMessage = ""
+
+	// Parse command (support both short and long forms)
+	switch cmd {
+	// Instance control commands
+	case "s", "start":
+		return m.cmdStart()
+	case "x", "stop":
+		return m.cmdStop()
+	case "p", "pause":
+		return m.cmdPause()
+	case "R", "reconnect":
+		return m.cmdReconnect()
+	case "restart":
+		return m.cmdRestart()
+
+	// Instance management commands
+	case "a", "add":
+		return m.cmdAdd()
+	case "D", "remove":
+		return m.cmdRemove()
+	case "kill":
+		return m.cmdKill()
+	case "C", "clear":
+		return m.cmdClearCompleted()
+
+	// View toggle commands
+	case "d", "diff":
+		return m.cmdDiff()
+	case "m", "metrics", "stats":
+		return m.cmdStats()
+	case "c", "conflicts":
+		return m.cmdConflicts()
+	case "f", "F", "filter":
+		return m.cmdFilter()
+
+	// Utility commands
+	case "t", "tmux":
+		return m.cmdTmux()
+	case "r", "pr":
+		return m.cmdPR()
+
+	// Help commands
+	case "h", "help":
+		m.showHelp = !m.showHelp
+		return m, nil
+	case "q", "quit":
+		m.quitting = true
+		return m, tea.Quit
+
+	default:
+		m.errorMessage = fmt.Sprintf("Unknown command: %s (type :h for help)", cmd)
+		return m, nil
+	}
+}
+
+// Command implementations
+
+func (m Model) cmdStart() (tea.Model, tea.Cmd) {
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	// Guard against starting already-running instances
+	if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
+		m.infoMessage = "Instance is already running. Use :p to pause/resume or :x to stop."
+		return m, nil
+	}
+	if inst.Status == orchestrator.StatusCreatingPR {
+		m.infoMessage = "Instance is creating PR. Wait for it to complete."
+		return m, nil
+	}
+
+	if err := m.orchestrator.StartInstance(inst); err != nil {
+		m.errorMessage = err.Error()
+	} else {
+		m.infoMessage = fmt.Sprintf("Started instance %s", inst.ID)
+	}
+	return m, nil
+}
+
+func (m Model) cmdStop() (tea.Model, tea.Cmd) {
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	prStarted, err := m.orchestrator.StopInstanceWithAutoPR(inst)
+	if err != nil {
+		m.errorMessage = err.Error()
+	} else if prStarted {
+		m.infoMessage = fmt.Sprintf("Instance stopped. Creating PR for %s...", inst.ID)
+	} else {
+		m.infoMessage = fmt.Sprintf("Instance stopped. Create PR with: claudio pr %s", inst.ID)
+	}
+	return m, nil
+}
+
+func (m Model) cmdPause() (tea.Model, tea.Cmd) {
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	mgr := m.orchestrator.GetInstanceManager(inst.ID)
+	if mgr == nil {
+		m.infoMessage = "Instance has no manager"
+		return m, nil
+	}
+
+	switch inst.Status {
+	case orchestrator.StatusPaused:
+		_ = mgr.Resume()
+		inst.Status = orchestrator.StatusWorking
+		m.infoMessage = fmt.Sprintf("Resumed instance %s", inst.ID)
+	case orchestrator.StatusWorking:
+		_ = mgr.Pause()
+		inst.Status = orchestrator.StatusPaused
+		m.infoMessage = fmt.Sprintf("Paused instance %s", inst.ID)
+	default:
+		m.infoMessage = "Instance is not in a pausable state"
+	}
+	return m, nil
+}
+
+func (m Model) cmdReconnect() (tea.Model, tea.Cmd) {
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	// Only allow reconnecting to non-running instances
+	if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
+		m.infoMessage = "Instance is already running. Use :p to pause/resume or :x to stop."
+		return m, nil
+	}
+	if inst.Status == orchestrator.StatusCreatingPR {
+		m.infoMessage = "Instance is creating PR. Wait for it to complete."
+		return m, nil
+	}
+
+	if err := m.orchestrator.ReconnectInstance(inst); err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to reconnect: %v", err)
+	} else {
+		m.infoMessage = fmt.Sprintf("Reconnected to instance %s", inst.ID)
+	}
+	return m, nil
+}
+
+func (m Model) cmdRestart() (tea.Model, tea.Cmd) {
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	// Only allow restarting non-running instances
+	switch inst.Status {
+	case orchestrator.StatusWorking, orchestrator.StatusWaitingInput:
+		m.infoMessage = "Instance is running. Use :x to stop it first, or :p to pause."
+		return m, nil
+	case orchestrator.StatusCreatingPR:
+		m.infoMessage = "Instance is creating PR. Wait for it to complete."
+		return m, nil
+	}
+
+	// Stop the instance if it's still running in tmux
+	mgr := m.orchestrator.GetInstanceManager(inst.ID)
+	if mgr != nil {
+		_ = mgr.Stop()
+		mgr.ClearTimeout() // Reset timeout state
+	}
+
+	// Restart with same task
+	if err := m.orchestrator.ReconnectInstance(inst); err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to restart instance: %v", err)
+	} else {
+		m.infoMessage = fmt.Sprintf("Instance %s restarted with same task", inst.ID)
+	}
+	return m, nil
+}
+
+func (m Model) cmdAdd() (tea.Model, tea.Cmd) {
+	m.addingTask = true
+	m.taskInput = ""
+	m.taskInputCursor = 0
+	return m, nil
+}
+
+func (m Model) cmdRemove() (tea.Model, tea.Cmd) {
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	instanceID := inst.ID
+	if err := m.orchestrator.RemoveInstance(m.session, instanceID, true); err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to remove instance: %v", err)
+	} else {
+		m.infoMessage = fmt.Sprintf("Removed instance %s", instanceID)
+		// Adjust active tab if needed
+		if m.activeTab >= m.instanceCount() {
+			m.activeTab = m.instanceCount() - 1
+			if m.activeTab < 0 {
+				m.activeTab = 0
+			}
+		}
+		m.ensureActiveVisible()
+	}
+	return m, nil
+}
+
+func (m Model) cmdKill() (tea.Model, tea.Cmd) {
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	// Stop the instance first
+	mgr := m.orchestrator.GetInstanceManager(inst.ID)
+	if mgr != nil {
+		_ = mgr.Stop()
+	}
+
+	// Remove the instance
+	if err := m.orchestrator.RemoveInstance(m.session, inst.ID, true); err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to remove instance: %v", err)
+	} else {
+		m.infoMessage = fmt.Sprintf("Instance %s killed and removed", inst.ID)
+		// Adjust active tab if needed
+		if m.activeTab >= len(m.session.Instances) && m.activeTab > 0 {
+			m.activeTab--
+		}
+	}
+	return m, nil
+}
+
+func (m Model) cmdClearCompleted() (tea.Model, tea.Cmd) {
+	removed, err := m.orchestrator.ClearCompletedInstances(m.session)
+	if err != nil {
+		m.errorMessage = err.Error()
+	} else if removed == 0 {
+		m.infoMessage = "No completed instances to clear"
+	} else {
+		m.infoMessage = fmt.Sprintf("Cleared %d completed instance(s)", removed)
+		// Adjust active tab if needed
+		if m.activeTab >= m.instanceCount() {
+			m.activeTab = m.instanceCount() - 1
+			if m.activeTab < 0 {
+				m.activeTab = 0
+			}
+		}
+		m.ensureActiveVisible()
+	}
+	return m, nil
+}
+
+func (m Model) cmdDiff() (tea.Model, tea.Cmd) {
+	if m.showDiff {
+		m.showDiff = false
+		m.diffContent = ""
+		m.diffScroll = 0
+		return m, nil
+	}
+
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	diff, err := m.orchestrator.GetInstanceDiff(inst.WorktreePath)
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to get diff: %v", err)
+	} else if diff == "" {
+		m.infoMessage = "No changes to show"
+	} else {
+		m.diffContent = diff
+		m.showDiff = true
+		m.diffScroll = 0
+	}
+	return m, nil
+}
+
+func (m Model) cmdStats() (tea.Model, tea.Cmd) {
+	m.showStats = !m.showStats
+	return m, nil
+}
+
+func (m Model) cmdConflicts() (tea.Model, tea.Cmd) {
+	if len(m.conflicts) > 0 {
+		m.showConflicts = !m.showConflicts
+	} else {
+		m.infoMessage = "No conflicts detected"
+	}
+	return m, nil
+}
+
+func (m Model) cmdFilter() (tea.Model, tea.Cmd) {
+	m.filterMode = true
+	return m, nil
+}
+
+func (m Model) cmdTmux() (tea.Model, tea.Cmd) {
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	mgr := m.orchestrator.GetInstanceManager(inst.ID)
+	if mgr == nil {
+		m.infoMessage = "Instance has no manager"
+		return m, nil
+	}
+
+	m.infoMessage = "Attach with: " + mgr.AttachCommand()
+	return m, nil
+}
+
+func (m Model) cmdPR() (tea.Model, tea.Cmd) {
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	m.infoMessage = fmt.Sprintf("Create PR: claudio pr %s  (add --draft for draft PR)", inst.ID)
 	return m, nil
 }
 
@@ -2158,60 +2390,55 @@ func (m Model) renderTemplateDropdown() string {
 // renderHelpPanel renders the help overlay
 func (m Model) renderHelpPanel(width int) string {
 	help := `
-Keyboard Shortcuts
+Claudio uses vim-style commands. Press : to enter command mode.
 
-Navigation:
-  Tab / l    Next instance
-  Shift+Tab  Previous instance
-  1-9        Select instance by number
+Navigation (always available):
+  Tab / l      Next instance
+  Shift+Tab/h  Previous instance
+  1-9          Select instance by number
+  j / ↓        Scroll down one line
+  k / ↑        Scroll up one line
+  Ctrl+D/U     Scroll half page down/up
+  Ctrl+F/B     Scroll full page down/up
+  g / G        Jump to top / bottom
 
-Output Scrolling:
-  ↑ / k      Scroll up one line
-  ↓ / j      Scroll down one line
-  Ctrl+U     Scroll up half page
-  Ctrl+D     Scroll down half page
-  Ctrl+B     Scroll up full page
-  Ctrl+F     Scroll down full page
-  g          Jump to top (oldest output)
-  G          Jump to bottom (re-enables auto-scroll)
+Commands (press : first, then type command):
+  :s :start      Start selected instance
+  :x :stop       Stop instance
+  :p :pause      Pause/resume instance
+  :a :add        Add new instance
+  :R :reconnect  Reconnect to stopped instance
+  :restart       Restart stuck/timed out instance
+  :D :remove     Close/remove instance
+  :kill          Kill and remove instance
+  :C :clear      Clear completed instances
 
-Instance Control:
-  a          Add new instance
-  s          Start selected instance
-  p          Pause/resume instance
-  x          Stop instance
-  D          Close/remove instance
-  R          Reconnect to stopped/paused instance
-  Ctrl+R     Restart stuck/timed out instance
-  Ctrl+K     Kill and remove instance
-  C          Clear completed instances
-  r          Show PR creation command
-  d          Show diff preview
+  :d :diff       Toggle diff preview
+  :m :stats      Toggle metrics panel
+  :c :conflicts  Toggle conflict view
+  :f :filter     Open filter panel
+  :t :tmux       Show tmux attach command
+  :r :pr         Show PR creation command
+
+  :h :help       Toggle this help
+  :q :quit       Quit Claudio
 
 Input Mode:
-  i / Enter  Enter input mode (interact with Claude)
-  Ctrl+]     Exit input mode
-  t          Show tmux attach command
+  i / Enter      Enter input mode (interact with Claude)
+  Ctrl+]         Exit input mode back to navigation
 
-Search & Filter:
-  /          Search output (type pattern, Enter to confirm)
-  n / N      Next / previous match
-  Ctrl+/     Clear search
-  F          Open filter panel
-  r:pattern  Regex search (prefix with r:)
-
-General:
-  ?          Toggle help
-  q          Quit
+Search (vim-style):
+  /              Start search (type pattern, Enter to confirm)
+  n / N          Next / previous match
+  Ctrl+/         Clear search
+  r:pattern      Use regex (prefix with r:)
 
 Search Tips:
   • Search is case-insensitive by default
   • Use r: prefix for regex (e.g. /r:error.*file)
-  • Press n/N to cycle through matches
   • Matches highlighted in yellow, current in orange
 
-Filter Categories:
-  Toggle in filter panel (F):
+Filter Categories (toggle in filter panel :f):
   • Errors: Stack traces, error messages
   • Warnings: Warning indicators
   • Tool calls: File operations, bash commands
@@ -2219,20 +2446,18 @@ Filter Categories:
   • Progress: Progress indicators
 
 Input Mode Details:
-  In input mode, all keystrokes are forwarded to Claude:
-  • All Ctrl+key combinations (Ctrl+O, Ctrl+R, Ctrl+W, etc.)
-  • Shift+Tab for backward navigation
+  All keystrokes are forwarded to Claude, including:
+  • Ctrl+key combinations (Ctrl+O, Ctrl+R, Ctrl+W, etc.)
   • Function keys (F1-F12)
   • Navigation keys (Page Up/Down, Home, End)
-  • Text paste with bracketed paste mode support
+  • Pasted text with bracketed paste support
   Press Ctrl+] to return to navigation mode.
 
-Auto-scroll follows new output by default. Scroll up to pause,
-press G to resume following. A "NEW OUTPUT" indicator appears
-when new content arrives while scrolled up.
-
-Creating Pull Requests:
-  After completing work, use: claudio pr <instance-id>
+General:
+  ?              Quick toggle help
+  q              Quick quit
+  Auto-scroll follows new output. Scroll up to pause,
+  press G to resume. "NEW OUTPUT" appears when paused.
 `
 	return styles.ContentBox.Width(width - 4).Render(help)
 }
@@ -2440,12 +2665,22 @@ func (m Model) renderHelp() string {
 		)
 	}
 
+	if m.commandMode {
+		return styles.HelpBar.Render(
+			styles.Primary.Bold(true).Render(":") + styles.Primary.Render(m.commandBuffer) +
+				styles.Muted.Render("█") + "  " +
+				styles.HelpKey.Render("[Enter]") + " execute  " +
+				styles.HelpKey.Render("[Esc]") + " cancel  " +
+				styles.Muted.Render("Type command (e.g., :s :a :d :h)"),
+		)
+	}
+
 	if m.showDiff {
 		return styles.HelpBar.Render(
 			styles.Primary.Bold(true).Render("DIFF VIEW") + "  " +
 				styles.HelpKey.Render("[j/k]") + " scroll  " +
 				styles.HelpKey.Render("[g/G]") + " top/bottom  " +
-				styles.HelpKey.Render("[d/Esc]") + " close",
+				styles.HelpKey.Render("[:d/Esc]") + " close",
 		)
 	}
 
@@ -2455,7 +2690,7 @@ func (m Model) renderHelp() string {
 				styles.HelpKey.Render("[e/w/t/h/p]") + " toggle categories  " +
 				styles.HelpKey.Render("[a]") + " all  " +
 				styles.HelpKey.Render("[c]") + " clear  " +
-				styles.HelpKey.Render("[Esc/F]") + " close",
+				styles.HelpKey.Render("[Esc]") + " close",
 		)
 	}
 
@@ -2470,23 +2705,18 @@ func (m Model) renderHelp() string {
 	}
 
 	keys := []string{
+		styles.HelpKey.Render("[:]") + " cmd",
 		styles.HelpKey.Render("[j/k]") + " scroll",
 		styles.HelpKey.Render("[Tab]") + " switch",
-		styles.HelpKey.Render("[a]") + " add",
-		styles.HelpKey.Render("[s]") + " start",
-		styles.HelpKey.Render("[R]") + " reconnect",
 		styles.HelpKey.Render("[i]") + " input",
 		styles.HelpKey.Render("[/]") + " search",
-		styles.HelpKey.Render("[d]") + " diff",
-		styles.HelpKey.Render("[m]") + " stats",
-		styles.HelpKey.Render("[r]") + " pr",
 		styles.HelpKey.Render("[?]") + " help",
 		styles.HelpKey.Render("[q]") + " quit",
 	}
 
-	// Add conflict shortcut when conflicts exist
+	// Add conflict indicator when conflicts exist
 	if len(m.conflicts) > 0 {
-		conflictKey := styles.Warning.Bold(true).Render("[c]") + styles.Warning.Render(" conflicts")
+		conflictKey := styles.Warning.Bold(true).Render("[:c]") + styles.Warning.Render(" conflicts")
 		keys = append([]string{conflictKey}, keys...)
 	}
 
