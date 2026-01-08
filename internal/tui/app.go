@@ -313,7 +313,7 @@ func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
 	}
 }
 
-// updateOutputs fetches latest output from all instances
+// updateOutputs fetches latest output from all instances and checks for conflicts
 func (m *Model) updateOutputs() {
 	if m.session == nil {
 		return
@@ -327,6 +327,12 @@ func (m *Model) updateOutputs() {
 				m.outputs[inst.ID] = string(output)
 			}
 		}
+	}
+
+	// Check for file conflicts
+	detector := m.orchestrator.GetConflictDetector()
+	if detector != nil {
+		m.conflicts = detector.GetConflicts()
 	}
 }
 
@@ -355,6 +361,12 @@ func (m Model) View() string {
 	// Content area
 	content := m.renderContent()
 	b.WriteString(content)
+
+	// Conflict warning banner (always show if conflicts exist)
+	if len(m.conflicts) > 0 {
+		b.WriteString("\n")
+		b.WriteString(m.renderConflictWarning())
+	}
 
 	// Info or error message if any
 	if m.infoMessage != "" {
@@ -388,19 +400,37 @@ func (m Model) renderTabs() string {
 		return styles.Muted.Render("No instances. Press [a] to add one.")
 	}
 
+	// Build a set of instance IDs that have conflicts
+	conflictingInstances := make(map[string]bool)
+	for _, c := range m.conflicts {
+		for _, instID := range c.Instances {
+			conflictingInstances[instID] = true
+		}
+	}
+
 	var tabs []string
 	for i, inst := range m.session.Instances {
+		// Add conflict indicator if instance has conflicts
 		label := fmt.Sprintf("[%d] %s", i+1, truncate(inst.Task, 20))
+		if conflictingInstances[inst.ID] {
+			label = fmt.Sprintf("[%d] ⚠ %s", i+1, truncate(inst.Task, 18))
+		}
 
 		var style lipgloss.Style
 		if i == m.activeTab {
-			if inst.Status == orchestrator.StatusWaitingInput {
+			if conflictingInstances[inst.ID] {
+				// Active tab with conflict - use warning background
+				style = styles.TabInputNeeded
+			} else if inst.Status == orchestrator.StatusWaitingInput {
 				style = styles.TabInputNeeded
 			} else {
 				style = styles.TabActive
 			}
 		} else {
-			if inst.Status == orchestrator.StatusWaitingInput {
+			if conflictingInstances[inst.ID] {
+				// Inactive but has conflict - use warning color
+				style = styles.TabInactive.Copy().Foreground(styles.WarningColor)
+			} else if inst.Status == orchestrator.StatusWaitingInput {
 				// Inactive but needs input - use warning color
 				style = styles.TabInactive.Copy().Foreground(styles.WarningColor)
 			} else {
@@ -565,6 +595,48 @@ You can also attach directly to a session with:
   tmux attach -t claudio-<instance-id>
 `
 	return styles.ContentBox.Width(m.width - 4).Render(help)
+}
+
+// renderConflictWarning renders the file conflict warning banner
+func (m Model) renderConflictWarning() string {
+	if len(m.conflicts) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+
+	// Banner header
+	banner := styles.ConflictBanner.Render("⚠ FILE CONFLICT DETECTED")
+	b.WriteString(banner)
+	b.WriteString("  ")
+
+	// Build conflict details
+	var conflictDetails []string
+	for _, c := range m.conflicts {
+		// Find instance names/numbers for the conflicting instances
+		var instanceLabels []string
+		for _, instID := range c.Instances {
+			// Find the instance index
+			for i, inst := range m.session.Instances {
+				if inst.ID == instID {
+					instanceLabels = append(instanceLabels, fmt.Sprintf("[%d]", i+1))
+					break
+				}
+			}
+		}
+		detail := fmt.Sprintf("%s (instances %s)", c.RelativePath, strings.Join(instanceLabels, ", "))
+		conflictDetails = append(conflictDetails, detail)
+	}
+
+	// Show conflict files
+	if len(conflictDetails) <= 2 {
+		b.WriteString(styles.Warning.Render(strings.Join(conflictDetails, "; ")))
+	} else {
+		// Show count and first file
+		b.WriteString(styles.Warning.Render(fmt.Sprintf("%d files: %s, ...", len(conflictDetails), conflictDetails[0])))
+	}
+
+	return b.String()
 }
 
 // renderHelp renders the help bar

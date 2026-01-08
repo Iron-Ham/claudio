@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 )
@@ -18,9 +19,10 @@ type Orchestrator struct {
 	claudioDir  string
 	worktreeDir string
 
-	session   *Session
-	instances map[string]*instance.Manager
-	wt        *worktree.Manager
+	session          *Session
+	instances        map[string]*instance.Manager
+	wt               *worktree.Manager
+	conflictDetector *conflict.Detector
 
 	mu sync.RWMutex
 }
@@ -35,12 +37,19 @@ func New(baseDir string) (*Orchestrator, error) {
 		return nil, fmt.Errorf("failed to create worktree manager: %w", err)
 	}
 
+	// Create conflict detector
+	detector, err := conflict.New()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create conflict detector: %w", err)
+	}
+
 	return &Orchestrator{
-		baseDir:     baseDir,
-		claudioDir:  claudioDir,
-		worktreeDir: worktreeDir,
-		instances:   make(map[string]*instance.Manager),
-		wt:          wt,
+		baseDir:          baseDir,
+		claudioDir:       claudioDir,
+		worktreeDir:      worktreeDir,
+		instances:        make(map[string]*instance.Manager),
+		wt:               wt,
+		conflictDetector: detector,
 	}, nil
 }
 
@@ -72,6 +81,9 @@ func (o *Orchestrator) StartSession(name string) (*Session, error) {
 	// Create new session
 	o.session = NewSession(name, o.baseDir)
 
+	// Start conflict detector
+	o.conflictDetector.Start()
+
 	// Save session state
 	if err := o.saveSession(); err != nil {
 		return nil, fmt.Errorf("failed to save session: %w", err)
@@ -97,6 +109,13 @@ func (o *Orchestrator) LoadSession() (*Session, error) {
 	}
 
 	o.session = &session
+
+	// Start conflict detector and register existing instances
+	o.conflictDetector.Start()
+	for _, inst := range session.Instances {
+		o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath)
+	}
+
 	return o.session, nil
 }
 
@@ -125,6 +144,12 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 	// Create instance manager
 	mgr := instance.NewManager(inst.ID, inst.WorktreePath, task)
 	o.instances[inst.ID] = mgr
+
+	// Register with conflict detector
+	if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
+		// Non-fatal, just log
+		fmt.Fprintf(os.Stderr, "Warning: failed to watch instance for conflicts: %v\n", err)
+	}
 
 	// Update shared context
 	if err := o.updateContext(); err != nil {
@@ -188,6 +213,11 @@ func (o *Orchestrator) StopSession(session *Session, force bool) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
+	// Stop conflict detector
+	if o.conflictDetector != nil {
+		o.conflictDetector.Stop()
+	}
+
 	// Stop all instances
 	for _, inst := range session.Instances {
 		if mgr, ok := o.instances[inst.ID]; ok {
@@ -221,6 +251,11 @@ func (o *Orchestrator) Session() *Session {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 	return o.session
+}
+
+// GetConflictDetector returns the conflict detector
+func (o *Orchestrator) GetConflictDetector() *conflict.Detector {
+	return o.conflictDetector
 }
 
 // saveSession persists the session state to disk
