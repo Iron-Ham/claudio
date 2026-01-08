@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/conflict"
@@ -194,19 +193,14 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 		o.mu.Unlock()
 	}
 
-	// Configure notification callbacks
-	idleTimeout := viper.GetDuration("notifications.idle_timeout")
-	if idleTimeout == 0 {
-		idleTimeout = 3 * time.Second // Default to 3 seconds
-	}
-	mgr.SetIdleTimeout(idleTimeout)
-
-	mgr.SetExitCallback(func(id string) {
-		o.handleInstanceExit(id)
-	})
-
-	mgr.SetWaitingInputCallback(func(id string) {
-		o.handleInstanceWaitingInput(id)
+	// Configure state change callback for notifications
+	mgr.SetStateCallback(func(id string, state instance.WaitingState) {
+		switch state {
+		case instance.StateCompleted:
+			o.handleInstanceExit(id)
+		case instance.StateWaitingInput, instance.StateWaitingQuestion, instance.StateWaitingPermission:
+			o.handleInstanceWaitingInput(id)
+		}
 	})
 
 	if err := mgr.Start(); err != nil {
