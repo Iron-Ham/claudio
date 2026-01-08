@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"strings"
+
+	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -27,17 +30,24 @@ func init() {
 }
 
 func initConfig() {
+	// Set defaults first so they're available even without a config file
+	config.SetDefaults()
+
 	if cfgFile := viper.GetString("config"); cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
 	} else {
 		viper.SetConfigName("config")
 		viper.SetConfigType("yaml")
+		viper.AddConfigPath(config.ConfigDir())
 		viper.AddConfigPath("$HOME/.config/claudio")
 		viper.AddConfigPath(".")
 	}
 
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix("CLAUDIO")
+	// Replace dots with underscores for nested keys in env vars
+	// e.g., CLAUDIO_COMPLETION_DEFAULT_ACTION for completion.default_action
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
 	// Read config file if it exists (ignore error if not found)
 	_ = viper.ReadInConfig()
