@@ -17,8 +17,11 @@ The instance will be created in its own worktree and start working on the specif
 	RunE: runAdd,
 }
 
+var autoStart bool
+
 func init() {
 	rootCmd.AddCommand(addCmd)
+	addCmd.Flags().BoolVarP(&autoStart, "start", "s", false, "Automatically start the instance after adding")
 }
 
 func runAdd(cmd *cobra.Command, args []string) error {
@@ -50,5 +53,14 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Added instance %s\n", instance.ID)
 	fmt.Printf("Task: %s\n", instance.Task)
 	fmt.Printf("Worktree: %s\n", instance.WorktreePath)
+
+	// Auto-start if requested
+	if autoStart {
+		if err := orch.StartInstance(instance); err != nil {
+			return fmt.Errorf("failed to start instance: %w", err)
+		}
+		fmt.Println("Instance started")
+	}
+
 	return nil
 }
