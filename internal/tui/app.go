@@ -224,6 +224,13 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = !m.showHelp
 		return m, nil
 
+	case "c":
+		// Toggle conflict detail view (only if conflicts exist)
+		if len(m.conflicts) > 0 {
+			m.showConflicts = !m.showConflicts
+		}
+		return m, nil
+
 	case "a":
 		m.addingTask = true
 		m.taskInput = ""
@@ -797,6 +804,10 @@ func (m Model) renderContent(width int) string {
 		return m.renderDiffPanel(width)
 	}
 
+	if m.showConflicts && len(m.conflicts) > 0 {
+		return m.renderConflictPanel(width)
+	}
+
 	inst := m.activeInstance()
 	if inst == nil {
 		return styles.ContentBox.Width(width - 4).Render(
@@ -1086,9 +1097,11 @@ func (m Model) renderConflictWarning() string {
 
 	var b strings.Builder
 
-	// Banner header
+	// Banner header with hint that it's interactive
 	banner := styles.ConflictBanner.Render("⚠ FILE CONFLICT DETECTED")
 	b.WriteString(banner)
+	b.WriteString("  ")
+	b.WriteString(styles.Muted.Render("(press [c] for details)"))
 	b.WriteString("  ")
 
 	// Build conflict details
@@ -1118,6 +1131,62 @@ func (m Model) renderConflictWarning() string {
 	}
 
 	return b.String()
+}
+
+// renderConflictPanel renders a detailed conflict view showing all files and instances
+func (m Model) renderConflictPanel(width int) string {
+	var b strings.Builder
+
+	b.WriteString(styles.Title.Render("⚠ File Conflicts"))
+	b.WriteString("\n\n")
+
+	b.WriteString(styles.Muted.Render("The following files have been modified by multiple instances:"))
+	b.WriteString("\n\n")
+
+	// Build instance ID to number mapping
+	instanceNum := make(map[string]int)
+	instanceTask := make(map[string]string)
+	for i, inst := range m.session.Instances {
+		instanceNum[inst.ID] = i + 1
+		instanceTask[inst.ID] = inst.Task
+	}
+
+	// Render each conflict
+	for i, c := range m.conflicts {
+		// File path in warning color
+		fileLine := styles.Warning.Bold(true).Render(c.RelativePath)
+		b.WriteString(fileLine)
+		b.WriteString("\n")
+
+		// List the instances that modified this file
+		b.WriteString(styles.Muted.Render("  Modified by:"))
+		b.WriteString("\n")
+		for _, instID := range c.Instances {
+			num := instanceNum[instID]
+			task := instanceTask[instID]
+			// Truncate task if too long
+			maxTaskLen := width - 15
+			if maxTaskLen < 20 {
+				maxTaskLen = 20
+			}
+			if len(task) > maxTaskLen {
+				task = task[:maxTaskLen-3] + "..."
+			}
+			instanceLine := fmt.Sprintf("    [%d] %s", num, task)
+			b.WriteString(styles.Text.Render(instanceLine))
+			b.WriteString("\n")
+		}
+
+		// Add spacing between conflicts except for the last one
+		if i < len(m.conflicts)-1 {
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("Press [c] to close this view"))
+
+	return styles.ContentBox.Width(width - 4).Render(b.String())
 }
 
 // renderHelp renders the help bar
@@ -1150,6 +1219,12 @@ func (m Model) renderHelp() string {
 		styles.HelpKey.Render("[r]") + " pr",
 		styles.HelpKey.Render("[?]") + " help",
 		styles.HelpKey.Render("[q]") + " quit",
+	}
+
+	// Add conflict shortcut when conflicts exist
+	if len(m.conflicts) > 0 {
+		conflictKey := styles.Warning.Bold(true).Render("[c]") + styles.Warning.Render(" conflicts")
+		keys = append([]string{conflictKey}, keys...)
 	}
 
 	return styles.HelpBar.Render(strings.Join(keys, "  "))

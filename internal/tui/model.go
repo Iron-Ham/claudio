@@ -18,6 +18,7 @@ type Model struct {
 	ready          bool
 	quitting       bool
 	showHelp       bool
+	showConflicts  bool // When true, show detailed conflict view
 	addingTask     bool
 	taskInput      string
 	errorMessage   string
