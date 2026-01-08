@@ -369,9 +369,10 @@ func (m *Manager) checkTimeouts() {
 	}
 
 	// Check for stale detection (repeated identical output)
-	// Trigger if we've seen the same output 600 times (1 minute at 100ms interval)
-	// This catches stuck loops producing identical output
-	if triggeredTimeout == nil && m.config.StaleDetection && m.repeatedOutputCount > 600 {
+	// Trigger if we've seen the same output 3000 times (5 minutes at 100ms interval)
+	// This catches stuck loops producing identical output while allowing time for
+	// legitimate long-running operations like planning and exploration
+	if triggeredTimeout == nil && m.config.StaleDetection && m.repeatedOutputCount > 3000 {
 		t := TimeoutStale
 		triggeredTimeout = &t
 		m.timedOut = true
