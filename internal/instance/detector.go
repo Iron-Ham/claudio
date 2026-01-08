@@ -55,12 +55,13 @@ func (s WaitingState) IsWaiting() bool {
 // Detector analyzes Claude's output to determine if it's waiting for user input
 type Detector struct {
 	// Compiled regex patterns for efficiency
-	permissionPatterns []*regexp.Regexp
-	questionPatterns   []*regexp.Regexp
-	completionPatterns []*regexp.Regexp
-	errorPatterns      []*regexp.Regexp
-	workingPatterns    []*regexp.Regexp
-	prOpenedPatterns   []*regexp.Regexp
+	permissionPatterns    []*regexp.Regexp
+	questionPatterns      []*regexp.Regexp
+	inputWaitingPatterns  []*regexp.Regexp
+	completionPatterns    []*regexp.Regexp
+	errorPatterns         []*regexp.Regexp
+	workingPatterns       []*regexp.Regexp
+	prOpenedPatterns      []*regexp.Regexp
 }
 
 // NewDetector creates a new output state detector
@@ -95,6 +96,18 @@ func NewDetector() *Detector {
 		// Waiting for specific input
 		`(?i)waiting for (?:your )?(?:input|response|answer|reply)`,
 		`(?i)enter (?:your|the|a) `,
+	}
+
+	// Input waiting patterns - Claude is at its prompt ready for input
+	// These detect Claude Code's UI elements that indicate it's waiting
+	inputWaitingStrings := []string{
+		// Claude Code prompt mode indicators (shown in status bar)
+		`⏵⏵\s*bypass permissions`,           // Bypass mode indicator
+		`⏵\s*(?:allow|approve|bypass)`,       // Single arrow prompt indicators
+		`↵\s*send`,                           // Send indicator at end of input line
+		`\(shift\+tab to cycle\)`,            // Mode cycling hint
+		// Input prompt line pattern (> followed by text and send indicator)
+		`>\s+.*↵`,
 	}
 
 	// Completion patterns - Claude has finished its task
@@ -139,6 +152,7 @@ func NewDetector() *Detector {
 	// Compile all patterns
 	d.permissionPatterns = compilePatterns(permissionStrings)
 	d.questionPatterns = compilePatterns(questionStrings)
+	d.inputWaitingPatterns = compilePatterns(inputWaitingStrings)
 	d.completionPatterns = compilePatterns(completionStrings)
 	d.errorPatterns = compilePatterns(errorStrings)
 	d.workingPatterns = compilePatterns(workingStrings)
@@ -210,6 +224,11 @@ func (d *Detector) Detect(output []byte) WaitingState {
 	// Check for questions
 	if d.matchesAny(recentText, d.questionPatterns) {
 		return StateWaitingQuestion
+	}
+
+	// Check for Claude Code prompt indicators (idle at input prompt)
+	if d.matchesAny(recentText, d.inputWaitingPatterns) {
+		return StateWaitingInput
 	}
 
 	// Default to working
