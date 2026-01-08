@@ -346,6 +346,32 @@ func (m *Manager) SendLiteral(text string) {
 	exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
 }
 
+// SendPaste sends pasted text to the tmux session with bracketed paste sequences
+// This preserves the paste context for applications that support bracketed paste mode
+func (m *Manager) SendPaste(text string) {
+	m.mu.RLock()
+	sessionName := m.sessionName
+	running := m.running
+	m.mu.RUnlock()
+
+	if !running {
+		return
+	}
+
+	// Bracketed paste mode escape sequences
+	// Start: ESC[200~ End: ESC[201~
+	// This tells the receiving application that the following text is pasted
+	pasteStart := "\x1b[200~"
+	pasteEnd := "\x1b[201~"
+
+	// Send bracketed paste start
+	exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteStart).Run()
+	// Send the pasted content
+	exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
+	// Send bracketed paste end
+	exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteEnd).Run()
+}
+
 // GetOutput returns all buffered output
 func (m *Manager) GetOutput() []byte {
 	return m.outputBuf.Bytes()
