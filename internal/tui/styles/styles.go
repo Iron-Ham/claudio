@@ -123,6 +123,30 @@ var (
 			Background(WarningColor).
 			Bold(true).
 			Padding(0, 1)
+
+	// Template dropdown styles
+	DropdownContainer = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(PrimaryColor).
+				Padding(0, 1).
+				MarginTop(1)
+
+	DropdownItem = lipgloss.NewStyle().
+			Foreground(TextColor).
+			Padding(0, 1)
+
+	DropdownItemSelected = lipgloss.NewStyle().
+				Foreground(TextColor).
+				Background(PrimaryColor).
+				Bold(true).
+				Padding(0, 1)
+
+	DropdownCommand = lipgloss.NewStyle().
+			Foreground(SecondaryColor).
+			Bold(true)
+
+	DropdownName = lipgloss.NewStyle().
+			Foreground(MutedColor)
 )
 
 // StatusColor returns the color for a given status

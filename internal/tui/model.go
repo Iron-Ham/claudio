@@ -25,6 +25,11 @@ type Model struct {
 	warningMessage string // Warning message (e.g., file conflicts)
 	inputMode      bool   // When true, all keys are forwarded to the active instance's tmux session
 
+	// Template dropdown state
+	showTemplates    bool   // Whether the template dropdown is visible
+	templateFilter   string // Current filter text (after the "/")
+	templateSelected int    // Currently highlighted template index
+
 	// File conflict tracking
 	conflicts []conflict.FileConflict
 
