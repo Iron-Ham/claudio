@@ -15,6 +15,16 @@ type PRContent struct {
 	Body  string `json:"body"`
 }
 
+// PROptions contains options for PR creation
+type PROptions struct {
+	Title     string
+	Body      string
+	Branch    string
+	Draft     bool
+	Reviewers []string
+	Labels    []string
+}
+
 // Context holds all the information needed to generate PR content
 type Context struct {
 	Task          string
@@ -132,36 +142,52 @@ func extractJSON(s string) string {
 	return s
 }
 
-// CreatePR creates a GitHub PR using the gh CLI
-func CreatePR(title, body, branch string) (string, error) {
-	cmd := exec.Command("gh", "pr", "create",
-		"--title", title,
-		"--body", body,
-		"--head", branch,
-	)
+// Create creates a GitHub PR using the gh CLI with full options support
+func Create(opts PROptions) (string, error) {
+	args := []string{"pr", "create",
+		"--title", opts.Title,
+		"--body", opts.Body,
+		"--head", opts.Branch,
+	}
+
+	if opts.Draft {
+		args = append(args, "--draft")
+	}
+
+	for _, reviewer := range opts.Reviewers {
+		args = append(args, "--reviewer", reviewer)
+	}
+
+	for _, label := range opts.Labels {
+		args = append(args, "--label", label)
+	}
+
+	cmd := exec.Command("gh", args...)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("failed to create PR: %w\n%s", err, string(output))
 	}
 
-	// gh pr create outputs the PR URL
 	return strings.TrimSpace(string(output)), nil
 }
 
-// CreatePRDraft creates a draft GitHub PR using the gh CLI
+// CreatePR creates a GitHub PR using the gh CLI (legacy wrapper)
+func CreatePR(title, body, branch string) (string, error) {
+	return Create(PROptions{
+		Title:  title,
+		Body:   body,
+		Branch: branch,
+		Draft:  false,
+	})
+}
+
+// CreatePRDraft creates a draft GitHub PR using the gh CLI (legacy wrapper)
 func CreatePRDraft(title, body, branch string) (string, error) {
-	cmd := exec.Command("gh", "pr", "create",
-		"--title", title,
-		"--body", body,
-		"--head", branch,
-		"--draft",
-	)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("failed to create draft PR: %w\n%s", err, string(output))
-	}
-
-	return strings.TrimSpace(string(output)), nil
+	return Create(PROptions{
+		Title:  title,
+		Body:   body,
+		Branch: branch,
+		Draft:  true,
+	})
 }
