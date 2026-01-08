@@ -13,6 +13,13 @@ var (
 	TextColor      = lipgloss.Color("#F9FAFB") // Light text
 	BorderColor    = lipgloss.Color("#4B5563") // Slightly dimmer gray for borders
 
+	// Additional colors for ultra-plan mode
+	GreenColor  = lipgloss.Color("#10B981") // Green (same as Secondary)
+	RedColor    = lipgloss.Color("#EF4444") // Red (same as Error)
+	BlueColor   = lipgloss.Color("#60A5FA") // Blue
+	YellowColor = lipgloss.Color("#FBBF24") // Yellow
+	PurpleColor = lipgloss.Color("#A78BFA") // Purple
+
 	// Convenience styles for colors
 	Primary   = lipgloss.NewStyle().Foreground(PrimaryColor)
 	Secondary = lipgloss.NewStyle().Foreground(SecondaryColor)

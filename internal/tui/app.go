@@ -35,6 +35,20 @@ func New(orch *orchestrator.Orchestrator, session *orchestrator.Session) *App {
 	}
 }
 
+// NewWithUltraPlan creates a new TUI application in ultra-plan mode
+func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.Coordinator) *App {
+	model := NewModel(orch, session)
+	model.ultraPlan = &UltraPlanState{
+		coordinator:  coordinator,
+		showPlanView: false,
+	}
+	return &App{
+		model:        model,
+		orchestrator: orch,
+		session:      session,
+	}
+}
+
 // Run starts the TUI application
 func (a *App) Run() error {
 	a.program = tea.NewProgram(
@@ -76,6 +90,11 @@ func (a *App) Run() error {
 			instanceID:  instanceID,
 			timeoutType: timeoutType,
 		})
+	})
+
+	// Set up bell callback to forward terminal bells to the parent terminal
+	a.orchestrator.SetBellCallback(func(instanceID string) {
+		a.program.Send(bellMsg{instanceID: instanceID})
 	})
 
 	_, err := a.program.Run()
@@ -132,12 +151,27 @@ type timeoutMsg struct {
 	timeoutType instance.TimeoutType
 }
 
+type bellMsg struct {
+	instanceID string
+}
+
 // Commands
 
 func tick() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+// ringBell returns a command that outputs a terminal bell character
+// This forwards bells from tmux sessions to the parent terminal
+func ringBell() tea.Cmd {
+	return func() tea.Msg {
+		// Write the bell character directly to stdout
+		// This works even when Bubbletea is in alt-screen mode
+		_, _ = os.Stdout.Write([]byte{'\a'})
+		return nil
+	}
 }
 
 // Init initializes the model
@@ -229,6 +263,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.infoMessage = fmt.Sprintf("Instance %s is %s - use Ctrl+R to restart or Ctrl+K to kill", inst.ID, statusText)
 		}
 		return m, nil
+
+	case bellMsg:
+		// Terminal bell detected in a tmux session - forward it to the parent terminal
+		return m, ringBell()
 	}
 
 	return m, nil
@@ -406,6 +444,14 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Normal mode - clear info message on most actions
 	m.infoMessage = ""
 
+	// Handle ultra-plan mode specific keys first
+	if m.IsUltraPlanMode() {
+		handled, model, cmd := m.handleUltraPlanKeypress(msg)
+		if handled {
+			return model, cmd
+		}
+	}
+
 	switch msg.String() {
 	case ":":
 		// Enter command mode (vim-style)
@@ -540,6 +586,57 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if inst := m.activeInstance(); inst != nil {
 			fullPage := m.getOutputMaxLines()
 			m.scrollOutputDown(inst.ID, fullPage)
+		}
+		return m, nil
+
+	case "ctrl+r":
+		// Restart instance with same task (useful for stuck/timeout instances)
+		if inst := m.activeInstance(); inst != nil {
+			// Only allow restarting stuck, timeout, completed, paused, or error instances
+			switch inst.Status {
+			case orchestrator.StatusWorking, orchestrator.StatusWaitingInput:
+				m.infoMessage = "Instance is running. Use [:x] to stop it first, or [:p] to pause."
+				return m, nil
+			case orchestrator.StatusCreatingPR:
+				m.infoMessage = "Instance is creating PR. Wait for it to complete."
+				return m, nil
+			}
+
+			// Stop the instance if it's still running in tmux
+			mgr := m.orchestrator.GetInstanceManager(inst.ID)
+			if mgr != nil {
+				_ = mgr.Stop()
+				mgr.ClearTimeout() // Reset timeout state
+			}
+
+			// Restart with same task
+			if err := m.orchestrator.ReconnectInstance(inst); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to restart instance: %v", err)
+			} else {
+				m.infoMessage = fmt.Sprintf("Instance %s restarted with same task", inst.ID)
+			}
+		}
+		return m, nil
+
+	case "ctrl+k":
+		// Kill and remove instance (force remove)
+		if inst := m.activeInstance(); inst != nil {
+			// Stop the instance first
+			mgr := m.orchestrator.GetInstanceManager(inst.ID)
+			if mgr != nil {
+				_ = mgr.Stop()
+			}
+
+			// Remove the instance
+			if err := m.orchestrator.RemoveInstance(m.session, inst.ID, true); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to remove instance: %v", err)
+			} else {
+				m.infoMessage = fmt.Sprintf("Instance %s killed and removed", inst.ID)
+				// Adjust active tab if needed
+				if m.activeTab >= len(m.session.Instances) && m.activeTab > 0 {
+					m.activeTab--
+				}
+			}
 		}
 		return m, nil
 
@@ -1658,8 +1755,13 @@ func (m Model) View() string {
 
 	var b strings.Builder
 
-	// Header
-	header := m.renderHeader()
+	// Header - use ultra-plan header if in ultra-plan mode
+	var header string
+	if m.IsUltraPlanMode() {
+		header = m.renderUltraPlanHeader()
+	} else {
+		header = m.renderHeader()
+	}
 	b.WriteString(header)
 	b.WriteString("\n")
 
@@ -1674,8 +1776,15 @@ func (m Model) View() string {
 	mainAreaHeight := m.height - 6 // Header + help bar + margins
 
 	// Sidebar + Content area (horizontal layout)
-	sidebar := m.renderSidebar(effectiveSidebarWidth, mainAreaHeight)
-	content := m.renderContent(mainContentWidth)
+	// Use ultra-plan specific rendering if in ultra-plan mode
+	var sidebar, content string
+	if m.IsUltraPlanMode() {
+		sidebar = m.renderUltraPlanSidebar(effectiveSidebarWidth, mainAreaHeight)
+		content = m.renderUltraPlanContent(mainContentWidth)
+	} else {
+		sidebar = m.renderSidebar(effectiveSidebarWidth, mainAreaHeight)
+		content = m.renderContent(mainContentWidth)
+	}
 
 	// Apply height constraints to both panels and join horizontally
 	// Using MaxHeight to ensure content doesn't overflow bounds
@@ -1709,9 +1818,13 @@ func (m Model) View() string {
 		b.WriteString(styles.ErrorMsg.Render("Error: " + m.errorMessage))
 	}
 
-	// Help/status bar
+	// Help/status bar - use ultra-plan help if in ultra-plan mode
 	b.WriteString("\n")
-	b.WriteString(m.renderHelp())
+	if m.IsUltraPlanMode() {
+		b.WriteString(m.renderUltraPlanHelp())
+	} else {
+		b.WriteString(m.renderHelp())
+	}
 
 	return b.String()
 }

@@ -23,6 +23,9 @@ const (
 // TimeoutCallback is called when a timeout condition is detected
 type TimeoutCallback func(instanceID string, timeoutType TimeoutType)
 
+// BellCallback is called when a terminal bell is detected in the tmux session
+type BellCallback func(instanceID string)
+
 // ManagerConfig holds configuration for instance management
 type ManagerConfig struct {
 	OutputBufferSize         int
@@ -82,6 +85,10 @@ type Manager struct {
 	timeoutCallback     TimeoutCallback
 	timedOut            bool           // Whether a timeout has been triggered
 	timeoutType         TimeoutType    // Type of timeout that was triggered
+
+	// Bell tracking
+	bellCallback   BellCallback
+	lastBellState  bool // Track last bell flag state to detect transitions
 }
 
 // NewManager creates a new instance manager with default configuration
@@ -124,6 +131,13 @@ func (m *Manager) SetTimeoutCallback(cb TimeoutCallback) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.timeoutCallback = cb
+}
+
+// SetBellCallback sets a callback that will be invoked when a terminal bell is detected
+func (m *Manager) SetBellCallback(cb BellCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bellCallback = cb
 }
 
 // CurrentMetrics returns the currently parsed metrics
@@ -200,6 +214,8 @@ func (m *Manager) Start() error {
 	// Set up the tmux session for color support and large history
 	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "history-limit", "10000").Run()
 	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run()
+	// Enable bell monitoring so we can detect and forward terminal bells
+	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
 
 	// Send the claude command to the tmux session
 	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions %q", m.task)
@@ -301,6 +317,9 @@ func (m *Manager) captureLoop() {
 			// Check for timeout conditions
 			m.checkTimeouts()
 
+			// Check for terminal bells and forward them
+			m.checkAndForwardBell(sessionName)
+
 			// Check if the session is still running
 			checkCmd := exec.Command("tmux", "has-session", "-t", sessionName)
 			if checkCmd.Run() != nil {
@@ -364,6 +383,31 @@ func (m *Manager) checkTimeouts() {
 	// Invoke callback outside of lock to prevent deadlocks
 	if triggeredTimeout != nil && callback != nil {
 		callback(instanceID, *triggeredTimeout)
+	}
+}
+
+// checkAndForwardBell checks for terminal bells and triggers the callback if detected
+func (m *Manager) checkAndForwardBell(sessionName string) {
+	// Query the window_bell_flag from tmux
+	bellCmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#{window_bell_flag}")
+	output, err := bellCmd.Output()
+	if err != nil {
+		return
+	}
+
+	bellActive := strings.TrimSpace(string(output)) == "1"
+
+	m.mu.Lock()
+	lastBellState := m.lastBellState
+	callback := m.bellCallback
+	instanceID := m.id
+	m.lastBellState = bellActive
+	m.mu.Unlock()
+
+	// Trigger callback on transition from no-bell to bell (edge detection)
+	// This ensures we only fire once per bell, not continuously while the flag is set
+	if bellActive && !lastBellState && callback != nil {
+		callback(instanceID)
 	}
 }
 
@@ -652,11 +696,15 @@ func (m *Manager) Reconnect() error {
 		return fmt.Errorf("tmux session %s does not exist", m.sessionName)
 	}
 
+	// Ensure monitor-bell is enabled for bell detection (may not be set if session was created before this feature)
+	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
+
 	m.running = true
 	m.paused = false
 	m.timedOut = false
 	m.repeatedOutputCount = 0
 	m.lastActivityTime = time.Now()
+	m.lastBellState = false // Reset bell state on reconnect
 	m.doneChan = make(chan struct{})
 
 	// Start background goroutine to capture output periodically

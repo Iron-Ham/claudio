@@ -71,6 +71,9 @@ type Session struct {
 	BaseRepo  string      `json:"base_repo"`
 	Created   time.Time   `json:"created"`
 	Instances []*Instance `json:"instances"`
+
+	// UltraPlan holds the ultra-plan session state (nil for regular sessions)
+	UltraPlan *UltraPlanSession `json:"ultra_plan,omitempty"`
 }
 
 // NewSession creates a new session with a generated ID

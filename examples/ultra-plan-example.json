@@ -1,0 +1,107 @@
+{
+  "id": "auth-feature-plan",
+  "objective": "Implement user authentication with OAuth2 support, including login, registration, password reset, and session management",
+  "summary": "Add a complete authentication system using OAuth2 with JWT tokens. This involves creating user models, authentication endpoints, middleware, and frontend components.",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "Add authentication dependencies",
+      "description": "Add the necessary dependencies for OAuth2 and JWT authentication:\n\n1. Add oauth2 library\n2. Add JWT library for token handling\n3. Add bcrypt for password hashing\n4. Update go.mod/go.sum or package.json as appropriate\n\nEnsure all dependencies are compatible with the existing project setup.",
+      "files": ["go.mod", "go.sum"],
+      "depends_on": [],
+      "priority": 1,
+      "est_complexity": "low"
+    },
+    {
+      "id": "task-2",
+      "title": "Create user model and database schema",
+      "description": "Create the User model with all necessary fields for authentication:\n\n1. User struct with ID, email, password hash, created_at, updated_at\n2. Add OAuth provider fields (provider, provider_id)\n3. Add session tracking fields\n4. Create database migration if using ORM\n5. Add validation tags\n\nFollow existing model patterns in the codebase.",
+      "files": ["internal/models/user.go", "internal/db/migrations/"],
+      "depends_on": [],
+      "priority": 1,
+      "est_complexity": "medium"
+    },
+    {
+      "id": "task-3",
+      "title": "Create configuration for auth settings",
+      "description": "Add configuration options for the authentication system:\n\n1. JWT secret key\n2. Token expiration times (access, refresh)\n3. OAuth provider credentials (client ID, secret)\n4. Allowed origins for CORS\n5. Session timeout settings\n\nUse the existing configuration pattern in the project.",
+      "files": ["internal/config/auth.go", "config.example.yaml"],
+      "depends_on": [],
+      "priority": 1,
+      "est_complexity": "low"
+    },
+    {
+      "id": "task-4",
+      "title": "Implement JWT token service",
+      "description": "Create a service for JWT token operations:\n\n1. Generate access tokens\n2. Generate refresh tokens\n3. Validate and parse tokens\n4. Extract claims from tokens\n5. Handle token expiration\n\nInclude proper error handling and logging.",
+      "files": ["internal/auth/jwt.go", "internal/auth/jwt_test.go"],
+      "depends_on": ["task-1", "task-3"],
+      "priority": 2,
+      "est_complexity": "medium"
+    },
+    {
+      "id": "task-5",
+      "title": "Create authentication middleware",
+      "description": "Implement middleware for protecting routes:\n\n1. Extract JWT from Authorization header\n2. Validate token and extract user info\n3. Attach user context to request\n4. Handle unauthorized requests\n5. Support optional authentication for some routes\n\nFollow existing middleware patterns.",
+      "files": ["internal/middleware/auth.go", "internal/middleware/auth_test.go"],
+      "depends_on": ["task-4"],
+      "priority": 3,
+      "est_complexity": "medium"
+    },
+    {
+      "id": "task-6",
+      "title": "Implement registration endpoint",
+      "description": "Create the user registration API endpoint:\n\n1. POST /api/auth/register\n2. Validate email format and password strength\n3. Check for existing users\n4. Hash password with bcrypt\n5. Create user in database\n6. Return JWT tokens\n\nInclude proper validation error messages.",
+      "files": ["internal/handlers/auth_register.go", "internal/handlers/auth_register_test.go"],
+      "depends_on": ["task-2", "task-4"],
+      "priority": 3,
+      "est_complexity": "medium"
+    },
+    {
+      "id": "task-7",
+      "title": "Implement login endpoint",
+      "description": "Create the user login API endpoint:\n\n1. POST /api/auth/login\n2. Validate credentials\n3. Compare password hash\n4. Generate and return JWT tokens\n5. Track login attempts for rate limiting\n\nHandle both email/password and OAuth flows.",
+      "files": ["internal/handlers/auth_login.go", "internal/handlers/auth_login_test.go"],
+      "depends_on": ["task-2", "task-4"],
+      "priority": 3,
+      "est_complexity": "medium"
+    },
+    {
+      "id": "task-8",
+      "title": "Implement password reset flow",
+      "description": "Create password reset functionality:\n\n1. POST /api/auth/forgot-password - send reset email\n2. POST /api/auth/reset-password - complete reset\n3. Generate secure reset tokens\n4. Token expiration handling\n5. Email template for reset link\n\nEnsure tokens are single-use and time-limited.",
+      "files": ["internal/handlers/auth_password.go", "internal/handlers/auth_password_test.go"],
+      "depends_on": ["task-2", "task-4"],
+      "priority": 3,
+      "est_complexity": "high"
+    },
+    {
+      "id": "task-9",
+      "title": "Add OAuth2 provider integration",
+      "description": "Implement OAuth2 login with external providers:\n\n1. GET /api/auth/oauth/:provider - redirect to provider\n2. GET /api/auth/oauth/:provider/callback - handle callback\n3. Support Google and GitHub providers\n4. Link OAuth accounts to existing users\n5. Create new users from OAuth data\n\nUse standard OAuth2 flow.",
+      "files": ["internal/handlers/auth_oauth.go", "internal/handlers/auth_oauth_test.go"],
+      "depends_on": ["task-2", "task-3", "task-4"],
+      "priority": 4,
+      "est_complexity": "high"
+    },
+    {
+      "id": "task-10",
+      "title": "Wire up routes and integration test",
+      "description": "Connect all authentication components:\n\n1. Register all auth routes in router\n2. Apply auth middleware to protected routes\n3. Create integration tests for full auth flows\n4. Test token refresh scenarios\n5. Verify error handling\n\nEnsure all endpoints work together correctly.",
+      "files": ["internal/router/routes.go", "internal/handlers/auth_integration_test.go"],
+      "depends_on": ["task-5", "task-6", "task-7", "task-8", "task-9"],
+      "priority": 5,
+      "est_complexity": "medium"
+    }
+  ],
+  "insights": [
+    "The codebase uses a standard Go project layout with handlers in internal/handlers/",
+    "Existing middleware pattern can be extended for authentication",
+    "Database migrations use golang-migrate format"
+  ],
+  "constraints": [
+    "JWT secret must be at least 32 characters for security",
+    "Password reset tokens should expire within 1 hour",
+    "OAuth callback URLs must match registered application URLs"
+  ]
+}
