@@ -2,7 +2,9 @@ package instance
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -217,8 +219,16 @@ func (m *Manager) Start() error {
 	// Enable bell monitoring so we can detect and forward terminal bells
 	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
 
-	// Send the claude command to the tmux session
-	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions %q", m.task)
+	// Write the task/prompt to a temporary file to avoid shell escaping issues
+	// (prompts with <, >, |, etc. would otherwise be interpreted by the shell)
+	promptFile := filepath.Join(m.workdir, ".claude-prompt")
+	if err := os.WriteFile(promptFile, []byte(m.task), 0600); err != nil {
+		_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+		return fmt.Errorf("failed to write prompt file: %w", err)
+	}
+
+	// Send the claude command to the tmux session, reading prompt from file
+	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q", promptFile, promptFile)
 	sendCmd := exec.Command("tmux",
 		"send-keys",
 		"-t", m.sessionName,
@@ -228,6 +238,7 @@ func (m *Manager) Start() error {
 	if err := sendCmd.Run(); err != nil {
 		// Clean up the session if we failed to start claude
 		_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+		_ = os.Remove(promptFile)
 		return fmt.Errorf("failed to start claude in tmux session: %w", err)
 	}
 
