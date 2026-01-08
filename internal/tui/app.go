@@ -35,6 +35,20 @@ func New(orch *orchestrator.Orchestrator, session *orchestrator.Session) *App {
 	}
 }
 
+// NewWithUltraPlan creates a new TUI application in ultra-plan mode
+func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.Coordinator) *App {
+	model := NewModel(orch, session)
+	model.ultraPlan = &UltraPlanState{
+		coordinator:  coordinator,
+		showPlanView: false,
+	}
+	return &App{
+		model:        model,
+		orchestrator: orch,
+		session:      session,
+	}
+}
+
 // Run starts the TUI application
 func (a *App) Run() error {
 	a.program = tea.NewProgram(
