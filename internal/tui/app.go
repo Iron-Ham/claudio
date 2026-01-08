@@ -1733,6 +1733,11 @@ func (m *Model) updateInstanceStatus(inst *orchestrator.Instance, mgr *instance.
 
 // handleInstanceCompleted handles post-completion actions based on config
 func (m *Model) handleInstanceCompleted(inst *orchestrator.Instance) {
+	// Check if this is an ultra-plan coordinator instance completing
+	if m.handleUltraPlanCoordinatorCompletion(inst) {
+		return
+	}
+
 	cfg := config.Get()
 
 	switch cfg.Completion.DefaultAction {
