@@ -123,7 +123,7 @@ Each Claude instance runs in its own [git worktree](https://git-scm.com/docs/git
 - **Parallel branches**: Each instance works on its own branch
 - **Easy cleanup**: Worktrees can be removed without losing the main repo
 
-Worktrees are created in `.claudio/worktrees/<instance-id>/` with branches named `claudio/<instance-id>-<task-slug>`.
+Worktrees are created in `.claudio/worktrees/<instance-id>/` with branches named `<prefix>/<instance-id>-<task-slug>` (the prefix and whether to include the instance ID are configurable).
 
 ### Shared Context
 
@@ -199,6 +199,16 @@ instance:
   # tmux pane dimensions
   tmux_width: 200
   tmux_height: 50
+
+# Branch naming convention
+branch:
+  # Prefix for branch names (default: "claudio")
+  # Examples: "claudio", "Iron-Ham", "feature"
+  prefix: claudio
+  # Include instance ID in branch names (default: true)
+  # When true: <prefix>/<id>-<slug> (e.g., claudio/abc123-fix-bug)
+  # When false: <prefix>/<slug> (e.g., claudio/fix-bug)
+  include_id: true
 ```
 
 ### Environment Variables
@@ -209,7 +219,8 @@ Use underscores instead of dots for nested keys:
 ```bash
 export CLAUDIO_COMPLETION_DEFAULT_ACTION=auto_pr
 export CLAUDIO_TUI_MAX_OUTPUT_LINES=2000
-export CLAUDIO_SESSION_MAX_INSTANCES=5
+export CLAUDIO_BRANCH_PREFIX=Iron-Ham
+export CLAUDIO_BRANCH_INCLUDE_ID=false
 ```
 
 ### Config Commands

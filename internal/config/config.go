@@ -14,6 +14,7 @@ type Config struct {
 	TUI        TUIConfig        `mapstructure:"tui"`
 	Session    SessionConfig    `mapstructure:"session"`
 	Instance   InstanceConfig   `mapstructure:"instance"`
+	Branch     BranchConfig     `mapstructure:"branch"`
 	PR         PRConfig         `mapstructure:"pr"`
 	Cleanup    CleanupConfig    `mapstructure:"cleanup"`
 	Resources  ResourceConfig   `mapstructure:"resources"`
@@ -49,6 +50,17 @@ type InstanceConfig struct {
 	TmuxWidth int `mapstructure:"tmux_width"`
 	// TmuxHeight is the height of the tmux pane
 	TmuxHeight int `mapstructure:"tmux_height"`
+}
+
+// BranchConfig controls branch naming conventions
+type BranchConfig struct {
+	// Prefix is the branch name prefix (default: "claudio")
+	// Examples: "claudio", "Iron-Ham", "feature"
+	Prefix string `mapstructure:"prefix"`
+	// IncludeID includes the instance ID in branch names (default: true)
+	// When true: <prefix>/<id>-<slug>
+	// When false: <prefix>/<slug>
+	IncludeID bool `mapstructure:"include_id"`
 }
 
 // PRConfig controls pull request creation behavior
@@ -114,6 +126,10 @@ func Default() *Config {
 			TmuxWidth:         200,
 			TmuxHeight:        50,
 		},
+		Branch: BranchConfig{
+			Prefix:    "claudio",
+			IncludeID: true,
+		},
 		PR: PRConfig{
 			Draft:        false,
 			AutoRebase:   true,
@@ -162,6 +178,10 @@ func SetDefaults() {
 	viper.SetDefault("instance.capture_interval_ms", defaults.Instance.CaptureIntervalMs)
 	viper.SetDefault("instance.tmux_width", defaults.Instance.TmuxWidth)
 	viper.SetDefault("instance.tmux_height", defaults.Instance.TmuxHeight)
+
+	// Branch defaults
+	viper.SetDefault("branch.prefix", defaults.Branch.Prefix)
+	viper.SetDefault("branch.include_id", defaults.Branch.IncludeID)
 
 	// PR defaults
 	viper.SetDefault("pr.draft", defaults.PR.Draft)

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 	"github.com/spf13/cobra"
@@ -35,7 +36,8 @@ var cleanupCmd = &cobra.Command{
 	Long: `Cleanup removes orphaned resources that can accumulate over time:
 
 - Worktrees: In .claudio/worktrees/ with no active session
-- Branches: claudio/* branches not associated with active work
+- Branches: <prefix>/* branches not associated with active work
+  (prefix is configured via branch.prefix, default: "claudio")
 - Tmux sessions: Orphaned claudio-* tmux sessions
 
 Use --dry-run to see what would be cleaned up without making changes.`,
@@ -124,6 +126,13 @@ func discoverStaleResources(baseDir string) (*CleanupResult, error) {
 	claudioDir := filepath.Join(baseDir, ".claudio")
 	worktreesDir := filepath.Join(claudioDir, "worktrees")
 
+	// Get the configured branch prefix
+	cfg := config.Get()
+	branchPrefix := cfg.Branch.Prefix
+	if branchPrefix == "" {
+		branchPrefix = "claudio"
+	}
+
 	// Load active session to know which instances are active
 	orch, err := orchestrator.New(baseDir)
 	if err == nil {
@@ -137,8 +146,8 @@ func discoverStaleResources(baseDir string) (*CleanupResult, error) {
 	// Find stale worktrees
 	result.StaleWorktrees = findStaleWorktrees(worktreesDir, result.ActiveInstanceIDs)
 
-	// Find stale branches
-	result.StaleBranches = findStaleBranches(baseDir, result.ActiveInstanceIDs)
+	// Find stale branches using configured prefix
+	result.StaleBranches = findStaleBranches(baseDir, result.ActiveInstanceIDs, branchPrefix)
 
 	// Find orphaned tmux sessions
 	result.OrphanedTmuxSess = findOrphanedTmuxSessions(result.ActiveInstanceIDs)
@@ -195,11 +204,11 @@ func findStaleWorktrees(worktreesDir string, activeIDs map[string]bool) []StaleW
 	return stale
 }
 
-func findStaleBranches(baseDir string, activeIDs map[string]bool) []string {
+func findStaleBranches(baseDir string, activeIDs map[string]bool, branchPrefix string) []string {
 	var stale []string
 
-	// Get all local branches starting with "claudio/"
-	cmd := exec.Command("git", "-C", baseDir, "branch", "--list", "claudio/*")
+	// Get all local branches starting with the configured prefix
+	cmd := exec.Command("git", "-C", baseDir, "branch", "--list", branchPrefix+"/*")
 	output, err := cmd.Output()
 	if err != nil {
 		return stale
@@ -213,8 +222,10 @@ func findStaleBranches(baseDir string, activeIDs map[string]bool) []string {
 			continue
 		}
 
-		// Extract instance ID from branch name (claudio/<id>-<slug>)
-		parts := strings.SplitN(strings.TrimPrefix(branch, "claudio/"), "-", 2)
+		// Extract instance ID from branch name (<prefix>/<id>-<slug>)
+		// The ID is the first segment after the prefix, before the first dash
+		afterPrefix := strings.TrimPrefix(branch, branchPrefix+"/")
+		parts := strings.SplitN(afterPrefix, "-", 2)
 		if len(parts) < 1 {
 			continue
 		}
