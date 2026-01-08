@@ -26,6 +26,11 @@ type Orchestrator struct {
 	conflictDetector *conflict.Detector
 	config           *config.Config
 
+	// Current display dimensions for tmux sessions
+	// These are updated when the TUI window resizes
+	displayWidth  int
+	displayHeight int
+
 	mu sync.RWMutex
 }
 
@@ -318,12 +323,24 @@ func (o *Orchestrator) Config() *config.Config {
 }
 
 // instanceManagerConfig converts the orchestrator config to instance.ManagerConfig
+// Uses the current display dimensions if available, otherwise falls back to config defaults
 func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
+	width := o.config.Instance.TmuxWidth
+	height := o.config.Instance.TmuxHeight
+
+	// Use the current display dimensions if they've been set by a resize event
+	if o.displayWidth > 0 {
+		width = o.displayWidth
+	}
+	if o.displayHeight > 0 {
+		height = o.displayHeight
+	}
+
 	return instance.ManagerConfig{
 		OutputBufferSize:  o.config.Instance.OutputBufferSize,
 		CaptureIntervalMs: o.config.Instance.CaptureIntervalMs,
-		TmuxWidth:         o.config.Instance.TmuxWidth,
-		TmuxHeight:        o.config.Instance.TmuxHeight,
+		TmuxWidth:         width,
+		TmuxHeight:        height,
 	}
 }
 
@@ -337,6 +354,24 @@ func (o *Orchestrator) Session() *Session {
 // GetConflictDetector returns the conflict detector
 func (o *Orchestrator) GetConflictDetector() *conflict.Detector {
 	return o.conflictDetector
+}
+
+// ResizeAllInstances resizes all running tmux sessions to the given dimensions
+// and stores the dimensions for new instances
+func (o *Orchestrator) ResizeAllInstances(width, height int) {
+	o.mu.Lock()
+	o.displayWidth = width
+	o.displayHeight = height
+	o.mu.Unlock()
+
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
+	for _, mgr := range o.instances {
+		if mgr != nil && mgr.Running() {
+			mgr.Resize(width, height)
+		}
+	}
 }
 
 // saveSession persists the session state to disk
