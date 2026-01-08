@@ -59,6 +59,31 @@ var TaskTemplates = []TaskTemplate{
 		Name:        "Security Audit",
 		Description: "Perform a security audit and fix any vulnerabilities found.",
 	},
+	{
+		Command: "megamerge",
+		Name:    "Mega Merge PRs",
+		Description: `Merge all of my open PRs to main. Follow these steps:
+
+1. **List all open PRs**: Use 'gh pr list --author @me --state open' to find all my open PRs targeting main.
+
+2. **For each PR, in order of oldest first**:
+   a. Check if the PR is mergeable using 'gh pr view <PR_NUMBER> --json mergeable,mergeStateStatus'
+   b. If there are merge conflicts:
+      - Checkout the PR branch: 'gh pr checkout <PR_NUMBER>'
+      - Fetch and rebase onto main: 'git fetch origin main && git rebase origin/main'
+      - Resolve any conflicts by examining the conflicting files and making intelligent fixes
+      - After resolving, continue the rebase: 'git add . && git rebase --continue'
+      - Force push the fixed branch: 'git push --force-with-lease'
+   c. If CI checks are failing, investigate and fix the issues
+   d. Once the PR is mergeable and checks pass, merge it: 'gh pr merge <PR_NUMBER> --squash --delete-branch'
+
+3. **Report summary**: After processing all PRs, provide a summary of:
+   - Which PRs were successfully merged
+   - Which PRs had conflicts and how they were resolved
+   - Which PRs could not be merged and why
+
+Important: Process PRs one at a time to avoid conflicts between dependent PRs. If a PR depends on another PR, merge the dependency first.`,
+	},
 }
 
 // FilterTemplates returns templates that match the given filter string
