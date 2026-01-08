@@ -15,9 +15,44 @@ import (
 
 // UltraPlanState holds ultra-plan specific UI state
 type UltraPlanState struct {
-	coordinator     *orchestrator.Coordinator
-	showPlanView    bool // Toggle between plan view and normal output view
-	selectedTaskIdx int  // Currently selected task index for navigation
+	coordinator            *orchestrator.Coordinator
+	showPlanView           bool                            // Toggle between plan view and normal output view
+	selectedTaskIdx        int                             // Currently selected task index for navigation
+	needsNotification      bool                            // Set when user input is needed (checked on tick)
+	lastNotifiedPhase      orchestrator.UltraPlanPhase     // Prevent duplicate notifications for same phase
+	lastConsolidationPhase orchestrator.ConsolidationPhase // Track consolidation phase for pause detection
+}
+
+// checkForPhaseNotification checks if the ultraplan phase changed to one that needs user attention
+// and sets the notification flag if needed. Call this from the tick handler.
+func (m *Model) checkForPhaseNotification() {
+	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil {
+		return
+	}
+
+	// Check for synthesis phase (user may want to review)
+	if session.Phase == orchestrator.PhaseSynthesis && m.ultraPlan.lastNotifiedPhase != orchestrator.PhaseSynthesis {
+		m.ultraPlan.needsNotification = true
+		m.ultraPlan.lastNotifiedPhase = orchestrator.PhaseSynthesis
+		return
+	}
+
+	// Check for consolidation pause (conflict detected, needs user attention)
+	if session.Phase == orchestrator.PhaseConsolidating && session.Consolidation != nil {
+		if session.Consolidation.Phase == orchestrator.ConsolidationPaused &&
+			m.ultraPlan.lastConsolidationPhase != orchestrator.ConsolidationPaused {
+			m.ultraPlan.needsNotification = true
+			m.ultraPlan.lastConsolidationPhase = orchestrator.ConsolidationPaused
+			return
+		}
+		// Track consolidation phase changes
+		m.ultraPlan.lastConsolidationPhase = session.Consolidation.Phase
+	}
 }
 
 // renderUltraPlanHeader renders the ultra-plan header with phase and progress
@@ -657,6 +692,9 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 	} else {
 		m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Press [e] to execute.",
 			len(plan.Tasks), len(plan.ExecutionOrder))
+		// Notify user that input is needed
+		m.ultraPlan.needsNotification = true
+		m.ultraPlan.lastNotifiedPhase = orchestrator.PhaseRefresh
 	}
 
 	return true
@@ -733,6 +771,9 @@ func (m *Model) checkForPlanFile() bool {
 	} else {
 		m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Press [e] to execute.",
 			len(plan.Tasks), len(plan.ExecutionOrder))
+		// Notify user that input is needed
+		m.ultraPlan.needsNotification = true
+		m.ultraPlan.lastNotifiedPhase = orchestrator.PhaseRefresh
 	}
 
 	return true

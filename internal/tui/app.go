@@ -3,8 +3,10 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/spf13/viper"
 )
 
 // App wraps the Bubbletea program
@@ -177,6 +180,30 @@ func ringBell() tea.Cmd {
 	}
 }
 
+// notifyUser returns a command that notifies the user via bell and optional sound
+// Used to alert the user when ultraplan needs input (e.g., plan ready, synthesis ready)
+func notifyUser() tea.Cmd {
+	return func() tea.Msg {
+		if !viper.GetBool("ultraplan.notifications.enabled") {
+			return nil
+		}
+
+		// Always ring terminal bell
+		_, _ = os.Stdout.Write([]byte{'\a'})
+
+		// Optionally play system sound on macOS
+		if runtime.GOOS == "darwin" && viper.GetBool("ultraplan.notifications.use_sound") {
+			soundPath := viper.GetString("ultraplan.notifications.sound_path")
+			if soundPath == "" {
+				soundPath = "/System/Library/Sounds/Glass.aiff"
+			}
+			// Start in background so it doesn't block
+			_ = exec.Command("afplay", soundPath).Start()
+		}
+		return nil
+	}
+}
+
 // ultraPlanInitMsg signals that ultra-plan mode should initialize
 type ultraPlanInitMsg struct{}
 
@@ -222,9 +249,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateOutputs()
 		// Check for plan file during planning phase (proactive detection)
 		m.checkForPlanFile()
-		// Clear info message after display (will show for ~100ms per tick, so a few ticks)
-		// We'll let it persist for a bit by not clearing immediately
-		return m, tick()
+		// Check for phase changes that need notification (synthesis, consolidation pause)
+		m.checkForPhaseNotification()
+
+		// Check if ultraplan needs user notification
+		var cmds []tea.Cmd
+		cmds = append(cmds, tick())
+		if m.ultraPlan != nil && m.ultraPlan.needsNotification {
+			m.ultraPlan.needsNotification = false
+			cmds = append(cmds, notifyUser())
+		}
+		return m, tea.Batch(cmds...)
 
 	case ultraPlanInitMsg:
 		// Initialize ultra-plan mode by starting the planning phase

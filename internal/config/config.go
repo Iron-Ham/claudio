@@ -18,6 +18,7 @@ type Config struct {
 	PR         PRConfig         `mapstructure:"pr"`
 	Cleanup    CleanupConfig    `mapstructure:"cleanup"`
 	Resources  ResourceConfig   `mapstructure:"resources"`
+	Ultraplan  UltraplanConfig  `mapstructure:"ultraplan"`
 }
 
 // CompletionConfig controls what happens when an instance completes
@@ -115,6 +116,22 @@ type ResourceConfig struct {
 	ShowMetricsInSidebar bool `mapstructure:"show_metrics_in_sidebar"`
 }
 
+// UltraplanConfig controls ultraplan behavior
+type UltraplanConfig struct {
+	// Notifications controls audio notifications for user input
+	Notifications NotificationConfig `mapstructure:"notifications"`
+}
+
+// NotificationConfig controls notification behavior for ultraplan
+type NotificationConfig struct {
+	// Enabled controls whether notifications are played (default: true)
+	Enabled bool `mapstructure:"enabled"`
+	// UseSound plays system sound on macOS in addition to bell (default: false)
+	UseSound bool `mapstructure:"use_sound"`
+	// SoundPath custom sound file path (macOS only, default: system Glass sound)
+	SoundPath string `mapstructure:"sound_path"`
+}
+
 // Default returns a Config with sensible default values
 func Default() *Config {
 	return &Config{
@@ -160,6 +177,13 @@ func Default() *Config {
 			CostLimit:             0,     // No limit by default
 			TokenLimitPerInstance: 0,     // No limit by default
 			ShowMetricsInSidebar:  true,  // Show metrics by default
+		},
+		Ultraplan: UltraplanConfig{
+			Notifications: NotificationConfig{
+				Enabled:   true,
+				UseSound:  false,
+				SoundPath: "",
+			},
 		},
 	}
 }
@@ -224,6 +248,11 @@ func SetDefaults() {
 	viper.SetDefault("resources.cost_limit", defaults.Resources.CostLimit)
 	viper.SetDefault("resources.token_limit_per_instance", defaults.Resources.TokenLimitPerInstance)
 	viper.SetDefault("resources.show_metrics_in_sidebar", defaults.Resources.ShowMetricsInSidebar)
+
+	// Ultraplan defaults
+	viper.SetDefault("ultraplan.notifications.enabled", defaults.Ultraplan.Notifications.Enabled)
+	viper.SetDefault("ultraplan.notifications.use_sound", defaults.Ultraplan.Notifications.UseSound)
+	viper.SetDefault("ultraplan.notifications.sound_path", defaults.Ultraplan.Notifications.SoundPath)
 }
 
 // Load reads the configuration from viper into a Config struct
