@@ -200,6 +200,58 @@ var (
 
 	DiffContext = lipgloss.NewStyle().
 			Foreground(MutedColor) // Gray for context lines
+
+	// Search styles
+	SearchBar = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(PrimaryColor).
+			Padding(0, 1).
+			MarginTop(1)
+
+	SearchInput = lipgloss.NewStyle().
+			Foreground(TextColor)
+
+	SearchPrompt = lipgloss.NewStyle().
+			Foreground(SecondaryColor).
+			Bold(true)
+
+	SearchMatch = lipgloss.NewStyle().
+			Background(lipgloss.Color("#FCD34D")). // Yellow highlight
+			Foreground(lipgloss.Color("#1F2937"))  // Dark text on yellow
+
+	SearchCurrentMatch = lipgloss.NewStyle().
+				Background(lipgloss.Color("#F97316")). // Orange for current match
+				Foreground(lipgloss.Color("#1F2937")).  // Dark text
+				Bold(true)
+
+	SearchInfo = lipgloss.NewStyle().
+			Foreground(MutedColor).
+			MarginLeft(2)
+
+	// Filter styles
+	FilterBar = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(PrimaryColor).
+			Padding(1, 2)
+
+	FilterCategory = lipgloss.NewStyle().
+			Foreground(TextColor).
+			MarginRight(2)
+
+	FilterCategoryEnabled = lipgloss.NewStyle().
+				Foreground(SecondaryColor).
+				Bold(true).
+				MarginRight(2)
+
+	FilterCategoryDisabled = lipgloss.NewStyle().
+				Foreground(MutedColor).
+				MarginRight(2)
+
+	FilterCheckbox = lipgloss.NewStyle().
+			Foreground(SecondaryColor)
+
+	FilterCheckboxEmpty = lipgloss.NewStyle().
+				Foreground(MutedColor)
 )
 
 // StatusColor returns the color for a given status
