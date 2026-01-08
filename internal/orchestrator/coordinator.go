@@ -431,6 +431,18 @@ func (c *Coordinator) monitorTaskInstance(taskID, instanceID string, completionC
 				}
 				return
 
+			case StatusWaitingInput:
+				// Task finished its assigned work and is now waiting at a prompt.
+				// For ultraplan tasks, this means the task is complete.
+				// Stop the instance to free up resources.
+				_ = c.orch.StopInstance(inst)
+				completionChan <- taskCompletion{
+					taskID:     taskID,
+					instanceID: instanceID,
+					success:    true,
+				}
+				return
+
 			case StatusError, StatusTimeout, StatusStuck:
 				completionChan <- taskCompletion{
 					taskID:     taskID,
