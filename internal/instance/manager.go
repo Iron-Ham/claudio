@@ -91,8 +91,8 @@ func (m *Manager) Start() error {
 
 // captureLoop periodically captures output from the tmux session
 func (m *Manager) captureLoop() {
-	// Track what we've already captured to avoid duplicates
-	lastLineCount := 0
+	// Track last output hash to detect changes
+	var lastOutput string
 
 	for {
 		select {
@@ -123,16 +123,12 @@ func (m *Manager) captureLoop() {
 				continue
 			}
 
-			// Count lines to detect new content
-			lines := strings.Split(string(output), "\n")
-			lineCount := len(lines)
-
-			// Only update if we have new content
-			if lineCount != lastLineCount || (lineCount > 0 && lastLineCount == 0) {
-				// Store the full captured output
+			// Always update if content changed
+			currentOutput := string(output)
+			if currentOutput != lastOutput {
 				m.outputBuf.Reset()
 				m.outputBuf.Write(output)
-				lastLineCount = lineCount
+				lastOutput = currentOutput
 			}
 
 			// Check if the session is still running
@@ -251,26 +247,31 @@ func (m *Manager) SendInput(data []byte) {
 // SendKey sends a special key to the tmux session
 func (m *Manager) SendKey(key string) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	sessionName := m.sessionName
+	running := m.running
+	m.mu.RUnlock()
 
-	if !m.running {
+	if !running {
 		return
 	}
 
-	exec.Command("tmux", "send-keys", "-t", m.sessionName, key).Run()
+	// Use CombinedOutput to capture any error
+	exec.Command("tmux", "send-keys", "-t", sessionName, key).Run()
 }
 
 // SendLiteral sends literal text to the tmux session (no interpretation)
 func (m *Manager) SendLiteral(text string) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	sessionName := m.sessionName
+	running := m.running
+	m.mu.RUnlock()
 
-	if !m.running {
+	if !running {
 		return
 	}
 
 	// -l flag sends keys literally without interpretation
-	exec.Command("tmux", "send-keys", "-t", m.sessionName, "-l", text).Run()
+	exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
 }
 
 // GetOutput returns all buffered output

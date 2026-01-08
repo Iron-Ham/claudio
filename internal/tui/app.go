@@ -263,38 +263,52 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // sendKeyToTmux sends a key event to the tmux session
 func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
+	var key string
+	literal := false
+
 	switch msg.Type {
 	case tea.KeyEnter:
-		mgr.SendKey("Enter")
+		key = "Enter"
 	case tea.KeyBackspace:
-		mgr.SendKey("BSpace")
+		key = "BSpace"
 	case tea.KeyTab:
-		mgr.SendKey("Tab")
+		key = "Tab"
 	case tea.KeySpace:
-		mgr.SendKey("Space")
+		key = " " // Send literal space
+		literal = true
 	case tea.KeyEsc:
-		mgr.SendKey("Escape")
+		key = "Escape"
 	case tea.KeyUp:
-		mgr.SendKey("Up")
+		key = "Up"
 	case tea.KeyDown:
-		mgr.SendKey("Down")
+		key = "Down"
 	case tea.KeyRight:
-		mgr.SendKey("Right")
+		key = "Right"
 	case tea.KeyLeft:
-		mgr.SendKey("Left")
+		key = "Left"
 	case tea.KeyCtrlC:
-		mgr.SendKey("C-c")
+		key = "C-c"
 	case tea.KeyCtrlD:
-		mgr.SendKey("C-d")
+		key = "C-d"
 	case tea.KeyCtrlZ:
-		mgr.SendKey("C-z")
+		key = "C-z"
 	case tea.KeyRunes:
 		// Send literal characters
-		mgr.SendLiteral(string(msg.Runes))
+		key = string(msg.Runes)
+		literal = true
 	default:
-		// Try to handle other keys
-		if s := msg.String(); len(s) == 1 {
-			mgr.SendLiteral(s)
+		// Try to handle other keys by their string representation
+		key = msg.String()
+		if len(key) == 1 {
+			literal = true
+		}
+	}
+
+	if key != "" {
+		if literal {
+			mgr.SendLiteral(key)
+		} else {
+			mgr.SendKey(key)
 		}
 	}
 }
