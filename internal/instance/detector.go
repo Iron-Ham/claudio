@@ -101,12 +101,18 @@ func NewDetector() *Detector {
 		`(?i)is there anything else`,
 	}
 
-	// Error patterns - Claude encountered an issue
+	// Error patterns - Claude encountered a critical issue that stopped it
+	// These patterns should be specific to actual Claude failures, not just error text appearing in output
+	// We want to avoid false positives from commands that show errors (like test output, build logs, etc.)
 	errorStrings := []string{
-		`(?i)(?:error|exception|failed|failure)(?::|!)`,
-		`(?i)(?:could not|couldn'?t|unable to|cannot|can'?t) (?:complete|finish|proceed|continue)`,
-		`(?i)(?:fatal|critical|severe) (?:error|issue|problem)`,
-		`(?i)process (?:exited|terminated|crashed|died)`,
+		// Claude CLI specific error messages
+		`(?i)^Error: (?:session|connection|authentication|api) `,
+		`(?i)claude (?:exited|terminated|crashed|died) (?:with|unexpectedly)`,
+		// Process termination signals
+		`(?i)(?:signal|killed|terminated): (?:SIGTERM|SIGKILL|SIGINT)`,
+		// Rate limiting or API errors from Claude
+		`(?i)(?:rate limit|quota) (?:exceeded|reached)`,
+		`(?i)(?:api|request) (?:error|failed).*(?:401|403|429|500|502|503)`,
 	}
 
 	// Working patterns - Claude is actively doing something (these override waiting detection)
