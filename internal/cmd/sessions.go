@@ -3,67 +3,85 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/instance"
-	"github.com/Iron-Ham/claudio/internal/orchestrator"
-	"github.com/Iron-Ham/claudio/internal/tui"
+	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var sessionsCmd = &cobra.Command{
 	Use:   "sessions",
 	Short: "Manage Claudio sessions",
-	Long:  `Commands for listing, recovering, and cleaning up Claudio sessions.`,
+	Long:  `Commands for listing, attaching, and cleaning up Claudio sessions.`,
 }
 
 var sessionsListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List recoverable sessions and orphaned tmux sessions",
-	Long: `List all Claudio sessions that can be recovered, including:
-- Existing session files with their instances
-- Orphaned tmux sessions (claudio-* sessions without a session file)`,
+	Short: "List all Claudio sessions",
+	Long: `List all Claudio sessions with their status:
+- Session ID and name
+- Number of instances
+- Lock status (whether another process is attached)
+- Orphaned tmux sessions`,
 	RunE: runSessionsList,
 }
 
-var sessionsRecoverCmd = &cobra.Command{
-	Use:   "recover",
-	Short: "Recover a previous session",
-	Long: `Recover a previous Claudio session by reconnecting to any
-still-running tmux sessions and launching the TUI.
+var sessionsAttachCmd = &cobra.Command{
+	Use:   "attach <session-id>",
+	Short: "Attach to an existing session",
+	Long: `Attach to an existing Claudio session by ID.
 
 This command will:
-1. Load the session state from .claudio/session.json
-2. Attempt to reconnect to any tmux sessions that are still running
-3. Mark instances with missing tmux sessions as paused
-4. Launch the TUI to continue working`,
+1. Load the session state
+2. Acquire a lock to prevent concurrent access
+3. Attempt to reconnect to any tmux sessions that are still running
+4. Launch the TUI`,
+	Args: cobra.ExactArgs(1),
+	RunE: runSessionsAttach,
+}
+
+var sessionsRecoverCmd = &cobra.Command{
+	Use:   "recover [session-id]",
+	Short: "Recover a previous session (legacy)",
+	Long: `Recover a previous Claudio session. If no session-id is provided,
+attempts to recover a legacy single-session format.
+
+This command is primarily for backwards compatibility.
+Use 'claudio sessions attach <id>' for multi-session support.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runSessionsRecover,
 }
 
 var sessionsCleanCmd = &cobra.Command{
 	Use:   "clean",
 	Short: "Clean up stale session data",
-	Long: `Clean up orphaned tmux sessions and optionally remove session files.
+	Long: `Clean up stale locks and orphaned tmux sessions.
 
 This command will:
-1. Kill any orphaned claudio-* tmux sessions
-2. Optionally remove the session file (with --all flag)`,
+1. Remove stale lock files (from dead processes)
+2. Kill any orphaned claudio-* tmux sessions
+3. Optionally remove all session data (with --all flag)`,
 	RunE: runSessionsClean,
 }
 
 var (
-	cleanAll bool
+	cleanAll       bool
+	cleanSessionID string
 )
 
 func init() {
 	rootCmd.AddCommand(sessionsCmd)
 	sessionsCmd.AddCommand(sessionsListCmd)
+	sessionsCmd.AddCommand(sessionsAttachCmd)
 	sessionsCmd.AddCommand(sessionsRecoverCmd)
 	sessionsCmd.AddCommand(sessionsCleanCmd)
 
-	sessionsCleanCmd.Flags().BoolVar(&cleanAll, "all", false, "Also remove session file")
+	sessionsCleanCmd.Flags().BoolVar(&cleanAll, "all", false, "Remove all session data")
+	sessionsCleanCmd.Flags().StringVar(&cleanSessionID, "session", "", "Clean specific session by ID")
 }
 
 func runSessionsList(cmd *cobra.Command, args []string) error {
@@ -72,92 +90,141 @@ func runSessionsList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	orch, err := orchestrator.New(cwd)
+	// List all sessions
+	sessions, err := session.ListSessions(cwd)
 	if err != nil {
-		return fmt.Errorf("failed to create orchestrator: %w", err)
+		return fmt.Errorf("failed to list sessions: %w", err)
 	}
 
-	// Check for existing session file
-	hasSession := orch.HasExistingSession()
-
-	// List orphaned tmux sessions
+	// List all tmux sessions
 	tmuxSessions, err := instance.ListClaudioTmuxSessions()
 	if err != nil {
-		return fmt.Errorf("failed to list tmux sessions: %w", err)
+		// Not fatal, just can't show tmux status
+		tmuxSessions = nil
 	}
 
-	fmt.Println(strings.Repeat("─", 60))
-	fmt.Println("Claudio Session Status")
-	fmt.Println(strings.Repeat("─", 60))
+	fmt.Println(strings.Repeat("─", 70))
+	fmt.Println("Claudio Sessions")
+	fmt.Println(strings.Repeat("─", 70))
 
-	if hasSession {
-		session, err := orch.LoadSession()
-		if err != nil {
-			fmt.Printf("\nSession file exists but failed to load: %v\n", err)
+	if len(sessions) == 0 {
+		// Check for legacy session
+		legacyFile := fmt.Sprintf("%s/.claudio/session.json", cwd)
+		if _, err := os.Stat(legacyFile); err == nil {
+			fmt.Println("\nLegacy session found (pre-multi-session format)")
+			fmt.Println("Run 'claudio start' to migrate it to the new format.")
 		} else {
-			fmt.Printf("\nSession: %s (ID: %s)\n", session.Name, session.ID)
-			fmt.Printf("Created: %s\n", session.Created.Format(time.RFC822))
-			fmt.Printf("Instances: %d\n", len(session.Instances))
-
-			// Show ultra-plan info if present
-			if session.UltraPlan != nil {
-				fmt.Printf("\nUltra-Plan Mode:\n")
-				fmt.Printf("  Phase: %s\n", session.UltraPlan.Phase)
-				fmt.Printf("  Objective: %s\n", truncateTask(session.UltraPlan.Objective, 50))
-				if session.UltraPlan.Plan != nil {
-					fmt.Printf("  Tasks: %d total, %d completed, %d failed\n",
-						len(session.UltraPlan.Plan.Tasks),
-						len(session.UltraPlan.CompletedTasks),
-						len(session.UltraPlan.FailedTasks))
-				}
-			}
-			fmt.Println()
-
-			if len(session.Instances) > 0 {
-				fmt.Println("Instances:")
-				for _, inst := range session.Instances {
-					sessionName := fmt.Sprintf("claudio-%s", inst.ID)
-					tmuxStatus := "stopped"
-
-					// Check if tmux session exists
-					for _, ts := range tmuxSessions {
-						if ts == sessionName {
-							tmuxStatus = "running"
-							break
-						}
-					}
-
-					fmt.Printf("  [%s] %s - %s\n", inst.Status, inst.ID, truncateTask(inst.Task, 40))
-					fmt.Printf("       Branch: %s\n", inst.Branch)
-					fmt.Printf("       Tmux: %s\n", tmuxStatus)
-				}
-			}
+			fmt.Println("\nNo sessions found.")
+			fmt.Println("Run 'claudio start' to create a new session.")
 		}
 	} else {
-		fmt.Println("\nNo session file found.")
+		fmt.Printf("\nFound %d session(s):\n\n", len(sessions))
+
+		for _, s := range sessions {
+			name := s.Name
+			if name == "" {
+				name = "(unnamed)"
+			}
+
+			lockStatus := "unlocked"
+			if s.IsLocked {
+				lockStatus = fmt.Sprintf("LOCKED (PID %d)", s.LockInfo.PID)
+			}
+
+			fmt.Printf("  Session: %s\n", s.ID)
+			fmt.Printf("    Name:      %s\n", name)
+			fmt.Printf("    Created:   %s\n", s.Created.Format(time.RFC822))
+			fmt.Printf("    Instances: %d\n", s.InstanceCount)
+			fmt.Printf("    Status:    %s\n", lockStatus)
+
+			// Count running tmux sessions for this session
+			runningCount := 0
+			prefix := fmt.Sprintf("claudio-%s-", s.ID)
+			for _, ts := range tmuxSessions {
+				if strings.HasPrefix(ts, prefix) {
+					runningCount++
+				}
+			}
+			if runningCount > 0 {
+				fmt.Printf("    Running:   %d tmux session(s)\n", runningCount)
+			}
+			fmt.Println()
+		}
 	}
 
-	// Show orphaned tmux sessions
-	orphaned, _ := orch.GetOrphanedTmuxSessions()
+	// Show orphaned tmux sessions (any that don't match known session patterns)
+	var orphaned []string
+	for _, ts := range tmuxSessions {
+		sessionID, _ := instance.ExtractSessionAndInstanceID(ts)
+		// Check if this session ID exists
+		found := false
+		if sessionID != "" {
+			for _, s := range sessions {
+				if s.ID == sessionID {
+					found = true
+					break
+				}
+			}
+		}
+		// Legacy format (no session ID) is also considered orphaned in multi-session context
+		if !found {
+			orphaned = append(orphaned, ts)
+		}
+	}
+
 	if len(orphaned) > 0 {
-		fmt.Printf("\nOrphaned tmux sessions (%d):\n", len(orphaned))
-		for _, sess := range orphaned {
-			instanceID := instance.ExtractInstanceIDFromSession(sess)
-			fmt.Printf("  - %s (instance: %s)\n", sess, instanceID)
+		fmt.Printf("Orphaned tmux sessions (%d):\n", len(orphaned))
+		for _, ts := range orphaned {
+			fmt.Printf("  - %s\n", ts)
 		}
 		fmt.Println("\nRun 'claudio sessions clean' to remove orphaned sessions.")
-	} else if len(tmuxSessions) == 0 {
-		fmt.Println("\nNo claudio tmux sessions running.")
 	}
 
-	fmt.Println(strings.Repeat("─", 60))
+	fmt.Println(strings.Repeat("─", 70))
 
-	if hasSession {
-		fmt.Println("\nTo recover this session: claudio sessions recover")
-		fmt.Println("To start fresh: claudio sessions clean --all && claudio start")
+	if len(sessions) > 0 {
+		fmt.Println("\nTo attach to a session: claudio sessions attach <session-id>")
+		fmt.Println("To create a new session: claudio start --new")
 	}
 
 	return nil
+}
+
+func runSessionsAttach(cmd *cobra.Command, args []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	sessionID := args[0]
+
+	// Find session by ID or prefix
+	sessions, err := session.ListSessions(cwd)
+	if err != nil {
+		return fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	var targetSession *session.Info
+	for _, s := range sessions {
+		if s.ID == sessionID || strings.HasPrefix(s.ID, sessionID) {
+			targetSession = s
+			break
+		}
+	}
+
+	if targetSession == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	if targetSession.IsLocked {
+		return fmt.Errorf("session %s is locked by PID %d. Use 'claudio sessions list' to see status",
+			targetSession.ID, targetSession.LockInfo.PID)
+	}
+
+	fmt.Printf("Attaching to session %s...\n", targetSession.ID)
+
+	cfg := config.Get()
+	return attachToSession(cwd, targetSession.ID, cfg)
 }
 
 func runSessionsRecover(cmd *cobra.Command, args []string) error {
@@ -166,71 +233,24 @@ func runSessionsRecover(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	orch, err := orchestrator.New(cwd)
-	if err != nil {
-		return fmt.Errorf("failed to create orchestrator: %w", err)
+	cfg := config.Get()
+
+	// If session ID is provided, use attach
+	if len(args) > 0 {
+		return attachToSession(cwd, args[0], cfg)
 	}
 
-	if !orch.HasExistingSession() {
-		return fmt.Errorf("no session found to recover. Use 'claudio start' to create a new session")
+	// Try to recover legacy session
+	legacyFile := fmt.Sprintf("%s/.claudio/session.json", cwd)
+	if _, err := os.Stat(legacyFile); err != nil {
+		return fmt.Errorf("no legacy session found. Use 'claudio sessions attach <id>' for multi-session")
 	}
 
-	fmt.Println("Recovering session...")
+	fmt.Println("Recovering legacy session...")
+	fmt.Println("This session will be migrated to the new multi-session format.")
+	fmt.Println()
 
-	session, reconnected, err := orch.RecoverSession()
-	if err != nil {
-		return fmt.Errorf("failed to recover session: %w", err)
-	}
-
-	fmt.Printf("Loaded session: %s\n", session.Name)
-	fmt.Printf("Total instances: %d\n", len(session.Instances))
-	fmt.Printf("Reconnected to tmux: %d\n", len(reconnected))
-
-	if len(reconnected) > 0 {
-		fmt.Println("Reconnected instances:")
-		for _, id := range reconnected {
-			fmt.Printf("  - %s\n", id)
-		}
-	}
-
-	// Check for ultra-plan session
-	if session.UltraPlan != nil {
-		fmt.Printf("\nUltra-plan session detected:\n")
-		fmt.Printf("  Phase: %s\n", session.UltraPlan.Phase)
-		fmt.Printf("  Objective: %s\n", truncateTask(session.UltraPlan.Objective, 50))
-		if session.UltraPlan.Plan != nil {
-			fmt.Printf("  Tasks: %d total, %d completed, %d failed\n",
-				len(session.UltraPlan.Plan.Tasks),
-				len(session.UltraPlan.CompletedTasks),
-				len(session.UltraPlan.FailedTasks))
-		}
-	}
-
-	// Get terminal dimensions and set them on the orchestrator before launching TUI
-	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
-		contentWidth, contentHeight := tui.CalculateContentDimensions(termWidth, termHeight)
-		if contentWidth > 0 && contentHeight > 0 {
-			orch.SetDisplayDimensions(contentWidth, contentHeight)
-		}
-	}
-
-	fmt.Println("\nLaunching TUI...")
-
-	// Launch TUI - use ultra-plan mode if session has ultra-plan state
-	var app *tui.App
-	if session.UltraPlan != nil {
-		// Recreate coordinator for ultra-plan session
-		coordinator := orchestrator.NewCoordinator(orch, session, session.UltraPlan)
-		app = tui.NewWithUltraPlan(orch, session, coordinator)
-	} else {
-		app = tui.New(orch, session)
-	}
-
-	if err := app.Run(); err != nil {
-		return fmt.Errorf("TUI error: %w", err)
-	}
-
-	return nil
+	return migrateAndStartLegacySession(cwd, "", cfg)
 }
 
 func runSessionsClean(cmd *cobra.Command, args []string) error {
@@ -239,42 +259,88 @@ func runSessionsClean(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	orch, err := orchestrator.New(cwd)
+	// Clean stale locks first
+	cleaned, err := session.CleanupStaleLocks(cwd)
 	if err != nil {
-		return fmt.Errorf("failed to create orchestrator: %w", err)
+		fmt.Printf("Warning: failed to clean stale locks: %v\n", err)
 	}
-
-	// Load session first to find orphaned sessions
-	if orch.HasExistingSession() {
-		_, _ = orch.LoadSession()
-	}
-
-	// Clean orphaned tmux sessions
-	cleaned, err := orch.CleanOrphanedTmuxSessions()
-	if err != nil {
-		fmt.Printf("Warning: failed to clean some tmux sessions: %v\n", err)
-	}
-
-	if cleaned > 0 {
-		fmt.Printf("Cleaned %d orphaned tmux session(s)\n", cleaned)
-	} else {
-		fmt.Println("No orphaned tmux sessions to clean")
-	}
-
-	// Remove session file if --all flag is set
-	if cleanAll {
-		sessionFile := fmt.Sprintf("%s/.claudio/session.json", cwd)
-		if err := os.Remove(sessionFile); err != nil {
-			if !os.IsNotExist(err) {
-				return fmt.Errorf("failed to remove session file: %w", err)
-			}
-			fmt.Println("No session file to remove")
-		} else {
-			fmt.Println("Removed session file")
+	if len(cleaned) > 0 {
+		fmt.Printf("Cleaned %d stale lock(s)\n", len(cleaned))
+		for _, id := range cleaned {
+			fmt.Printf("  - Session %s\n", id)
 		}
 	}
 
+	// List all sessions to find orphaned tmux sessions
+	sessions, _ := session.ListSessions(cwd)
+	tmuxSessions, _ := instance.ListClaudioTmuxSessions()
+
+	// Find and kill orphaned tmux sessions
+	var orphanedKilled int
+	for _, ts := range tmuxSessions {
+		sessionID, _ := instance.ExtractSessionAndInstanceID(ts)
+		found := false
+		if sessionID != "" {
+			for _, s := range sessions {
+				if s.ID == sessionID {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			// Kill orphaned session
+			killCmd := fmt.Sprintf("tmux kill-session -t %s", ts)
+			if _, err := runCommand(killCmd); err == nil {
+				orphanedKilled++
+			}
+		}
+	}
+
+	if orphanedKilled > 0 {
+		fmt.Printf("Killed %d orphaned tmux session(s)\n", orphanedKilled)
+	}
+
+	// Clean specific session if --session flag is set
+	if cleanSessionID != "" {
+		sessionDir := session.GetSessionDir(cwd, cleanSessionID)
+		if err := os.RemoveAll(sessionDir); err != nil {
+			return fmt.Errorf("failed to remove session %s: %w", cleanSessionID, err)
+		}
+		fmt.Printf("Removed session: %s\n", cleanSessionID)
+	}
+
+	// Remove all session data if --all flag is set
+	if cleanAll {
+		// Remove legacy session file
+		legacyFile := fmt.Sprintf("%s/.claudio/session.json", cwd)
+		if err := os.Remove(legacyFile); err == nil {
+			fmt.Println("Removed legacy session file")
+		}
+
+		// Remove all session directories
+		sessionsDir := session.GetSessionsDir(cwd)
+		if err := os.RemoveAll(sessionsDir); err != nil {
+			return fmt.Errorf("failed to remove sessions directory: %w", err)
+		}
+		fmt.Println("Removed all session data")
+	}
+
+	if len(cleaned) == 0 && orphanedKilled == 0 && cleanSessionID == "" && !cleanAll {
+		fmt.Println("No stale resources to clean")
+	}
+
 	return nil
+}
+
+// runCommand executes a shell command and returns output
+func runCommand(cmd string) (string, error) {
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return "", fmt.Errorf("empty command")
+	}
+	out, err := exec.Command(parts[0], parts[1:]...).Output()
+	return string(out), err
 }
 
 func truncateTask(task string, maxLen int) string {

@@ -58,9 +58,10 @@ type MetricsChangeCallback func(instanceID string, metrics *ParsedMetrics)
 // Manager handles a single Claude Code instance running in a tmux session
 type Manager struct {
 	id          string
+	sessionID   string // Claudio session ID (for multi-session support)
 	workdir     string
 	task        string
-	sessionName string
+	sessionName string // tmux session name
 	outputBuf   *RingBuffer
 	mu          sync.RWMutex
 	running     bool
@@ -98,13 +99,41 @@ func NewManager(id, workdir, task string) *Manager {
 	return NewManagerWithConfig(id, workdir, task, DefaultManagerConfig())
 }
 
-// NewManagerWithConfig creates a new instance manager with the given configuration
+// NewManagerWithConfig creates a new instance manager with the given configuration.
+// Uses legacy tmux naming (claudio-{instanceID}) for backwards compatibility.
 func NewManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager {
 	return &Manager{
 		id:            id,
 		workdir:       workdir,
 		task:          task,
 		sessionName:   fmt.Sprintf("claudio-%s", id),
+		outputBuf:     NewRingBuffer(cfg.OutputBufferSize),
+		doneChan:      make(chan struct{}),
+		config:        cfg,
+		detector:      NewDetector(),
+		currentState:  StateWorking,
+		metricsParser: NewMetricsParser(),
+	}
+}
+
+// NewManagerWithSession creates a new instance manager with session-scoped tmux naming.
+// The tmux session will be named claudio-{sessionID}-{instanceID} to prevent collisions
+// when multiple Claudio sessions are running simultaneously.
+func NewManagerWithSession(sessionID, id, workdir, task string, cfg ManagerConfig) *Manager {
+	// Use session-scoped naming if sessionID is provided
+	var sessionName string
+	if sessionID != "" {
+		sessionName = fmt.Sprintf("claudio-%s-%s", sessionID, id)
+	} else {
+		sessionName = fmt.Sprintf("claudio-%s", id)
+	}
+
+	return &Manager{
+		id:            id,
+		sessionID:     sessionID,
+		workdir:       workdir,
+		task:          task,
+		sessionName:   sessionName,
 		outputBuf:     NewRingBuffer(cfg.OutputBufferSize),
 		doneChan:      make(chan struct{}),
 		config:        cfg,
@@ -752,13 +781,77 @@ func ListClaudioTmuxSessions() ([]string, error) {
 	return sessions, nil
 }
 
-// ExtractInstanceIDFromSession extracts the instance ID from a claudio tmux session name
-// Session names are in the format "claudio-{instanceID}"
+// ExtractInstanceIDFromSession extracts the instance ID from a claudio tmux session name.
+// Supports both legacy format (claudio-{instanceID}) and new format (claudio-{sessionID}-{instanceID}).
+// For PR workflow sessions (claudio-{id}-pr or claudio-{sessionID}-{id}-pr), removes the -pr suffix first.
 func ExtractInstanceIDFromSession(sessionName string) string {
-	if strings.HasPrefix(sessionName, "claudio-") {
-		return strings.TrimPrefix(sessionName, "claudio-")
+	if !strings.HasPrefix(sessionName, "claudio-") {
+		return ""
 	}
-	return ""
+
+	// Remove "claudio-" prefix
+	rest := strings.TrimPrefix(sessionName, "claudio-")
+
+	// Remove -pr suffix if present (PR workflow sessions)
+	rest = strings.TrimSuffix(rest, "-pr")
+
+	// Check if this is new format (claudio-{sessionID}-{instanceID})
+	// by looking for a second hyphen after the session ID
+	parts := strings.SplitN(rest, "-", 2)
+	if len(parts) == 2 && len(parts[0]) == 8 && len(parts[1]) >= 8 {
+		// Likely new format: first part is sessionID (8 chars), second is instanceID
+		return parts[1]
+	}
+
+	// Legacy format or instance ID only
+	return rest
+}
+
+// ExtractSessionAndInstanceID extracts both session ID and instance ID from a tmux session name.
+// Returns (sessionID, instanceID). For legacy format, sessionID will be empty.
+// For PR workflow sessions, removes the -pr suffix first.
+func ExtractSessionAndInstanceID(sessionName string) (sessionID, instanceID string) {
+	if !strings.HasPrefix(sessionName, "claudio-") {
+		return "", ""
+	}
+
+	// Remove "claudio-" prefix
+	rest := strings.TrimPrefix(sessionName, "claudio-")
+
+	// Remove -pr suffix if present (PR workflow sessions)
+	rest = strings.TrimSuffix(rest, "-pr")
+
+	// Check if this is new format (claudio-{sessionID}-{instanceID})
+	parts := strings.SplitN(rest, "-", 2)
+	if len(parts) == 2 && len(parts[0]) == 8 && len(parts[1]) >= 8 {
+		// New format: first part is sessionID, second is instanceID
+		return parts[0], parts[1]
+	}
+
+	// Legacy format: no session ID, just instance ID
+	return "", rest
+}
+
+// ListSessionTmuxSessions returns tmux sessions for a specific Claudio session.
+// Filters by session ID prefix in the tmux session name.
+func ListSessionTmuxSessions(sessionID string) ([]string, error) {
+	allSessions, err := ListClaudioTmuxSessions()
+	if err != nil {
+		return nil, err
+	}
+
+	if sessionID == "" {
+		return allSessions, nil
+	}
+
+	prefix := fmt.Sprintf("claudio-%s-", sessionID)
+	var sessions []string
+	for _, s := range allSessions {
+		if strings.HasPrefix(s, prefix) {
+			sessions = append(sessions, s)
+		}
+	}
+	return sessions, nil
 }
 
 // Resize changes the tmux pane dimensions

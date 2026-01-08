@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -21,18 +23,21 @@ var startCmd = &cobra.Command{
 	Long: `Start a new Claudio session with an optional name.
 This launches the TUI dashboard where you can add and manage Claude instances.
 
-If a previous session exists, you will be prompted to recover it or start fresh.`,
+If other sessions exist, you will be prompted to attach to one or create a new session.
+Multiple Claudio sessions can run simultaneously in different terminal windows.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runStart,
 }
 
 var (
-	forceNew bool
+	forceNew       bool
+	attachSession  string // --session flag to attach to specific session
 )
 
 func init() {
 	rootCmd.AddCommand(startCmd)
-	startCmd.Flags().BoolVar(&forceNew, "new", false, "Force start a new session, replacing any existing one")
+	startCmd.Flags().BoolVar(&forceNew, "new", false, "Force start a new session")
+	startCmd.Flags().StringVar(&attachSession, "session", "", "Attach to a specific session by ID")
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
@@ -51,72 +56,175 @@ func runStart(cmd *cobra.Command, args []string) error {
 		checkStaleResourcesWarning(cwd)
 	}
 
-	// Create orchestrator
-	orch, err := orchestrator.New(cwd)
-	if err != nil {
-		return fmt.Errorf("failed to create orchestrator: %w", err)
+	cfg := config.Get()
+
+	// Check for legacy session format and prompt for migration
+	legacyFile := filepath.Join(cwd, ".claudio", "session.json")
+	if _, err := os.Stat(legacyFile); err == nil {
+		fmt.Println("\nLegacy session format detected.")
+		fmt.Println("Claudio now supports multiple simultaneous sessions.")
+		fmt.Println("Your existing session will be migrated to the new format.")
+		fmt.Println()
+
+		return migrateAndStartLegacySession(cwd, sessionName, cfg)
 	}
 
-	var session *orchestrator.Session
+	// If --session flag is set, attach to that specific session
+	if attachSession != "" {
+		return attachToSession(cwd, attachSession, cfg)
+	}
 
-	// Check for existing session
-	if !forceNew && orch.HasExistingSession() {
-		// Prompt user for what to do
-		action, err := promptSessionAction()
+	// List available sessions
+	sessions, err := session.ListSessions(cwd)
+	if err != nil {
+		return fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	// Filter to unlocked sessions only
+	var unlockedSessions []*session.Info
+	for _, s := range sessions {
+		if !s.IsLocked {
+			unlockedSessions = append(unlockedSessions, s)
+		}
+	}
+
+	// If there are unlocked sessions and we're not forcing new, prompt user
+	if len(unlockedSessions) > 0 && !forceNew {
+		action, selectedID, err := promptMultiSessionAction(unlockedSessions)
 		if err != nil {
 			return err
 		}
 
 		switch action {
-		case "recover":
-			fmt.Println("Recovering session...")
-			session, reconnected, err := orch.RecoverSession()
-			if err != nil {
-				return fmt.Errorf("failed to recover session: %w", err)
-			}
-			if len(reconnected) > 0 {
-				fmt.Printf("Reconnected to %d running instance(s)\n", len(reconnected))
-			}
-
-			// Get terminal dimensions and set them on the orchestrator before launching TUI
-			if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
-				contentWidth, contentHeight := tui.CalculateContentDimensions(termWidth, termHeight)
-				if contentWidth > 0 && contentHeight > 0 {
-					orch.SetDisplayDimensions(contentWidth, contentHeight)
-				}
-			}
-
-			// Launch TUI with recovered session
-			app := tui.New(orch, session)
-			if err := app.Run(); err != nil {
-				return fmt.Errorf("TUI error: %w", err)
-			}
-			return nil
-
+		case "attach":
+			return attachToSession(cwd, selectedID, cfg)
 		case "new":
-			// Clean up orphaned tmux sessions before starting fresh
-			_, _ = orch.LoadSession()
-			cleaned, _ := orch.CleanOrphanedTmuxSessions()
-			if cleaned > 0 {
-				fmt.Printf("Cleaned %d orphaned tmux session(s)\n", cleaned)
-			}
-			// Continue to start new session below
-
+			// Continue to create new session below
+		case "list":
+			return runSessionsList(cmd, args)
 		case "quit":
-			fmt.Println("Use 'claudio sessions list' to see session details")
-			fmt.Println("Use 'claudio sessions recover' to recover the existing session")
 			return nil
 		}
 	}
 
-	// Start a new session
-	session, err = orch.StartSession(sessionName)
+	// Create a new session
+	return startNewSession(cwd, sessionName, cfg)
+}
+
+// attachToSession attaches to an existing session by ID
+func attachToSession(cwd, sessionID string, cfg *config.Config) error {
+	// Check if session exists
+	if !session.SessionExists(cwd, sessionID) {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	// Create orchestrator with the session ID
+	orch, err := orchestrator.NewWithSession(cwd, sessionID, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create orchestrator: %w", err)
+	}
+
+	// Load and lock the session
+	sess, err := orch.LoadSessionWithLock()
+	if err != nil {
+		return fmt.Errorf("failed to load session: %w", err)
+	}
+
+	// Try to reconnect to running tmux sessions
+	var reconnected []string
+	for _, inst := range sess.Instances {
+		mgr := orch.GetInstanceManager(inst.ID)
+		if mgr == nil {
+			continue
+		}
+		if mgr.TmuxSessionExists() {
+			if err := mgr.Reconnect(); err == nil {
+				inst.Status = orchestrator.StatusWorking
+				inst.PID = mgr.PID()
+				reconnected = append(reconnected, inst.ID)
+			}
+		}
+	}
+
+	if len(reconnected) > 0 {
+		fmt.Printf("Reconnected to %d running instance(s)\n", len(reconnected))
+	}
+
+	return launchTUI(orch, sess)
+}
+
+// startNewSession creates and starts a new session
+func startNewSession(cwd, sessionName string, cfg *config.Config) error {
+	// Generate a new session ID
+	sessionID := orchestrator.GenerateID()
+
+	// Create orchestrator with the new session ID
+	orch, err := orchestrator.NewWithSession(cwd, sessionID, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create orchestrator: %w", err)
+	}
+
+	// Start the new session
+	sess, err := orch.StartSession(sessionName)
 	if err != nil {
 		return fmt.Errorf("failed to start session: %w", err)
 	}
 
+	fmt.Printf("Started new session: %s\n", sessionID)
+
+	return launchTUI(orch, sess)
+}
+
+// migrateAndStartLegacySession migrates a legacy session to the new format and starts it
+func migrateAndStartLegacySession(cwd, sessionName string, cfg *config.Config) error {
+	// First, load the legacy session to get its ID
+	legacyOrch, err := orchestrator.New(cwd)
+	if err != nil {
+		return fmt.Errorf("failed to create orchestrator: %w", err)
+	}
+
+	legacySession, err := legacyOrch.LoadSession()
+	if err != nil {
+		return fmt.Errorf("failed to load legacy session: %w", err)
+	}
+
+	// Use the existing session ID or generate a new one
+	sessionID := legacySession.ID
+	if sessionID == "" {
+		sessionID = orchestrator.GenerateID()
+	}
+
+	// Create the new session directory
+	sessionDir := session.GetSessionDir(cwd, sessionID)
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		return fmt.Errorf("failed to create session directory: %w", err)
+	}
+
+	// Move the session file
+	legacyFile := filepath.Join(cwd, ".claudio", "session.json")
+	newFile := filepath.Join(sessionDir, "session.json")
+	if err := os.Rename(legacyFile, newFile); err != nil {
+		return fmt.Errorf("failed to migrate session file: %w", err)
+	}
+
+	// Move the context file if it exists
+	legacyContext := filepath.Join(cwd, ".claudio", "context.md")
+	if _, err := os.Stat(legacyContext); err == nil {
+		newContext := filepath.Join(sessionDir, "context.md")
+		_ = os.Rename(legacyContext, newContext)
+	}
+
+	fmt.Printf("Migrated session to: %s\n", sessionID)
+	fmt.Println("Note: Existing tmux sessions use legacy naming and may need to be restarted.")
+	fmt.Println()
+
+	// Now start with the migrated session
+	return attachToSession(cwd, sessionID, cfg)
+}
+
+// launchTUI sets up terminal dimensions and launches the TUI
+func launchTUI(orch *orchestrator.Orchestrator, sess *orchestrator.Session) error {
 	// Get terminal dimensions and set them on the orchestrator before launching TUI
-	// This ensures that any instances started from the TUI have the correct initial size
 	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
 		contentWidth, contentHeight := tui.CalculateContentDimensions(termWidth, termHeight)
 		if contentWidth > 0 && contentHeight > 0 {
@@ -125,7 +233,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 
 	// Launch TUI
-	app := tui.New(orch, session)
+	app := tui.New(orch, sess)
 	if err := app.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
@@ -133,33 +241,67 @@ func runStart(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// promptSessionAction prompts the user to choose what to do with an existing session
-func promptSessionAction() (string, error) {
-	fmt.Println("\nAn existing session was found.")
-	fmt.Println("What would you like to do?")
-	fmt.Println("  [r] Recover - Resume the existing session")
-	fmt.Println("  [n] New     - Start fresh (cleans up old session)")
-	fmt.Println("  [q] Quit    - Exit without changes")
-	fmt.Print("\nChoice [r/n/q]: ")
+// promptMultiSessionAction prompts the user to choose what to do when sessions exist
+func promptMultiSessionAction(sessions []*session.Info) (action string, selectedID string, err error) {
+	fmt.Println("\nExisting sessions found:")
+	fmt.Println()
+
+	for i, s := range sessions {
+		name := s.Name
+		if name == "" {
+			name = "(unnamed)"
+		}
+		lockStatus := ""
+		if s.IsLocked {
+			lockStatus = " [LOCKED]"
+		}
+		fmt.Printf("  [%d] %s - %s (%d instances)%s\n", i+1, s.ID[:8], name, s.InstanceCount, lockStatus)
+	}
+
+	fmt.Println()
+	fmt.Println("  [n] Create new session")
+	fmt.Println("  [l] List all sessions with details")
+	fmt.Println("  [q] Quit")
+	fmt.Println()
+	fmt.Print("Enter number to attach or action [1/n/l/q]: ")
 
 	reader := bufio.NewReader(os.Stdin)
 	input, err := reader.ReadString('\n')
 	if err != nil {
-		return "", fmt.Errorf("failed to read input: %w", err)
+		return "", "", fmt.Errorf("failed to read input: %w", err)
 	}
 
 	input = strings.TrimSpace(strings.ToLower(input))
 
 	switch input {
-	case "r", "recover", "":
-		return "recover", nil
 	case "n", "new":
-		return "new", nil
+		return "new", "", nil
+	case "l", "list":
+		return "list", "", nil
 	case "q", "quit":
-		return "quit", nil
+		return "quit", "", nil
+	case "", "1":
+		// Default to first session
+		if len(sessions) > 0 {
+			return "attach", sessions[0].ID, nil
+		}
+		return "new", "", nil
 	default:
-		fmt.Printf("Unknown option '%s', defaulting to recover\n", input)
-		return "recover", nil
+		// Try to parse as number
+		var idx int
+		if _, err := fmt.Sscanf(input, "%d", &idx); err == nil {
+			if idx >= 1 && idx <= len(sessions) {
+				return "attach", sessions[idx-1].ID, nil
+			}
+		}
+		// Check if it's a session ID prefix
+		for _, s := range sessions {
+			if strings.HasPrefix(s.ID, input) {
+				return "attach", s.ID, nil
+			}
+		}
+		fmt.Printf("Unknown option '%s', creating new session\n", input)
+		return "new", "", nil
 	}
 }
 
