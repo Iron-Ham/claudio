@@ -22,10 +22,11 @@ type PRWorkflowCallback func(instanceID string, success bool, output string)
 // PRWorkflow manages the commit-push-PR workflow after an instance is stopped
 type PRWorkflow struct {
 	instanceID  string
+	sessionID   string // Claudio session ID (for multi-session support)
 	workdir     string
 	branch      string
 	task        string
-	sessionName string
+	sessionName string // tmux session name
 	config      PRWorkflowConfig
 	outputBuf   *RingBuffer
 
@@ -36,7 +37,8 @@ type PRWorkflow struct {
 	callback    PRWorkflowCallback
 }
 
-// NewPRWorkflow creates a new PR workflow manager
+// NewPRWorkflow creates a new PR workflow manager.
+// Uses legacy tmux naming (claudio-{instanceID}-pr) for backwards compatibility.
 func NewPRWorkflow(instanceID, workdir, branch, task string, cfg PRWorkflowConfig) *PRWorkflow {
 	return &PRWorkflow{
 		instanceID:  instanceID,
@@ -44,6 +46,31 @@ func NewPRWorkflow(instanceID, workdir, branch, task string, cfg PRWorkflowConfi
 		branch:      branch,
 		task:        task,
 		sessionName: fmt.Sprintf("claudio-%s-pr", instanceID),
+		config:      cfg,
+		outputBuf:   NewRingBuffer(100000), // 100KB buffer
+		doneChan:    make(chan struct{}),
+	}
+}
+
+// NewPRWorkflowWithSession creates a new PR workflow manager with session-scoped tmux naming.
+// The tmux session will be named claudio-{sessionID}-{instanceID}-pr to prevent collisions
+// when multiple Claudio sessions are running simultaneously.
+func NewPRWorkflowWithSession(sessionID, instanceID, workdir, branch, task string, cfg PRWorkflowConfig) *PRWorkflow {
+	// Use session-scoped naming if sessionID is provided
+	var sessionName string
+	if sessionID != "" {
+		sessionName = fmt.Sprintf("claudio-%s-%s-pr", sessionID, instanceID)
+	} else {
+		sessionName = fmt.Sprintf("claudio-%s-pr", instanceID)
+	}
+
+	return &PRWorkflow{
+		instanceID:  instanceID,
+		sessionID:   sessionID,
+		workdir:     workdir,
+		branch:      branch,
+		task:        task,
+		sessionName: sessionName,
 		config:      cfg,
 		outputBuf:   NewRingBuffer(100000), // 100KB buffer
 		doneChan:    make(chan struct{}),

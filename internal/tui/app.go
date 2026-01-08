@@ -51,6 +51,9 @@ func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Ses
 
 // Run starts the TUI application
 func (a *App) Run() error {
+	// Ensure session lock is released when TUI exits (both normal and signal-based)
+	defer a.orchestrator.ReleaseLock()
+
 	a.program = tea.NewProgram(
 		a.model,
 		tea.WithAltScreen(),

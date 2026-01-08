@@ -117,3 +117,9 @@ func generateID() string {
 	_, _ = rand.Read(bytes)
 	return hex.EncodeToString(bytes)
 }
+
+// GenerateID generates a new random 8-character hex ID for sessions and instances.
+// Exported for use by cmd package.
+func GenerateID() string {
+	return generateID()
+}

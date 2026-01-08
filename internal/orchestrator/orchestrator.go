@@ -13,6 +13,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/instance"
+	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 	"github.com/spf13/viper"
 )
@@ -22,6 +23,9 @@ type Orchestrator struct {
 	baseDir     string
 	claudioDir  string
 	worktreeDir string
+	sessionID   string // Current session ID (for multi-session support)
+	sessionDir  string // Session-specific directory (.claudio/sessions/{sessionID})
+	lock        *session.Lock
 
 	session          *Session
 	instances        map[string]*instance.Manager
@@ -55,7 +59,8 @@ func New(baseDir string) (*Orchestrator, error) {
 	return NewWithConfig(baseDir, config.Get())
 }
 
-// NewWithConfig creates a new Orchestrator with the given configuration
+// NewWithConfig creates a new Orchestrator with the given configuration.
+// This is a legacy constructor that doesn't support multi-session - use NewWithSession instead.
 func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 	claudioDir := filepath.Join(baseDir, ".claudio")
 	worktreeDir := filepath.Join(claudioDir, "worktrees")
@@ -83,6 +88,39 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 	}, nil
 }
 
+// NewWithSession creates a new Orchestrator for a specific session.
+// This is the preferred constructor for multi-session support.
+// The sessionID determines the storage location and lock file.
+func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrator, error) {
+	claudioDir := filepath.Join(baseDir, ".claudio")
+	worktreeDir := filepath.Join(claudioDir, "worktrees")
+	sessionDir := session.GetSessionDir(baseDir, sessionID)
+
+	wt, err := worktree.New(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create worktree manager: %w", err)
+	}
+
+	// Create conflict detector
+	detector, err := conflict.New()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create conflict detector: %w", err)
+	}
+
+	return &Orchestrator{
+		baseDir:          baseDir,
+		claudioDir:       claudioDir,
+		worktreeDir:      worktreeDir,
+		sessionID:        sessionID,
+		sessionDir:       sessionDir,
+		instances:        make(map[string]*instance.Manager),
+		prWorkflows:      make(map[string]*instance.PRWorkflow),
+		wt:               wt,
+		conflictDetector: detector,
+		config:           cfg,
+	}, nil
+}
+
 // Init initializes the Claudio directory structure
 func (o *Orchestrator) Init() error {
 	// Create .claudio directory
@@ -93,6 +131,13 @@ func (o *Orchestrator) Init() error {
 	// Create worktrees directory
 	if err := os.MkdirAll(o.worktreeDir, 0755); err != nil {
 		return fmt.Errorf("failed to create worktrees directory: %w", err)
+	}
+
+	// Create session directory if using multi-session
+	if o.sessionDir != "" {
+		if err := os.MkdirAll(o.sessionDir, 0755); err != nil {
+			return fmt.Errorf("failed to create session directory: %w", err)
+		}
 	}
 
 	return nil
@@ -108,8 +153,22 @@ func (o *Orchestrator) StartSession(name string) (*Session, error) {
 		return nil, err
 	}
 
+	// Acquire session lock if using multi-session
+	if o.sessionDir != "" && o.sessionID != "" {
+		lock, err := session.AcquireLock(o.sessionDir, o.sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to acquire session lock: %w", err)
+		}
+		o.lock = lock
+	}
+
 	// Create new session
-	o.session = NewSession(name, o.baseDir)
+	sess := NewSession(name, o.baseDir)
+	// Use the orchestrator's session ID if set (multi-session mode)
+	if o.sessionID != "" {
+		sess.ID = o.sessionID
+	}
+	o.session = sess
 
 	// Start conflict detector
 	o.conflictDetector.Start()
@@ -127,26 +186,54 @@ func (o *Orchestrator) LoadSession() (*Session, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	sessionFile := filepath.Join(o.claudioDir, "session.json")
+	// Determine session file path based on mode
+	var sessionFile string
+	if o.sessionDir != "" {
+		sessionFile = filepath.Join(o.sessionDir, "session.json")
+	} else {
+		// Legacy single-session mode
+		sessionFile = filepath.Join(o.claudioDir, "session.json")
+	}
+
 	data, err := os.ReadFile(sessionFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read session file: %w", err)
 	}
 
-	var session Session
-	if err := json.Unmarshal(data, &session); err != nil {
+	var sess Session
+	if err := json.Unmarshal(data, &sess); err != nil {
 		return nil, fmt.Errorf("failed to parse session file: %w", err)
 	}
 
-	o.session = &session
+	o.session = &sess
+
+	// Set sessionID from loaded session if not already set
+	if o.sessionID == "" && sess.ID != "" {
+		o.sessionID = sess.ID
+	}
 
 	// Start conflict detector and register existing instances
 	o.conflictDetector.Start()
-	for _, inst := range session.Instances {
+	for _, inst := range sess.Instances {
 		_ = o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath)
 	}
 
 	return o.session, nil
+}
+
+// LoadSessionWithLock loads an existing session and acquires a lock on it.
+// Use this for multi-session mode to prevent concurrent access.
+func (o *Orchestrator) LoadSessionWithLock() (*Session, error) {
+	// Acquire lock first if using multi-session
+	if o.sessionDir != "" && o.sessionID != "" {
+		lock, err := session.AcquireLock(o.sessionDir, o.sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to acquire session lock: %w", err)
+		}
+		o.lock = lock
+	}
+
+	return o.LoadSession()
 }
 
 // RecoverSession loads a session and attempts to reconnect to running tmux sessions
@@ -160,7 +247,7 @@ func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
 	var reconnected []string
 	for _, inst := range session.Instances {
 		// Create instance manager
-		mgr := instance.NewManagerWithConfig(inst.ID, inst.WorktreePath, inst.Task, o.instanceManagerConfig())
+		mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task)
 
 		// Try to reconnect if the tmux session still exists
 		if mgr.TmuxSessionExists() {
@@ -212,9 +299,39 @@ func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
 
 // HasExistingSession checks if there's an existing session file
 func (o *Orchestrator) HasExistingSession() bool {
-	sessionFile := filepath.Join(o.claudioDir, "session.json")
+	var sessionFile string
+	if o.sessionDir != "" {
+		sessionFile = filepath.Join(o.sessionDir, "session.json")
+	} else {
+		// Legacy single-session mode
+		sessionFile = filepath.Join(o.claudioDir, "session.json")
+	}
 	_, err := os.Stat(sessionFile)
 	return err == nil
+}
+
+// HasLegacySession checks if there's a legacy single-session file
+// that might need migration to multi-session format.
+func (o *Orchestrator) HasLegacySession() bool {
+	legacyFile := filepath.Join(o.claudioDir, "session.json")
+	_, err := os.Stat(legacyFile)
+	return err == nil
+}
+
+// SessionID returns the current session ID
+func (o *Orchestrator) SessionID() string {
+	return o.sessionID
+}
+
+// ReleaseLock releases the session lock if one is held.
+// Safe to call multiple times.
+func (o *Orchestrator) ReleaseLock() error {
+	if o.lock != nil {
+		err := o.lock.Release()
+		o.lock = nil
+		return err
+	}
+	return nil
 }
 
 // GetOrphanedTmuxSessions returns tmux sessions that exist but aren't tracked by the current session
@@ -287,7 +404,7 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 	session.Instances = append(session.Instances, inst)
 
 	// Create instance manager with config
-	mgr := instance.NewManagerWithConfig(inst.ID, inst.WorktreePath, task, o.instanceManagerConfig())
+	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, task)
 	o.instances[inst.ID] = mgr
 
 	// Register with conflict detector
@@ -317,7 +434,7 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 	o.mu.Unlock()
 
 	if !ok {
-		mgr = instance.NewManagerWithConfig(inst.ID, inst.WorktreePath, inst.Task, o.instanceManagerConfig())
+		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task)
 		o.mu.Lock()
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
@@ -432,8 +549,13 @@ func (o *Orchestrator) StartPRWorkflow(inst *Instance) error {
 		cfg.TmuxHeight = o.config.Instance.TmuxHeight
 	}
 
-	// Create and start PR workflow
-	workflow := instance.NewPRWorkflow(inst.ID, inst.WorktreePath, inst.Branch, inst.Task, cfg)
+	// Create and start PR workflow with session-scoped naming if in multi-session mode
+	var workflow *instance.PRWorkflow
+	if o.sessionID != "" {
+		workflow = instance.NewPRWorkflowWithSession(o.sessionID, inst.ID, inst.WorktreePath, inst.Branch, inst.Task, cfg)
+	} else {
+		workflow = instance.NewPRWorkflow(inst.ID, inst.WorktreePath, inst.Branch, inst.Task, cfg)
+	}
 	workflow.SetCallback(o.handlePRWorkflowComplete)
 
 	if err := workflow.Start(); err != nil {
@@ -562,7 +684,7 @@ func (o *Orchestrator) RemoveInstance(session *Session, instanceID string, force
 }
 
 // StopSession stops all instances and optionally cleans up
-func (o *Orchestrator) StopSession(session *Session, force bool) error {
+func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -572,7 +694,7 @@ func (o *Orchestrator) StopSession(session *Session, force bool) error {
 	}
 
 	// Stop all instances
-	for _, inst := range session.Instances {
+	for _, inst := range sess.Instances {
 		if mgr, ok := o.instances[inst.ID]; ok {
 			_ = mgr.Stop()
 		}
@@ -586,13 +708,24 @@ func (o *Orchestrator) StopSession(session *Session, force bool) error {
 
 	// Clean up worktrees if forced
 	if force {
-		for _, inst := range session.Instances {
+		for _, inst := range sess.Instances {
 			_ = o.wt.Remove(inst.WorktreePath)
 		}
 	}
 
+	// Release session lock
+	if o.lock != nil {
+		_ = o.lock.Release()
+		o.lock = nil
+	}
+
 	// Remove session file
-	sessionFile := filepath.Join(o.claudioDir, "session.json")
+	var sessionFile string
+	if o.sessionDir != "" {
+		sessionFile = filepath.Join(o.sessionDir, "session.json")
+	} else {
+		sessionFile = filepath.Join(o.claudioDir, "session.json")
+	}
 	_ = os.Remove(sessionFile)
 
 	return nil
@@ -633,6 +766,16 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 		CompletionTimeoutMinutes: o.config.Instance.CompletionTimeoutMinutes,
 		StaleDetection:           o.config.Instance.StaleDetection,
 	}
+}
+
+// newInstanceManager creates a new instance manager with the appropriate constructor.
+// Uses session-scoped tmux naming when sessionID is set (multi-session mode).
+func (o *Orchestrator) newInstanceManager(instanceID, workdir, task string) *instance.Manager {
+	cfg := o.instanceManagerConfig()
+	if o.sessionID != "" {
+		return instance.NewManagerWithSession(o.sessionID, instanceID, workdir, task, cfg)
+	}
+	return instance.NewManagerWithConfig(instanceID, workdir, task, cfg)
 }
 
 // Session returns the current session
@@ -681,7 +824,15 @@ func (o *Orchestrator) saveSession() error {
 		return nil
 	}
 
-	sessionFile := filepath.Join(o.claudioDir, "session.json")
+	// Determine session file path based on mode
+	var sessionFile string
+	if o.sessionDir != "" {
+		sessionFile = filepath.Join(o.sessionDir, "session.json")
+	} else {
+		// Legacy single-session mode
+		sessionFile = filepath.Join(o.claudioDir, "session.json")
+	}
+
 	data, err := json.MarshalIndent(o.session, "", "  ")
 	if err != nil {
 		return err
@@ -704,8 +855,13 @@ func (o *Orchestrator) updateContext() error {
 
 	ctx := o.generateContextMarkdown()
 
-	// Write to main .claudio directory
-	mainCtx := filepath.Join(o.claudioDir, "context.md")
+	// Write to session directory if using multi-session, otherwise main .claudio directory
+	var mainCtx string
+	if o.sessionDir != "" {
+		mainCtx = filepath.Join(o.sessionDir, "context.md")
+	} else {
+		mainCtx = filepath.Join(o.claudioDir, "context.md")
+	}
 	if err := os.WriteFile(mainCtx, []byte(ctx), 0644); err != nil {
 		return err
 	}
@@ -1062,7 +1218,7 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 
 	// If no manager exists yet, create one
 	if !ok {
-		mgr = instance.NewManagerWithConfig(inst.ID, inst.WorktreePath, inst.Task, o.instanceManagerConfig())
+		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task)
 		o.mu.Lock()
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
