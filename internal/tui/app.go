@@ -83,6 +83,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		// Update outputs from instances
 		m.updateOutputs()
+		// Clear info message after display (will show for ~100ms per tick, so a few ticks)
+		// We'll let it persist for a bit by not clearing immediately
 		return m, tick()
 
 	case outputMsg:
@@ -164,7 +166,9 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Normal mode
+	// Normal mode - clear info message on most actions
+	m.infoMessage = ""
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.quitting = true
@@ -247,7 +251,8 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if inst := m.activeInstance(); inst != nil {
 			mgr := m.orchestrator.GetInstanceManager(inst.ID)
 			if mgr != nil {
-				m.errorMessage = "Attach with: " + mgr.AttachCommand()
+				m.infoMessage = "Attach with: " + mgr.AttachCommand()
+				m.errorMessage = "" // Clear any error
 			}
 		}
 		return m, nil
@@ -337,8 +342,11 @@ func (m Model) View() string {
 	content := m.renderContent()
 	b.WriteString(content)
 
-	// Error message if any
-	if m.errorMessage != "" {
+	// Info or error message if any
+	if m.infoMessage != "" {
+		b.WriteString("\n")
+		b.WriteString(styles.Secondary.Render("ℹ " + m.infoMessage))
+	} else if m.errorMessage != "" {
 		b.WriteString("\n")
 		b.WriteString(styles.ErrorMsg.Render("Error: " + m.errorMessage))
 	}

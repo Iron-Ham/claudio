@@ -46,8 +46,7 @@ func (m *Manager) Start() error {
 	// Kill any existing session with this name (cleanup from previous run)
 	exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
 
-	// Create a new detached tmux session
-	// We set the default-terminal to support colors and use a large history
+	// Create a new detached tmux session with color support
 	createCmd := exec.Command("tmux",
 		"new-session",
 		"-d",                      // detached
@@ -56,12 +55,15 @@ func (m *Manager) Start() error {
 		"-y", "50",                // height
 	)
 	createCmd.Dir = m.workdir
+	// Ensure TERM supports colors
+	createCmd.Env = append(createCmd.Env, "TERM=xterm-256color")
 	if err := createCmd.Run(); err != nil {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
-	// Set up the tmux session environment
+	// Set up the tmux session for color support and large history
 	exec.Command("tmux", "set-option", "-t", m.sessionName, "history-limit", "10000").Run()
+	exec.Command("tmux", "set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run()
 
 	// Send the claude command to the tmux session
 	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions %q", m.task)
@@ -107,10 +109,12 @@ func (m *Manager) captureLoop() {
 
 			// Capture the entire visible pane plus scrollback
 			// -p prints to stdout, -S - starts from beginning of history
+			// -e preserves ANSI escape sequences (colors)
 			captureCmd := exec.Command("tmux",
 				"capture-pane",
 				"-t", sessionName,
 				"-p",      // print to stdout
+				"-e",      // preserve escape sequences (colors)
 				"-S", "-", // start from beginning of scrollback
 				"-E", "-", // end at bottom of scrollback
 			)
