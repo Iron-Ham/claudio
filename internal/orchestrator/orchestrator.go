@@ -962,7 +962,7 @@ func (o *Orchestrator) handleInstanceTimeout(id string, timeoutType instance.Tim
 		inst.Metrics.EndTime = &now
 	}
 
-	o.saveSession()
+	_ = o.saveSession()
 
 	// Notify via callback if set (TUI will handle the display)
 	o.mu.RLock()

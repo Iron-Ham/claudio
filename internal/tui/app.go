@@ -837,7 +837,7 @@ func (m Model) cmdRestart() (tea.Model, tea.Cmd) {
 	// Stop the instance if it's still running in tmux
 	mgr := m.orchestrator.GetInstanceManager(inst.ID)
 	if mgr != nil {
-		mgr.Stop()
+		_ = mgr.Stop()
 		mgr.ClearTimeout() // Reset timeout state
 	}
 
@@ -891,7 +891,7 @@ func (m Model) cmdKill() (tea.Model, tea.Cmd) {
 	// Stop the instance first
 	mgr := m.orchestrator.GetInstanceManager(inst.ID)
 	if mgr != nil {
-		mgr.Stop()
+		_ = mgr.Stop()
 	}
 
 	// Remove the instance
