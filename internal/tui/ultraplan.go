@@ -479,40 +479,68 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 		return true, m, nil
 
 	case "tab", "l":
-		// Navigate to next task during execution
+		// Navigate to next runnable task during execution (skip blocked tasks)
 		if session.Phase == orchestrator.PhaseExecuting && session.Plan != nil {
-			taskCount := len(session.Plan.Tasks)
-			if taskCount > 0 {
-				m.ultraPlan.selectedTaskIdx = (m.ultraPlan.selectedTaskIdx + 1) % taskCount
+			if nextIdx := m.findNextRunnableTask(session, 1); nextIdx >= 0 {
+				m.ultraPlan.selectedTaskIdx = nextIdx
 				m.selectTaskInstance(session)
 			}
 		}
 		return true, m, nil
 
 	case "shift+tab", "h":
-		// Navigate to previous task during execution
+		// Navigate to previous runnable task during execution (skip blocked tasks)
 		if session.Phase == orchestrator.PhaseExecuting && session.Plan != nil {
-			taskCount := len(session.Plan.Tasks)
-			if taskCount > 0 {
-				m.ultraPlan.selectedTaskIdx = (m.ultraPlan.selectedTaskIdx - 1 + taskCount) % taskCount
+			if prevIdx := m.findNextRunnableTask(session, -1); prevIdx >= 0 {
+				m.ultraPlan.selectedTaskIdx = prevIdx
 				m.selectTaskInstance(session)
 			}
 		}
 		return true, m, nil
 
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		// Jump to task by number during execution
+		// Jump to task by number during execution (only if task has instance)
 		if session.Phase == orchestrator.PhaseExecuting && session.Plan != nil {
 			idx := int(msg.String()[0] - '1')
 			if idx < len(session.Plan.Tasks) {
-				m.ultraPlan.selectedTaskIdx = idx
-				m.selectTaskInstance(session)
+				task := &session.Plan.Tasks[idx]
+				if _, hasInstance := session.TaskToInstance[task.ID]; hasInstance {
+					m.ultraPlan.selectedTaskIdx = idx
+					m.selectTaskInstance(session)
+				} else {
+					m.infoMessage = fmt.Sprintf("Task %d not yet started (blocked)", idx+1)
+				}
 			}
 		}
 		return true, m, nil
 	}
 
 	return false, m, nil
+}
+
+// findNextRunnableTask finds the next or previous task that has a running instance.
+// direction: +1 for next, -1 for previous
+// Returns the task index or -1 if no runnable task is found.
+func (m *Model) findNextRunnableTask(session *orchestrator.UltraPlanSession, direction int) int {
+	if session.Plan == nil || len(session.Plan.Tasks) == 0 {
+		return -1
+	}
+
+	numTasks := len(session.Plan.Tasks)
+	startIdx := m.ultraPlan.selectedTaskIdx
+
+	// Search through all tasks in the given direction
+	for i := 1; i <= numTasks; i++ {
+		// Calculate next index with wrapping
+		nextIdx := (startIdx + i*direction + numTasks) % numTasks
+
+		task := &session.Plan.Tasks[nextIdx]
+		if _, hasInstance := session.TaskToInstance[task.ID]; hasInstance {
+			return nextIdx
+		}
+	}
+
+	return -1
 }
 
 // selectTaskInstance switches to the instance associated with the currently selected task
