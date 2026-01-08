@@ -16,6 +16,7 @@ const (
 	StatusPaused       InstanceStatus = "paused"
 	StatusCompleted    InstanceStatus = "completed"
 	StatusError        InstanceStatus = "error"
+	StatusCreatingPR   InstanceStatus = "creating_pr"
 )
 
 // Metrics tracks resource usage and costs for an instance

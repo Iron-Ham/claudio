@@ -55,6 +55,14 @@ func (a *App) Run() error {
 		}
 	}()
 
+	// Set up PR workflow completion callback to send message to program
+	a.orchestrator.SetPRCompleteCallback(func(instanceID string, success bool) {
+		a.program.Send(prCompleteMsg{
+			instanceID: instanceID,
+			success:    success,
+		})
+	})
+
 	_, err := a.program.Run()
 
 	// Clean up signal handler
@@ -94,6 +102,10 @@ type outputMsg struct {
 }
 type errMsg struct {
 	err error
+}
+type prCompleteMsg struct {
+	instanceID string
+	success    bool
 }
 
 // Commands
@@ -149,6 +161,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.errorMessage = msg.err.Error()
+		return m, nil
+
+	case prCompleteMsg:
+		// PR workflow completed - remove the instance
+		inst := m.session.GetInstance(msg.instanceID)
+		if inst != nil {
+			if err := m.orchestrator.RemoveInstance(m.session, msg.instanceID, true); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to remove instance after PR: %v", err)
+			} else if msg.success {
+				m.infoMessage = fmt.Sprintf("PR created and instance %s removed", msg.instanceID)
+			} else {
+				m.infoMessage = fmt.Sprintf("PR workflow finished (may have failed) - instance %s removed", msg.instanceID)
+			}
+		}
 		return m, nil
 	}
 
@@ -333,12 +359,15 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "x":
-		// Stop active instance
+		// Stop active instance (with optional auto-PR workflow)
 		if inst := m.activeInstance(); inst != nil {
-			if err := m.orchestrator.StopInstance(inst); err != nil {
+			prStarted, err := m.orchestrator.StopInstanceWithAutoPR(inst)
+			if err != nil {
 				m.errorMessage = err.Error()
+			} else if prStarted {
+				m.infoMessage = fmt.Sprintf("Instance stopped. Creating PR for %s...", inst.ID)
 			} else {
-				// Suggest creating a PR after stopping
+				// Suggest creating a PR after stopping (auto-PR not enabled)
 				m.infoMessage = fmt.Sprintf("Instance stopped. Create PR with: claudio pr %s", inst.ID)
 			}
 		}
@@ -1154,6 +1183,18 @@ func (m *Model) updateOutputs() {
 	}
 
 	for _, inst := range m.session.Instances {
+		// Check for PR workflow first (when instance is in PR creation state)
+		if inst.Status == orchestrator.StatusCreatingPR {
+			workflow := m.orchestrator.GetPRWorkflow(inst.ID)
+			if workflow != nil {
+				output := workflow.GetOutput()
+				if len(output) > 0 {
+					m.outputs[inst.ID] = string(output)
+				}
+			}
+			continue
+		}
+
 		mgr := m.orchestrator.GetInstanceManager(inst.ID)
 		if mgr != nil {
 			output := mgr.GetOutput()

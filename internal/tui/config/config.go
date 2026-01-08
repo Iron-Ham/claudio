@@ -143,6 +143,13 @@ func New() Model {
 					Type:        "bool",
 					Category:    "pr",
 				},
+				{
+					Key:         "pr.auto_pr_on_stop",
+					Label:       "Auto PR on Stop",
+					Description: "Automatically commit, push, and create PR when stopping an instance with 'x'",
+					Type:        "bool",
+					Category:    "pr",
+				},
 			},
 		},
 	}
@@ -565,6 +572,7 @@ func (m *Model) resetCurrentToDefault() {
 		"pr.draft":                     defaults.PR.Draft,
 		"pr.auto_rebase":               defaults.PR.AutoRebase,
 		"pr.use_ai":                    defaults.PR.UseAI,
+		"pr.auto_pr_on_stop":           defaults.PR.AutoPROnStop,
 	}
 
 	if defaultVal, ok := defaultValues[item.Key]; ok {
