@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 )
 
@@ -11,17 +12,21 @@ type Model struct {
 	session      *orchestrator.Session
 
 	// UI state
-	activeTab    int
-	width        int
-	height       int
-	ready        bool
-	quitting     bool
-	showHelp     bool
-	addingTask   bool
-	taskInput    string
-	errorMessage string
-	infoMessage  string // Non-error status message
-	inputMode    bool   // When true, all keys are forwarded to the active instance's tmux session
+	activeTab      int
+	width          int
+	height         int
+	ready          bool
+	quitting       bool
+	showHelp       bool
+	addingTask     bool
+	taskInput      string
+	errorMessage   string
+	infoMessage    string // Non-error status message
+	warningMessage string // Warning message (e.g., file conflicts)
+	inputMode      bool   // When true, all keys are forwarded to the active instance's tmux session
+
+	// File conflict tracking
+	conflicts []conflict.FileConflict
 
 	// Instance outputs (instance ID -> output string)
 	outputs map[string]string

@@ -111,6 +111,18 @@ var (
 	SuccessMsg = lipgloss.NewStyle().
 			Foreground(SecondaryColor).
 			Bold(true)
+
+	// Warning message
+	WarningMsg = lipgloss.NewStyle().
+			Foreground(WarningColor).
+			Bold(true)
+
+	// Conflict warning banner
+	ConflictBanner = lipgloss.NewStyle().
+			Foreground(TextColor).
+			Background(WarningColor).
+			Bold(true).
+			Padding(0, 1)
 )
 
 // StatusColor returns the color for a given status
