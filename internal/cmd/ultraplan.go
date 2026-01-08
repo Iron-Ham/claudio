@@ -106,13 +106,12 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to start session: %w", err)
 	}
 
-	// Create ultra-plan configuration
-	config := orchestrator.UltraPlanConfig{
-		MaxParallel: ultraplanMaxParallel,
-		DryRun:      ultraplanDryRun,
-		NoSynthesis: ultraplanNoSynthesis,
-		AutoApprove: ultraplanAutoApprove,
-	}
+	// Create ultra-plan configuration from defaults, then override with flags
+	config := orchestrator.DefaultUltraPlanConfig()
+	config.MaxParallel = ultraplanMaxParallel
+	config.DryRun = ultraplanDryRun
+	config.NoSynthesis = ultraplanNoSynthesis
+	config.AutoApprove = ultraplanAutoApprove
 
 	// Create or load the plan
 	var plan *orchestrator.PlanSpec
