@@ -107,6 +107,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.orchestrator.ResizeAllInstances(contentWidth, contentHeight)
 		}
 
+		// Ensure active instance is still visible after resize
+		m.ensureActiveVisible()
+
 		return m, nil
 
 	case tickMsg:
@@ -187,8 +190,9 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if err != nil {
 					m.errorMessage = err.Error()
 				} else {
-					// Switch to the newly added task
+					// Switch to the newly added task and ensure it's visible in sidebar
 					m.activeTab = len(m.session.Instances) - 1
+					m.ensureActiveVisible()
 				}
 			}
 			m.addingTask = false
@@ -429,6 +433,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.activeTab = 0
 				}
 			}
+			m.ensureActiveVisible()
 		}
 		m.errorMessage = "" // Clear any error
 		return m, nil
@@ -676,15 +681,18 @@ func (m Model) View() string {
 	sidebar := m.renderSidebar(effectiveSidebarWidth, mainAreaHeight)
 	content := m.renderContent(mainContentWidth)
 
-	// Apply height to both panels and join horizontally
+	// Apply height constraints to both panels and join horizontally
+	// Using MaxHeight to ensure content doesn't overflow bounds
 	sidebarStyled := lipgloss.NewStyle().
 		Width(effectiveSidebarWidth).
 		Height(mainAreaHeight).
+		MaxHeight(mainAreaHeight).
 		Render(sidebar)
 
 	contentStyled := lipgloss.NewStyle().
 		Width(mainContentWidth).
 		Height(mainAreaHeight).
+		MaxHeight(mainAreaHeight).
 		Render(content)
 
 	mainArea := lipgloss.JoinHorizontal(lipgloss.Top, sidebarStyled, " ", contentStyled)
