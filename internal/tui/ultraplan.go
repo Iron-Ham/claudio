@@ -491,9 +491,18 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 		return true
 	}
 
-	// Success! Show a helpful message
-	m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Press [v] to view, [e] to execute.",
-		len(plan.Tasks), len(plan.ExecutionOrder))
+	// Auto-start execution if configured
+	if session.Config.AutoApprove {
+		if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
+			m.errorMessage = fmt.Sprintf("Plan ready but failed to auto-start: %v", err)
+		} else {
+			m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Auto-starting execution...",
+				len(plan.Tasks), len(plan.ExecutionOrder))
+		}
+	} else {
+		m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Press [e] to execute.",
+			len(plan.Tasks), len(plan.ExecutionOrder))
+	}
 
 	return true
 }
@@ -555,9 +564,21 @@ func (m *Model) checkForPlanFile() bool {
 		return false
 	}
 
-	// Success!
-	m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Press [v] to view, [e] to execute.",
-		len(plan.Tasks), len(plan.ExecutionOrder))
+	// Plan detected - stop the coordinator instance (it's done its job)
+	_ = m.orchestrator.StopInstance(inst)
+
+	// Auto-start execution if configured
+	if session.Config.AutoApprove {
+		if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
+			m.errorMessage = fmt.Sprintf("Plan detected but failed to auto-start: %v", err)
+		} else {
+			m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Auto-starting execution...",
+				len(plan.Tasks), len(plan.ExecutionOrder))
+		}
+	} else {
+		m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Press [e] to execute.",
+			len(plan.Tasks), len(plan.ExecutionOrder))
+	}
 
 	return true
 }
