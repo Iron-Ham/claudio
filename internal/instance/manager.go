@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// StateChangeCallback is called when the detected waiting state changes
+type StateChangeCallback func(instanceID string, state WaitingState)
+
 // Manager handles a single Claude Code instance running in a tmux session
 type Manager struct {
 	id          string
@@ -20,18 +23,39 @@ type Manager struct {
 	paused      bool
 	doneChan    chan struct{}
 	captureTick *time.Ticker
+
+	// State detection
+	detector      *Detector
+	currentState  WaitingState
+	stateCallback StateChangeCallback
 }
 
 // NewManager creates a new instance manager
 func NewManager(id, workdir, task string) *Manager {
 	return &Manager{
-		id:          id,
-		workdir:     workdir,
-		task:        task,
-		sessionName: fmt.Sprintf("claudio-%s", id),
-		outputBuf:   NewRingBuffer(100000), // 100KB output buffer
-		doneChan:    make(chan struct{}),
+		id:           id,
+		workdir:      workdir,
+		task:         task,
+		sessionName:  fmt.Sprintf("claudio-%s", id),
+		outputBuf:    NewRingBuffer(100000), // 100KB output buffer
+		doneChan:     make(chan struct{}),
+		detector:     NewDetector(),
+		currentState: StateWorking,
 	}
+}
+
+// SetStateCallback sets a callback that will be invoked when the detected state changes
+func (m *Manager) SetStateCallback(cb StateChangeCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stateCallback = cb
+}
+
+// CurrentState returns the currently detected waiting state
+func (m *Manager) CurrentState() WaitingState {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.currentState
 }
 
 // Start launches the Claude Code process in a tmux session
@@ -129,6 +153,9 @@ func (m *Manager) captureLoop() {
 				m.outputBuf.Reset()
 				m.outputBuf.Write(output)
 				lastOutput = currentOutput
+
+				// Detect waiting state from the new output
+				m.detectAndNotifyState(output)
 			}
 
 			// Check if the session is still running
@@ -141,6 +168,26 @@ func (m *Manager) captureLoop() {
 				return
 			}
 		}
+	}
+}
+
+// detectAndNotifyState analyzes output and notifies if state changed
+func (m *Manager) detectAndNotifyState(output []byte) {
+	newState := m.detector.Detect(output)
+
+	m.mu.Lock()
+	oldState := m.currentState
+	callback := m.stateCallback
+	instanceID := m.id
+
+	if newState != oldState {
+		m.currentState = newState
+	}
+	m.mu.Unlock()
+
+	// Invoke callback outside of lock to prevent deadlocks
+	if newState != oldState && callback != nil {
+		callback(instanceID, newState)
 	}
 }
 
