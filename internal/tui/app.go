@@ -363,41 +363,101 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "j", "down":
-		// Scroll down in diff view, or navigate to next instance
+		// Scroll down in diff view, output view, or navigate to next instance
 		if m.showDiff {
 			m.diffScroll++
 			return m, nil
 		}
-		if m.instanceCount() > 0 {
-			m.activeTab = (m.activeTab + 1) % m.instanceCount()
-			m.ensureActiveVisible()
+		if m.showHelp || m.showConflicts {
+			// Don't scroll output when other panels are shown
+			return m, nil
+		}
+		if inst := m.activeInstance(); inst != nil {
+			// Scroll output down
+			m.scrollOutputDown(inst.ID, 1)
+			return m, nil
 		}
 		return m, nil
 
 	case "k", "up":
-		// Scroll up in diff view, or navigate to previous instance
+		// Scroll up in diff view, output view, or navigate to previous instance
 		if m.showDiff {
 			if m.diffScroll > 0 {
 				m.diffScroll--
 			}
 			return m, nil
 		}
-		if m.instanceCount() > 0 {
-			m.activeTab = (m.activeTab - 1 + m.instanceCount()) % m.instanceCount()
-			m.ensureActiveVisible()
+		if m.showHelp || m.showConflicts {
+			// Don't scroll output when other panels are shown
+			return m, nil
 		}
-		return m, nil
-
-	case "g":
-		// Go to top of diff
-		if m.showDiff {
-			m.diffScroll = 0
+		if inst := m.activeInstance(); inst != nil {
+			// Scroll output up
+			m.scrollOutputUp(inst.ID, 1)
 			return m, nil
 		}
 		return m, nil
 
+	case "ctrl+u":
+		// Scroll up half page in output view
+		if m.showDiff || m.showHelp || m.showConflicts {
+			return m, nil
+		}
+		if inst := m.activeInstance(); inst != nil {
+			halfPage := m.getOutputMaxLines() / 2
+			m.scrollOutputUp(inst.ID, halfPage)
+		}
+		return m, nil
+
+	case "ctrl+d":
+		// Scroll down half page in output view
+		if m.showDiff || m.showHelp || m.showConflicts {
+			return m, nil
+		}
+		if inst := m.activeInstance(); inst != nil {
+			halfPage := m.getOutputMaxLines() / 2
+			m.scrollOutputDown(inst.ID, halfPage)
+		}
+		return m, nil
+
+	case "ctrl+b":
+		// Scroll up full page in output view
+		if m.showDiff || m.showHelp || m.showConflicts {
+			return m, nil
+		}
+		if inst := m.activeInstance(); inst != nil {
+			fullPage := m.getOutputMaxLines()
+			m.scrollOutputUp(inst.ID, fullPage)
+		}
+		return m, nil
+
+	case "ctrl+f":
+		// Scroll down full page in output view
+		if m.showDiff || m.showHelp || m.showConflicts {
+			return m, nil
+		}
+		if inst := m.activeInstance(); inst != nil {
+			fullPage := m.getOutputMaxLines()
+			m.scrollOutputDown(inst.ID, fullPage)
+		}
+		return m, nil
+
+	case "g":
+		// Go to top of diff or output
+		if m.showDiff {
+			m.diffScroll = 0
+			return m, nil
+		}
+		if m.showHelp || m.showConflicts {
+			return m, nil
+		}
+		if inst := m.activeInstance(); inst != nil {
+			m.scrollOutputToTop(inst.ID)
+		}
+		return m, nil
+
 	case "G":
-		// Go to bottom of diff (handled in render by maxScroll)
+		// Go to bottom of diff or output (re-enables auto-scroll)
 		if m.showDiff {
 			lines := strings.Split(m.diffContent, "\n")
 			maxLines := m.height - 14
@@ -410,6 +470,12 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.diffScroll = maxScroll
 			return m, nil
+		}
+		if m.showHelp || m.showConflicts {
+			return m, nil
+		}
+		if inst := m.activeInstance(); inst != nil {
+			m.scrollOutputToBottom(inst.ID)
 		}
 		return m, nil
 
@@ -587,6 +653,8 @@ func (m *Model) updateOutputs() {
 			output := mgr.GetOutput()
 			if len(output) > 0 {
 				m.outputs[inst.ID] = string(output)
+				// Update scroll position (auto-scroll if enabled)
+				m.updateOutputScroll(inst.ID)
 			}
 
 			// Update instance status based on detected waiting state
@@ -918,23 +986,84 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	}
 	b.WriteString("\n")
 
-	// Output
+	// Output with scrolling support
 	output := m.outputs[inst.ID]
 	if output == "" {
 		output = "No output yet. Press [s] to start this instance."
+		outputBox := styles.OutputArea.
+			Width(width - 4).
+			Height(m.getOutputMaxLines()).
+			Render(output)
+		b.WriteString(outputBox)
+		return b.String()
 	}
 
-	// Limit output to visible area
-	maxLines := m.height - 12 // Adjusted for sidebar layout
-	if maxLines < 5 {
-		maxLines = 5
+	// Split output into lines and apply scroll
+	lines := strings.Split(output, "\n")
+	totalLines := len(lines)
+	maxLines := m.getOutputMaxLines()
+
+	// Get scroll position
+	scrollOffset := m.outputScrolls[inst.ID]
+	maxScroll := m.getOutputMaxScroll(inst.ID)
+
+	// Clamp scroll position
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
 	}
-	output = lastNLines(output, maxLines)
+
+	// Calculate visible range
+	startLine := scrollOffset
+	endLine := startLine + maxLines
+	if endLine > totalLines {
+		endLine = totalLines
+	}
+
+	// Get visible lines
+	var visibleOutput string
+	if totalLines <= maxLines {
+		// No scrolling needed, show all
+		visibleOutput = output
+	} else {
+		visibleOutput = strings.Join(lines[startLine:endLine], "\n")
+	}
+
+	// Build scroll indicator
+	var scrollIndicator string
+	if totalLines > maxLines {
+		// Show scroll position
+		autoScrollEnabled := m.isOutputAutoScroll(inst.ID)
+		hasNew := m.hasNewOutput(inst.ID) && !autoScrollEnabled
+
+		if hasNew {
+			// New output arrived while scrolled up
+			scrollIndicator = styles.Warning.Render(fmt.Sprintf("▲ NEW OUTPUT - Line %d/%d", startLine+1, totalLines)) +
+				"  " + styles.Muted.Render("[G] jump to latest")
+		} else if scrollOffset == 0 && !autoScrollEnabled {
+			// At top
+			scrollIndicator = styles.Muted.Render(fmt.Sprintf("▲ TOP - Line 1/%d", totalLines)) +
+				"  " + styles.Muted.Render("[j/↓] down  [G] bottom")
+		} else if autoScrollEnabled {
+			// Auto-scrolling (at bottom)
+			scrollIndicator = styles.Secondary.Render(fmt.Sprintf("▼ FOLLOWING - Line %d/%d", endLine, totalLines)) +
+				"  " + styles.Muted.Render("[k/↑] scroll up")
+		} else {
+			// Scrolled somewhere in the middle
+			percent := 0
+			if maxScroll > 0 {
+				percent = scrollOffset * 100 / maxScroll
+			}
+			scrollIndicator = styles.Muted.Render(fmt.Sprintf("Line %d-%d/%d (%d%%)", startLine+1, endLine, totalLines, percent)) +
+				"  " + styles.Muted.Render("[j/k] scroll  [g/G] top/bottom")
+		}
+		b.WriteString(scrollIndicator)
+		b.WriteString("\n")
+	}
 
 	outputBox := styles.OutputArea.
 		Width(width - 4).
 		Height(maxLines).
-		Render(output)
+		Render(visibleOutput)
 
 	b.WriteString(outputBox)
 
@@ -1017,11 +1146,19 @@ func (m Model) renderHelpPanel(width int) string {
 Keyboard Shortcuts
 
 Navigation:
-  ↑ / k      Previous instance
-  ↓ / j      Next instance
   Tab / l    Next instance
   Shift+Tab  Previous instance
   1-9        Select instance by number
+
+Output Scrolling:
+  ↑ / k      Scroll up one line
+  ↓ / j      Scroll down one line
+  Ctrl+U     Scroll up half page
+  Ctrl+D     Scroll down half page
+  Ctrl+B     Scroll up full page
+  Ctrl+F     Scroll down full page
+  g          Jump to top (oldest output)
+  G          Jump to bottom (re-enables auto-scroll)
 
 Instance Control:
   a          Add new instance
@@ -1041,14 +1178,12 @@ General:
   ?          Toggle help
   q          Quit
 
-Each Claude instance runs in its own tmux session.
-In input mode, ALL keystrokes are forwarded to Claude.
-Press Ctrl+] to return to navigation mode.
+Auto-scroll follows new output by default. Scroll up to pause,
+press G to resume following. A "NEW OUTPUT" indicator appears
+when new content arrives while scrolled up.
 
 Creating Pull Requests:
   After completing work, use: claudio pr <instance-id>
-  This will use Claude to generate a meaningful PR title and description,
-  rebase on main, and create the PR on GitHub.
 `
 	return styles.ContentBox.Width(width - 4).Render(help)
 }
@@ -1266,15 +1401,14 @@ func (m Model) renderHelp() string {
 	}
 
 	keys := []string{
-		styles.HelpKey.Render("[↑↓/jk]") + " nav",
+		styles.HelpKey.Render("[j/k]") + " scroll",
+		styles.HelpKey.Render("[Tab]") + " switch",
 		styles.HelpKey.Render("[a]") + " add",
 		styles.HelpKey.Render("[s]") + " start",
 		styles.HelpKey.Render("[i]") + " input",
 		styles.HelpKey.Render("[p]") + " pause",
 		styles.HelpKey.Render("[x]") + " stop",
-		styles.HelpKey.Render("[C]") + " clear",
 		styles.HelpKey.Render("[d]") + " diff",
-		styles.HelpKey.Render("[r]") + " pr",
 		styles.HelpKey.Render("[?]") + " help",
 		styles.HelpKey.Render("[q]") + " quit",
 	}
