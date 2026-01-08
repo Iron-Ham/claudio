@@ -109,6 +109,6 @@ func (s *Session) GetInstance(id string) *Instance {
 // generateID creates a short random hex ID
 func generateID() string {
 	bytes := make([]byte, 4)
-	rand.Read(bytes)
+	_, _ = rand.Read(bytes)
 	return hex.EncodeToString(bytes)
 }

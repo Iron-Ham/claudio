@@ -106,7 +106,7 @@ func (d *Detector) watchDirRecursive(root string) error {
 
 		// We can only watch directories with fsnotify
 		if info.IsDir() {
-			d.watcher.Add(path)
+			_ = d.watcher.Add(path)
 		}
 
 		return nil
@@ -124,7 +124,7 @@ func (d *Detector) RemoveInstance(instanceID string) {
 	}
 
 	// Remove from watcher
-	d.watcher.Remove(worktreePath)
+	_ = d.watcher.Remove(worktreePath)
 
 	// Remove instance from tracking
 	delete(d.instances, instanceID)
@@ -149,7 +149,7 @@ func (d *Detector) Start() {
 // Stop stops the detector and cleans up resources
 func (d *Detector) Stop() {
 	close(d.stopCh)
-	d.watcher.Close()
+	_ = d.watcher.Close()
 }
 
 // watchLoop processes filesystem events

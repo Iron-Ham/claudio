@@ -262,7 +262,7 @@ func removeWorktree(wt WorktreeStatus) error {
 
 	// Optionally delete the branch
 	branchCmd := exec.Command("git", "branch", "-D", wt.Branch)
-	branchCmd.Run() // Ignore errors - branch might not exist locally
+	_ = branchCmd.Run() // Ignore errors - branch might not exist locally
 
 	return nil
 }

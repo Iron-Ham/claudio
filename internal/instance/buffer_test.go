@@ -141,7 +141,7 @@ func TestRingBuffer_Len(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rb := NewRingBuffer(tt.size)
 			for _, w := range tt.writes {
-				rb.Write([]byte(w))
+				_, _ = rb.Write([]byte(w))
 			}
 			if rb.Len() != tt.expectedLen {
 				t.Errorf("got length %d, expected %d", rb.Len(), tt.expectedLen)
@@ -154,7 +154,7 @@ func TestRingBuffer_Reset(t *testing.T) {
 	rb := NewRingBuffer(10)
 
 	// Write some data
-	rb.Write([]byte("hello world"))
+	_, _ = rb.Write([]byte("hello world"))
 
 	// Reset
 	rb.Reset()
@@ -168,7 +168,7 @@ func TestRingBuffer_Reset(t *testing.T) {
 	}
 
 	// Write again to verify buffer is usable
-	rb.Write([]byte("new data"))
+	_, _ = rb.Write([]byte("new data"))
 	if string(rb.Bytes()) != "new data" {
 		t.Errorf("expected 'new data' after reset+write, got %q", rb.Bytes())
 	}
@@ -178,7 +178,7 @@ func TestRingBuffer_ResetAfterOverflow(t *testing.T) {
 	rb := NewRingBuffer(5)
 
 	// Overflow the buffer
-	rb.Write([]byte("hello world"))
+	_, _ = rb.Write([]byte("hello world"))
 
 	// Reset
 	rb.Reset()
@@ -189,7 +189,7 @@ func TestRingBuffer_ResetAfterOverflow(t *testing.T) {
 	}
 
 	// Write exactly the buffer size
-	rb.Write([]byte("12345"))
+	_, _ = rb.Write([]byte("12345"))
 	if string(rb.Bytes()) != "12345" {
 		t.Errorf("expected '12345', got %q", rb.Bytes())
 	}
@@ -201,7 +201,7 @@ func TestRingBuffer_WriteIOWriter(t *testing.T) {
 	var buf bytes.Buffer
 
 	// Copy from reader through buffer
-	rb.Write([]byte("test"))
+	_, _ = rb.Write([]byte("test"))
 
 	// Should be able to use as io.Writer
 	n, err := rb.Write([]byte("data"))
@@ -217,7 +217,7 @@ func TestRingBuffer_WriteIOWriter(t *testing.T) {
 
 func TestRingBuffer_BytesReturnsCopy(t *testing.T) {
 	rb := NewRingBuffer(10)
-	rb.Write([]byte("hello"))
+	_, _ = rb.Write([]byte("hello"))
 
 	// Get bytes
 	b1 := rb.Bytes()
@@ -237,11 +237,11 @@ func TestRingBuffer_WrapAround(t *testing.T) {
 	rb := NewRingBuffer(5)
 
 	// Write 3 bytes: buffer = [a, b, c, _, _], start=0, end=3
-	rb.Write([]byte("abc"))
+	_, _ = rb.Write([]byte("abc"))
 
 	// Write 3 more bytes: buffer = [f, b, c, d, e], start=1, end=1, full=true
 	// After overflow: start moves, oldest data lost
-	rb.Write([]byte("def"))
+	_, _ = rb.Write([]byte("def"))
 
 	result := string(rb.Bytes())
 	if result != "bcdef" {
@@ -249,7 +249,7 @@ func TestRingBuffer_WrapAround(t *testing.T) {
 	}
 
 	// Write 2 more bytes to further test wrap
-	rb.Write([]byte("gh"))
+	_, _ = rb.Write([]byte("gh"))
 	result = string(rb.Bytes())
 	if result != "defgh" {
 		t.Errorf("expected 'defgh', got %q", result)
@@ -260,16 +260,16 @@ func TestRingBuffer_SingleByteOperations(t *testing.T) {
 	rb := NewRingBuffer(3)
 
 	// Write byte by byte
-	rb.Write([]byte("a"))
-	rb.Write([]byte("b"))
-	rb.Write([]byte("c"))
+	_, _ = rb.Write([]byte("a"))
+	_, _ = rb.Write([]byte("b"))
+	_, _ = rb.Write([]byte("c"))
 
 	if string(rb.Bytes()) != "abc" {
 		t.Errorf("expected 'abc', got %q", rb.Bytes())
 	}
 
 	// One more byte causes overflow
-	rb.Write([]byte("d"))
+	_, _ = rb.Write([]byte("d"))
 	if string(rb.Bytes()) != "bcd" {
 		t.Errorf("expected 'bcd', got %q", rb.Bytes())
 	}
@@ -280,7 +280,7 @@ func TestRingBuffer_LargeWrite(t *testing.T) {
 
 	// Write much larger than buffer
 	largeData := "abcdefghijklmnopqrstuvwxyz"
-	rb.Write([]byte(largeData))
+	_, _ = rb.Write([]byte(largeData))
 
 	result := string(rb.Bytes())
 	expected := "vwxyz" // Last 5 characters
@@ -300,7 +300,7 @@ func TestRingBuffer_ConcurrentWrites(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			for j := 0; j < writesPerGoroutine; j++ {
-				rb.Write([]byte("x"))
+				_, _ = rb.Write([]byte("x"))
 			}
 		}(i)
 	}
@@ -333,7 +333,7 @@ func TestRingBuffer_ConcurrentReadWrite(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				rb.Write([]byte("data"))
+				_, _ = rb.Write([]byte("data"))
 			}
 		}()
 	}
@@ -365,7 +365,7 @@ func TestRingBuffer_ConcurrentReset(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < iterations; i++ {
-			rb.Write([]byte("some data"))
+			_, _ = rb.Write([]byte("some data"))
 		}
 	}()
 
@@ -383,17 +383,17 @@ func TestRingBuffer_ConcurrentReset(t *testing.T) {
 func TestRingBuffer_SizeOne(t *testing.T) {
 	rb := NewRingBuffer(1)
 
-	rb.Write([]byte("a"))
+	_, _ = rb.Write([]byte("a"))
 	if string(rb.Bytes()) != "a" {
 		t.Errorf("expected 'a', got %q", rb.Bytes())
 	}
 
-	rb.Write([]byte("b"))
+	_, _ = rb.Write([]byte("b"))
 	if string(rb.Bytes()) != "b" {
 		t.Errorf("expected 'b', got %q", rb.Bytes())
 	}
 
-	rb.Write([]byte("cde"))
+	_, _ = rb.Write([]byte("cde"))
 	if string(rb.Bytes()) != "e" {
 		t.Errorf("expected 'e', got %q", rb.Bytes())
 	}
@@ -464,13 +464,13 @@ func BenchmarkRingBuffer_Write(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		rb.Write(data)
+		_, _ = rb.Write(data)
 	}
 }
 
 func BenchmarkRingBuffer_Bytes(b *testing.B) {
 	rb := NewRingBuffer(1024)
-	rb.Write([]byte("some data to fill the buffer partially"))
+	_, _ = rb.Write([]byte("some data to fill the buffer partially"))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -487,14 +487,14 @@ func BenchmarkRingBuffer_ConcurrentWrite(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			rb.Write(data)
+			_, _ = rb.Write(data)
 		}
 	})
 }
 
 func BenchmarkRingBuffer_ConcurrentRead(b *testing.B) {
 	rb := NewRingBuffer(1024)
-	rb.Write([]byte("some data to read concurrently"))
+	_, _ = rb.Write([]byte("some data to read concurrently"))
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
