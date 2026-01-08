@@ -174,11 +174,22 @@ func ringBell() tea.Cmd {
 	}
 }
 
+// ultraPlanInitMsg signals that ultra-plan mode should initialize
+type ultraPlanInitMsg struct{}
+
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
-		tick(),
-	)
+	cmds := []tea.Cmd{tick()}
+
+	// Schedule ultra-plan initialization if needed
+	if m.ultraPlan != nil && m.ultraPlan.coordinator != nil {
+		session := m.ultraPlan.coordinator.Session()
+		if session != nil && session.Phase == orchestrator.PhasePlanning && session.CoordinatorID == "" {
+			cmds = append(cmds, func() tea.Msg { return ultraPlanInitMsg{} })
+		}
+	}
+
+	return tea.Batch(cmds...)
 }
 
 // Update handles messages and updates the model
@@ -209,6 +220,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Clear info message after display (will show for ~100ms per tick, so a few ticks)
 		// We'll let it persist for a bit by not clearing immediately
 		return m, tick()
+
+	case ultraPlanInitMsg:
+		// Initialize ultra-plan mode by starting the planning phase
+		if m.ultraPlan != nil && m.ultraPlan.coordinator != nil {
+			session := m.ultraPlan.coordinator.Session()
+			if session != nil && session.Phase == orchestrator.PhasePlanning && session.CoordinatorID == "" {
+				if err := m.ultraPlan.coordinator.RunPlanning(); err != nil {
+					m.errorMessage = fmt.Sprintf("Failed to start planning: %v", err)
+				} else {
+					m.infoMessage = "Planning started. Claude is analyzing the codebase..."
+					// Select the coordinator instance so user can see the output
+					for i, inst := range m.session.Instances {
+						if inst.ID == session.CoordinatorID {
+							m.activeTab = i
+							break
+						}
+					}
+				}
+			}
+		}
+		return m, nil
 
 	case outputMsg:
 		if m.outputs == nil {
