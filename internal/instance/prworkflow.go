@@ -67,7 +67,7 @@ func (p *PRWorkflow) Start() error {
 	}
 
 	// Kill any existing session with this name (cleanup from previous run)
-	exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
+	_ = exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
 
 	// Create a new detached tmux session
 	createCmd := exec.Command("tmux",
@@ -84,8 +84,8 @@ func (p *PRWorkflow) Start() error {
 	}
 
 	// Set up tmux for color support
-	exec.Command("tmux", "set-option", "-t", p.sessionName, "history-limit", "10000").Run()
-	exec.Command("tmux", "set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run()
+	_ = exec.Command("tmux", "set-option", "-t", p.sessionName, "history-limit", "10000").Run()
+	_ = exec.Command("tmux", "set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run()
 
 	// Build and send the command
 	var cmd string
@@ -104,7 +104,7 @@ func (p *PRWorkflow) Start() error {
 		"Enter",
 	)
 	if err := sendCmd.Run(); err != nil {
-		exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
+		_ = exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
 		return fmt.Errorf("failed to start PR workflow command: %w", err)
 	}
 
@@ -220,7 +220,7 @@ func (p *PRWorkflow) monitorLoop() {
 			output, err := captureCmd.Output()
 			if err == nil {
 				p.outputBuf.Reset()
-				p.outputBuf.Write(output)
+				_, _ = p.outputBuf.Write(output)
 			}
 
 			// Check if the session is still running
@@ -293,7 +293,7 @@ func (p *PRWorkflow) Stop() error {
 	}
 
 	// Kill the tmux session
-	exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
+	_ = exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
 
 	p.running = false
 	return nil

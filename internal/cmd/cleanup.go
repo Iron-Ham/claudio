@@ -77,16 +77,9 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check if there's anything to clean
-	hasWork := false
-	if (cleanAll || cleanupWorktrees) && len(result.StaleWorktrees) > 0 {
-		hasWork = true
-	}
-	if (cleanAll || cleanupBranches) && len(result.StaleBranches) > 0 {
-		hasWork = true
-	}
-	if (cleanAll || cleanupTmux) && len(result.OrphanedTmuxSess) > 0 {
-		hasWork = true
-	}
+	hasWork := ((cleanAll || cleanupWorktrees) && len(result.StaleWorktrees) > 0) ||
+		((cleanAll || cleanupBranches) && len(result.StaleBranches) > 0) ||
+		((cleanAll || cleanupTmux) && len(result.OrphanedTmuxSess) > 0)
 
 	if !hasWork {
 		fmt.Println("No stale resources found. Nothing to clean up.")

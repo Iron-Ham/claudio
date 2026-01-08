@@ -124,7 +124,7 @@ func (m *Manager) Start() error {
 	}
 
 	// Kill any existing session with this name (cleanup from previous run)
-	exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+	_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
 
 	// Create a new detached tmux session with color support
 	createCmd := exec.Command("tmux",
@@ -142,8 +142,8 @@ func (m *Manager) Start() error {
 	}
 
 	// Set up the tmux session for color support and large history
-	exec.Command("tmux", "set-option", "-t", m.sessionName, "history-limit", "10000").Run()
-	exec.Command("tmux", "set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run()
+	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "history-limit", "10000").Run()
+	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run()
 
 	// Send the claude command to the tmux session
 	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions %q", m.task)
@@ -155,7 +155,7 @@ func (m *Manager) Start() error {
 	)
 	if err := sendCmd.Run(); err != nil {
 		// Clean up the session if we failed to start claude
-		exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+		_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
 		return fmt.Errorf("failed to start claude in tmux session: %w", err)
 	}
 
@@ -211,7 +211,7 @@ func (m *Manager) captureLoop() {
 			currentOutput := string(output)
 			if currentOutput != lastOutput {
 				m.outputBuf.Reset()
-				m.outputBuf.Write(output)
+				_, _ = m.outputBuf.Write(output)
 				lastOutput = currentOutput
 
 				// Detect waiting state from the new output
@@ -305,11 +305,11 @@ func (m *Manager) Stop() error {
 	}
 
 	// Send Ctrl+C to gracefully stop Claude first
-	exec.Command("tmux", "send-keys", "-t", m.sessionName, "C-c").Run()
+	_ = exec.Command("tmux", "send-keys", "-t", m.sessionName, "C-c").Run()
 	time.Sleep(500 * time.Millisecond)
 
 	// Kill the tmux session
-	exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+	_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
 
 	m.running = false
 	return nil
@@ -379,7 +379,7 @@ func (m *Manager) SendInput(data []byte) {
 			}
 		}
 
-		exec.Command("tmux", "send-keys", "-t", m.sessionName, "-l", key).Run()
+		_ = exec.Command("tmux", "send-keys", "-t", m.sessionName, "-l", key).Run()
 	}
 }
 
@@ -395,7 +395,7 @@ func (m *Manager) SendKey(key string) {
 	}
 
 	// Use CombinedOutput to capture any error
-	exec.Command("tmux", "send-keys", "-t", sessionName, key).Run()
+	_ = exec.Command("tmux", "send-keys", "-t", sessionName, key).Run()
 }
 
 // SendLiteral sends literal text to the tmux session (no interpretation)
@@ -410,7 +410,7 @@ func (m *Manager) SendLiteral(text string) {
 	}
 
 	// -l flag sends keys literally without interpretation
-	exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
+	_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
 }
 
 // SendPaste sends pasted text to the tmux session with bracketed paste sequences
@@ -432,11 +432,11 @@ func (m *Manager) SendPaste(text string) {
 	pasteEnd := "\x1b[201~"
 
 	// Send bracketed paste start
-	exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteStart).Run()
+	_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteStart).Run()
 	// Send the pasted content
-	exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
+	_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
 	// Send bracketed paste end
-	exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteEnd).Run()
+	_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteEnd).Run()
 }
 
 // GetOutput returns all buffered output
@@ -485,7 +485,7 @@ func (m *Manager) PID() int {
 	}
 
 	var pid int
-	fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &pid)
+	_, _ = fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &pid)
 	return pid
 }
 

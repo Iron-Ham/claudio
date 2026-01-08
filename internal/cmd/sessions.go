@@ -211,7 +211,7 @@ func runSessionsClean(cmd *cobra.Command, args []string) error {
 
 	// Load session first to find orphaned sessions
 	if orch.HasExistingSession() {
-		orch.LoadSession()
+		_, _ = orch.LoadSession()
 	}
 
 	// Clean orphaned tmux sessions

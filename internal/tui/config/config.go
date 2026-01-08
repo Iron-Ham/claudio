@@ -230,16 +230,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "enter", " ":
 			item := m.currentItem()
-			if item.Type == "bool" {
+			switch item.Type {
+			case "bool":
 				// Toggle boolean directly
 				current := viper.GetBool(item.Key)
 				viper.Set(item.Key, !current)
 				m.saveConfig()
-			} else if item.Type == "select" {
+			case "select":
 				// Enter selection mode
 				m.editing = true
 				m.selectIndex = m.getCurrentSelectIndex()
-			} else {
+			default:
 				// Enter edit mode for int/string
 				m.editing = true
 				m.textInput.SetValue(m.getCurrentValue())

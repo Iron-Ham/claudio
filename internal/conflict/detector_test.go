@@ -30,7 +30,7 @@ func TestDetector_AddInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	d.Start()
 
@@ -52,13 +52,13 @@ func TestDetector_DetectsConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir 1: %v", err)
 	}
-	defer os.RemoveAll(tmpDir1)
+	defer func() { _ = os.RemoveAll(tmpDir1) }()
 
 	tmpDir2, err := os.MkdirTemp("", "conflict-test-2-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir 2: %v", err)
 	}
-	defer os.RemoveAll(tmpDir2)
+	defer func() { _ = os.RemoveAll(tmpDir2) }()
 
 	d.Start()
 
@@ -130,7 +130,7 @@ func TestDetector_GetFilesModifiedByInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	d.Start()
 
@@ -170,24 +170,24 @@ func TestDetector_RemoveInstance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir 1: %v", err)
 	}
-	defer os.RemoveAll(tmpDir1)
+	defer func() { _ = os.RemoveAll(tmpDir1) }()
 
 	tmpDir2, err := os.MkdirTemp("", "conflict-test-2-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir 2: %v", err)
 	}
-	defer os.RemoveAll(tmpDir2)
+	defer func() { _ = os.RemoveAll(tmpDir2) }()
 
 	d.Start()
 
-	d.AddInstance("inst1", tmpDir1)
-	d.AddInstance("inst2", tmpDir2)
+	_ = d.AddInstance("inst1", tmpDir1)
+	_ = d.AddInstance("inst2", tmpDir2)
 
 	// Create conflict
 	testFile := "conflict.txt"
-	os.WriteFile(filepath.Join(tmpDir1, testFile), []byte("1"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir1, testFile), []byte("1"), 0644)
 	time.Sleep(200 * time.Millisecond)
-	os.WriteFile(filepath.Join(tmpDir2, testFile), []byte("2"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir2, testFile), []byte("2"), 0644)
 	time.Sleep(200 * time.Millisecond)
 
 	if !d.HasConflicts() {

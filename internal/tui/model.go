@@ -24,10 +24,9 @@ type Model struct {
 	addingTask      bool
 	taskInput       string
 	taskInputCursor int // Cursor position within taskInput (0 = before first char)
-	errorMessage   string
-	infoMessage    string // Non-error status message
-	warningMessage string // Warning message (e.g., file conflicts)
-	inputMode      bool   // When true, all keys are forwarded to the active instance's tmux session
+	errorMessage string
+	infoMessage  string // Non-error status message
+	inputMode    bool   // When true, all keys are forwarded to the active instance's tmux session
 
 	// Template dropdown state
 	showTemplates    bool   // Whether the template dropdown is visible
@@ -54,8 +53,7 @@ type Model struct {
 	sidebarScrollOffset int // Index of the first visible instance in sidebar
 
 	// Resource metrics display
-	showStats     bool // When true, show the stats panel
-	budgetWarning bool // True when session cost exceeds warning threshold
+	showStats bool // When true, show the stats panel
 
 	// Search state
 	searchMode    bool           // Whether search mode is active (typing pattern)

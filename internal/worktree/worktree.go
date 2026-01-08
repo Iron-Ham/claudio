@@ -47,12 +47,12 @@ func (m *Manager) Remove(path string) error {
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		// If worktree remove fails, try to clean up manually
-		os.RemoveAll(path)
+		_ = os.RemoveAll(path)
 
 		// Prune worktree references
 		pruneCmd := exec.Command("git", "worktree", "prune")
 		pruneCmd.Dir = m.repoDir
-		pruneCmd.Run()
+		_ = pruneCmd.Run()
 
 		return fmt.Errorf("failed to remove worktree cleanly: %w\n%s", err, string(output))
 	}
@@ -230,7 +230,7 @@ func (m *Manager) RebaseOnMain(path string) error {
 			// Abort the rebase so we don't leave things in a bad state
 			abortCmd := exec.Command("git", "rebase", "--abort")
 			abortCmd.Dir = path
-			abortCmd.Run()
+			_ = abortCmd.Run()
 			return fmt.Errorf("rebase conflicts detected - manual resolution required:\n%s", string(output))
 		}
 		return fmt.Errorf("failed to rebase: %w\n%s", err, string(output))
@@ -298,7 +298,7 @@ func (m *Manager) GetBehindCount(path string) (int, error) {
 	// Fetch first
 	fetchCmd := exec.Command("git", "fetch", "origin", mainBranch)
 	fetchCmd.Dir = path
-	fetchCmd.Run() // Ignore error, might be offline
+	_ = fetchCmd.Run() // Ignore error, might be offline
 
 	behindCmd := exec.Command("git", "rev-list", "--count", "HEAD..origin/"+mainBranch)
 	behindCmd.Dir = path
@@ -308,7 +308,7 @@ func (m *Manager) GetBehindCount(path string) (int, error) {
 	}
 
 	count := 0
-	fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &count)
+	_, _ = fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &count)
 	return count, nil
 }
 

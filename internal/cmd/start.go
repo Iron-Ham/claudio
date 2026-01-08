@@ -95,7 +95,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 		case "new":
 			// Clean up orphaned tmux sessions before starting fresh
-			orch.LoadSession()
+			_, _ = orch.LoadSession()
 			cleaned, _ := orch.CleanOrphanedTmuxSessions()
 			if cleaned > 0 {
 				fmt.Printf("Cleaned %d orphaned tmux session(s)\n", cleaned)
