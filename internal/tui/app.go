@@ -2,7 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/config"
@@ -38,7 +41,24 @@ func (a *App) Run() error {
 		tea.WithAltScreen(),
 	)
 
+	// Set up signal handling for graceful shutdown
+	// This ensures session state is preserved when the process is terminated
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+
+	go func() {
+		<-sigChan
+		// Send quit message to the TUI
+		if a.program != nil {
+			a.program.Send(tea.Quit())
+		}
+	}()
+
 	_, err := a.program.Run()
+
+	// Clean up signal handler
+	signal.Stop(sigChan)
+
 	return err
 }
 

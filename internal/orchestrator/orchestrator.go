@@ -134,6 +134,109 @@ func (o *Orchestrator) LoadSession() (*Session, error) {
 	return o.session, nil
 }
 
+// RecoverSession loads a session and attempts to reconnect to running tmux sessions
+// Returns a list of instance IDs that were successfully reconnected
+func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
+	session, err := o.LoadSession()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var reconnected []string
+	for _, inst := range session.Instances {
+		// Create instance manager
+		mgr := instance.NewManagerWithConfig(inst.ID, inst.WorktreePath, inst.Task, o.instanceManagerConfig())
+
+		// Try to reconnect if the tmux session still exists
+		if mgr.TmuxSessionExists() {
+			// Configure state change callback
+			mgr.SetStateCallback(func(id string, state instance.WaitingState) {
+				switch state {
+				case instance.StateCompleted:
+					o.handleInstanceExit(id)
+				case instance.StateWaitingInput, instance.StateWaitingQuestion, instance.StateWaitingPermission:
+					o.handleInstanceWaitingInput(id)
+				}
+			})
+
+			if err := mgr.Reconnect(); err == nil {
+				inst.Status = StatusWorking
+				inst.PID = mgr.PID()
+				reconnected = append(reconnected, inst.ID)
+			}
+		} else {
+			// Tmux session doesn't exist - mark as paused if it was working
+			if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
+				inst.Status = StatusPaused
+				inst.PID = 0
+			}
+		}
+
+		o.mu.Lock()
+		o.instances[inst.ID] = mgr
+		o.mu.Unlock()
+	}
+
+	// Save updated session state
+	o.saveSession()
+
+	return session, reconnected, nil
+}
+
+// HasExistingSession checks if there's an existing session file
+func (o *Orchestrator) HasExistingSession() bool {
+	sessionFile := filepath.Join(o.claudioDir, "session.json")
+	_, err := os.Stat(sessionFile)
+	return err == nil
+}
+
+// GetOrphanedTmuxSessions returns tmux sessions that exist but aren't tracked by the current session
+func (o *Orchestrator) GetOrphanedTmuxSessions() ([]string, error) {
+	tmuxSessions, err := instance.ListClaudioTmuxSessions()
+	if err != nil {
+		return nil, err
+	}
+
+	if o.session == nil {
+		return tmuxSessions, nil
+	}
+
+	// Build set of tracked session names
+	tracked := make(map[string]bool)
+	for _, inst := range o.session.Instances {
+		sessionName := fmt.Sprintf("claudio-%s", inst.ID)
+		tracked[sessionName] = true
+	}
+
+	// Find orphaned sessions
+	var orphaned []string
+	for _, sess := range tmuxSessions {
+		if !tracked[sess] {
+			orphaned = append(orphaned, sess)
+		}
+	}
+
+	return orphaned, nil
+}
+
+// CleanOrphanedTmuxSessions kills all orphaned claudio tmux sessions
+func (o *Orchestrator) CleanOrphanedTmuxSessions() (int, error) {
+	orphaned, err := o.GetOrphanedTmuxSessions()
+	if err != nil {
+		return 0, err
+	}
+
+	cleaned := 0
+	for _, sess := range orphaned {
+		cmd := exec.Command("tmux", "kill-session", "-t", sess)
+		if cmd.Run() == nil {
+			cleaned++
+		}
+	}
+
+	return cleaned, nil
+}
+
 // AddInstance adds a new Claude instance to the session
 func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, error) {
 	o.mu.Lock()
@@ -209,6 +312,7 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 
 	inst.Status = StatusWorking
 	inst.PID = mgr.PID()
+	inst.TmuxSession = mgr.SessionName() // Save tmux session name for recovery
 
 	return o.saveSession()
 }

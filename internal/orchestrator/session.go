@@ -28,7 +28,8 @@ type Instance struct {
 	PID           int            `json:"pid,omitempty"`
 	FilesModified []string       `json:"files_modified,omitempty"`
 	Created       time.Time      `json:"created"`
-	Output        []byte         `json:"-"` // Not persisted, runtime only
+	TmuxSession   string         `json:"tmux_session,omitempty"` // Tmux session name for recovery
+	Output        []byte         `json:"-"`                      // Not persisted, runtime only
 }
 
 // Session represents a Claudio work session

@@ -402,6 +402,65 @@ func (m *Manager) AttachCommand() string {
 	return fmt.Sprintf("tmux attach -t %s", m.sessionName)
 }
 
+// TmuxSessionExists checks if the tmux session for this instance exists
+func (m *Manager) TmuxSessionExists() bool {
+	cmd := exec.Command("tmux", "has-session", "-t", m.sessionName)
+	return cmd.Run() == nil
+}
+
+// Reconnect attempts to reconnect to an existing tmux session
+// This is used for session recovery after a restart
+func (m *Manager) Reconnect() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.running {
+		return fmt.Errorf("instance already running")
+	}
+
+	// Check if the tmux session exists
+	if !m.TmuxSessionExists() {
+		return fmt.Errorf("tmux session %s does not exist", m.sessionName)
+	}
+
+	m.running = true
+	m.paused = false
+	m.doneChan = make(chan struct{})
+
+	// Start background goroutine to capture output periodically
+	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)
+	go m.captureLoop()
+
+	return nil
+}
+
+// ListClaudioTmuxSessions returns a list of all tmux sessions with the claudio- prefix
+func ListClaudioTmuxSessions() ([]string, error) {
+	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	output, err := cmd.Output()
+	if err != nil {
+		// No sessions or tmux not running
+		return nil, nil
+	}
+
+	var sessions []string
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if strings.HasPrefix(line, "claudio-") {
+			sessions = append(sessions, line)
+		}
+	}
+	return sessions, nil
+}
+
+// ExtractInstanceIDFromSession extracts the instance ID from a claudio tmux session name
+// Session names are in the format "claudio-{instanceID}"
+func ExtractInstanceIDFromSession(sessionName string) string {
+	if strings.HasPrefix(sessionName, "claudio-") {
+		return strings.TrimPrefix(sessionName, "claudio-")
+	}
+	return ""
+}
+
 // Resize changes the tmux pane dimensions
 // This is useful when the display area changes (e.g., sidebar added/removed)
 func (m *Manager) Resize(width, height int) error {
