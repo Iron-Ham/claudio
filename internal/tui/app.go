@@ -697,50 +697,36 @@ func (m Model) renderSidebar(width int) string {
 			}
 		}
 
-		// Render each instance as a list item
+		// Separate active and completed instances
+		var activeInstances, completedInstances []int
 		for i, inst := range m.session.Instances {
-			// Status indicator (colored dot)
-			statusColor := styles.StatusColor(string(inst.Status))
-			dot := lipgloss.NewStyle().Foreground(statusColor).Render("●")
-
-			// Instance number and truncated task
-			maxTaskLen := width - 8 // Account for number, dot, padding
-			if maxTaskLen < 10 {
-				maxTaskLen = 10
-			}
-			label := fmt.Sprintf("%d %s", i+1, truncate(inst.Task, maxTaskLen))
-			// Add conflict indicator if instance has conflicts
-			if conflictingInstances[inst.ID] {
-				label = fmt.Sprintf("%d ⚠ %s", i+1, truncate(inst.Task, maxTaskLen-2))
-			}
-
-			// Choose style based on active state and status
-			var itemStyle lipgloss.Style
-			if i == m.activeTab {
-				if conflictingInstances[inst.ID] {
-					// Active item with conflict - use warning background
-					itemStyle = styles.SidebarItemInputNeeded
-				} else if inst.Status == orchestrator.StatusWaitingInput {
-					itemStyle = styles.SidebarItemInputNeeded
-				} else {
-					itemStyle = styles.SidebarItemActive
-				}
+			if inst.Status == orchestrator.StatusCompleted || inst.Status == orchestrator.StatusError {
+				completedInstances = append(completedInstances, i)
 			} else {
-				itemStyle = styles.SidebarItem
-				if conflictingInstances[inst.ID] {
-					// Inactive but has conflict - use warning color
-					itemStyle = itemStyle.Copy().Foreground(styles.WarningColor)
-				} else if inst.Status == orchestrator.StatusWaitingInput {
-					itemStyle = itemStyle.Copy().Foreground(styles.WarningColor)
-				} else {
-					itemStyle = itemStyle.Copy().Foreground(styles.MutedColor)
-				}
+				activeInstances = append(activeInstances, i)
 			}
+		}
 
-			// Combine dot and label
-			item := dot + " " + itemStyle.Render(label)
-			b.WriteString(item)
+		// Render active instances
+		for _, i := range activeInstances {
+			inst := m.session.Instances[i]
+			b.WriteString(m.renderSidebarInstance(i, inst, conflictingInstances, width))
 			b.WriteString("\n")
+		}
+
+		// Render completed section if there are completed instances
+		if len(completedInstances) > 0 {
+			if len(activeInstances) > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(styles.SidebarSectionTitle.Render("Completed"))
+			b.WriteString("\n")
+
+			for _, i := range completedInstances {
+				inst := m.session.Instances[i]
+				b.WriteString(m.renderSidebarInstance(i, inst, conflictingInstances, width))
+				b.WriteString("\n")
+			}
 		}
 	}
 
@@ -751,6 +737,50 @@ func (m Model) renderSidebar(width int) string {
 
 	// Wrap in sidebar box
 	return styles.Sidebar.Width(width - 2).Render(b.String())
+}
+
+// renderSidebarInstance renders a single instance item in the sidebar
+func (m Model) renderSidebarInstance(i int, inst *orchestrator.Instance, conflictingInstances map[string]bool, width int) string {
+	// Status indicator (colored dot)
+	statusColor := styles.StatusColor(string(inst.Status))
+	dot := lipgloss.NewStyle().Foreground(statusColor).Render("●")
+
+	// Instance number and truncated task
+	maxTaskLen := width - 8 // Account for number, dot, padding
+	if maxTaskLen < 10 {
+		maxTaskLen = 10
+	}
+	label := fmt.Sprintf("%d %s", i+1, truncate(inst.Task, maxTaskLen))
+	// Add conflict indicator if instance has conflicts
+	if conflictingInstances[inst.ID] {
+		label = fmt.Sprintf("%d ⚠ %s", i+1, truncate(inst.Task, maxTaskLen-2))
+	}
+
+	// Choose style based on active state and status
+	var itemStyle lipgloss.Style
+	if i == m.activeTab {
+		if conflictingInstances[inst.ID] {
+			// Active item with conflict - use warning background
+			itemStyle = styles.SidebarItemInputNeeded
+		} else if inst.Status == orchestrator.StatusWaitingInput {
+			itemStyle = styles.SidebarItemInputNeeded
+		} else {
+			itemStyle = styles.SidebarItemActive
+		}
+	} else {
+		itemStyle = styles.SidebarItem
+		if conflictingInstances[inst.ID] {
+			// Inactive but has conflict - use warning color
+			itemStyle = itemStyle.Copy().Foreground(styles.WarningColor)
+		} else if inst.Status == orchestrator.StatusWaitingInput {
+			itemStyle = itemStyle.Copy().Foreground(styles.WarningColor)
+		} else {
+			itemStyle = itemStyle.Copy().Foreground(styles.MutedColor)
+		}
+	}
+
+	// Combine dot and label
+	return dot + " " + itemStyle.Render(label)
 }
 
 // renderContent renders the main content area
