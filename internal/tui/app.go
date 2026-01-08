@@ -63,6 +63,13 @@ func (a *App) Run() error {
 		})
 	})
 
+	// Set up PR opened callback (for inline PR creation detected in instance output)
+	a.orchestrator.SetPROpenedCallback(func(instanceID string) {
+		a.program.Send(prOpenedMsg{
+			instanceID: instanceID,
+		})
+	})
+
 	_, err := a.program.Run()
 
 	// Clean up signal handler
@@ -106,6 +113,10 @@ type errMsg struct {
 type prCompleteMsg struct {
 	instanceID string
 	success    bool
+}
+
+type prOpenedMsg struct {
+	instanceID string
 }
 
 // Commands
@@ -173,6 +184,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.infoMessage = fmt.Sprintf("PR created and instance %s removed", msg.instanceID)
 			} else {
 				m.infoMessage = fmt.Sprintf("PR workflow finished (may have failed) - instance %s removed", msg.instanceID)
+			}
+		}
+		return m, nil
+
+	case prOpenedMsg:
+		// PR URL detected in instance output - remove the instance
+		inst := m.session.GetInstance(msg.instanceID)
+		if inst != nil {
+			if err := m.orchestrator.RemoveInstance(m.session, msg.instanceID, true); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to remove instance after PR opened: %v", err)
+			} else {
+				m.infoMessage = fmt.Sprintf("PR opened - instance %s removed", msg.instanceID)
 			}
 		}
 		return m, nil
