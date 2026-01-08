@@ -143,12 +143,14 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.taskInput = m.taskInput[:len(m.taskInput)-1]
 			}
 			return m, nil
-		default:
-			if msg.Type == tea.KeyRunes {
-				m.taskInput += string(msg.Runes)
-			}
+		case tea.KeySpace:
+			m.taskInput += " "
+			return m, nil
+		case tea.KeyRunes:
+			m.taskInput += string(msg.Runes)
 			return m, nil
 		}
+		return m, nil
 	}
 
 	// Normal mode
