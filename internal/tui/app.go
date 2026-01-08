@@ -421,7 +421,7 @@ func (m Model) handleTemplateDropdown(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateOutputs fetches latest output from all instances and checks for conflicts
+// updateOutputs fetches latest output from all instances, updates their status, and checks for conflicts
 func (m *Model) updateOutputs() {
 	if m.session == nil {
 		return
@@ -434,6 +434,12 @@ func (m *Model) updateOutputs() {
 			if len(output) > 0 {
 				m.outputs[inst.ID] = string(output)
 			}
+
+			// Update instance status based on detected waiting state
+			// Only update if the instance is currently working (not paused, completed, etc.)
+			if inst.Status == orchestrator.StatusWorking {
+				m.updateInstanceStatus(inst, mgr)
+			}
 		}
 	}
 
@@ -441,6 +447,25 @@ func (m *Model) updateOutputs() {
 	detector := m.orchestrator.GetConflictDetector()
 	if detector != nil {
 		m.conflicts = detector.GetConflicts()
+	}
+}
+
+// updateInstanceStatus updates an instance's status based on detected waiting state
+func (m *Model) updateInstanceStatus(inst *orchestrator.Instance, mgr *instance.Manager) {
+	state := mgr.CurrentState()
+
+	switch state {
+	case instance.StateWaitingPermission, instance.StateWaitingQuestion, instance.StateWaitingInput:
+		inst.Status = orchestrator.StatusWaitingInput
+	case instance.StateCompleted:
+		inst.Status = orchestrator.StatusCompleted
+	case instance.StateError:
+		inst.Status = orchestrator.StatusError
+	case instance.StateWorking:
+		// If currently marked as waiting but now working, go back to working
+		if inst.Status == orchestrator.StatusWaitingInput {
+			inst.Status = orchestrator.StatusWorking
+		}
 	}
 }
 
