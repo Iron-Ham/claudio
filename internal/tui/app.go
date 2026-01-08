@@ -78,6 +78,13 @@ func (a *App) Run() error {
 		})
 	})
 
+	// Set up bell callback for terminal sound forwarding
+	a.orchestrator.SetBellCallback(func(instanceID string) {
+		a.program.Send(bellMsg{
+			instanceID: instanceID,
+		})
+	})
+
 	_, err := a.program.Run()
 
 	// Clean up signal handler
@@ -132,12 +139,22 @@ type timeoutMsg struct {
 	timeoutType instance.TimeoutType
 }
 
+type bellMsg struct {
+	instanceID string
+}
+
 // Commands
 
 func tick() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+// emitBell returns a command that outputs the terminal bell character
+// This triggers the terminal's audible/visual alert mechanism
+func emitBell() tea.Cmd {
+	return tea.Println("\a")
 }
 
 // Init initializes the model
@@ -229,6 +246,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.infoMessage = fmt.Sprintf("Instance %s is %s - use Ctrl+R to restart or Ctrl+K to kill", inst.ID, statusText)
 		}
 		return m, nil
+
+	case bellMsg:
+		// Terminal bell detected in an instance - forward to parent terminal
+		// The bell character (\a or \x07) triggers the terminal's alert mechanism
+		return m, emitBell()
 	}
 
 	return m, nil

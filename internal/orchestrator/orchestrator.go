@@ -44,6 +44,9 @@ type Orchestrator struct {
 	// Callback for when an instance timeout is detected
 	timeoutCallback func(instanceID string, timeoutType instance.TimeoutType)
 
+	// Callback for when a terminal bell is detected in an instance
+	bellCallback func(instanceID string)
+
 	mu sync.RWMutex
 }
 
@@ -176,6 +179,11 @@ func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
 			// Configure timeout callback
 			mgr.SetTimeoutCallback(func(id string, timeoutType instance.TimeoutType) {
 				o.handleInstanceTimeout(id, timeoutType)
+			})
+
+			// Configure bell callback for terminal sound forwarding
+			mgr.SetBellCallback(func(id string) {
+				o.handleInstanceBell(id)
 			})
 
 			if err := mgr.Reconnect(); err == nil {
@@ -337,6 +345,11 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 		o.handleInstanceTimeout(id, timeoutType)
 	})
 
+	// Configure bell callback for terminal sound forwarding
+	mgr.SetBellCallback(func(id string) {
+		o.handleInstanceBell(id)
+	})
+
 	if err := mgr.Start(); err != nil {
 		return fmt.Errorf("failed to start instance: %w", err)
 	}
@@ -468,6 +481,13 @@ func (o *Orchestrator) SetTimeoutCallback(cb func(instanceID string, timeoutType
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.timeoutCallback = cb
+}
+
+// SetBellCallback sets the callback for when a terminal bell is detected in an instance
+func (o *Orchestrator) SetBellCallback(cb func(instanceID string)) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.bellCallback = cb
 }
 
 // GetPRWorkflow returns the PR workflow for an instance, if any
@@ -941,6 +961,18 @@ func (o *Orchestrator) handleInstancePROpened(id string) {
 	}
 }
 
+// handleInstanceBell handles when a terminal bell is detected in an instance
+func (o *Orchestrator) handleInstanceBell(id string) {
+	o.mu.RLock()
+	callback := o.bellCallback
+	o.mu.RUnlock()
+
+	// Forward to the TUI callback if set
+	if callback != nil {
+		callback(id)
+	}
+}
+
 // handleInstanceTimeout handles when an instance timeout is detected
 func (o *Orchestrator) handleInstanceTimeout(id string, timeoutType instance.TimeoutType) {
 	inst := o.GetInstance(id)
@@ -1049,6 +1081,11 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 	// Configure timeout callback
 	mgr.SetTimeoutCallback(func(id string, timeoutType instance.TimeoutType) {
 		o.handleInstanceTimeout(id, timeoutType)
+	})
+
+	// Configure bell callback for terminal sound forwarding
+	mgr.SetBellCallback(func(id string) {
+		o.handleInstanceBell(id)
 	})
 
 	// Check if the tmux session still exists

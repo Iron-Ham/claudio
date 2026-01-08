@@ -50,6 +50,9 @@ func DefaultManagerConfig() ManagerConfig {
 // MetricsChangeCallback is called when metrics are updated
 type MetricsChangeCallback func(instanceID string, metrics *ParsedMetrics)
 
+// BellCallback is called when a terminal bell is detected in the output
+type BellCallback func(instanceID string)
+
 // Manager handles a single Claude Code instance running in a tmux session
 type Manager struct {
 	id          string
@@ -76,12 +79,15 @@ type Manager struct {
 	startTime       *time.Time
 
 	// Timeout tracking
-	lastActivityTime    time.Time      // Last time output changed
-	lastOutputHash      string         // Hash of last output for change detection
-	repeatedOutputCount int            // Count of consecutive identical outputs (for stale detection)
+	lastActivityTime    time.Time       // Last time output changed
+	lastOutputHash      string          // Hash of last output for change detection
+	repeatedOutputCount int             // Count of consecutive identical outputs (for stale detection)
 	timeoutCallback     TimeoutCallback
-	timedOut            bool           // Whether a timeout has been triggered
-	timeoutType         TimeoutType    // Type of timeout that was triggered
+	timedOut            bool            // Whether a timeout has been triggered
+	timeoutType         TimeoutType     // Type of timeout that was triggered
+
+	// Bell detection
+	bellCallback BellCallback
 }
 
 // NewManager creates a new instance manager with default configuration
@@ -124,6 +130,13 @@ func (m *Manager) SetTimeoutCallback(cb TimeoutCallback) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.timeoutCallback = cb
+}
+
+// SetBellCallback sets a callback that will be invoked when a terminal bell is detected
+func (m *Manager) SetBellCallback(cb BellCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.bellCallback = cb
 }
 
 // CurrentMetrics returns the currently parsed metrics
@@ -298,6 +311,9 @@ func (m *Manager) captureLoop() {
 				m.mu.Unlock()
 			}
 
+			// Check for terminal bell and forward to callback
+			m.checkAndForwardBell(sessionName)
+
 			// Check for timeout conditions
 			m.checkTimeouts()
 
@@ -364,6 +380,39 @@ func (m *Manager) checkTimeouts() {
 	// Invoke callback outside of lock to prevent deadlocks
 	if triggeredTimeout != nil && callback != nil {
 		callback(instanceID, *triggeredTimeout)
+	}
+}
+
+// checkAndForwardBell checks for terminal bell in the tmux session and forwards to callback
+// TMUX tracks bells via the window_bell_flag format variable. When a bell occurs,
+// this flag is set to 1. After detecting it, we need to clear it by selecting the window.
+func (m *Manager) checkAndForwardBell(sessionName string) {
+	// Query the bell flag from tmux
+	bellCmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#{window_bell_flag}")
+	output, err := bellCmd.Output()
+	if err != nil {
+		return
+	}
+
+	// Check if bell flag is set (output will be "1\n" if bell occurred)
+	bellFlag := strings.TrimSpace(string(output))
+	if bellFlag != "1" {
+		return
+	}
+
+	// Bell detected! Clear the flag by selecting the window (this resets the alert)
+	// We use select-window with -t to clear the bell flag without changing focus
+	_ = exec.Command("tmux", "select-window", "-t", sessionName).Run()
+
+	// Get callback under lock
+	m.mu.RLock()
+	callback := m.bellCallback
+	instanceID := m.id
+	m.mu.RUnlock()
+
+	// Invoke callback outside of lock
+	if callback != nil {
+		callback(instanceID)
 	}
 }
 
