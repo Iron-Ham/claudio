@@ -84,8 +84,8 @@ const (
 	SidebarMinWidth = 20 // Minimum sidebar width
 
 	// Layout offsets for content area calculation
-	ContentWidthOffset  = 5 // sidebar gap (3) + border chars (2)
-	ContentHeightOffset = 6 // header + help bar + margins
+	ContentWidthOffset  = 7  // sidebar gap (3) + output area margin (4)
+	ContentHeightOffset = 12 // header + help bar + instance info + task + status + scroll indicator
 )
 
 // CalculateContentDimensions returns the effective content area dimensions
