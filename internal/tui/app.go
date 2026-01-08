@@ -44,9 +44,25 @@ func (a *App) Run() error {
 
 // Layout constants
 const (
-	sidebarWidth    = 30 // Fixed sidebar width
-	sidebarMinWidth = 20 // Minimum sidebar width
+	SidebarWidth    = 30 // Fixed sidebar width
+	SidebarMinWidth = 20 // Minimum sidebar width
+
+	// Layout offsets for content area calculation
+	ContentWidthOffset  = 5 // sidebar gap (3) + border chars (2)
+	ContentHeightOffset = 6 // header + help bar + margins
 )
+
+// CalculateContentDimensions returns the effective content area dimensions
+// given the terminal width and height. This accounts for the sidebar and other UI elements.
+func CalculateContentDimensions(termWidth, termHeight int) (contentWidth, contentHeight int) {
+	effectiveSidebarWidth := SidebarWidth
+	if termWidth < 80 {
+		effectiveSidebarWidth = SidebarMinWidth
+	}
+	contentWidth = termWidth - effectiveSidebarWidth - ContentWidthOffset
+	contentHeight = termHeight - ContentHeightOffset
+	return contentWidth, contentHeight
+}
 
 // Messages
 
@@ -85,18 +101,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.ready = true
 
-		// Calculate the content area width for tmux sessions
-		// This accounts for the sidebar taking up space
-		effectiveSidebarWidth := sidebarWidth
-		if m.width < 80 {
-			effectiveSidebarWidth = sidebarMinWidth
-		}
-		// Content width minus borders/padding (2 for border chars)
-		contentWidth := m.width - effectiveSidebarWidth - 3 - 2
-		// Content height minus header, help bar, and margins
-		contentHeight := m.height - 6
-
-		// Resize all running tmux sessions to match the content area
+		// Calculate the content area dimensions and resize tmux sessions
+		contentWidth, contentHeight := CalculateContentDimensions(m.width, m.height)
 		if m.orchestrator != nil && contentWidth > 0 && contentHeight > 0 {
 			m.orchestrator.ResizeAllInstances(contentWidth, contentHeight)
 		}
@@ -624,9 +630,9 @@ func (m Model) View() string {
 	b.WriteString("\n")
 
 	// Calculate widths for sidebar and main content
-	effectiveSidebarWidth := sidebarWidth
+	effectiveSidebarWidth := SidebarWidth
 	if m.width < 80 {
-		effectiveSidebarWidth = sidebarMinWidth
+		effectiveSidebarWidth = SidebarMinWidth
 	}
 	mainContentWidth := m.width - effectiveSidebarWidth - 3 // 3 for gap between panels
 

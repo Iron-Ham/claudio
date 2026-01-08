@@ -368,6 +368,16 @@ func (o *Orchestrator) GetConflictDetector() *conflict.Detector {
 	return o.conflictDetector
 }
 
+// SetDisplayDimensions sets the initial display dimensions for new instances
+// This should be called before the TUI starts to ensure instances are created
+// with the correct size from the beginning
+func (o *Orchestrator) SetDisplayDimensions(width, height int) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.displayWidth = width
+	o.displayHeight = height
+}
+
 // ResizeAllInstances resizes all running tmux sessions to the given dimensions
 // and stores the dimensions for new instances
 func (o *Orchestrator) ResizeAllInstances(width, height int) {
