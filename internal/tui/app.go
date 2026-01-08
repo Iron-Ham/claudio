@@ -145,7 +145,15 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if inst := m.activeInstance(); inst != nil {
 			mgr := m.orchestrator.GetInstanceManager(inst.ID)
 			if mgr != nil && mgr.Running() {
-				m.sendKeyToTmux(mgr, msg)
+				// Check if this is a paste operation
+				// Note: msg is tea.KeyMsg which embeds tea.Key, so we can access Paste directly
+				if msg.Paste && msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+					// Send pasted text with bracketed paste sequences
+					// This preserves paste context for Claude Code
+					mgr.SendPaste(string(msg.Runes))
+				} else {
+					m.sendKeyToTmux(mgr, msg)
+				}
 			}
 		}
 		return m, nil
@@ -509,17 +517,22 @@ func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
 	literal := false
 
 	switch msg.Type {
+	// Basic keys
 	case tea.KeyEnter:
 		key = "Enter"
 	case tea.KeyBackspace:
 		key = "BSpace"
 	case tea.KeyTab:
 		key = "Tab"
+	case tea.KeyShiftTab:
+		key = "BTab" // Back-tab in tmux
 	case tea.KeySpace:
 		key = " " // Send literal space
 		literal = true
 	case tea.KeyEsc:
 		key = "Escape"
+
+	// Arrow keys
 	case tea.KeyUp:
 		key = "Up"
 	case tea.KeyDown:
@@ -528,21 +541,160 @@ func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
 		key = "Right"
 	case tea.KeyLeft:
 		key = "Left"
+
+	// Navigation keys
+	case tea.KeyPgUp:
+		key = "PageUp"
+	case tea.KeyPgDown:
+		key = "PageDown"
+	case tea.KeyHome:
+		key = "Home"
+	case tea.KeyEnd:
+		key = "End"
+	case tea.KeyDelete:
+		key = "DC" // Delete character in tmux
+	case tea.KeyInsert:
+		key = "IC" // Insert character in tmux
+
+	// All Ctrl+letter combinations (Claude Code uses many of these)
+	case tea.KeyCtrlA:
+		key = "C-a"
+	case tea.KeyCtrlB:
+		key = "C-b"
 	case tea.KeyCtrlC:
 		key = "C-c"
 	case tea.KeyCtrlD:
 		key = "C-d"
+	case tea.KeyCtrlE:
+		key = "C-e"
+	case tea.KeyCtrlF:
+		key = "C-f"
+	case tea.KeyCtrlG:
+		key = "C-g"
+	case tea.KeyCtrlH:
+		key = "C-h"
+	// Note: KeyCtrlI (ASCII 9) is the same as KeyTab - handled above
+	case tea.KeyCtrlJ:
+		key = "C-j" // Note: also used for newline in some contexts
+	case tea.KeyCtrlK:
+		key = "C-k"
+	case tea.KeyCtrlL:
+		key = "C-l"
+	// Note: KeyCtrlM (ASCII 13) is the same as KeyEnter - handled above
+	case tea.KeyCtrlN:
+		key = "C-n"
+	case tea.KeyCtrlO:
+		key = "C-o" // Used by Claude Code for file operations
+	case tea.KeyCtrlP:
+		key = "C-p"
+	case tea.KeyCtrlQ:
+		key = "C-q"
+	case tea.KeyCtrlR:
+		key = "C-r" // Used by Claude Code for reverse search
+	case tea.KeyCtrlS:
+		key = "C-s"
+	case tea.KeyCtrlT:
+		key = "C-t"
+	case tea.KeyCtrlU:
+		key = "C-u" // Used by Claude Code to clear line
+	case tea.KeyCtrlV:
+		key = "C-v"
+	case tea.KeyCtrlW:
+		key = "C-w" // Used by Claude Code to delete word
+	case tea.KeyCtrlX:
+		key = "C-x"
+	case tea.KeyCtrlY:
+		key = "C-y"
 	case tea.KeyCtrlZ:
 		key = "C-z"
+
+	// Function keys (F1-F12)
+	case tea.KeyF1:
+		key = "F1"
+	case tea.KeyF2:
+		key = "F2"
+	case tea.KeyF3:
+		key = "F3"
+	case tea.KeyF4:
+		key = "F4"
+	case tea.KeyF5:
+		key = "F5"
+	case tea.KeyF6:
+		key = "F6"
+	case tea.KeyF7:
+		key = "F7"
+	case tea.KeyF8:
+		key = "F8"
+	case tea.KeyF9:
+		key = "F9"
+	case tea.KeyF10:
+		key = "F10"
+	case tea.KeyF11:
+		key = "F11"
+	case tea.KeyF12:
+		key = "F12"
+
 	case tea.KeyRunes:
 		// Send literal characters
+		// Handle Alt+key combinations
+		if msg.Alt {
+			// For alt combinations, tmux uses M- prefix or Escape followed by char
+			key = string(msg.Runes)
+			mgr.SendKey("Escape") // Send escape first
+			mgr.SendLiteral(key)  // Then send the character
+			return
+		}
 		key = string(msg.Runes)
 		literal = true
+
 	default:
 		// Try to handle other keys by their string representation
-		key = msg.String()
-		if len(key) == 1 {
-			literal = true
+		keyStr := msg.String()
+
+		// Handle known string patterns that might not have direct KeyType
+		switch {
+		case strings.HasPrefix(keyStr, "shift+"):
+			// Try to map shift combinations
+			baseKey := strings.TrimPrefix(keyStr, "shift+")
+			switch baseKey {
+			case "up":
+				key = "S-Up"
+			case "down":
+				key = "S-Down"
+			case "left":
+				key = "S-Left"
+			case "right":
+				key = "S-Right"
+			case "home":
+				key = "S-Home"
+			case "end":
+				key = "S-End"
+			default:
+				key = keyStr
+			}
+		case strings.HasPrefix(keyStr, "alt+"):
+			// Alt combinations: send Escape then the key
+			baseKey := strings.TrimPrefix(keyStr, "alt+")
+			mgr.SendKey("Escape")
+			if len(baseKey) == 1 {
+				mgr.SendLiteral(baseKey)
+			} else {
+				mgr.SendKey(baseKey)
+			}
+			return
+		case strings.HasPrefix(keyStr, "ctrl+"):
+			// Try to handle ctrl combinations not caught above
+			baseKey := strings.TrimPrefix(keyStr, "ctrl+")
+			if len(baseKey) == 1 {
+				key = "C-" + baseKey
+			} else {
+				key = keyStr
+			}
+		default:
+			key = keyStr
+			if len(key) == 1 {
+				literal = true
+			}
 		}
 	}
 
@@ -1177,6 +1329,15 @@ Input Mode:
 General:
   ?          Toggle help
   q          Quit
+
+Input Mode Details:
+  In input mode, all keystrokes are forwarded to Claude:
+  • All Ctrl+key combinations (Ctrl+O, Ctrl+R, Ctrl+W, etc.)
+  • Shift+Tab for backward navigation
+  • Function keys (F1-F12)
+  • Navigation keys (Page Up/Down, Home, End)
+  • Text paste with bracketed paste mode support
+  Press Ctrl+] to return to navigation mode.
 
 Auto-scroll follows new output by default. Scroll up to pause,
 press G to resume following. A "NEW OUTPUT" indicator appears
