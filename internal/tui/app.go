@@ -124,6 +124,11 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Handle task input mode
 	if m.addingTask {
+		// Handle template dropdown if visible
+		if m.showTemplates {
+			return m.handleTemplateDropdown(msg)
+		}
+
 		// Check for Shift+Enter first (adds newline)
 		if msg.Type == tea.KeyEnter && msg.Alt {
 			// Alt+Enter as fallback for terminals that don't support Shift+Enter
@@ -163,7 +168,16 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.taskInput += " "
 			return m, nil
 		case tea.KeyRunes:
-			m.taskInput += string(msg.Runes)
+			char := string(msg.Runes)
+			// Detect "/" at start of input or after newline to show templates
+			if char == "/" && (m.taskInput == "" || strings.HasSuffix(m.taskInput, "\n")) {
+				m.showTemplates = true
+				m.templateFilter = ""
+				m.templateSelected = 0
+				m.taskInput += char
+				return m, nil
+			}
+			m.taskInput += char
 			return m, nil
 		}
 		return m, nil
@@ -314,6 +328,92 @@ func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
 			mgr.SendKey(key)
 		}
 	}
+}
+
+// handleTemplateDropdown handles keyboard input when the template dropdown is visible
+func (m Model) handleTemplateDropdown(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	templates := FilterTemplates(m.templateFilter)
+
+	switch msg.Type {
+	case tea.KeyEsc:
+		// Close dropdown but keep the "/" and filter in input
+		m.showTemplates = false
+		m.templateFilter = ""
+		m.templateSelected = 0
+		return m, nil
+
+	case tea.KeyEnter, tea.KeyTab:
+		// Select the highlighted template
+		if len(templates) > 0 && m.templateSelected < len(templates) {
+			selected := templates[m.templateSelected]
+			// Replace the "/" and filter with the template description
+			// Find where the "/" starts (could be at beginning or after newline)
+			lastNewline := strings.LastIndex(m.taskInput, "\n")
+			if lastNewline == -1 {
+				// "/" is at the beginning
+				m.taskInput = selected.Description
+			} else {
+				// "/" is after a newline
+				m.taskInput = m.taskInput[:lastNewline+1] + selected.Description
+			}
+		}
+		m.showTemplates = false
+		m.templateFilter = ""
+		m.templateSelected = 0
+		return m, nil
+
+	case tea.KeyUp:
+		if m.templateSelected > 0 {
+			m.templateSelected--
+		}
+		return m, nil
+
+	case tea.KeyDown:
+		if m.templateSelected < len(templates)-1 {
+			m.templateSelected++
+		}
+		return m, nil
+
+	case tea.KeyBackspace:
+		if len(m.templateFilter) > 0 {
+			// Remove from both filter and taskInput
+			m.templateFilter = m.templateFilter[:len(m.templateFilter)-1]
+			if len(m.taskInput) > 0 {
+				m.taskInput = m.taskInput[:len(m.taskInput)-1]
+			}
+			m.templateSelected = 0 // Reset selection on filter change
+		} else {
+			// Remove the "/" and close dropdown
+			if len(m.taskInput) > 0 {
+				m.taskInput = m.taskInput[:len(m.taskInput)-1]
+			}
+			m.showTemplates = false
+		}
+		return m, nil
+
+	case tea.KeyRunes:
+		char := string(msg.Runes)
+		// Space closes dropdown and keeps current input, adds space
+		if char == " " {
+			m.showTemplates = false
+			m.taskInput += " "
+			m.templateFilter = ""
+			m.templateSelected = 0
+			return m, nil
+		}
+		// Add to both filter and taskInput
+		m.templateFilter += char
+		m.taskInput += char
+		m.templateSelected = 0 // Reset selection on filter change
+		// If no templates match, close dropdown
+		if len(FilterTemplates(m.templateFilter)) == 0 {
+			m.showTemplates = false
+			m.templateFilter = ""
+		}
+		return m, nil
+	}
+
+	return m, nil
 }
 
 // updateOutputs fetches latest output from all instances and checks for conflicts
@@ -557,12 +657,56 @@ func (m Model) renderAddTask() string {
 		}
 	}
 
+	// Show template dropdown if active
+	if m.showTemplates {
+		b.WriteString("\n")
+		b.WriteString(m.renderTemplateDropdown())
+	}
+
 	b.WriteString("\n\n")
-	b.WriteString(styles.Muted.Render("Enter") + " submit  " +
-		styles.Muted.Render("Shift+Enter") + " newline  " +
-		styles.Muted.Render("Esc") + " cancel")
+	if m.showTemplates {
+		b.WriteString(styles.Muted.Render("↑/↓") + " navigate  " +
+			styles.Muted.Render("Enter/Tab") + " select  " +
+			styles.Muted.Render("Esc") + " close  " +
+			styles.Muted.Render("Type") + " filter")
+	} else {
+		b.WriteString(styles.Muted.Render("Enter") + " submit  " +
+			styles.Muted.Render("Shift+Enter") + " newline  " +
+			styles.Muted.Render("/") + " templates  " +
+			styles.Muted.Render("Esc") + " cancel")
+	}
 
 	return styles.ContentBox.Width(m.width - 4).Render(b.String())
+}
+
+// renderTemplateDropdown renders the template selection dropdown
+func (m Model) renderTemplateDropdown() string {
+	templates := FilterTemplates(m.templateFilter)
+	if len(templates) == 0 {
+		return styles.Muted.Render("  No matching templates")
+	}
+
+	var items []string
+	for i, t := range templates {
+		cmd := "/" + t.Command
+		name := " - " + t.Name
+
+		var item string
+		if i == m.templateSelected {
+			// Selected item - highlight the whole row
+			item = styles.DropdownItemSelected.Render(cmd + name)
+		} else {
+			// Normal item - color command and name differently
+			item = styles.DropdownItem.Render(
+				styles.DropdownCommand.Render(cmd) +
+					styles.DropdownName.Render(name),
+			)
+		}
+		items = append(items, item)
+	}
+
+	content := strings.Join(items, "\n")
+	return styles.DropdownContainer.Render(content)
 }
 
 // renderHelpPanel renders the help overlay
