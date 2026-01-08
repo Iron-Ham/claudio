@@ -1,0 +1,243 @@
+# Claudio
+
+A CLI/TUI tool for running multiple Claude Code instances simultaneously on a single project using git worktrees.
+
+## Overview
+
+Claudio enables parallel AI-assisted development by orchestrating multiple Claude Code instances, each working in isolated git worktrees. A central orchestrator coordinates the work, tracks what each instance is doing, and helps prevent conflicts.
+
+## Features
+
+- **Parallel Instances** - Run multiple Claude Code processes simultaneously
+- **Worktree Isolation** - Each instance works in its own git worktree/branch
+- **TUI Dashboard** - Real-time view of all instances with output streaming
+- **Shared Context** - Instances can see what others are working on via auto-generated context files
+- **Process Control** - Start, pause, resume, and stop instances
+
+## Requirements
+
+- Go 1.21+
+- Git
+- [Claude Code](https://claude.ai/claude-code) CLI installed and authenticated
+
+## Installation
+
+### From Source
+
+```bash
+# Clone the repository
+git clone https://github.com/Iron-Ham/claudio.git
+cd claudio
+
+# Build
+go build -o claudio ./cmd/claudio
+
+# Install to your PATH (optional)
+go install ./cmd/claudio
+```
+
+### Verify Installation
+
+```bash
+claudio --help
+```
+
+## Quick Start
+
+```bash
+# Navigate to your project (must be a git repository)
+cd your-project
+
+# Initialize Claudio
+claudio init
+
+# Start a session (launches the TUI)
+claudio start my-feature
+
+# Or add instances directly from CLI
+claudio add "Implement user authentication API"
+claudio add "Write unit tests for auth module"
+claudio add "Update API documentation"
+```
+
+## Usage
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `claudio init` | Initialize Claudio in the current git repository |
+| `claudio start [name]` | Start a new session and launch the TUI |
+| `claudio add "task"` | Add a new Claude instance with the given task |
+| `claudio status` | Show current session status |
+| `claudio stop` | Stop all instances and end the session |
+| `claudio stop -f` | Force stop without prompts |
+
+### TUI Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `1-9` | Select instance by number |
+| `Tab` / `l` / `→` | Next instance |
+| `Shift+Tab` / `h` / `←` | Previous instance |
+| `a` | Add new instance |
+| `s` | Start selected instance |
+| `p` | Pause/resume instance |
+| `x` | Stop instance |
+| `Enter` | Focus instance for input |
+| `?` | Toggle help |
+| `q` | Quit |
+
+## How It Works
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         TUI Layer                           │
+│  (Bubbletea - renders state, handles keyboard input)        │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      Orchestrator                           │
+│  - Manages session state                                    │
+│  - Updates shared context                                   │
+│  - Coordinates instances                                    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│   Instance 1    │ │   Instance 2    │ │   Instance 3    │
+│   (worktree)    │ │   (worktree)    │ │   (worktree)    │
+│  claude process │ │  claude process │ │  claude process │
+└─────────────────┘ └─────────────────┘ └─────────────────┘
+```
+
+### Worktrees
+
+Each Claude instance runs in its own [git worktree](https://git-scm.com/docs/git-worktree), providing:
+
+- **Isolation**: Instances can modify files without affecting each other
+- **Parallel branches**: Each instance works on its own branch
+- **Easy cleanup**: Worktrees can be removed without losing the main repo
+
+Worktrees are created in `.claudio/worktrees/<instance-id>/` with branches named `claudio/<instance-id>-<task-slug>`.
+
+### Shared Context
+
+Claudio generates a `context.md` file that's injected into each worktree, containing:
+
+- What each instance is working on
+- Current status of all instances
+- Files being modified
+- Coordination notes
+
+This helps Claude instances be aware of parallel work and avoid conflicts.
+
+## Project Structure
+
+```
+.claudio/
+├── session.json          # Current session state
+├── context.md            # Shared context file
+└── worktrees/
+    ├── abc123/           # Instance 1 worktree
+    ├── def456/           # Instance 2 worktree
+    └── ...
+```
+
+## Configuration
+
+Claudio looks for configuration in:
+- `~/.config/claudio/config.yaml`
+- `~/.claudio.yaml`
+- `./claudio.yaml`
+
+Example configuration:
+
+```yaml
+# Default behavior when instance completes
+completion:
+  default_action: "prompt"  # "keep_branch" | "merge_staging" | "merge_main" | "prompt"
+
+# TUI preferences
+tui:
+  auto_focus_on_input: true
+  max_output_lines: 1000
+
+# Session defaults
+session:
+  max_instances: 10
+```
+
+## Development
+
+### Building
+
+```bash
+go build ./cmd/claudio
+```
+
+### Running Tests
+
+```bash
+go test ./...
+```
+
+### Project Layout
+
+```
+claudio/
+├── cmd/claudio/          # Entry point
+├── internal/
+│   ├── cmd/              # CLI commands (Cobra)
+│   ├── orchestrator/     # Session & coordination
+│   ├── instance/         # Process management
+│   ├── worktree/         # Git worktree operations
+│   └── tui/              # Terminal UI (Bubbletea)
+└── go.mod
+```
+
+## Troubleshooting
+
+### "not a git repository"
+
+Claudio requires a git repository. Initialize one with:
+
+```bash
+git init
+```
+
+### Claude process not starting
+
+Ensure Claude Code CLI is installed and authenticated:
+
+```bash
+claude --version
+claude auth status
+```
+
+### Worktree conflicts
+
+If you encounter worktree issues, you can manually clean up:
+
+```bash
+# List worktrees
+git worktree list
+
+# Remove a worktree
+git worktree remove .claudio/worktrees/<id>
+
+# Prune stale worktree references
+git worktree prune
+```
+
+## License
+
+MIT
+
+## Contributing
+
+Contributions welcome! Please open an issue or PR.

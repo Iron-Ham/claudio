@@ -1,0 +1,134 @@
+package styles
+
+import "github.com/charmbracelet/lipgloss"
+
+var (
+	// Colors
+	PrimaryColor   = lipgloss.Color("#7C3AED") // Purple
+	SecondaryColor = lipgloss.Color("#10B981") // Green
+	WarningColor   = lipgloss.Color("#F59E0B") // Amber
+	ErrorColor     = lipgloss.Color("#EF4444") // Red
+	MutedColor     = lipgloss.Color("#6B7280") // Gray
+	SurfaceColor   = lipgloss.Color("#1F2937") // Dark surface
+	TextColor      = lipgloss.Color("#F9FAFB") // Light text
+
+	// Convenience styles for colors
+	Primary   = lipgloss.NewStyle().Foreground(PrimaryColor)
+	Secondary = lipgloss.NewStyle().Foreground(SecondaryColor)
+	Warning   = lipgloss.NewStyle().Foreground(WarningColor)
+	Error     = lipgloss.NewStyle().Foreground(ErrorColor)
+	Muted     = lipgloss.NewStyle().Foreground(MutedColor)
+	Surface   = lipgloss.NewStyle().Background(SurfaceColor)
+	Text      = lipgloss.NewStyle().Foreground(TextColor)
+
+	// Status colors
+	StatusWorking  = lipgloss.Color("#10B981") // Green
+	StatusPending  = lipgloss.Color("#6B7280") // Gray
+	StatusInput    = lipgloss.Color("#F59E0B") // Amber
+	StatusPaused   = lipgloss.Color("#3B82F6") // Blue
+	StatusComplete = lipgloss.Color("#8B5CF6") // Purple
+	StatusError    = lipgloss.Color("#EF4444") // Red
+
+	// Base styles
+	Title = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(PrimaryColor).
+		MarginBottom(1)
+
+	Subtitle = lipgloss.NewStyle().
+			Foreground(MutedColor).
+			Italic(true)
+
+	// Tab styles
+	TabActive = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(TextColor).
+			Background(PrimaryColor).
+			Padding(0, 2)
+
+	TabInactive = lipgloss.NewStyle().
+			Foreground(MutedColor).
+			Padding(0, 2)
+
+	TabInputNeeded = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(TextColor).
+			Background(WarningColor).
+			Padding(0, 2)
+
+	// Status badge styles
+	StatusBadge = lipgloss.NewStyle().
+			Padding(0, 1).
+			MarginRight(1)
+
+	// Content area
+	ContentBox = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(MutedColor).
+			Padding(1, 2)
+
+	// Help bar
+	HelpBar = lipgloss.NewStyle().
+		Foreground(MutedColor).
+		MarginTop(1)
+
+	HelpKey = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(SecondaryColor)
+
+	// Output area
+	OutputArea = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(MutedColor)
+
+	// Header
+	Header = lipgloss.NewStyle().
+		Bold(true).
+		Foreground(PrimaryColor).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderBottom(true).
+		BorderForeground(MutedColor).
+		MarginBottom(1).
+		PaddingBottom(1)
+
+	// Footer / status bar
+	StatusBar = lipgloss.NewStyle().
+			Foreground(TextColor).
+			Background(SurfaceColor).
+			Padding(0, 1)
+
+	// Instance info
+	InstanceInfo = lipgloss.NewStyle().
+			Foreground(MutedColor).
+			MarginBottom(1)
+
+	// Error message
+	ErrorMsg = lipgloss.NewStyle().
+			Foreground(ErrorColor).
+			Bold(true)
+
+	// Success message
+	SuccessMsg = lipgloss.NewStyle().
+			Foreground(SecondaryColor).
+			Bold(true)
+)
+
+// StatusColor returns the color for a given status
+func StatusColor(status string) lipgloss.Color {
+	switch status {
+	case "working":
+		return StatusWorking
+	case "pending":
+		return StatusPending
+	case "waiting_input":
+		return StatusInput
+	case "paused":
+		return StatusPaused
+	case "completed":
+		return StatusComplete
+	case "error":
+		return StatusError
+	default:
+		return MutedColor
+	}
+}
