@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -11,6 +12,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+// Wrapper functions for exec to allow testing
+var execLookPath = exec.LookPath
+var execCommand = exec.Command
 
 var configCmd = &cobra.Command{
 	Use:   "config",
@@ -36,18 +41,21 @@ var configSetCmd = &cobra.Command{
 Keys use dot notation, e.g.:
   claudio config set completion.default_action auto_pr
   claudio config set tui.max_output_lines 2000
-  claudio config set session.max_instances 5
+  claudio config set pr.use_ai false
 
 Valid keys:
-  completion.default_action  - Action when instance completes
-                               Options: prompt, keep_branch, merge_staging, merge_main, auto_pr
-  tui.auto_focus_on_input    - Auto-focus new instances (true/false)
-  tui.max_output_lines       - Max output lines to display
-  session.max_instances      - Max simultaneous instances
+  completion.default_action   - Action when instance completes
+                                Options: prompt, keep_branch, merge_staging, merge_main, auto_pr
+  tui.auto_focus_on_input     - Auto-focus new instances (true/false)
+  tui.max_output_lines        - Max output lines to display
+  session.max_instances       - Max simultaneous instances
   instance.output_buffer_size - Output buffer size in bytes
   instance.capture_interval_ms - Output capture interval in milliseconds
-  instance.tmux_width        - tmux pane width
-  instance.tmux_height       - tmux pane height`,
+  instance.tmux_width         - tmux pane width
+  instance.tmux_height        - tmux pane height
+  pr.draft                    - Create PRs as drafts by default (true/false)
+  pr.auto_rebase              - Rebase on main before creating PR (true/false)
+  pr.use_ai                   - Use Claude AI to generate PR content (true/false)`,
 	Args: cobra.ExactArgs(2),
 	RunE: runConfigSet,
 }
@@ -65,12 +73,39 @@ var configPathCmd = &cobra.Command{
 	RunE:  runConfigPath,
 }
 
+var configEditCmd = &cobra.Command{
+	Use:   "edit",
+	Short: "Open config file in your editor",
+	Long: `Open the config file in your preferred editor.
+
+Uses $EDITOR environment variable, or falls back to common editors (vim, nano, vi).
+If no config file exists, creates one with default values first.`,
+	RunE: runConfigEdit,
+}
+
+var configResetCmd = &cobra.Command{
+	Use:   "reset [key]",
+	Short: "Reset configuration to defaults",
+	Long: `Reset configuration values to their defaults.
+
+Without arguments, resets all configuration to defaults.
+With a key argument, resets only that specific key.
+
+Examples:
+  claudio config reset           # Reset all to defaults
+  claudio config reset pr.draft  # Reset only pr.draft to default`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runConfigReset,
+}
+
 func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configInitCmd)
 	configCmd.AddCommand(configPathCmd)
+	configCmd.AddCommand(configEditCmd)
+	configCmd.AddCommand(configResetCmd)
 }
 
 func runConfigShow(cmd *cobra.Command, args []string) error {
@@ -107,6 +142,12 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  tmux_width: %d\n", cfg.Instance.TmuxWidth)
 	fmt.Printf("  tmux_height: %d\n", cfg.Instance.TmuxHeight)
 
+	// PR settings
+	fmt.Println("pr:")
+	fmt.Printf("  draft: %v\n", cfg.PR.Draft)
+	fmt.Printf("  auto_rebase: %v\n", cfg.PR.AutoRebase)
+	fmt.Printf("  use_ai: %v\n", cfg.PR.UseAI)
+
 	return nil
 }
 
@@ -124,6 +165,9 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		"instance.capture_interval_ms": "int",
 		"instance.tmux_width":          "int",
 		"instance.tmux_height":         "int",
+		"pr.draft":                     "bool",
+		"pr.auto_rebase":               "bool",
+		"pr.use_ai":                    "bool",
 	}
 
 	keyType, ok := validKeys[key]
@@ -221,6 +265,15 @@ instance:
   # tmux pane dimensions
   tmux_width: 200
   tmux_height: 50
+
+# Pull request settings
+pr:
+  # Create PRs as drafts by default
+  draft: false
+  # Automatically rebase on main before creating PR
+  auto_rebase: true
+  # Use Claude AI to generate PR title and description
+  use_ai: true
 `
 
 	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
@@ -249,5 +302,100 @@ func runConfigPath(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  3. ./config.yaml (current directory)\n")
 	fmt.Println("\nEnvironment variables: CLAUDIO_* (e.g., CLAUDIO_COMPLETION_DEFAULT_ACTION)")
 
+	return nil
+}
+
+func runConfigEdit(cmd *cobra.Command, args []string) error {
+	configFile := config.ConfigFile()
+
+	// Check if config file exists, if not create it
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		fmt.Printf("Config file doesn't exist, creating with defaults...\n")
+		if err := runConfigInit(cmd, args); err != nil {
+			return err
+		}
+	}
+
+	// Find an editor
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if editor == "" {
+		// Try common editors
+		for _, e := range []string{"vim", "nano", "vi"} {
+			if _, err := execLookPath(e); err == nil {
+				editor = e
+				break
+			}
+		}
+	}
+	if editor == "" {
+		return fmt.Errorf("no editor found. Set $EDITOR environment variable")
+	}
+
+	// Open the editor
+	editorCmd := execCommand(editor, configFile)
+	editorCmd.Stdin = os.Stdin
+	editorCmd.Stdout = os.Stdout
+	editorCmd.Stderr = os.Stderr
+
+	if err := editorCmd.Run(); err != nil {
+		return fmt.Errorf("editor exited with error: %w", err)
+	}
+
+	fmt.Printf("Config file saved: %s\n", configFile)
+	return nil
+}
+
+func runConfigReset(cmd *cobra.Command, args []string) error {
+	defaults := config.Default()
+
+	// Map of keys to their default values
+	defaultValues := map[string]interface{}{
+		"completion.default_action":    defaults.Completion.DefaultAction,
+		"tui.auto_focus_on_input":      defaults.TUI.AutoFocusOnInput,
+		"tui.max_output_lines":         defaults.TUI.MaxOutputLines,
+		"session.max_instances":        defaults.Session.MaxInstances,
+		"instance.output_buffer_size":  defaults.Instance.OutputBufferSize,
+		"instance.capture_interval_ms": defaults.Instance.CaptureIntervalMs,
+		"instance.tmux_width":          defaults.Instance.TmuxWidth,
+		"instance.tmux_height":         defaults.Instance.TmuxHeight,
+		"pr.draft":                     defaults.PR.Draft,
+		"pr.auto_rebase":               defaults.PR.AutoRebase,
+		"pr.use_ai":                    defaults.PR.UseAI,
+	}
+
+	if len(args) == 0 {
+		// Reset all values
+		for key, value := range defaultValues {
+			viper.Set(key, value)
+		}
+		fmt.Println("Reset all configuration to defaults.")
+	} else {
+		// Reset specific key
+		key := args[0]
+		value, ok := defaultValues[key]
+		if !ok {
+			return fmt.Errorf("unknown configuration key: %s\nRun 'claudio config set --help' to see valid keys", key)
+		}
+		viper.Set(key, value)
+		fmt.Printf("Reset %s to default: %v\n", key, value)
+	}
+
+	// Write to config file
+	configFile := config.ConfigFile()
+
+	// Ensure config directory exists
+	configDir := config.ConfigDir()
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	if err := viper.WriteConfigAs(configFile); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	fmt.Printf("Config saved to %s\n", configFile)
 	return nil
 }
