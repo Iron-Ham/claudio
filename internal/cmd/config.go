@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/config"
+	tuiconfig "github.com/Iron-Ham/claudio/internal/tui/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -22,9 +23,10 @@ var configCmd = &cobra.Command{
 	Short: "View or modify Claudio configuration",
 	Long: `View or modify Claudio configuration.
 
-Without arguments, displays the current configuration.
+Without arguments, opens an interactive configuration UI.
+Use 'config show' to display configuration non-interactively.
 Use subcommands to modify settings or create a config file.`,
-	RunE: runConfigShow,
+	RunE: runConfigInteractive,
 }
 
 var configShowCmd = &cobra.Command{
@@ -106,6 +108,10 @@ func init() {
 	configCmd.AddCommand(configPathCmd)
 	configCmd.AddCommand(configEditCmd)
 	configCmd.AddCommand(configResetCmd)
+}
+
+func runConfigInteractive(cmd *cobra.Command, args []string) error {
+	return tuiconfig.Run()
 }
 
 func runConfigShow(cmd *cobra.Command, args []string) error {
