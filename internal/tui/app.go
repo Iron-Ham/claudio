@@ -146,6 +146,9 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				_, err := m.orchestrator.AddInstance(m.session, m.taskInput)
 				if err != nil {
 					m.errorMessage = err.Error()
+				} else {
+					// Switch to the newly added task
+					m.activeTab = len(m.session.Instances) - 1
 				}
 			}
 			m.addingTask = false
