@@ -18,6 +18,34 @@ const (
 	StatusError        InstanceStatus = "error"
 )
 
+// Metrics tracks resource usage and costs for an instance
+type Metrics struct {
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CacheRead    int64   `json:"cache_read,omitempty"`
+	CacheWrite   int64   `json:"cache_write,omitempty"`
+	Cost         float64 `json:"cost"`
+	APICalls     int     `json:"api_calls"`
+	StartTime    *time.Time `json:"start_time,omitempty"`
+	EndTime      *time.Time `json:"end_time,omitempty"`
+}
+
+// TotalTokens returns the sum of input and output tokens
+func (m *Metrics) TotalTokens() int64 {
+	return m.InputTokens + m.OutputTokens
+}
+
+// Duration returns the total runtime duration if start/end times are set
+func (m *Metrics) Duration() time.Duration {
+	if m.StartTime == nil {
+		return 0
+	}
+	if m.EndTime == nil {
+		return time.Since(*m.StartTime)
+	}
+	return m.EndTime.Sub(*m.StartTime)
+}
+
 // Instance represents a single Claude Code instance
 type Instance struct {
 	ID            string         `json:"id"`
@@ -29,7 +57,8 @@ type Instance struct {
 	FilesModified []string       `json:"files_modified,omitempty"`
 	Created       time.Time      `json:"created"`
 	TmuxSession   string         `json:"tmux_session,omitempty"` // Tmux session name for recovery
-	Output        []byte         `json:"-"`                      // Not persisted, runtime only
+	Metrics       *Metrics       `json:"metrics,omitempty"`
+	Output        []byte         `json:"-"` // Not persisted, runtime only
 }
 
 // Session represents a Claudio work session

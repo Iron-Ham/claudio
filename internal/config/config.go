@@ -16,6 +16,7 @@ type Config struct {
 	Instance   InstanceConfig   `mapstructure:"instance"`
 	PR         PRConfig         `mapstructure:"pr"`
 	Cleanup    CleanupConfig    `mapstructure:"cleanup"`
+	Resources  ResourceConfig   `mapstructure:"resources"`
 }
 
 // CompletionConfig controls what happens when an instance completes
@@ -82,6 +83,18 @@ type CleanupConfig struct {
 	KeepRemoteBranches bool `mapstructure:"keep_remote_branches"`
 }
 
+// ResourceConfig controls resource monitoring and cost tracking
+type ResourceConfig struct {
+	// CostWarningThreshold triggers a warning when session cost exceeds this amount (USD)
+	CostWarningThreshold float64 `mapstructure:"cost_warning_threshold"`
+	// CostLimit pauses all instances when session cost exceeds this amount (USD), 0 = no limit
+	CostLimit float64 `mapstructure:"cost_limit"`
+	// TokenLimitPerInstance limits tokens per instance, 0 = no limit
+	TokenLimitPerInstance int64 `mapstructure:"token_limit_per_instance"`
+	// ShowMetricsInSidebar shows token/cost metrics in TUI sidebar
+	ShowMetricsInSidebar bool `mapstructure:"show_metrics_in_sidebar"`
+}
+
 // Default returns a Config with sensible default values
 func Default() *Config {
 	return &Config{
@@ -113,6 +126,12 @@ func Default() *Config {
 		Cleanup: CleanupConfig{
 			WarnOnStale:        true,
 			KeepRemoteBranches: true,
+		},
+		Resources: ResourceConfig{
+			CostWarningThreshold:  5.00,  // Warn at $5
+			CostLimit:             0,     // No limit by default
+			TokenLimitPerInstance: 0,     // No limit by default
+			ShowMetricsInSidebar:  true,  // Show metrics by default
 		},
 	}
 }
@@ -153,6 +172,12 @@ func SetDefaults() {
 	// Cleanup defaults
 	viper.SetDefault("cleanup.warn_on_stale", defaults.Cleanup.WarnOnStale)
 	viper.SetDefault("cleanup.keep_remote_branches", defaults.Cleanup.KeepRemoteBranches)
+
+	// Resource defaults
+	viper.SetDefault("resources.cost_warning_threshold", defaults.Resources.CostWarningThreshold)
+	viper.SetDefault("resources.cost_limit", defaults.Resources.CostLimit)
+	viper.SetDefault("resources.token_limit_per_instance", defaults.Resources.TokenLimitPerInstance)
+	viper.SetDefault("resources.show_metrics_in_sidebar", defaults.Resources.ShowMetricsInSidebar)
 }
 
 // Load reads the configuration from viper into a Config struct
