@@ -14,6 +14,7 @@ type Config struct {
 	TUI        TUIConfig        `mapstructure:"tui"`
 	Session    SessionConfig    `mapstructure:"session"`
 	Instance   InstanceConfig   `mapstructure:"instance"`
+	PR         PRConfig         `mapstructure:"pr"`
 }
 
 // CompletionConfig controls what happens when an instance completes
@@ -49,6 +50,16 @@ type InstanceConfig struct {
 	TmuxHeight int `mapstructure:"tmux_height"`
 }
 
+// PRConfig controls pull request creation behavior
+type PRConfig struct {
+	// Draft creates PRs as drafts by default
+	Draft bool `mapstructure:"draft"`
+	// AutoRebase rebases on main before creating PR (default: true)
+	AutoRebase bool `mapstructure:"auto_rebase"`
+	// UseAI uses Claude to generate PR title and description (default: true)
+	UseAI bool `mapstructure:"use_ai"`
+}
+
 // Default returns a Config with sensible default values
 func Default() *Config {
 	return &Config{
@@ -67,6 +78,11 @@ func Default() *Config {
 			CaptureIntervalMs: 100,
 			TmuxWidth:         200,
 			TmuxHeight:        50,
+		},
+		PR: PRConfig{
+			Draft:      false,
+			AutoRebase: true,
+			UseAI:      true,
 		},
 	}
 }
@@ -95,6 +111,11 @@ func SetDefaults() {
 	viper.SetDefault("instance.capture_interval_ms", defaults.Instance.CaptureIntervalMs)
 	viper.SetDefault("instance.tmux_width", defaults.Instance.TmuxWidth)
 	viper.SetDefault("instance.tmux_height", defaults.Instance.TmuxHeight)
+
+	// PR defaults
+	viper.SetDefault("pr.draft", defaults.PR.Draft)
+	viper.SetDefault("pr.auto_rebase", defaults.PR.AutoRebase)
+	viper.SetDefault("pr.use_ai", defaults.PR.UseAI)
 }
 
 // Load reads the configuration from viper into a Config struct

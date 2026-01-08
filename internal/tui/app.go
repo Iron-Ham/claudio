@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
@@ -260,7 +261,18 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if inst := m.activeInstance(); inst != nil {
 			if err := m.orchestrator.StopInstance(inst); err != nil {
 				m.errorMessage = err.Error()
+			} else {
+				// Suggest creating a PR after stopping
+				m.infoMessage = fmt.Sprintf("Instance stopped. Create PR with: claudio pr %s", inst.ID)
 			}
+		}
+		return m, nil
+
+	case "r":
+		// Show PR creation command for active instance
+		if inst := m.activeInstance(); inst != nil {
+			m.infoMessage = fmt.Sprintf("Create PR: claudio pr %s  (add --draft for draft PR)", inst.ID)
+			m.errorMessage = "" // Clear any error
 		}
 		return m, nil
 
@@ -459,12 +471,17 @@ func (m *Model) updateOutputs() {
 // updateInstanceStatus updates an instance's status based on detected waiting state
 func (m *Model) updateInstanceStatus(inst *orchestrator.Instance, mgr *instance.Manager) {
 	state := mgr.CurrentState()
+	previousStatus := inst.Status
 
 	switch state {
 	case instance.StateWaitingPermission, instance.StateWaitingQuestion, instance.StateWaitingInput:
 		inst.Status = orchestrator.StatusWaitingInput
 	case instance.StateCompleted:
 		inst.Status = orchestrator.StatusCompleted
+		// If just completed (status changed), check completion action
+		if previousStatus != orchestrator.StatusCompleted {
+			m.handleInstanceCompleted(inst)
+		}
 	case instance.StateError:
 		inst.Status = orchestrator.StatusError
 	case instance.StateWorking:
@@ -472,6 +489,23 @@ func (m *Model) updateInstanceStatus(inst *orchestrator.Instance, mgr *instance.
 		if inst.Status == orchestrator.StatusWaitingInput {
 			inst.Status = orchestrator.StatusWorking
 		}
+	}
+}
+
+// handleInstanceCompleted handles post-completion actions based on config
+func (m *Model) handleInstanceCompleted(inst *orchestrator.Instance) {
+	cfg := config.Get()
+
+	switch cfg.Completion.DefaultAction {
+	case "auto_pr":
+		// Prompt user to create PR (we can't run it in TUI without freezing)
+		m.infoMessage = fmt.Sprintf("Instance %s completed! Create PR: claudio pr %s", inst.ID, inst.ID)
+	case "prompt":
+		// Show a generic completion message
+		m.infoMessage = fmt.Sprintf("Instance %s completed. Press [r] for PR options.", inst.ID)
+	default:
+		// For other actions (keep_branch, merge_staging, merge_main), just note completion
+		m.infoMessage = fmt.Sprintf("Instance %s completed.", inst.ID)
 	}
 }
 
@@ -803,6 +837,7 @@ Instance Control:
   s          Start selected instance
   p          Pause/resume instance
   x          Stop instance
+  r          Show PR creation command
 
 Input Mode:
   i / Enter  Enter input mode (interact with Claude)
@@ -817,8 +852,10 @@ Each Claude instance runs in its own tmux session.
 In input mode, ALL keystrokes are forwarded to Claude.
 Press Ctrl+] to return to navigation mode.
 
-You can also attach directly to a session with:
-  tmux attach -t claudio-<instance-id>
+Creating Pull Requests:
+  After completing work, use: claudio pr <instance-id>
+  This will use Claude to generate a meaningful PR title and description,
+  rebase on main, and create the PR on GitHub.
 `
 	return styles.ContentBox.Width(width - 4).Render(help)
 }
@@ -882,6 +919,7 @@ func (m Model) renderHelp() string {
 		styles.HelpKey.Render("[i]") + " input",
 		styles.HelpKey.Render("[p]") + " pause",
 		styles.HelpKey.Render("[x]") + " stop",
+		styles.HelpKey.Render("[r]") + " pr",
 		styles.HelpKey.Render("[?]") + " help",
 		styles.HelpKey.Render("[q]") + " quit",
 	}
