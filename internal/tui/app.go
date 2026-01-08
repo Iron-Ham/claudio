@@ -675,6 +675,26 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errorMessage = "" // Clear any error
 		return m, nil
 
+	case "D":
+		// Close/remove active instance from sidebar
+		if inst := m.activeInstance(); inst != nil {
+			instanceID := inst.ID
+			if err := m.orchestrator.RemoveInstance(m.session, instanceID, true); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to remove instance: %v", err)
+			} else {
+				m.infoMessage = fmt.Sprintf("Removed instance %s", instanceID)
+				// Adjust active tab if needed
+				if m.activeTab >= m.instanceCount() {
+					m.activeTab = m.instanceCount() - 1
+					if m.activeTab < 0 {
+						m.activeTab = 0
+					}
+				}
+				m.ensureActiveVisible()
+			}
+		}
+		return m, nil
+
 	case "m":
 		// Toggle stats/metrics panel
 		m.showStats = !m.showStats
@@ -2016,6 +2036,7 @@ Instance Control:
   s          Start selected instance
   p          Pause/resume instance
   x          Stop instance
+  D          Close/remove instance
   R          Reconnect to stopped/paused instance
   C          Clear completed instances
   r          Show PR creation command
