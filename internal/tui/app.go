@@ -231,15 +231,44 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// protocols (Kitty, iTerm2, WezTerm, Ghostty). Alt+Enter and Ctrl+J work
 		// universally as fallbacks.
 		if msg.Type == tea.KeyEnter && msg.Alt {
-			m.taskInput += "\n"
+			m.taskInputInsert("\n")
 			return m, nil
 		}
 		if msg.String() == "shift+enter" {
-			m.taskInput += "\n"
+			m.taskInputInsert("\n")
 			return m, nil
 		}
 		if msg.Type == tea.KeyCtrlJ {
-			m.taskInput += "\n"
+			m.taskInputInsert("\n")
+			return m, nil
+		}
+
+		// Handle Opt+Arrow (word navigation) and Cmd+Arrow (line navigation)
+		// On macOS, terminals typically report these as:
+		// - Opt+Arrow: "alt+left", "alt+right", etc.
+		// - Cmd+Arrow: May vary by terminal, often reported as special sequences
+		keyStr := msg.String()
+		switch keyStr {
+		case "alt+left":
+			// Opt+Left: Move to previous word boundary
+			m.taskInputCursor = m.taskInputFindPrevWordBoundary()
+			return m, nil
+		case "alt+right":
+			// Opt+Right: Move to next word boundary
+			m.taskInputCursor = m.taskInputFindNextWordBoundary()
+			return m, nil
+		case "alt+up", "ctrl+a": // Cmd+Up often reported as ctrl+a in some terminals
+			// Move to start of input
+			m.taskInputCursor = 0
+			return m, nil
+		case "alt+down", "ctrl+e": // Cmd+Down often reported as ctrl+e in some terminals
+			// Move to end of input
+			m.taskInputCursor = len([]rune(m.taskInput))
+			return m, nil
+		case "alt+backspace", "ctrl+w":
+			// Opt+Backspace: Delete previous word
+			prevWord := m.taskInputFindPrevWordBoundary()
+			m.taskInputDeleteBack(m.taskInputCursor - prevWord)
 			return m, nil
 		}
 
@@ -247,6 +276,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyEsc:
 			m.addingTask = false
 			m.taskInput = ""
+			m.taskInputCursor = 0
 			return m, nil
 		case tea.KeyEnter:
 			if m.taskInput != "" {
@@ -262,26 +292,54 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.addingTask = false
 			m.taskInput = ""
+			m.taskInputCursor = 0
 			return m, nil
 		case tea.KeyBackspace:
-			if len(m.taskInput) > 0 {
-				m.taskInput = m.taskInput[:len(m.taskInput)-1]
-			}
+			m.taskInputDeleteBack(1)
+			return m, nil
+		case tea.KeyDelete:
+			m.taskInputDeleteForward(1)
+			return m, nil
+		case tea.KeyLeft:
+			m.taskInputMoveCursor(-1)
+			return m, nil
+		case tea.KeyRight:
+			m.taskInputMoveCursor(1)
+			return m, nil
+		case tea.KeyHome:
+			// Move to start of current line
+			m.taskInputCursor = m.taskInputFindLineStart()
+			return m, nil
+		case tea.KeyEnd:
+			// Move to end of current line
+			m.taskInputCursor = m.taskInputFindLineEnd()
+			return m, nil
+		case tea.KeyCtrlU:
+			// Cmd+Backspace equivalent: Delete from cursor to start of line
+			lineStart := m.taskInputFindLineStart()
+			m.taskInputDeleteBack(m.taskInputCursor - lineStart)
+			return m, nil
+		case tea.KeyCtrlK:
+			// Delete from cursor to end of line
+			lineEnd := m.taskInputFindLineEnd()
+			m.taskInputDeleteForward(lineEnd - m.taskInputCursor)
 			return m, nil
 		case tea.KeySpace:
-			m.taskInput += " "
+			m.taskInputInsert(" ")
 			return m, nil
 		case tea.KeyRunes:
 			char := string(msg.Runes)
 			// Detect "/" at start of input or after newline to show templates
-			if char == "/" && (m.taskInput == "" || strings.HasSuffix(m.taskInput, "\n")) {
+			cursorAtLineStart := m.taskInputCursor == 0 ||
+				(m.taskInputCursor > 0 && []rune(m.taskInput)[m.taskInputCursor-1] == '\n')
+			if char == "/" && cursorAtLineStart {
 				m.showTemplates = true
 				m.templateFilter = ""
 				m.templateSelected = 0
-				m.taskInput += char
+				m.taskInputInsert(char)
 				return m, nil
 			}
-			m.taskInput += char
+			m.taskInputInsert(char)
 			return m, nil
 		}
 		return m, nil
@@ -1812,13 +1870,27 @@ func (m Model) renderAddTask(width int) string {
 	b.WriteString("\n\n")
 	b.WriteString("Enter task description:\n\n")
 
-	// Handle multiline display
-	lines := strings.Split(m.taskInput, "\n")
+	// Render text with cursor at the correct position
+	runes := []rune(m.taskInput)
+	beforeCursor := string(runes[:m.taskInputCursor])
+	afterCursor := string(runes[m.taskInputCursor:])
+
+	// Build the display with cursor indicator
+	// The cursor line gets a ">" prefix, other lines get "  " prefix
+	fullText := beforeCursor + "█" + afterCursor
+	lines := strings.Split(fullText, "\n")
+
+	// Find which line contains the cursor
+	cursorLineIdx := strings.Count(beforeCursor, "\n")
+
 	for i, line := range lines {
-		if i == len(lines)-1 {
-			b.WriteString("> " + line + "█")
+		if i == cursorLineIdx {
+			b.WriteString("> " + line)
 		} else {
-			b.WriteString("  " + line + "\n")
+			b.WriteString("  " + line)
+		}
+		if i < len(lines)-1 {
+			b.WriteString("\n")
 		}
 	}
 
