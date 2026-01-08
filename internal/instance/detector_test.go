@@ -229,30 +229,57 @@ func TestDetector_ErrorPatterns(t *testing.T) {
 		output   string
 		expected WaitingState
 	}{
+		// Real error patterns that should trigger StateError
 		{
-			name:     "error colon",
-			output:   "Error: could not find file",
+			name:     "claude session error",
+			output:   "Error: session expired, please restart",
 			expected: StateError,
 		},
 		{
-			name:     "could not complete",
-			output:   "Could not complete the operation",
+			name:     "claude connection error",
+			output:   "Error: connection failed to API",
 			expected: StateError,
 		},
 		{
-			name:     "unable to proceed",
-			output:   "Unable to proceed with the task",
+			name:     "claude crashed",
+			output:   "claude exited unexpectedly with code 1",
 			expected: StateError,
 		},
 		{
-			name:     "fatal error",
-			output:   "Fatal error encountered",
+			name:     "rate limit exceeded",
+			output:   "Rate limit exceeded, please wait before retrying",
 			expected: StateError,
 		},
 		{
-			name:     "process crashed",
-			output:   "The process crashed unexpectedly",
+			name:     "api error with status code",
+			output:   "API error failed with status 429",
 			expected: StateError,
+		},
+		{
+			name:     "signal termination",
+			output:   "Terminated: SIGTERM received",
+			expected: StateError,
+		},
+		// These should NOT trigger StateError (false positives we're avoiding)
+		{
+			name:     "error in test output - should not trigger error state",
+			output:   "Error: could not find file\nLet me try a different approach...",
+			expected: StateWorking,
+		},
+		{
+			name:     "build failure output - should not trigger error state",
+			output:   "Build failed: 3 errors\nI'll fix these compilation errors now.",
+			expected: StateWorking,
+		},
+		{
+			name:     "test failure output - should not trigger error state",
+			output:   "FAIL: TestSomething\nError: assertion failed\nLet me investigate the test failure...",
+			expected: StateWorking,
+		},
+		{
+			name:     "generic error mention - should not trigger error state",
+			output:   "The error handling code needs to be improved",
+			expected: StateWorking,
 		},
 	}
 
