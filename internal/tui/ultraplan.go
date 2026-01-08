@@ -59,9 +59,13 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 	}
 
 	session := m.ultraPlan.coordinator.Session()
-	if session == nil || session.Plan == nil {
-		// Still in planning phase - show regular sidebar
+	if session == nil {
 		return m.renderSidebar(width, height)
+	}
+
+	// During planning phase, show a planning-specific sidebar
+	if session.Plan == nil {
+		return m.renderPlanningSidebar(width, height, session)
 	}
 
 	var b strings.Builder
@@ -503,4 +507,70 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 		len(plan.Tasks), len(plan.ExecutionOrder))
 
 	return true
+}
+
+// renderPlanningSidebar renders a planning-specific sidebar during the planning phase
+func (m Model) renderPlanningSidebar(width int, height int, session *orchestrator.UltraPlanSession) string {
+	var b strings.Builder
+
+	// Title
+	b.WriteString(styles.SidebarTitle.Render("Planning Phase"))
+	b.WriteString("\n\n")
+
+	// Show coordinator status
+	if session.CoordinatorID != "" {
+		inst := m.orchestrator.GetInstance(session.CoordinatorID)
+		if inst != nil {
+			// Status indicator
+			var statusIcon string
+			switch inst.Status {
+			case orchestrator.StatusWorking:
+				statusIcon = "⟳"
+			case orchestrator.StatusCompleted:
+				statusIcon = "✓"
+			case orchestrator.StatusError:
+				statusIcon = "✗"
+			default:
+				statusIcon = "○"
+			}
+
+			// Coordinator line
+			coordLine := fmt.Sprintf("%s Coordinator", statusIcon)
+			if m.activeTab == 0 { // Coordinator should be the first instance
+				b.WriteString(styles.SidebarItemActive.Render(coordLine))
+			} else {
+				b.WriteString(styles.Muted.Render(coordLine))
+			}
+			b.WriteString("\n")
+
+			// Status description
+			var statusDesc string
+			switch inst.Status {
+			case orchestrator.StatusWorking:
+				statusDesc = "Analyzing codebase..."
+			case orchestrator.StatusCompleted:
+				statusDesc = "Planning complete"
+			case orchestrator.StatusError:
+				statusDesc = "Planning failed"
+			default:
+				statusDesc = "Starting..."
+			}
+			b.WriteString(styles.Muted.Render("  " + statusDesc))
+			b.WriteString("\n")
+		}
+	} else {
+		b.WriteString(styles.Muted.Render("Initializing..."))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+
+	// Instructions
+	b.WriteString(styles.Muted.Render("Claude is exploring the"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("codebase and creating"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("an execution plan."))
+
+	return styles.Sidebar.Width(width - 2).Render(b.String())
 }
