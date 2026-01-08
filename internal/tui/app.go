@@ -35,7 +35,6 @@ func (a *App) Run() error {
 	a.program = tea.NewProgram(
 		a.model,
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 
 	_, err := a.program.Run()
