@@ -72,6 +72,11 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 		return m.renderPlanningSidebar(width, height, session)
 	}
 
+	// During synthesis phase, show synthesis-specific sidebar
+	if session.Phase == orchestrator.PhaseSynthesis {
+		return m.renderSynthesisSidebar(width, height, session)
+	}
+
 	// During consolidation phase, show consolidation-specific sidebar
 	if session.Phase == orchestrator.PhaseConsolidating && session.Consolidation != nil {
 		return m.renderConsolidationSidebar(width, height, session)
@@ -808,6 +813,107 @@ func (m Model) renderPlanningSidebar(width int, height int, session *orchestrato
 	b.WriteString(styles.Muted.Render("codebase and creating"))
 	b.WriteString("\n")
 	b.WriteString(styles.Muted.Render("an execution plan."))
+
+	return styles.Sidebar.Width(width - 2).Render(b.String())
+}
+
+// renderSynthesisSidebar renders a synthesis-specific sidebar during the synthesis phase
+func (m Model) renderSynthesisSidebar(width int, height int, session *orchestrator.UltraPlanSession) string {
+	var b strings.Builder
+
+	// Title
+	b.WriteString(styles.SidebarTitle.Render("Synthesis Phase"))
+	b.WriteString("\n\n")
+
+	// Show synthesis instance status
+	if session.SynthesisID != "" {
+		inst := m.orchestrator.GetInstance(session.SynthesisID)
+		if inst != nil {
+			// Status indicator
+			var statusIcon string
+			switch inst.Status {
+			case orchestrator.StatusWorking:
+				statusIcon = "⟳"
+			case orchestrator.StatusCompleted:
+				statusIcon = "✓"
+			case orchestrator.StatusError, orchestrator.StatusStuck, orchestrator.StatusTimeout:
+				statusIcon = "✗"
+			case orchestrator.StatusPending:
+				statusIcon = "○"
+			default:
+				statusIcon = "◌"
+			}
+
+			// Synthesis reviewer line - highlight if active
+			reviewerLine := fmt.Sprintf("%s Reviewer", statusIcon)
+			// Find index of synthesis instance to check if it's active
+			isActive := false
+			for i, sessionInst := range m.session.Instances {
+				if sessionInst.ID == session.SynthesisID && m.activeTab == i {
+					isActive = true
+					break
+				}
+			}
+			if isActive {
+				b.WriteString(styles.SidebarItemActive.Render(reviewerLine))
+			} else {
+				b.WriteString(styles.Muted.Render(reviewerLine))
+			}
+			b.WriteString("\n")
+
+			// Status description
+			var statusDesc string
+			switch inst.Status {
+			case orchestrator.StatusWorking:
+				statusDesc = "Reviewing completed work..."
+			case orchestrator.StatusCompleted:
+				statusDesc = "Review complete"
+			case orchestrator.StatusWaitingInput:
+				statusDesc = "Review complete"
+			case orchestrator.StatusError:
+				statusDesc = "Review failed"
+			case orchestrator.StatusStuck:
+				statusDesc = "Stuck - no activity"
+			case orchestrator.StatusTimeout:
+				statusDesc = "Timed out"
+			case orchestrator.StatusPending:
+				statusDesc = "Starting..."
+			default:
+				statusDesc = fmt.Sprintf("Status: %s", inst.Status)
+			}
+			b.WriteString(styles.Muted.Render("  " + statusDesc))
+			b.WriteString("\n")
+		}
+	} else {
+		b.WriteString(styles.Muted.Render("Initializing..."))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+
+	// Completed tasks summary
+	completedCount := len(session.CompletedTasks)
+	totalTasks := 0
+	if session.Plan != nil {
+		totalTasks = len(session.Plan.Tasks)
+	}
+	b.WriteString(styles.Muted.Render(fmt.Sprintf("Tasks: %d/%d completed", completedCount, totalTasks)))
+	b.WriteString("\n\n")
+
+	// Instructions
+	b.WriteString(styles.Muted.Render("Claude is reviewing all"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("completed work to ensure"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("the objective is met."))
+	b.WriteString("\n\n")
+
+	// Show what comes next
+	if session.Config.ConsolidationMode != "" {
+		b.WriteString(styles.Muted.Render("Next: Branch consolidation"))
+		b.WriteString("\n")
+		b.WriteString(styles.Muted.Render("      & PR creation"))
+	}
 
 	return styles.Sidebar.Width(width - 2).Render(b.String())
 }

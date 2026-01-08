@@ -520,6 +520,10 @@ func (c *Coordinator) RunSynthesis() error {
 		return fmt.Errorf("failed to create synthesis instance: %w", err)
 	}
 
+	// Store the synthesis instance ID for TUI visibility
+	session := c.Session()
+	session.SynthesisID = inst.ID
+
 	// Start the instance
 	if err := c.orch.StartInstance(inst); err != nil {
 		return fmt.Errorf("failed to start synthesis instance: %w", err)

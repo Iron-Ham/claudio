@@ -93,8 +93,9 @@ type UltraPlanSession struct {
 	Plan            *PlanSpec         `json:"plan,omitempty"`
 	Phase           UltraPlanPhase    `json:"phase"`
 	Config          UltraPlanConfig   `json:"config"`
-	CoordinatorID   string            `json:"coordinator_id,omitempty"`    // Instance ID of the coordinator
-	TaskToInstance  map[string]string `json:"task_to_instance"`            // PlannedTask.ID -> Instance.ID
+	CoordinatorID  string            `json:"coordinator_id,omitempty"` // Instance ID of the planning coordinator
+	SynthesisID    string            `json:"synthesis_id,omitempty"`   // Instance ID of the synthesis reviewer
+	TaskToInstance map[string]string `json:"task_to_instance"`         // PlannedTask.ID -> Instance.ID
 	CompletedTasks  []string          `json:"completed_tasks"`
 	FailedTasks     []string          `json:"failed_tasks"`
 	CurrentGroup    int               `json:"current_group"`               // Index into ExecutionOrder
