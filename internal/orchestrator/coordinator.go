@@ -22,6 +22,9 @@ type CoordinatorCallbacks struct {
 	// OnTaskFailed is called when a task fails
 	OnTaskFailed func(taskID, reason string)
 
+	// OnGroupComplete is called when an execution group completes
+	OnGroupComplete func(groupIndex int)
+
 	// OnPlanReady is called when the plan is ready (after planning phase)
 	OnPlanReady func(plan *PlanSpec)
 
@@ -467,6 +470,41 @@ func (c *Coordinator) handleTaskCompletion(completion taskCompletion) {
 		c.notifyTaskComplete(completion.taskID)
 	} else {
 		c.notifyTaskFailed(completion.taskID, completion.error)
+	}
+
+	// Check if the current group is now complete and advance if so
+	c.checkAndAdvanceGroup()
+}
+
+// checkAndAdvanceGroup checks if the current execution group is complete
+// and advances to the next group, emitting EventGroupComplete
+func (c *Coordinator) checkAndAdvanceGroup() {
+	session := c.Session()
+	if session == nil || session.Plan == nil {
+		return
+	}
+
+	c.mu.Lock()
+	advanced, previousGroup := session.AdvanceGroupIfComplete()
+	c.mu.Unlock()
+
+	if advanced {
+		// Emit group complete event
+		c.manager.emitEvent(CoordinatorEvent{
+			Type:    EventGroupComplete,
+			Message: fmt.Sprintf("Group %d complete, advancing to group %d", previousGroup+1, session.CurrentGroup+1),
+		})
+
+		// Call the callback
+		c.mu.RLock()
+		cb := c.callbacks
+		c.mu.RUnlock()
+		if cb != nil && cb.OnGroupComplete != nil {
+			cb.OnGroupComplete(previousGroup)
+		}
+
+		// Persist the group advancement
+		_ = c.orch.SaveSession()
 	}
 }
 

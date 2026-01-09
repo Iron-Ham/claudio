@@ -272,6 +272,7 @@ func TestUltraPlanSession_Progress(t *testing.T) {
 }
 
 func TestUltraPlanSession_GetReadyTasks(t *testing.T) {
+	// Test with execution order groups - tasks should respect group boundaries
 	session := &UltraPlanSession{
 		Plan: &PlanSpec{
 			Tasks: []PlannedTask{
@@ -280,13 +281,20 @@ func TestUltraPlanSession_GetReadyTasks(t *testing.T) {
 				{ID: "task-3", DependsOn: []string{"task-1"}},
 				{ID: "task-4", DependsOn: []string{"task-2"}},
 			},
+			// Group 1: task-1, task-2 (both independent)
+			// Group 2: task-3, task-4 (depend on group 1)
+			ExecutionOrder: [][]string{
+				{"task-1", "task-2"},
+				{"task-3", "task-4"},
+			},
 		},
 		CompletedTasks: []string{},
 		FailedTasks:    []string{},
 		TaskToInstance: make(map[string]string),
+		CurrentGroup:   0,
 	}
 
-	// Initially, task-1 and task-2 should be ready
+	// Initially, only task-1 and task-2 (group 1) should be ready
 	ready := session.GetReadyTasks()
 	if len(ready) != 2 {
 		t.Errorf("GetReadyTasks() returned %d tasks, want 2", len(ready))
@@ -295,15 +303,149 @@ func TestUltraPlanSession_GetReadyTasks(t *testing.T) {
 	// Start task-1
 	session.TaskToInstance["task-1"] = "inst-1"
 	ready = session.GetReadyTasks()
-	if len(ready) != 1 { // Only task-2 should be ready now
+	if len(ready) != 1 { // Only task-2 should be ready (from group 1)
 		t.Errorf("GetReadyTasks() returned %d tasks, want 1 (task-2 only)", len(ready))
 	}
 
-	// Complete task-1
+	// Complete task-1 but NOT task-2 - should NOT get group 2 tasks
 	delete(session.TaskToInstance, "task-1")
+	session.CompletedTasks = []string{"task-1"}
+	ready = session.GetReadyTasks()
+	// With group-aware logic, only task-2 is ready (still in group 1)
+	if len(ready) != 1 {
+		t.Errorf("GetReadyTasks() returned %d tasks, want 1 (task-2 from current group)", len(ready))
+	}
+	if len(ready) > 0 && ready[0] != "task-2" {
+		t.Errorf("GetReadyTasks() returned %s, want task-2", ready[0])
+	}
+
+	// Complete task-2, advancing group - now group 2 tasks should be ready
+	session.CompletedTasks = []string{"task-1", "task-2"}
+	session.CurrentGroup = 1 // Manually advance for this test (normally done by coordinator)
+	ready = session.GetReadyTasks()
+	if len(ready) != 2 { // task-3 and task-4 from group 2
+		t.Errorf("GetReadyTasks() returned %d tasks, want 2 (task-3 and task-4)", len(ready))
+	}
+}
+
+func TestUltraPlanSession_GetReadyTasks_NoExecutionOrder(t *testing.T) {
+	// Test fallback behavior when no ExecutionOrder is defined (dependency-only)
+	session := &UltraPlanSession{
+		Plan: &PlanSpec{
+			Tasks: []PlannedTask{
+				{ID: "task-1", DependsOn: []string{}},
+				{ID: "task-2", DependsOn: []string{}},
+				{ID: "task-3", DependsOn: []string{"task-1"}},
+			},
+			// No ExecutionOrder defined - falls back to dependency-only logic
+		},
+		CompletedTasks: []string{},
+		FailedTasks:    []string{},
+		TaskToInstance: make(map[string]string),
+	}
+
+	// Initially, task-1 and task-2 should be ready (no dependencies)
+	ready := session.GetReadyTasks()
+	if len(ready) != 2 {
+		t.Errorf("GetReadyTasks() returned %d tasks, want 2", len(ready))
+	}
+
+	// Complete task-1 - task-3 should become ready (dependency-only logic)
 	session.CompletedTasks = []string{"task-1"}
 	ready = session.GetReadyTasks()
 	if len(ready) != 2 { // task-2 and task-3 should be ready
 		t.Errorf("GetReadyTasks() returned %d tasks, want 2", len(ready))
+	}
+}
+
+func TestUltraPlanSession_IsCurrentGroupComplete(t *testing.T) {
+	session := &UltraPlanSession{
+		Plan: &PlanSpec{
+			Tasks: []PlannedTask{
+				{ID: "task-1", DependsOn: []string{}},
+				{ID: "task-2", DependsOn: []string{}},
+				{ID: "task-3", DependsOn: []string{"task-1", "task-2"}},
+			},
+			ExecutionOrder: [][]string{
+				{"task-1", "task-2"},
+				{"task-3"},
+			},
+		},
+		CompletedTasks: []string{},
+		FailedTasks:    []string{},
+		CurrentGroup:   0,
+	}
+
+	// Initially, group 0 is not complete
+	if session.IsCurrentGroupComplete() {
+		t.Error("IsCurrentGroupComplete() = true, want false (no tasks completed)")
+	}
+
+	// Complete only task-1 - group still not complete
+	session.CompletedTasks = []string{"task-1"}
+	if session.IsCurrentGroupComplete() {
+		t.Error("IsCurrentGroupComplete() = true, want false (task-2 not complete)")
+	}
+
+	// Complete task-2 - now group 0 is complete
+	session.CompletedTasks = []string{"task-1", "task-2"}
+	if !session.IsCurrentGroupComplete() {
+		t.Error("IsCurrentGroupComplete() = false, want true (both tasks complete)")
+	}
+
+	// Test that failed tasks also count as "done" for group completion
+	session.CompletedTasks = []string{"task-1"}
+	session.FailedTasks = []string{"task-2"}
+	if !session.IsCurrentGroupComplete() {
+		t.Error("IsCurrentGroupComplete() = false, want true (task-2 failed counts as done)")
+	}
+}
+
+func TestUltraPlanSession_AdvanceGroupIfComplete(t *testing.T) {
+	session := &UltraPlanSession{
+		Plan: &PlanSpec{
+			Tasks: []PlannedTask{
+				{ID: "task-1", DependsOn: []string{}},
+				{ID: "task-2", DependsOn: []string{"task-1"}},
+			},
+			ExecutionOrder: [][]string{
+				{"task-1"},
+				{"task-2"},
+			},
+		},
+		CompletedTasks: []string{},
+		CurrentGroup:   0,
+	}
+
+	// Group not complete - should not advance
+	advanced, prevGroup := session.AdvanceGroupIfComplete()
+	if advanced {
+		t.Error("AdvanceGroupIfComplete() advanced when group not complete")
+	}
+	if prevGroup != 0 {
+		t.Errorf("AdvanceGroupIfComplete() prevGroup = %d, want 0", prevGroup)
+	}
+
+	// Complete task-1 - should advance to group 1
+	session.CompletedTasks = []string{"task-1"}
+	advanced, prevGroup = session.AdvanceGroupIfComplete()
+	if !advanced {
+		t.Error("AdvanceGroupIfComplete() did not advance when group complete")
+	}
+	if prevGroup != 0 {
+		t.Errorf("AdvanceGroupIfComplete() prevGroup = %d, want 0", prevGroup)
+	}
+	if session.CurrentGroup != 1 {
+		t.Errorf("CurrentGroup = %d, want 1", session.CurrentGroup)
+	}
+
+	// Complete task-2 - should advance past last group
+	session.CompletedTasks = []string{"task-1", "task-2"}
+	advanced, prevGroup = session.AdvanceGroupIfComplete()
+	if !advanced {
+		t.Error("AdvanceGroupIfComplete() did not advance when final group complete")
+	}
+	if session.CurrentGroup != 2 {
+		t.Errorf("CurrentGroup = %d, want 2 (past last group)", session.CurrentGroup)
 	}
 }
