@@ -21,6 +21,7 @@ type UltraPlanState struct {
 	needsNotification      bool                            // Set when user input is needed (checked on tick)
 	lastNotifiedPhase      orchestrator.UltraPlanPhase     // Prevent duplicate notifications for same phase
 	lastConsolidationPhase orchestrator.ConsolidationPhase // Track consolidation phase for pause detection
+	notifiedGroupDecision  bool                            // Prevent repeated notifications while awaiting group decision
 
 	// Phase-aware navigation state
 	navigableInstances []string // Ordered list of navigable instance IDs
@@ -66,9 +67,19 @@ func (m *Model) checkForPhaseNotification() {
 	}
 
 	// Check for group decision needed (partial success/failure)
+	// Only notify once when we enter the awaiting decision state
 	if session.GroupDecision != nil && session.GroupDecision.AwaitingDecision {
-		m.ultraPlan.needsNotification = true
+		if !m.ultraPlan.notifiedGroupDecision {
+			m.ultraPlan.needsNotification = true
+			m.ultraPlan.notifiedGroupDecision = true
+		}
 		return
+	}
+
+	// Reset group decision notification flag when no longer awaiting
+	// (so we can notify again if another group decision occurs later)
+	if m.ultraPlan.notifiedGroupDecision {
+		m.ultraPlan.notifiedGroupDecision = false
 	}
 }
 
