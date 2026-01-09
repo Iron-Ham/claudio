@@ -1031,3 +1031,676 @@ func TestValidationResultMethods(t *testing.T) {
 		t.Error("expected HasWarnings to return true")
 	}
 }
+
+// Table-driven tests for edge cases in mutation operations
+
+func TestUpdateTaskTitle_TableDriven(t *testing.T) {
+	tests := []struct {
+		name        string
+		taskID      string
+		newTitle    string
+		wantErr     bool
+		errType     any
+		checkResult func(t *testing.T, plan *PlanSpec)
+	}{
+		{
+			name:     "update existing task title",
+			taskID:   "task-1",
+			newTitle: "New Setup Title",
+			wantErr:  false,
+			checkResult: func(t *testing.T, plan *PlanSpec) {
+				task := GetTaskByID(plan, "task-1")
+				if task.Title != "New Setup Title" {
+					t.Errorf("expected title 'New Setup Title', got '%s'", task.Title)
+				}
+			},
+		},
+		{
+			name:     "update with empty title",
+			taskID:   "task-1",
+			newTitle: "",
+			wantErr:  false,
+			checkResult: func(t *testing.T, plan *PlanSpec) {
+				task := GetTaskByID(plan, "task-1")
+				if task.Title != "" {
+					t.Errorf("expected empty title, got '%s'", task.Title)
+				}
+			},
+		},
+		{
+			name:     "update with unicode title",
+			taskID:   "task-2",
+			newTitle: "任务二 - Task Two 🚀",
+			wantErr:  false,
+			checkResult: func(t *testing.T, plan *PlanSpec) {
+				task := GetTaskByID(plan, "task-2")
+				if task.Title != "任务二 - Task Two 🚀" {
+					t.Errorf("expected unicode title, got '%s'", task.Title)
+				}
+			},
+		},
+		{
+			name:    "update non-existent task",
+			taskID:  "nonexistent",
+			newTitle: "Title",
+			wantErr: true,
+			errType: ErrTaskNotFound{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := createTestPlan()
+			err := UpdateTaskTitle(plan, tt.taskID, tt.newTitle)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UpdateTaskTitle() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && tt.errType != nil {
+				switch tt.errType.(type) {
+				case ErrTaskNotFound:
+					if _, ok := err.(ErrTaskNotFound); !ok {
+						t.Errorf("expected ErrTaskNotFound, got %T", err)
+					}
+				}
+			}
+
+			if tt.checkResult != nil && !tt.wantErr {
+				tt.checkResult(t, plan)
+			}
+		})
+	}
+}
+
+func TestUpdateTaskDependencies_TableDriven(t *testing.T) {
+	tests := []struct {
+		name        string
+		taskID      string
+		deps        []string
+		wantErr     bool
+		errType     any
+		checkResult func(t *testing.T, plan *PlanSpec)
+	}{
+		{
+			name:    "add valid dependency",
+			taskID:  "task-3",
+			deps:    []string{"task-1", "task-2"},
+			wantErr: false,
+			checkResult: func(t *testing.T, plan *PlanSpec) {
+				task := GetTaskByID(plan, "task-3")
+				if len(task.DependsOn) != 2 {
+					t.Errorf("expected 2 dependencies, got %d", len(task.DependsOn))
+				}
+			},
+		},
+		{
+			name:    "clear all dependencies",
+			taskID:  "task-3",
+			deps:    []string{},
+			wantErr: false,
+			checkResult: func(t *testing.T, plan *PlanSpec) {
+				task := GetTaskByID(plan, "task-3")
+				if len(task.DependsOn) != 0 {
+					t.Errorf("expected 0 dependencies, got %d", len(task.DependsOn))
+				}
+			},
+		},
+		{
+			name:    "self-dependency error",
+			taskID:  "task-1",
+			deps:    []string{"task-1"},
+			wantErr: true,
+			errType: ErrInvalidDependency{},
+		},
+		{
+			name:    "non-existent dependency error",
+			taskID:  "task-1",
+			deps:    []string{"ghost-task"},
+			wantErr: true,
+			errType: ErrInvalidDependency{},
+		},
+		{
+			name:    "duplicate dependencies are allowed",
+			taskID:  "task-3",
+			deps:    []string{"task-1", "task-1"},
+			wantErr: false,
+			checkResult: func(t *testing.T, plan *PlanSpec) {
+				task := GetTaskByID(plan, "task-3")
+				// Duplicates are passed through - validation may flag this as a warning
+				if len(task.DependsOn) != 2 {
+					t.Errorf("expected 2 dependencies, got %d", len(task.DependsOn))
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := createTestPlan()
+			err := UpdateTaskDependencies(plan, tt.taskID, tt.deps)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UpdateTaskDependencies() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && tt.errType != nil {
+				switch tt.errType.(type) {
+				case ErrInvalidDependency:
+					if _, ok := err.(ErrInvalidDependency); !ok {
+						t.Errorf("expected ErrInvalidDependency, got %T", err)
+					}
+				}
+			}
+
+			if tt.checkResult != nil && !tt.wantErr {
+				tt.checkResult(t, plan)
+			}
+		})
+	}
+}
+
+func TestCircularDependencyDetection_TableDriven(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func() *PlanSpec
+		taskID    string
+		newDepID  string
+		wantCycle bool
+	}{
+		{
+			name: "simple two-node cycle",
+			setup: func() *PlanSpec {
+				return &PlanSpec{
+					Tasks: []PlannedTask{
+						{ID: "A", DependsOn: []string{}},
+						{ID: "B", DependsOn: []string{"A"}},
+					},
+				}
+			},
+			taskID:    "A",
+			newDepID:  "B",
+			wantCycle: true, // A -> B -> A would create cycle
+		},
+		{
+			name: "three-node cycle",
+			setup: func() *PlanSpec {
+				return &PlanSpec{
+					Tasks: []PlannedTask{
+						{ID: "A", DependsOn: []string{}},
+						{ID: "B", DependsOn: []string{"A"}},
+						{ID: "C", DependsOn: []string{"B"}},
+					},
+				}
+			},
+			taskID:    "A",
+			newDepID:  "C",
+			wantCycle: true, // A -> C -> B -> A would create cycle
+		},
+		{
+			name: "no cycle - independent tasks",
+			setup: func() *PlanSpec {
+				return &PlanSpec{
+					Tasks: []PlannedTask{
+						{ID: "A", DependsOn: []string{}},
+						{ID: "B", DependsOn: []string{}},
+						{ID: "C", DependsOn: []string{}},
+					},
+				}
+			},
+			taskID:    "A",
+			newDepID:  "B",
+			wantCycle: false,
+		},
+		{
+			name: "no cycle - valid DAG",
+			setup: func() *PlanSpec {
+				return &PlanSpec{
+					Tasks: []PlannedTask{
+						{ID: "A", DependsOn: []string{}},
+						{ID: "B", DependsOn: []string{"A"}},
+						{ID: "C", DependsOn: []string{"A"}},
+						{ID: "D", DependsOn: []string{"B", "C"}},
+					},
+				}
+			},
+			taskID:    "D",
+			newDepID:  "A",
+			wantCycle: false, // D can depend on A directly (already transitive)
+		},
+		{
+			name: "diamond dependency - no cycle",
+			setup: func() *PlanSpec {
+				return &PlanSpec{
+					Tasks: []PlannedTask{
+						{ID: "root", DependsOn: []string{}},
+						{ID: "left", DependsOn: []string{"root"}},
+						{ID: "right", DependsOn: []string{"root"}},
+						{ID: "bottom", DependsOn: []string{"left", "right"}},
+					},
+				}
+			},
+			taskID:    "bottom",
+			newDepID:  "root",
+			wantCycle: false, // Adding explicit dep doesn't create cycle
+		},
+		{
+			name: "self-dependency",
+			setup: func() *PlanSpec {
+				return &PlanSpec{
+					Tasks: []PlannedTask{
+						{ID: "A", DependsOn: []string{}},
+					},
+				}
+			},
+			taskID:    "A",
+			newDepID:  "A",
+			wantCycle: true, // Self-dependency is always a cycle
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := tt.setup()
+			hasCycle := HasCircularDependency(plan, tt.taskID, tt.newDepID)
+
+			if hasCycle != tt.wantCycle {
+				t.Errorf("HasCircularDependency(%s, %s) = %v, want %v",
+					tt.taskID, tt.newDepID, hasCycle, tt.wantCycle)
+			}
+		})
+	}
+}
+
+func TestExecutionOrderAfterMutations_TableDriven(t *testing.T) {
+	tests := []struct {
+		name        string
+		mutations   func(plan *PlanSpec) error
+		checkResult func(t *testing.T, plan *PlanSpec)
+	}{
+		{
+			name: "delete task updates execution order",
+			mutations: func(plan *PlanSpec) error {
+				return DeleteTask(plan, "task-2")
+			},
+			checkResult: func(t *testing.T, plan *PlanSpec) {
+				// task-3 should now be earlier (since its dependency task-2 is gone)
+				group := GetExecutionGroupForTask(plan, "task-3")
+				if group > 1 {
+					t.Errorf("task-3 should be in earlier group after dependency removed, got %d", group)
+				}
+			},
+		},
+		{
+			name: "add dependency moves task later",
+			mutations: func(plan *PlanSpec) error {
+				return UpdateTaskDependencies(plan, "task-4", []string{"task-3"})
+			},
+			checkResult: func(t *testing.T, plan *PlanSpec) {
+				group3 := GetExecutionGroupForTask(plan, "task-3")
+				group4 := GetExecutionGroupForTask(plan, "task-4")
+				if group4 <= group3 {
+					t.Errorf("task-4 should be after task-3, got groups %d and %d", group4, group3)
+				}
+			},
+		},
+		{
+			name: "remove dependency moves task earlier",
+			mutations: func(plan *PlanSpec) error {
+				return UpdateTaskDependencies(plan, "task-3", []string{})
+			},
+			checkResult: func(t *testing.T, plan *PlanSpec) {
+				group := GetExecutionGroupForTask(plan, "task-3")
+				if group != 0 {
+					t.Errorf("task-3 with no deps should be in group 0, got %d", group)
+				}
+			},
+		},
+		{
+			name: "adding task with dependency affects order",
+			mutations: func(plan *PlanSpec) error {
+				newTask := PlannedTask{
+					ID:        "task-5",
+					Title:     "New Task",
+					DependsOn: []string{"task-3"},
+				}
+				return AddTask(plan, "", newTask)
+			},
+			checkResult: func(t *testing.T, plan *PlanSpec) {
+				group3 := GetExecutionGroupForTask(plan, "task-3")
+				group5 := GetExecutionGroupForTask(plan, "task-5")
+				if group5 <= group3 {
+					t.Errorf("task-5 should be after task-3, got groups %d and %d", group5, group3)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := createTestPlan()
+
+			if err := tt.mutations(plan); err != nil {
+				t.Fatalf("mutation failed: %v", err)
+			}
+
+			// Verify plan is still valid
+			if err := ValidatePlan(plan); err != nil {
+				t.Errorf("plan should be valid after mutation: %v", err)
+			}
+
+			tt.checkResult(t, plan)
+		})
+	}
+}
+
+func TestSplitTask_TableDriven(t *testing.T) {
+	tests := []struct {
+		name        string
+		taskID      string
+		description string
+		splitPoints []int
+		wantErr     bool
+		wantParts   int
+		checkResult func(t *testing.T, plan *PlanSpec, newIDs []string)
+	}{
+		{
+			name:        "split into two parts",
+			taskID:      "task-1",
+			description: "First part. Second part.",
+			splitPoints: []int{12},
+			wantParts:   2,
+			checkResult: func(t *testing.T, plan *PlanSpec, newIDs []string) {
+				if len(newIDs) != 2 {
+					t.Errorf("expected 2 new IDs, got %d", len(newIDs))
+				}
+				// First part keeps original ID
+				if newIDs[0] != "task-1" {
+					t.Errorf("expected first part to be 'task-1', got '%s'", newIDs[0])
+				}
+			},
+		},
+		{
+			name:        "split into three parts",
+			taskID:      "task-2",
+			description: "Part A. Part B. Part C.",
+			splitPoints: []int{8, 16},
+			wantParts:   3,
+			checkResult: func(t *testing.T, plan *PlanSpec, newIDs []string) {
+				if len(newIDs) != 3 {
+					t.Errorf("expected 3 new IDs, got %d", len(newIDs))
+				}
+			},
+		},
+		{
+			name:        "split with out of bounds point",
+			taskID:      "task-1",
+			description: "Short",
+			splitPoints: []int{100},
+			wantErr:     true,
+		},
+		{
+			name:        "split with zero point",
+			taskID:      "task-1",
+			description: "Some text",
+			splitPoints: []int{0},
+			wantErr:     true,
+		},
+		{
+			name:        "split with no points",
+			taskID:      "task-1",
+			description: "Some text",
+			splitPoints: []int{},
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := createTestPlan()
+			UpdateTaskDescription(plan, tt.taskID, tt.description)
+
+			newIDs, err := SplitTask(plan, tt.taskID, tt.splitPoints)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SplitTask() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				if len(newIDs) != tt.wantParts {
+					t.Errorf("expected %d parts, got %d", tt.wantParts, len(newIDs))
+				}
+
+				if tt.checkResult != nil {
+					tt.checkResult(t, plan, newIDs)
+				}
+
+				// Verify plan is valid after split
+				if err := ValidatePlan(plan); err != nil {
+					t.Errorf("plan should be valid after split: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestMergeTasks_TableDriven(t *testing.T) {
+	tests := []struct {
+		name        string
+		taskIDs     []string
+		mergedTitle string
+		wantErr     bool
+		checkResult func(t *testing.T, plan *PlanSpec, mergedID string)
+	}{
+		{
+			name:        "merge two sequential tasks",
+			taskIDs:     []string{"task-2", "task-3"},
+			mergedTitle: "Combined Task",
+			wantErr:     false,
+			checkResult: func(t *testing.T, plan *PlanSpec, mergedID string) {
+				merged := GetTaskByID(plan, mergedID)
+				if merged == nil {
+					t.Fatal("merged task should exist")
+				}
+				if merged.Title != "Combined Task" {
+					t.Errorf("expected title 'Combined Task', got '%s'", merged.Title)
+				}
+				// Original task-3 should be gone
+				if GetTaskByID(plan, "task-3") != nil {
+					t.Error("task-3 should have been merged away")
+				}
+			},
+		},
+		{
+			name:        "merge tasks inherits highest complexity",
+			taskIDs:     []string{"task-1", "task-2"},
+			mergedTitle: "Merged Low+Medium",
+			wantErr:     false,
+			checkResult: func(t *testing.T, plan *PlanSpec, mergedID string) {
+				merged := GetTaskByID(plan, mergedID)
+				// task-1 is Low, task-2 is Medium - should get Medium
+				if merged.EstComplexity != ComplexityMedium {
+					t.Errorf("expected complexity medium, got %s", merged.EstComplexity)
+				}
+			},
+		},
+		{
+			name:        "merge single task fails",
+			taskIDs:     []string{"task-1"},
+			mergedTitle: "Single",
+			wantErr:     true,
+		},
+		{
+			name:        "merge with non-existent task fails",
+			taskIDs:     []string{"task-1", "ghost"},
+			mergedTitle: "Ghost Merge",
+			wantErr:     true,
+		},
+		{
+			name:        "merge empty list fails",
+			taskIDs:     []string{},
+			mergedTitle: "Empty",
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := createTestPlan()
+
+			mergedID, err := MergeTasks(plan, tt.taskIDs, tt.mergedTitle)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("MergeTasks() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				if tt.checkResult != nil {
+					tt.checkResult(t, plan, mergedID)
+				}
+
+				// Verify plan is valid after merge
+				if err := ValidatePlan(plan); err != nil {
+					t.Errorf("plan should be valid after merge: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestDependencyGraphRecalculation(t *testing.T) {
+	plan := createTestPlan()
+
+	// Verify initial dependency graph matches task dependencies
+	for _, task := range plan.Tasks {
+		graphDeps := plan.DependencyGraph[task.ID]
+		if len(graphDeps) != len(task.DependsOn) {
+			t.Errorf("initial graph mismatch for %s: graph has %d deps, task has %d",
+				task.ID, len(graphDeps), len(task.DependsOn))
+		}
+	}
+
+	// Modify dependencies
+	UpdateTaskDependencies(plan, "task-4", []string{"task-2", "task-3"})
+
+	// Verify graph was recalculated
+	graphDeps := plan.DependencyGraph["task-4"]
+	if len(graphDeps) != 2 {
+		t.Errorf("expected 2 deps in graph after update, got %d", len(graphDeps))
+	}
+
+	// Verify execution order was recalculated
+	group4 := GetExecutionGroupForTask(plan, "task-4")
+	group3 := GetExecutionGroupForTask(plan, "task-3")
+	if group4 <= group3 {
+		t.Errorf("task-4 should be after task-3 in execution order")
+	}
+}
+
+func TestGetAllDependencies(t *testing.T) {
+	plan := createTestPlan()
+
+	// task-3 depends on task-2, which depends on task-1
+	allDeps := getAllDependencies(plan, "task-3")
+
+	if !allDeps["task-2"] {
+		t.Error("task-3 should have task-2 as dependency")
+	}
+	if !allDeps["task-1"] {
+		t.Error("task-3 should have task-1 as transitive dependency")
+	}
+
+	// task-1 has no dependencies
+	allDeps = getAllDependencies(plan, "task-1")
+	if len(allDeps) != 0 {
+		t.Errorf("task-1 should have no dependencies, got %d", len(allDeps))
+	}
+}
+
+func TestAreTasksInDependencyChain(t *testing.T) {
+	plan := createTestPlan()
+
+	// task-1 -> task-2 -> task-3 are in a chain
+	if !areTasksInDependencyChain(plan, []string{"task-1", "task-2", "task-3"}) {
+		t.Error("task-1, task-2, task-3 should be in dependency chain")
+	}
+
+	// task-2 and task-4 both depend on task-1 but not on each other (parallel)
+	if areTasksInDependencyChain(plan, []string{"task-2", "task-4"}) {
+		t.Error("task-2 and task-4 are parallel, not in a chain")
+	}
+
+	// Single task is trivially in a chain
+	if !areTasksInDependencyChain(plan, []string{"task-1"}) {
+		t.Error("single task should be considered in a chain")
+	}
+
+	// Empty list is trivially in a chain
+	if !areTasksInDependencyChain(plan, []string{}) {
+		t.Error("empty list should be considered in a chain")
+	}
+}
+
+func TestValidatePlanForEditor_MissingTitle(t *testing.T) {
+	plan := &PlanSpec{
+		ID: "test-plan",
+		Tasks: []PlannedTask{
+			{
+				ID:          "task-1",
+				Title:       "", // Missing title
+				Description: "Has description",
+			},
+		},
+	}
+	plan.ExecutionOrder = [][]string{{"task-1"}}
+
+	result := ValidatePlanForEditor(plan)
+
+	if !result.HasWarnings() {
+		t.Error("expected warning for missing title")
+	}
+
+	// Check that we have a title-related warning
+	found := false
+	for _, msg := range result.Messages {
+		if msg.TaskID == "task-1" && msg.Field == "title" && msg.Severity == SeverityWarning {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected warning message for missing title")
+	}
+}
+
+func TestFindTaskIndex(t *testing.T) {
+	plan := createTestPlan()
+
+	// Find existing tasks
+	idx := findTaskIndex(plan, "task-1")
+	if idx != 0 {
+		t.Errorf("expected task-1 at index 0, got %d", idx)
+	}
+
+	idx = findTaskIndex(plan, "task-3")
+	if idx != 2 {
+		t.Errorf("expected task-3 at index 2, got %d", idx)
+	}
+
+	// Non-existent task
+	idx = findTaskIndex(plan, "nonexistent")
+	if idx != -1 {
+		t.Errorf("expected -1 for nonexistent task, got %d", idx)
+	}
+
+	// Empty task list
+	emptyPlan := &PlanSpec{Tasks: []PlannedTask{}}
+	idx = findTaskIndex(emptyPlan, "task-1")
+	if idx != -1 {
+		t.Errorf("expected -1 for empty plan, got %d", idx)
+	}
+}
