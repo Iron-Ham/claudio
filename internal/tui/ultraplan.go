@@ -110,6 +110,10 @@ func (m Model) renderUltraPlanHeader() string {
 		// During planning, show activity indicator instead of progress
 		progressDisplay = "analyzing codebase..."
 
+	case orchestrator.PhasePlanSelection:
+		// During plan selection, show that comparison is in progress
+		progressDisplay = "comparing plans..."
+
 	case orchestrator.PhaseRefresh:
 		// Plan ready, waiting for user to start execution
 		progressDisplay = "plan ready"
@@ -509,7 +513,26 @@ func (m Model) getPhaseSectionStatus(phase orchestrator.UltraPlanPhase, session 
 		if session.Phase == orchestrator.PhasePlanning {
 			return "[⟳]"
 		}
+		// Plan selection comes after planning but before refresh
+		if session.Phase == orchestrator.PhasePlanSelection {
+			return "[✓]"
+		}
 		if session.Plan != nil {
+			return "[✓]"
+		}
+		return "[○]"
+
+	case orchestrator.PhasePlanSelection:
+		if session.Phase == orchestrator.PhasePlanSelection {
+			return "[⟳]"
+		}
+		// Plan selection is complete once we move to refresh or later phases
+		if session.Phase == orchestrator.PhaseRefresh ||
+			session.Phase == orchestrator.PhaseExecuting ||
+			session.Phase == orchestrator.PhaseSynthesis ||
+			session.Phase == orchestrator.PhaseRevision ||
+			session.Phase == orchestrator.PhaseConsolidating ||
+			session.Phase == orchestrator.PhaseComplete {
 			return "[✓]"
 		}
 		return "[○]"
@@ -1134,6 +1157,10 @@ func (m Model) renderUltraPlanHelp() string {
 		keys = append(keys, "[p] parse plan")
 		keys = append(keys, "[i] input mode")
 
+	case orchestrator.PhasePlanSelection:
+		// During plan selection/comparison, user may want to view progress
+		keys = append(keys, "[v] toggle plan view")
+
 	case orchestrator.PhaseRefresh:
 		keys = append(keys, "[e] start execution")
 		keys = append(keys, "[E] edit plan")
@@ -1194,6 +1221,8 @@ func phaseToString(phase orchestrator.UltraPlanPhase) string {
 	switch phase {
 	case orchestrator.PhasePlanning:
 		return "PLANNING"
+	case orchestrator.PhasePlanSelection:
+		return "SELECTING PLAN"
 	case orchestrator.PhaseRefresh:
 		return "READY"
 	case orchestrator.PhaseExecuting:
@@ -1218,6 +1247,8 @@ func phaseStyle(phase orchestrator.UltraPlanPhase) lipgloss.Style {
 	switch phase {
 	case orchestrator.PhasePlanning:
 		return lipgloss.NewStyle().Foreground(styles.BlueColor)
+	case orchestrator.PhasePlanSelection:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true) // Orange for plan selection (intermediate state)
 	case orchestrator.PhaseRefresh:
 		return lipgloss.NewStyle().Foreground(styles.YellowColor)
 	case orchestrator.PhaseExecuting:
