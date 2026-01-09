@@ -1503,6 +1503,91 @@ func (m *Model) selectTaskInstance(session *orchestrator.UltraPlanSession) {
 	m.infoMessage = fmt.Sprintf("Instance for task %s not found", task.Title)
 }
 
+// handlePlanManagerCompletion handles the plan manager instance completing in multi-pass mode.
+// The plan manager evaluates multiple candidate plans and selects or merges the best one.
+// Returns true if this was a plan manager completion that was handled.
+func (m *Model) handlePlanManagerCompletion(inst *orchestrator.Instance) bool {
+	// Not in ultra-plan mode
+	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return false
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil {
+		return false
+	}
+
+	// Only handle during plan selection phase
+	if session.Phase != orchestrator.PhasePlanSelection {
+		return false
+	}
+
+	// Check if this is the plan manager instance
+	if session.PlanManagerID != inst.ID {
+		return false
+	}
+
+	// Parse the plan decision from the output
+	output := m.outputs[inst.ID]
+	decision, err := orchestrator.ParsePlanDecisionFromOutput(output)
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Plan selection completed but failed to parse decision: %v", err)
+		return true
+	}
+
+	// Store the decision info in the session
+	session.SelectedPlanIndex = decision.SelectedIndex
+
+	// Parse the final plan from the plan manager's worktree
+	// The plan manager writes its final choice (selected or merged) to the plan file
+	plan, err := m.tryParsePlan(inst, session)
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Plan selection completed but failed to parse final plan: %v", err)
+		return true
+	}
+
+	// Set the plan using the coordinator (validates and transitions to PhaseRefresh)
+	if err := m.ultraPlan.coordinator.SetPlan(plan); err != nil {
+		m.errorMessage = fmt.Sprintf("Plan selection completed but plan is invalid: %v", err)
+		return true
+	}
+
+	// Build info message based on decision type
+	var decisionDesc string
+	if decision.Action == "select" {
+		strategyNames := orchestrator.GetMultiPassStrategyNames()
+		if decision.SelectedIndex >= 0 && decision.SelectedIndex < len(strategyNames) {
+			decisionDesc = fmt.Sprintf("Selected '%s' plan", strategyNames[decision.SelectedIndex])
+		} else {
+			decisionDesc = fmt.Sprintf("Selected plan %d", decision.SelectedIndex)
+		}
+	} else {
+		decisionDesc = "Merged best elements from multiple plans"
+	}
+
+	// Determine whether to open plan editor or auto-start execution
+	// This follows the same logic as single-pass planning
+	if session.Config.Review || !session.Config.AutoApprove {
+		// Enter plan editor for interactive review
+		m.enterPlanEditor()
+		m.infoMessage = fmt.Sprintf("%s: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
+			decisionDesc, len(plan.Tasks), len(plan.ExecutionOrder))
+		// Notify user that input is needed
+		m.ultraPlan.needsNotification = true
+		m.ultraPlan.lastNotifiedPhase = orchestrator.PhaseRefresh
+	} else {
+		// Auto-start execution (AutoApprove is true and Review is false)
+		if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
+			m.errorMessage = fmt.Sprintf("%s but failed to auto-start: %v", decisionDesc, err)
+		} else {
+			m.infoMessage = fmt.Sprintf("%s: %d tasks in %d groups. Auto-starting execution...",
+				decisionDesc, len(plan.Tasks), len(plan.ExecutionOrder))
+		}
+	}
+
+	return true
+}
+
 // handleUltraPlanCoordinatorCompletion handles auto-parsing when the planning coordinator completes
 // Returns true if this was an ultra-plan coordinator completion that was handled
 func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance) bool {
