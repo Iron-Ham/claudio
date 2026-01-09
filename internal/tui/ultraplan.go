@@ -1720,6 +1720,24 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 		return false
 	}
 
+	// Multi-pass mode: dispatch to specialized handlers based on phase
+	if session.Config.MultiPass {
+		// During planning phase, check if this is one of the multi-pass coordinators
+		if session.Phase == orchestrator.PhasePlanning {
+			if m.handleMultiPassCoordinatorCompletion(inst) {
+				return true
+			}
+		}
+		// During plan selection phase, check if this is the plan manager
+		if session.Phase == orchestrator.PhasePlanSelection {
+			if m.handlePlanManagerCompletion(inst) {
+				return true
+			}
+		}
+		// Fall through to single-coordinator logic for other instances/phases
+	}
+
+	// Single-pass mode (or fall-through from multi-pass for non-matching instances):
 	// Only auto-parse during planning phase
 	if session.Phase != orchestrator.PhasePlanning {
 		return false
