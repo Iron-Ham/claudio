@@ -313,10 +313,6 @@ git worktree remove .claudio/worktrees/<id>
 git worktree prune
 ```
 
-## License
-
-MIT
-
 ## Contributing
 
 Contributions welcome! Please open an issue or PR.
