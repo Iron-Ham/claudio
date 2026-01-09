@@ -66,6 +66,7 @@ type UltraPlanConfig struct {
 	NoSynthesis   bool `json:"no_synthesis"`    // Skip synthesis phase after execution
 	AutoApprove   bool `json:"auto_approve"`    // Auto-approve spawned tasks without confirmation
 	Review        bool `json:"review"`          // Force plan editor to open for review (overrides AutoApprove)
+	MultiPass     bool `json:"multi_pass"`      // Enable multi-pass planning with plan comparison
 
 	// Consolidation settings
 	ConsolidationMode ConsolidationMode `json:"consolidation_mode,omitempty"` // "stacked" or "single"
@@ -85,6 +86,7 @@ func DefaultUltraPlanConfig() UltraPlanConfig {
 		DryRun:                 false,
 		NoSynthesis:            false,
 		AutoApprove:            false,
+		MultiPass:              false,
 		ConsolidationMode:      ModeStackedPRs,
 		CreateDraftPRs:         true,
 		PRLabels:               []string{"ultraplan"},
