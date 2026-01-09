@@ -1561,6 +1561,99 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 	return true
 }
 
+// handleMultiPassCoordinatorCompletion handles completion of one of the multi-pass planning coordinators.
+// In multi-pass mode, 3 parallel coordinators generate plans with different strategies.
+// This method collects each plan and triggers the plan manager when all 3 are ready.
+// Returns true if this was a multi-pass coordinator completion that was handled.
+func (m *Model) handleMultiPassCoordinatorCompletion(inst *orchestrator.Instance) bool {
+	// Not in ultra-plan mode
+	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return false
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil {
+		return false
+	}
+
+	// Check if multi-pass mode is enabled
+	if !session.Config.MultiPass {
+		return false
+	}
+
+	// Only process during planning phase
+	if session.Phase != orchestrator.PhasePlanning {
+		return false
+	}
+
+	// Check if this instance is one of the plan coordinators
+	planIndex := -1
+	for i, coordID := range session.PlanCoordinatorIDs {
+		if coordID == inst.ID {
+			planIndex = i
+			break
+		}
+	}
+
+	if planIndex == -1 {
+		// Not a multi-pass planning coordinator
+		return false
+	}
+
+	// Parse the plan from the completed instance's worktree
+	plan, err := m.tryParsePlan(inst, session)
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Multi-pass coordinator %d failed to parse plan: %v", planIndex+1, err)
+		// Still return true because we handled it (even though it failed)
+		return true
+	}
+
+	// Initialize CandidatePlans slice if needed (ensure capacity for 3 plans)
+	if len(session.CandidatePlans) < len(session.PlanCoordinatorIDs) {
+		newPlans := make([]*orchestrator.PlanSpec, len(session.PlanCoordinatorIDs))
+		copy(newPlans, session.CandidatePlans)
+		session.CandidatePlans = newPlans
+	}
+
+	// Store the plan at the correct index
+	session.CandidatePlans[planIndex] = plan
+
+	// Determine the strategy name for the info message
+	strategyNames := orchestrator.GetMultiPassStrategyNames()
+	strategyName := "unknown"
+	if planIndex < len(strategyNames) {
+		strategyName = strategyNames[planIndex]
+	}
+
+	m.infoMessage = fmt.Sprintf("Multi-pass plan %d/%d collected (%s): %d tasks",
+		m.countCollectedPlans(session), len(session.PlanCoordinatorIDs), strategyName, len(plan.Tasks))
+
+	// Check if all 3 plans are collected
+	if m.countCollectedPlans(session) >= len(session.PlanCoordinatorIDs) {
+		// All plans collected - start the plan manager to evaluate and select/merge
+		m.infoMessage = "All candidate plans collected. Starting plan evaluation..."
+
+		if err := m.ultraPlan.coordinator.RunPlanManager(); err != nil {
+			m.errorMessage = fmt.Sprintf("Failed to start plan manager: %v", err)
+		} else {
+			m.infoMessage = "Plan manager started - comparing strategies to select the best plan..."
+		}
+	}
+
+	return true
+}
+
+// countCollectedPlans counts how many non-nil plans have been collected
+func (m *Model) countCollectedPlans(session *orchestrator.UltraPlanSession) int {
+	count := 0
+	for _, plan := range session.CandidatePlans {
+		if plan != nil {
+			count++
+		}
+	}
+	return count
+}
+
 // tryParsePlan attempts to parse a plan, trying file-based parsing first, then output parsing
 func (m *Model) tryParsePlan(inst *orchestrator.Instance, session *orchestrator.UltraPlanSession) (*orchestrator.PlanSpec, error) {
 	// Try file-based parsing first (preferred)

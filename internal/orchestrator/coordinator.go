@@ -275,27 +275,36 @@ func (c *Coordinator) RunMultiPassPlanning() error {
 	return nil
 }
 
-// RunPlanManager executes the plan selection phase in multi-pass planning.
-// This is called after all 3 candidate plans have been collected.
-// It creates a coordinator-manager instance that evaluates and selects/merges the best plan.
+// RunPlanManager starts the plan manager (coordinator-manager) for multi-pass planning.
+// This is called after all candidate plans have been collected from the parallel planning coordinators.
+// The plan manager evaluates all plans and either selects the best one or merges them.
 func (c *Coordinator) RunPlanManager() error {
 	session := c.Session()
 
-	// Verify we have candidate plans to evaluate
-	if len(session.CandidatePlans) == 0 {
-		return fmt.Errorf("no candidate plans available for evaluation")
+	// Validate multi-pass mode and collected plans
+	if !session.Config.MultiPass {
+		return fmt.Errorf("RunPlanManager called but MultiPass mode is not enabled")
 	}
 
-	// Set the phase to plan selection
+	if len(session.CandidatePlans) < len(session.PlanCoordinatorIDs) {
+		return fmt.Errorf("not all candidate plans collected: have %d, need %d",
+			len(session.CandidatePlans), len(session.PlanCoordinatorIDs))
+	}
+
+	// Verify all plans are non-nil
+	for i, plan := range session.CandidatePlans {
+		if plan == nil {
+			return fmt.Errorf("candidate plan at index %d is nil", i)
+		}
+	}
+
+	// Transition to plan selection phase
 	c.notifyPhaseChange(PhasePlanSelection)
 
-	// Build the plan comparison section
-	plansComparison := c.buildPlanComparisonSection()
+	// Build the plan manager prompt with all candidate plans
+	prompt := c.buildPlanManagerPrompt()
 
-	// Create the plan manager prompt
-	prompt := fmt.Sprintf(PlanManagerPromptTemplate, session.Objective, plansComparison)
-
-	// Create a coordinator-manager instance for plan selection
+	// Create the plan manager instance
 	inst, err := c.orch.AddInstance(c.baseSession, prompt)
 	if err != nil {
 		return fmt.Errorf("failed to create plan manager instance: %w", err)
@@ -311,8 +320,56 @@ func (c *Coordinator) RunPlanManager() error {
 		return fmt.Errorf("failed to start plan manager instance: %w", err)
 	}
 
-	// The TUI will handle monitoring; here we just set up the session state
+	// The TUI will handle monitoring and parsing the final plan from the manager
 	return nil
+}
+
+// buildPlanManagerPrompt constructs the prompt for the plan manager
+// It includes all candidate plans formatted for comparison
+func (c *Coordinator) buildPlanManagerPrompt() string {
+	session := c.Session()
+	var plansSection strings.Builder
+
+	strategyNames := GetMultiPassStrategyNames()
+	for i, plan := range session.CandidatePlans {
+		strategyName := "unknown"
+		if i < len(strategyNames) {
+			strategyName = strategyNames[i]
+		}
+
+		plansSection.WriteString(fmt.Sprintf("\n### Plan %d: %s Strategy\n\n", i+1, strategyName))
+		plansSection.WriteString(fmt.Sprintf("**Summary:** %s\n\n", plan.Summary))
+		plansSection.WriteString(fmt.Sprintf("**Tasks (%d total):**\n", len(plan.Tasks)))
+		for _, task := range plan.Tasks {
+			deps := "none"
+			if len(task.DependsOn) > 0 {
+				deps = strings.Join(task.DependsOn, ", ")
+			}
+			plansSection.WriteString(fmt.Sprintf("- [%s] %s (complexity: %s, depends: %s)\n",
+				task.ID, task.Title, task.EstComplexity, deps))
+		}
+		plansSection.WriteString(fmt.Sprintf("\n**Execution Groups:** %d parallel groups\n", len(plan.ExecutionOrder)))
+		for groupIdx, group := range plan.ExecutionOrder {
+			plansSection.WriteString(fmt.Sprintf("  - Group %d: %s\n", groupIdx+1, strings.Join(group, ", ")))
+		}
+
+		if len(plan.Insights) > 0 {
+			plansSection.WriteString("\n**Insights:**\n")
+			for _, insight := range plan.Insights {
+				plansSection.WriteString(fmt.Sprintf("- %s\n", insight))
+			}
+		}
+
+		if len(plan.Constraints) > 0 {
+			plansSection.WriteString("\n**Constraints:**\n")
+			for _, constraint := range plan.Constraints {
+				plansSection.WriteString(fmt.Sprintf("- %s\n", constraint))
+			}
+		}
+		plansSection.WriteString("\n---\n")
+	}
+
+	return fmt.Sprintf(PlanManagerPromptTemplate, session.Objective, plansSection.String())
 }
 
 // buildPlanComparisonSection formats all candidate plans for comparison by the plan manager.
