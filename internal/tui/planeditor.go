@@ -6,8 +6,390 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+// Validation panel styles
+var (
+	validationPanelStyle = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(0, 1)
+
+	validationErrorStyle = lipgloss.NewStyle().
+		Foreground(styles.RedColor).
+		Bold(true)
+
+	validationWarningStyle = lipgloss.NewStyle().
+		Foreground(styles.YellowColor)
+
+	validationInfoStyle = lipgloss.NewStyle().
+		Foreground(styles.BlueColor)
+
+	validationHeaderStyle = lipgloss.NewStyle().
+		Bold(true).
+		Underline(true)
+
+	validationTaskStyle = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245"))
+
+	cyclicTaskStyle = lipgloss.NewStyle().
+		Foreground(styles.RedColor).
+		Bold(true)
+)
+
+// renderValidationPanel renders the validation feedback panel at the bottom of the editor
+func (m Model) renderValidationPanel(width int, maxHeight int) string {
+	if m.planEditor == nil || m.planEditor.validation == nil {
+		return ""
+	}
+
+	validation := m.planEditor.validation
+	if len(validation.Messages) == 0 {
+		// No validation messages - show a success indicator
+		successMsg := lipgloss.NewStyle().
+			Foreground(styles.GreenColor).
+			Render("✓ Plan is valid")
+		return validationPanelStyle.Width(width - 4).Render(successMsg)
+	}
+
+	var b strings.Builder
+
+	// Header with counts
+	headerParts := []string{}
+	if validation.ErrorCount > 0 {
+		headerParts = append(headerParts, validationErrorStyle.Render(fmt.Sprintf("%d error(s)", validation.ErrorCount)))
+	}
+	if validation.WarningCount > 0 {
+		headerParts = append(headerParts, validationWarningStyle.Render(fmt.Sprintf("%d warning(s)", validation.WarningCount)))
+	}
+	if validation.InfoCount > 0 {
+		headerParts = append(headerParts, validationInfoStyle.Render(fmt.Sprintf("%d info", validation.InfoCount)))
+	}
+
+	header := validationHeaderStyle.Render("Validation") + "  " + strings.Join(headerParts, " | ")
+	b.WriteString(header)
+	b.WriteString("\n")
+
+	// Calculate available lines for messages
+	availableLines := maxHeight - 3 // Header + borders
+	if availableLines < 1 {
+		availableLines = 1
+	}
+
+	// Render messages with scroll offset
+	messages := validation.Messages
+	startIdx := m.planEditor.validationScrollOffset
+	if startIdx >= len(messages) {
+		startIdx = 0
+	}
+
+	linesRendered := 0
+	for i := startIdx; i < len(messages) && linesRendered < availableLines; i++ {
+		msg := messages[i]
+		line := m.renderValidationMessage(msg, width-6)
+		b.WriteString(line)
+		b.WriteString("\n")
+		linesRendered++
+	}
+
+	// Show scroll indicator if there are more messages
+	remaining := len(messages) - startIdx - linesRendered
+	if remaining > 0 {
+		scrollIndicator := styles.Muted.Render(fmt.Sprintf("  ↓ %d more...", remaining))
+		b.WriteString(scrollIndicator)
+	}
+
+	return validationPanelStyle.Width(width - 4).Render(b.String())
+}
+
+// renderValidationMessage renders a single validation message
+func (m Model) renderValidationMessage(msg orchestrator.ValidationMessage, maxWidth int) string {
+	var icon string
+	var msgStyle lipgloss.Style
+
+	switch msg.Severity {
+	case orchestrator.SeverityError:
+		icon = "✗"
+		msgStyle = validationErrorStyle
+	case orchestrator.SeverityWarning:
+		icon = "⚠"
+		msgStyle = validationWarningStyle
+	case orchestrator.SeverityInfo:
+		icon = "ℹ"
+		msgStyle = validationInfoStyle
+	default:
+		icon = "•"
+		msgStyle = styles.Muted
+	}
+
+	// Build the message line
+	var parts []string
+	parts = append(parts, msgStyle.Render(icon))
+
+	// Add task ID if present
+	if msg.TaskID != "" {
+		taskRef := validationTaskStyle.Render(fmt.Sprintf("[%s]", msg.TaskID))
+		parts = append(parts, taskRef)
+	}
+
+	// Add the main message
+	parts = append(parts, msgStyle.Render(msg.Message))
+
+	line := strings.Join(parts, " ")
+
+	// Truncate if needed
+	if len(line) > maxWidth {
+		line = line[:maxWidth-3] + "..."
+	}
+
+	return line
+}
+
+// renderValidationSummary renders a compact validation summary for the status bar
+func (m Model) renderValidationSummary() string {
+	if m.planEditor == nil || m.planEditor.validation == nil {
+		return ""
+	}
+
+	validation := m.planEditor.validation
+	if len(validation.Messages) == 0 {
+		return lipgloss.NewStyle().Foreground(styles.GreenColor).Render("✓ Valid")
+	}
+
+	var parts []string
+	if validation.ErrorCount > 0 {
+		parts = append(parts, validationErrorStyle.Render(fmt.Sprintf("✗%d", validation.ErrorCount)))
+	}
+	if validation.WarningCount > 0 {
+		parts = append(parts, validationWarningStyle.Render(fmt.Sprintf("⚠%d", validation.WarningCount)))
+	}
+
+	return strings.Join(parts, " ")
+}
+
+// renderTaskValidationIndicator returns a validation indicator for a specific task
+func (m Model) renderTaskValidationIndicator(taskID string) string {
+	if m.planEditor == nil || m.planEditor.validation == nil {
+		return ""
+	}
+
+	// Check if task is in a cycle
+	if m.planEditor.tasksInCycle[taskID] {
+		return cyclicTaskStyle.Render("⟳")
+	}
+
+	// Get messages for this task
+	messages := m.planEditor.validation.GetMessagesForTask(taskID)
+	if len(messages) == 0 {
+		return ""
+	}
+
+	// Count by severity
+	hasError := false
+	hasWarning := false
+	for _, msg := range messages {
+		switch msg.Severity {
+		case orchestrator.SeverityError:
+			hasError = true
+		case orchestrator.SeverityWarning:
+			hasWarning = true
+		}
+	}
+
+	if hasError {
+		return validationErrorStyle.Render("✗")
+	}
+	if hasWarning {
+		return validationWarningStyle.Render("⚠")
+	}
+	return ""
+}
+
+// renderPlanEditorView renders the plan editor view with validation
+func (m Model) renderPlanEditorView(width int) string {
+	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return "No plan available"
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil || session.Plan == nil {
+		return "No plan available"
+	}
+
+	plan := session.Plan
+	var b strings.Builder
+
+	// Calculate layout heights
+	totalHeight := m.height - 8 // Reserve space for header/footer
+	validationPanelHeight := 0
+	if m.planEditor != nil && m.planEditor.showValidationPanel && m.planEditor.validation != nil {
+		if len(m.planEditor.validation.Messages) > 0 {
+			validationPanelHeight = min(8, len(m.planEditor.validation.Messages)+3)
+		} else {
+			validationPanelHeight = 3 // Just show "valid" indicator
+		}
+	}
+	mainContentHeight := totalHeight - validationPanelHeight
+
+	// Plan summary header
+	b.WriteString(styles.SidebarTitle.Render("Plan Editor"))
+	b.WriteString("  ")
+	b.WriteString(m.renderValidationSummary())
+	b.WriteString("\n\n")
+
+	// Task list with validation indicators
+	b.WriteString(styles.SidebarTitle.Render("Tasks"))
+	b.WriteString("\n")
+
+	selectedIdx := 0
+	if m.planEditor != nil {
+		selectedIdx = m.planEditor.selectedTaskIdx
+	}
+
+	// Calculate visible task range with scroll
+	scrollOffset := 0
+	if m.planEditor != nil {
+		scrollOffset = m.planEditor.scrollOffset
+	}
+
+	visibleTasks := mainContentHeight - 6 // Reserve space for headers
+	if visibleTasks < 3 {
+		visibleTasks = 3
+	}
+
+	startIdx := scrollOffset
+	if startIdx > len(plan.Tasks)-visibleTasks {
+		startIdx = len(plan.Tasks) - visibleTasks
+	}
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	endIdx := startIdx + visibleTasks
+	if endIdx > len(plan.Tasks) {
+		endIdx = len(plan.Tasks)
+	}
+
+	// Show scroll indicator at top
+	if startIdx > 0 {
+		b.WriteString(styles.Muted.Render(fmt.Sprintf("  ↑ %d more above\n", startIdx)))
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		task := &plan.Tasks[i]
+		isSelected := i == selectedIdx
+
+		// Validation indicator for this task
+		validationIndicator := m.renderTaskValidationIndicator(task.ID)
+
+		// Task status icon
+		var statusIcon string
+		if m.planEditor != nil && m.planEditor.tasksInCycle[task.ID] {
+			statusIcon = cyclicTaskStyle.Render("⟳")
+		} else {
+			statusIcon = complexityIndicator(task.EstComplexity)
+		}
+
+		// Build task line
+		taskNum := fmt.Sprintf("%d.", i+1)
+		titleLen := width - 12 // Account for numbering, icons, and padding
+		title := truncate(task.Title, titleLen)
+
+		var line string
+		if validationIndicator != "" {
+			line = fmt.Sprintf("  %s %s %s %s", taskNum, statusIcon, validationIndicator, title)
+		} else {
+			line = fmt.Sprintf("  %s %s %s", taskNum, statusIcon, title)
+		}
+
+		// Apply selection styling
+		if isSelected {
+			line = lipgloss.NewStyle().
+				Background(styles.PrimaryColor).
+				Foreground(styles.TextColor).
+				Render(line)
+		}
+
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+
+	// Show scroll indicator at bottom
+	remaining := len(plan.Tasks) - endIdx
+	if remaining > 0 {
+		b.WriteString(styles.Muted.Render(fmt.Sprintf("  ↓ %d more below\n", remaining)))
+	}
+
+	// Selected task details
+	if selectedIdx >= 0 && selectedIdx < len(plan.Tasks) {
+		task := &plan.Tasks[selectedIdx]
+		b.WriteString("\n")
+		b.WriteString(styles.SidebarTitle.Render("Selected Task"))
+		b.WriteString("\n")
+		b.WriteString(fmt.Sprintf("ID: %s\n", task.ID))
+		b.WriteString(fmt.Sprintf("Complexity: %s\n", task.EstComplexity))
+		if len(task.DependsOn) > 0 {
+			b.WriteString(fmt.Sprintf("Depends on: %s\n", strings.Join(task.DependsOn, ", ")))
+		}
+		if len(task.Files) > 0 {
+			filesDisplay := strings.Join(task.Files, ", ")
+			if len(filesDisplay) > width-10 {
+				filesDisplay = filesDisplay[:width-13] + "..."
+			}
+			b.WriteString(fmt.Sprintf("Files: %s\n", filesDisplay))
+		}
+
+		// Show task-specific validation messages
+		taskMessages := m.getValidationMessagesForSelectedTask()
+		if len(taskMessages) > 0 {
+			b.WriteString("\n")
+			b.WriteString(validationWarningStyle.Render("Issues:"))
+			b.WriteString("\n")
+			for _, msg := range taskMessages {
+				line := m.renderValidationMessage(msg, width-6)
+				b.WriteString("  " + line + "\n")
+			}
+		}
+	}
+
+	// Render main content area
+	mainContent := styles.OutputArea.Width(width - 2).Height(mainContentHeight).Render(b.String())
+
+	// Render validation panel if enabled
+	var validationPanel string
+	if m.planEditor != nil && m.planEditor.showValidationPanel {
+		validationPanel = m.renderValidationPanel(width, validationPanelHeight)
+	}
+
+	// Combine main content and validation panel
+	if validationPanel != "" {
+		return lipgloss.JoinVertical(lipgloss.Left, mainContent, validationPanel)
+	}
+	return mainContent
+}
+
+// renderPlanEditorHelp renders the help bar for plan editor mode
+func (m Model) renderPlanEditorHelp() string {
+	var keys []string
+
+	keys = append(keys, "[↑↓] select task")
+	keys = append(keys, "[e] edit")
+
+	// Show confirm status based on validation
+	if m.canConfirmPlan() {
+		keys = append(keys, "[enter] confirm")
+	} else {
+		keys = append(keys, styles.Muted.Render("[enter] blocked"))
+	}
+
+	keys = append(keys, "[v] toggle validation")
+	keys = append(keys, "[esc] exit")
+
+	return styles.HelpBar.Width(m.width).Render(strings.Join(keys, "  "))
+}
 
 // handlePlanEditorKeypress handles keyboard input for the plan editor mode.
 // Returns (handled, model, cmd) where handled indicates if the key was processed.
@@ -55,6 +437,11 @@ func (m Model) handlePlanEditorNavigationMode(msg tea.KeyMsg, plan *orchestrator
 	case "e":
 		// Confirm plan and start execution (only in review phase)
 		if m.canStartExecution() {
+			// Check validation before starting
+			if !m.canConfirmPlan() {
+				m.errorMessage = "Cannot start execution: fix validation errors first"
+				return true, m, nil
+			}
 			if err := m.startPlanExecution(); err != nil {
 				m.errorMessage = fmt.Sprintf("Failed to start execution: %v", err)
 			} else {
@@ -62,6 +449,27 @@ func (m Model) handlePlanEditorNavigationMode(msg tea.KeyMsg, plan *orchestrator
 				m.infoMessage = "Execution started"
 			}
 		}
+		return true, m, nil
+
+	case "v":
+		// Toggle validation panel visibility
+		m.planEditor.showValidationPanel = !m.planEditor.showValidationPanel
+		return true, m, nil
+
+	case "r":
+		// Refresh validation
+		m.updatePlanValidation()
+		m.infoMessage = "Validation refreshed"
+		return true, m, nil
+
+	case "pgup":
+		// Scroll validation panel up
+		m.scrollValidationPanel(-1)
+		return true, m, nil
+
+	case "pgdown":
+		// Scroll validation panel down
+		m.scrollValidationPanel(1)
 		return true, m, nil
 	}
 
@@ -111,7 +519,25 @@ func (m Model) handlePlanEditorNavigationMode(msg tea.KeyMsg, plan *orchestrator
 	// Task operation keys
 	switch key {
 	case "enter", "t":
-		// Edit task title
+		// Confirm plan if valid, otherwise edit task title
+		if key == "enter" && m.canConfirmPlan() {
+			m.exitPlanEditor()
+			m.infoMessage = "Plan confirmed"
+			// Trigger execution if in refresh phase
+			session := m.ultraPlan.coordinator.Session()
+			if session != nil && session.Phase == orchestrator.PhaseRefresh {
+				if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
+					m.errorMessage = fmt.Sprintf("Failed to start execution: %v", err)
+				} else {
+					m.infoMessage = "Plan confirmed. Execution started."
+				}
+			}
+			return true, m, nil
+		} else if key == "enter" && !m.canConfirmPlan() {
+			m.errorMessage = "Cannot confirm plan: fix validation errors first"
+			return true, m, nil
+		}
+		// 't' key or enter when editing - edit task title
 		m.startEditingField("title", plan)
 		return true, m, nil
 
@@ -147,6 +573,8 @@ func (m Model) handlePlanEditorNavigationMode(msg tea.KeyMsg, plan *orchestrator
 			m.errorMessage = fmt.Sprintf("Failed to delete task: %v", err)
 		} else {
 			m.infoMessage = "Task deleted"
+			// Refresh validation after deletion
+			m.updatePlanValidation()
 		}
 		return true, m, nil
 
@@ -158,6 +586,8 @@ func (m Model) handlePlanEditorNavigationMode(msg tea.KeyMsg, plan *orchestrator
 			m.infoMessage = "New task added"
 			// Start editing the title of the new task
 			m.startEditingField("title", plan)
+			// Refresh validation after addition
+			m.updatePlanValidation()
 		}
 		return true, m, nil
 
@@ -193,6 +623,9 @@ func (m Model) handlePlanEditorEditMode(msg tea.KeyMsg, plan *orchestrator.PlanS
 		// Confirm edit and save
 		if err := m.confirmFieldEdit(plan); err != nil {
 			m.errorMessage = fmt.Sprintf("Failed to save: %v", err)
+		} else {
+			// Refresh validation after edit
+			m.updatePlanValidation()
 		}
 		return true, m, nil
 
@@ -590,6 +1023,28 @@ func (m *Model) startPlanExecution() error {
 		return fmt.Errorf("no ultra-plan session")
 	}
 	return m.ultraPlan.coordinator.StartExecution()
+}
+
+// scrollValidationPanel scrolls the validation panel by delta lines
+func (m *Model) scrollValidationPanel(delta int) {
+	if m.planEditor == nil || m.planEditor.validation == nil {
+		return
+	}
+
+	newOffset := m.planEditor.validationScrollOffset + delta
+	if newOffset < 0 {
+		newOffset = 0
+	}
+
+	maxOffset := len(m.planEditor.validation.Messages) - 5
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if newOffset > maxOffset {
+		newOffset = maxOffset
+	}
+
+	m.planEditor.validationScrollOffset = newOffset
 }
 
 // parseCommaSeparatedList parses a comma-separated string into a slice

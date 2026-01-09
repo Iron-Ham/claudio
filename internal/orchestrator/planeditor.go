@@ -723,3 +723,365 @@ func HasCircularDependency(plan *PlanSpec, taskID, newDepID string) bool {
 
 	return checkCycle(newDepID)
 }
+
+// ValidationSeverity represents the severity level of a validation message
+type ValidationSeverity string
+
+const (
+	SeverityError   ValidationSeverity = "error"
+	SeverityWarning ValidationSeverity = "warning"
+	SeverityInfo    ValidationSeverity = "info"
+)
+
+// ValidationMessage represents a single validation issue with structured information
+type ValidationMessage struct {
+	Severity    ValidationSeverity `json:"severity"`
+	Message     string             `json:"message"`
+	TaskID      string             `json:"task_id,omitempty"`      // The task this message relates to (empty for plan-level issues)
+	Field       string             `json:"field,omitempty"`        // The field causing the issue (e.g., "depends_on", "description")
+	Suggestion  string             `json:"suggestion,omitempty"`   // A suggested fix
+	RelatedIDs  []string           `json:"related_ids,omitempty"`  // Related task IDs (for cycles, conflicts, etc.)
+}
+
+// ValidationResult contains the complete validation results for a plan
+type ValidationResult struct {
+	IsValid   bool                `json:"is_valid"`   // True if there are no errors (warnings allowed)
+	Messages  []ValidationMessage `json:"messages"`
+	ErrorCount   int              `json:"error_count"`
+	WarningCount int              `json:"warning_count"`
+	InfoCount    int              `json:"info_count"`
+}
+
+// HasErrors returns true if there are any error-level messages
+func (v *ValidationResult) HasErrors() bool {
+	return v.ErrorCount > 0
+}
+
+// HasWarnings returns true if there are any warning-level messages
+func (v *ValidationResult) HasWarnings() bool {
+	return v.WarningCount > 0
+}
+
+// GetMessagesForTask returns all validation messages for a specific task
+func (v *ValidationResult) GetMessagesForTask(taskID string) []ValidationMessage {
+	var messages []ValidationMessage
+	for _, msg := range v.Messages {
+		if msg.TaskID == taskID {
+			messages = append(messages, msg)
+		}
+	}
+	return messages
+}
+
+// GetMessagesBySeverity returns all messages of a specific severity
+func (v *ValidationResult) GetMessagesBySeverity(severity ValidationSeverity) []ValidationMessage {
+	var messages []ValidationMessage
+	for _, msg := range v.Messages {
+		if msg.Severity == severity {
+			messages = append(messages, msg)
+		}
+	}
+	return messages
+}
+
+// ValidatePlanForEditor performs comprehensive validation of a plan for the editor UI.
+// It returns structured validation results including errors, warnings, and informational messages.
+// This is more comprehensive than ValidatePlan() which only returns basic validity.
+func ValidatePlanForEditor(plan *PlanSpec) *ValidationResult {
+	result := &ValidationResult{
+		IsValid:  true,
+		Messages: make([]ValidationMessage, 0),
+	}
+
+	if plan == nil {
+		result.IsValid = false
+		result.Messages = append(result.Messages, ValidationMessage{
+			Severity: SeverityError,
+			Message:  "Plan is nil",
+		})
+		result.ErrorCount++
+		return result
+	}
+
+	if len(plan.Tasks) == 0 {
+		result.IsValid = false
+		result.Messages = append(result.Messages, ValidationMessage{
+			Severity:   SeverityError,
+			Message:    "Plan has no tasks",
+			Suggestion: "Add at least one task to the plan",
+		})
+		result.ErrorCount++
+		return result
+	}
+
+	// Build task ID set for validation
+	taskSet := make(map[string]bool)
+	for _, task := range plan.Tasks {
+		taskSet[task.ID] = true
+	}
+
+	// Build a map of files to tasks for conflict detection
+	fileToTasks := make(map[string][]string)
+	for _, task := range plan.Tasks {
+		for _, file := range task.Files {
+			fileToTasks[file] = append(fileToTasks[file], task.ID)
+		}
+	}
+
+	// Validate each task
+	for _, task := range plan.Tasks {
+		// Check for missing description (warning)
+		if strings.TrimSpace(task.Description) == "" {
+			result.Messages = append(result.Messages, ValidationMessage{
+				Severity:   SeverityWarning,
+				Message:    "Task has no description",
+				TaskID:     task.ID,
+				Field:      "description",
+				Suggestion: "Add a detailed description for the task",
+			})
+			result.WarningCount++
+		}
+
+		// Check for missing title (warning)
+		if strings.TrimSpace(task.Title) == "" {
+			result.Messages = append(result.Messages, ValidationMessage{
+				Severity:   SeverityWarning,
+				Message:    "Task has no title",
+				TaskID:     task.ID,
+				Field:      "title",
+				Suggestion: "Add a descriptive title for the task",
+			})
+			result.WarningCount++
+		}
+
+		// Check for self-dependency (error)
+		for _, depID := range task.DependsOn {
+			if depID == task.ID {
+				result.IsValid = false
+				result.Messages = append(result.Messages, ValidationMessage{
+					Severity:   SeverityError,
+					Message:    "Task depends on itself",
+					TaskID:     task.ID,
+					Field:      "depends_on",
+					RelatedIDs: []string{task.ID},
+					Suggestion: "Remove the self-dependency",
+				})
+				result.ErrorCount++
+			}
+		}
+
+		// Check for invalid dependency references (error)
+		for _, depID := range task.DependsOn {
+			if depID != task.ID && !taskSet[depID] {
+				result.IsValid = false
+				result.Messages = append(result.Messages, ValidationMessage{
+					Severity:   SeverityError,
+					Message:    fmt.Sprintf("Depends on unknown task '%s'", depID),
+					TaskID:     task.ID,
+					Field:      "depends_on",
+					RelatedIDs: []string{depID},
+					Suggestion: fmt.Sprintf("Remove '%s' from dependencies or create a task with that ID", depID),
+				})
+				result.ErrorCount++
+			}
+		}
+
+		// Check for high complexity tasks (warning - might benefit from splitting)
+		if task.EstComplexity == ComplexityHigh {
+			result.Messages = append(result.Messages, ValidationMessage{
+				Severity:   SeverityWarning,
+				Message:    "High complexity task may benefit from splitting",
+				TaskID:     task.ID,
+				Field:      "est_complexity",
+				Suggestion: "Consider splitting into smaller, more manageable subtasks",
+			})
+			result.WarningCount++
+		}
+	}
+
+	// Check for dependency cycles
+	cycleInfo := detectDependencyCycle(plan)
+	if cycleInfo != nil {
+		result.IsValid = false
+		result.Messages = append(result.Messages, ValidationMessage{
+			Severity:   SeverityError,
+			Message:    fmt.Sprintf("Dependency cycle detected: %s", strings.Join(cycleInfo, " → ")),
+			RelatedIDs: cycleInfo,
+			Suggestion: "Remove one of the dependencies to break the cycle",
+		})
+		result.ErrorCount++
+	}
+
+	// Check for file conflicts (warning - tasks with overlapping files not in same dependency chain)
+	for file, taskIDs := range fileToTasks {
+		if len(taskIDs) > 1 {
+			// Check if tasks are in a dependency chain (which is OK)
+			if !areTasksInDependencyChain(plan, taskIDs) {
+				result.Messages = append(result.Messages, ValidationMessage{
+					Severity:   SeverityWarning,
+					Message:    fmt.Sprintf("File '%s' is modified by multiple parallel tasks", file),
+					RelatedIDs: taskIDs,
+					Field:      "files",
+					Suggestion: "Add dependencies between these tasks or assign different files",
+				})
+				result.WarningCount++
+			}
+		}
+	}
+
+	// Verify execution order coverage matches task count
+	if plan.ExecutionOrder != nil {
+		scheduledTasks := 0
+		for _, group := range plan.ExecutionOrder {
+			scheduledTasks += len(group)
+		}
+		if scheduledTasks < len(plan.Tasks) {
+			result.IsValid = false
+			result.Messages = append(result.Messages, ValidationMessage{
+				Severity:   SeverityError,
+				Message:    fmt.Sprintf("Execution order incomplete: only %d of %d tasks scheduled (indicates a cycle)", scheduledTasks, len(plan.Tasks)),
+				Suggestion: "Fix the dependency cycle to allow all tasks to be scheduled",
+			})
+			result.ErrorCount++
+		}
+	}
+
+	return result
+}
+
+// detectDependencyCycle detects if there's a dependency cycle in the plan.
+// Returns the task IDs forming the cycle if found, nil otherwise.
+func detectDependencyCycle(plan *PlanSpec) []string {
+	if plan == nil {
+		return nil
+	}
+
+	// Track visited and recursion stack
+	visited := make(map[string]bool)
+	recStack := make(map[string]bool)
+	parent := make(map[string]string)
+
+	var dfs func(taskID string) []string
+	dfs = func(taskID string) []string {
+		visited[taskID] = true
+		recStack[taskID] = true
+
+		task := GetTaskByID(plan, taskID)
+		if task == nil {
+			recStack[taskID] = false
+			return nil
+		}
+
+		for _, depID := range task.DependsOn {
+			if !visited[depID] {
+				parent[depID] = taskID
+				if cycle := dfs(depID); cycle != nil {
+					return cycle
+				}
+			} else if recStack[depID] {
+				// Found a cycle - reconstruct it
+				cycle := []string{depID}
+				current := taskID
+				for current != depID {
+					cycle = append([]string{current}, cycle...)
+					current = parent[current]
+				}
+				cycle = append([]string{depID}, cycle...)
+				return cycle
+			}
+		}
+
+		recStack[taskID] = false
+		return nil
+	}
+
+	for _, task := range plan.Tasks {
+		if !visited[task.ID] {
+			if cycle := dfs(task.ID); cycle != nil {
+				return cycle
+			}
+		}
+	}
+
+	return nil
+}
+
+// areTasksInDependencyChain checks if a set of tasks are all in a linear dependency chain
+// (meaning they can't execute in parallel and file conflicts are acceptable)
+func areTasksInDependencyChain(plan *PlanSpec, taskIDs []string) bool {
+	if len(taskIDs) < 2 {
+		return true
+	}
+
+	// Build a dependency set for each task (all tasks it directly or indirectly depends on)
+	allDeps := make(map[string]map[string]bool)
+	for _, taskID := range taskIDs {
+		allDeps[taskID] = getAllDependencies(plan, taskID)
+	}
+
+	// Check if for each pair, one depends on the other
+	for i := 0; i < len(taskIDs); i++ {
+		for j := i + 1; j < len(taskIDs); j++ {
+			taskA := taskIDs[i]
+			taskB := taskIDs[j]
+
+			// Check if A depends on B or B depends on A
+			aOnB := allDeps[taskA][taskB]
+			bOnA := allDeps[taskB][taskA]
+
+			if !aOnB && !bOnA {
+				// Neither depends on the other - they can run in parallel
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// getAllDependencies returns all direct and transitive dependencies for a task
+func getAllDependencies(plan *PlanSpec, taskID string) map[string]bool {
+	deps := make(map[string]bool)
+	visited := make(map[string]bool)
+
+	var collectDeps func(id string)
+	collectDeps = func(id string) {
+		if visited[id] {
+			return
+		}
+		visited[id] = true
+
+		task := GetTaskByID(plan, id)
+		if task == nil {
+			return
+		}
+
+		for _, depID := range task.DependsOn {
+			deps[depID] = true
+			collectDeps(depID)
+		}
+	}
+
+	collectDeps(taskID)
+	return deps
+}
+
+// GetTasksInCycle returns a list of task IDs that are part of a dependency cycle, if any.
+// This is useful for highlighting cyclic tasks in the UI.
+func GetTasksInCycle(plan *PlanSpec) []string {
+	cycle := detectDependencyCycle(plan)
+	if cycle == nil {
+		return nil
+	}
+
+	// Return unique task IDs from the cycle
+	seen := make(map[string]bool)
+	var unique []string
+	for _, taskID := range cycle {
+		if !seen[taskID] {
+			seen[taskID] = true
+			unique = append(unique, taskID)
+		}
+	}
+	return unique
+}

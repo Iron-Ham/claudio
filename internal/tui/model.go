@@ -27,6 +27,18 @@ type PlanEditorState struct {
 
 	// scrollOffset is the vertical scroll offset for the task list
 	scrollOffset int
+
+	// validation holds the current validation results for the plan
+	validation *orchestrator.ValidationResult
+
+	// showValidationPanel controls whether the validation panel is visible
+	showValidationPanel bool
+
+	// validationScrollOffset is the scroll offset for the validation panel
+	validationScrollOffset int
+
+	// tasksInCycle contains task IDs that are part of a dependency cycle (for highlighting)
+	tasksInCycle map[string]bool
 }
 
 // Model holds the TUI application state
@@ -115,13 +127,70 @@ func (m Model) IsPlanEditorActive() bool {
 // enterPlanEditor initializes the plan editor state when entering edit mode
 func (m *Model) enterPlanEditor() {
 	m.planEditor = &PlanEditorState{
-		active:          true,
-		selectedTaskIdx: 0,
-		editingField:    "",
-		editBuffer:      "",
-		editCursor:      0,
-		scrollOffset:    0,
+		active:              true,
+		selectedTaskIdx:     0,
+		editingField:        "",
+		editBuffer:          "",
+		editCursor:          0,
+		scrollOffset:        0,
+		showValidationPanel: true, // Show validation by default
+		tasksInCycle:        make(map[string]bool),
 	}
+	// Run initial validation
+	m.updatePlanValidation()
+}
+
+// updatePlanValidation runs validation on the current plan and updates the editor state
+func (m *Model) updatePlanValidation() {
+	if m.planEditor == nil || m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil || session.Plan == nil {
+		return
+	}
+
+	// Run validation
+	m.planEditor.validation = orchestrator.ValidatePlanForEditor(session.Plan)
+
+	// Update tasks in cycle map for highlighting
+	m.planEditor.tasksInCycle = make(map[string]bool)
+	cycleTasks := orchestrator.GetTasksInCycle(session.Plan)
+	for _, taskID := range cycleTasks {
+		m.planEditor.tasksInCycle[taskID] = true
+	}
+}
+
+// isTaskInCycle returns true if the given task is part of a dependency cycle
+func (m *Model) isTaskInCycle(taskID string) bool {
+	if m.planEditor == nil || m.planEditor.tasksInCycle == nil {
+		return false
+	}
+	return m.planEditor.tasksInCycle[taskID]
+}
+
+// canConfirmPlan returns true if the plan can be confirmed (no validation errors)
+func (m *Model) canConfirmPlan() bool {
+	if m.planEditor == nil || m.planEditor.validation == nil {
+		return false
+	}
+	return !m.planEditor.validation.HasErrors()
+}
+
+// getValidationMessagesForSelectedTask returns validation messages for the currently selected task
+func (m *Model) getValidationMessagesForSelectedTask() []orchestrator.ValidationMessage {
+	if m.planEditor == nil || m.planEditor.validation == nil || m.ultraPlan == nil {
+		return nil
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil || session.Plan == nil || m.planEditor.selectedTaskIdx >= len(session.Plan.Tasks) {
+		return nil
+	}
+
+	taskID := session.Plan.Tasks[m.planEditor.selectedTaskIdx].ID
+	return m.planEditor.validation.GetMessagesForTask(taskID)
 }
 
 // exitPlanEditor cleans up the plan editor state when exiting edit mode

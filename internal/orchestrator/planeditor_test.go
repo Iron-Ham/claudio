@@ -659,3 +659,375 @@ func TestErrorTypes(t *testing.T) {
 		t.Errorf("unexpected error message: %s", err4.Error())
 	}
 }
+
+// Tests for ValidatePlanForEditor and related validation functions
+
+func TestValidatePlanForEditor_ValidPlan(t *testing.T) {
+	plan := createTestPlan()
+
+	result := ValidatePlanForEditor(plan)
+
+	// Valid plan should have no errors
+	if result.HasErrors() {
+		t.Errorf("expected no errors, got %d errors", result.ErrorCount)
+		for _, msg := range result.GetMessagesBySeverity(SeverityError) {
+			t.Logf("  Error: %s", msg.Message)
+		}
+	}
+
+	if !result.IsValid {
+		t.Error("expected IsValid to be true")
+	}
+}
+
+func TestValidatePlanForEditor_NilPlan(t *testing.T) {
+	result := ValidatePlanForEditor(nil)
+
+	if !result.HasErrors() {
+		t.Error("expected errors for nil plan")
+	}
+
+	if result.IsValid {
+		t.Error("expected IsValid to be false for nil plan")
+	}
+}
+
+func TestValidatePlanForEditor_EmptyPlan(t *testing.T) {
+	plan := &PlanSpec{
+		ID:    "empty-plan",
+		Tasks: []PlannedTask{},
+	}
+
+	result := ValidatePlanForEditor(plan)
+
+	if !result.HasErrors() {
+		t.Error("expected errors for empty plan")
+	}
+
+	if result.IsValid {
+		t.Error("expected IsValid to be false for empty plan")
+	}
+}
+
+func TestValidatePlanForEditor_MissingDescription(t *testing.T) {
+	plan := &PlanSpec{
+		ID: "test-plan",
+		Tasks: []PlannedTask{
+			{
+				ID:          "task-1",
+				Title:       "Test Task",
+				Description: "", // Missing description
+			},
+		},
+	}
+	plan.ExecutionOrder = [][]string{{"task-1"}}
+
+	result := ValidatePlanForEditor(plan)
+
+	// Should have a warning for missing description
+	if !result.HasWarnings() {
+		t.Error("expected warning for missing description")
+	}
+
+	// Should still be valid (warnings allowed)
+	if !result.IsValid {
+		t.Error("expected IsValid to be true (missing description is just a warning)")
+	}
+
+	// Check the warning message
+	found := false
+	for _, msg := range result.Messages {
+		if msg.TaskID == "task-1" && msg.Field == "description" && msg.Severity == SeverityWarning {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected warning message for task-1 description field")
+	}
+}
+
+func TestValidatePlanForEditor_SelfDependency(t *testing.T) {
+	plan := &PlanSpec{
+		ID: "test-plan",
+		Tasks: []PlannedTask{
+			{
+				ID:          "task-1",
+				Title:       "Test Task",
+				Description: "A task",
+				DependsOn:   []string{"task-1"}, // Self-dependency
+			},
+		},
+	}
+
+	result := ValidatePlanForEditor(plan)
+
+	if !result.HasErrors() {
+		t.Error("expected error for self-dependency")
+	}
+
+	if result.IsValid {
+		t.Error("expected IsValid to be false for self-dependency")
+	}
+
+	// Check the error message
+	found := false
+	for _, msg := range result.Messages {
+		if msg.TaskID == "task-1" && msg.Severity == SeverityError && msg.Field == "depends_on" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected error message for self-dependency")
+	}
+}
+
+func TestValidatePlanForEditor_InvalidDependency(t *testing.T) {
+	plan := &PlanSpec{
+		ID: "test-plan",
+		Tasks: []PlannedTask{
+			{
+				ID:          "task-1",
+				Title:       "Test Task",
+				Description: "A task",
+				DependsOn:   []string{"nonexistent-task"}, // Invalid reference
+			},
+		},
+	}
+
+	result := ValidatePlanForEditor(plan)
+
+	if !result.HasErrors() {
+		t.Error("expected error for invalid dependency")
+	}
+
+	if result.IsValid {
+		t.Error("expected IsValid to be false for invalid dependency")
+	}
+}
+
+func TestValidatePlanForEditor_DependencyCycle(t *testing.T) {
+	plan := &PlanSpec{
+		ID: "test-plan",
+		Tasks: []PlannedTask{
+			{
+				ID:          "task-1",
+				Title:       "Task 1",
+				Description: "A task",
+				DependsOn:   []string{"task-2"},
+			},
+			{
+				ID:          "task-2",
+				Title:       "Task 2",
+				Description: "Another task",
+				DependsOn:   []string{"task-1"}, // Creates cycle
+			},
+		},
+		DependencyGraph: map[string][]string{
+			"task-1": {"task-2"},
+			"task-2": {"task-1"},
+		},
+	}
+	// Don't set ExecutionOrder - it should be incomplete due to cycle
+
+	result := ValidatePlanForEditor(plan)
+
+	if !result.HasErrors() {
+		t.Error("expected error for dependency cycle")
+	}
+
+	if result.IsValid {
+		t.Error("expected IsValid to be false for dependency cycle")
+	}
+
+	// Should have a cycle-related error message
+	found := false
+	for _, msg := range result.Messages {
+		if msg.Severity == SeverityError && len(msg.RelatedIDs) >= 2 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected cycle error message with related IDs")
+	}
+}
+
+func TestValidatePlanForEditor_HighComplexityWarning(t *testing.T) {
+	plan := &PlanSpec{
+		ID: "test-plan",
+		Tasks: []PlannedTask{
+			{
+				ID:            "task-1",
+				Title:         "Complex Task",
+				Description:   "A complex task",
+				EstComplexity: ComplexityHigh,
+			},
+		},
+	}
+	plan.ExecutionOrder = [][]string{{"task-1"}}
+
+	result := ValidatePlanForEditor(plan)
+
+	if !result.HasWarnings() {
+		t.Error("expected warning for high complexity task")
+	}
+
+	// Should still be valid (warnings allowed)
+	if !result.IsValid {
+		t.Error("expected IsValid to be true (high complexity is just a warning)")
+	}
+}
+
+func TestValidatePlanForEditor_FileConflict(t *testing.T) {
+	plan := &PlanSpec{
+		ID: "test-plan",
+		Tasks: []PlannedTask{
+			{
+				ID:          "task-1",
+				Title:       "Task 1",
+				Description: "A task",
+				Files:       []string{"main.go"},
+				DependsOn:   []string{},
+			},
+			{
+				ID:          "task-2",
+				Title:       "Task 2",
+				Description: "Another task",
+				Files:       []string{"main.go"}, // Same file, parallel task
+				DependsOn:   []string{},          // No dependency - can run in parallel
+			},
+		},
+	}
+	plan.ExecutionOrder = [][]string{{"task-1", "task-2"}} // Both in same group
+
+	result := ValidatePlanForEditor(plan)
+
+	if !result.HasWarnings() {
+		t.Error("expected warning for file conflict")
+	}
+
+	// Should still be valid (file conflicts are warnings)
+	if !result.IsValid {
+		t.Error("expected IsValid to be true (file conflicts are just warnings)")
+	}
+}
+
+func TestValidatePlanForEditor_FileConflictWithDependency(t *testing.T) {
+	plan := &PlanSpec{
+		ID: "test-plan",
+		Tasks: []PlannedTask{
+			{
+				ID:          "task-1",
+				Title:       "Task 1",
+				Description: "A task",
+				Files:       []string{"main.go"},
+				DependsOn:   []string{},
+			},
+			{
+				ID:          "task-2",
+				Title:       "Task 2",
+				Description: "Another task",
+				Files:       []string{"main.go"}, // Same file, but depends on task-1
+				DependsOn:   []string{"task-1"},  // Sequential - OK
+			},
+		},
+	}
+	plan.ExecutionOrder = [][]string{{"task-1"}, {"task-2"}}
+
+	result := ValidatePlanForEditor(plan)
+
+	// Should NOT have a warning for file conflict when tasks are in dependency chain
+	hasFileConflictWarning := false
+	for _, msg := range result.Messages {
+		if msg.Field == "files" && msg.Severity == SeverityWarning {
+			hasFileConflictWarning = true
+			break
+		}
+	}
+	if hasFileConflictWarning {
+		t.Error("should not warn about file conflict when tasks have dependency relationship")
+	}
+}
+
+func TestGetTasksInCycle(t *testing.T) {
+	plan := &PlanSpec{
+		ID: "test-plan",
+		Tasks: []PlannedTask{
+			{ID: "task-1", DependsOn: []string{"task-2"}},
+			{ID: "task-2", DependsOn: []string{"task-1"}},
+			{ID: "task-3", DependsOn: []string{}}, // Not in cycle
+		},
+	}
+
+	cycleTasks := GetTasksInCycle(plan)
+
+	if len(cycleTasks) == 0 {
+		t.Error("expected cycle tasks to be detected")
+	}
+
+	// Both task-1 and task-2 should be in the cycle
+	hasTask1 := slices.Contains(cycleTasks, "task-1")
+	hasTask2 := slices.Contains(cycleTasks, "task-2")
+
+	if !hasTask1 || !hasTask2 {
+		t.Errorf("expected task-1 and task-2 in cycle, got %v", cycleTasks)
+	}
+}
+
+func TestGetTasksInCycle_NoCycle(t *testing.T) {
+	plan := createTestPlan()
+
+	cycleTasks := GetTasksInCycle(plan)
+
+	if len(cycleTasks) != 0 {
+		t.Errorf("expected no cycle tasks, got %v", cycleTasks)
+	}
+}
+
+func TestValidationResultMethods(t *testing.T) {
+	result := &ValidationResult{
+		IsValid: true,
+		Messages: []ValidationMessage{
+			{Severity: SeverityError, TaskID: "task-1", Message: "Error 1"},
+			{Severity: SeverityWarning, TaskID: "task-1", Message: "Warning 1"},
+			{Severity: SeverityWarning, TaskID: "task-2", Message: "Warning 2"},
+			{Severity: SeverityInfo, TaskID: "task-2", Message: "Info 1"},
+		},
+		ErrorCount:   1,
+		WarningCount: 2,
+		InfoCount:    1,
+	}
+
+	// Test GetMessagesForTask
+	task1Msgs := result.GetMessagesForTask("task-1")
+	if len(task1Msgs) != 2 {
+		t.Errorf("expected 2 messages for task-1, got %d", len(task1Msgs))
+	}
+
+	task2Msgs := result.GetMessagesForTask("task-2")
+	if len(task2Msgs) != 2 {
+		t.Errorf("expected 2 messages for task-2, got %d", len(task2Msgs))
+	}
+
+	// Test GetMessagesBySeverity
+	errorMsgs := result.GetMessagesBySeverity(SeverityError)
+	if len(errorMsgs) != 1 {
+		t.Errorf("expected 1 error message, got %d", len(errorMsgs))
+	}
+
+	warningMsgs := result.GetMessagesBySeverity(SeverityWarning)
+	if len(warningMsgs) != 2 {
+		t.Errorf("expected 2 warning messages, got %d", len(warningMsgs))
+	}
+
+	// Test HasErrors and HasWarnings
+	if !result.HasErrors() {
+		t.Error("expected HasErrors to return true")
+	}
+
+	if !result.HasWarnings() {
+		t.Error("expected HasWarnings to return true")
+	}
+}
