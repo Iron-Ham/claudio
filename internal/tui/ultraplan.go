@@ -257,7 +257,7 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 					continue
 				}
 
-				instID := session.TaskToInstance[taskID]
+				instID := m.findInstanceIDForTask(session, taskID)
 				selected := m.isInstanceSelected(instID)
 				navigable := instID != ""
 				taskLine := m.renderExecutionTaskLine(session, task, instID, selected, navigable, width-6)
@@ -549,6 +549,25 @@ func (m Model) getPhaseSectionStatus(phase orchestrator.UltraPlanPhase, session 
 	default:
 		return ""
 	}
+}
+
+// findInstanceIDForTask finds the instance ID associated with a task.
+// It first checks the active TaskToInstance mapping, then searches through
+// all instances for completed/failed tasks that are no longer in the mapping.
+func (m Model) findInstanceIDForTask(session *orchestrator.UltraPlanSession, taskID string) string {
+	// First check the active TaskToInstance mapping
+	if instID, ok := session.TaskToInstance[taskID]; ok && instID != "" {
+		return instID
+	}
+
+	// For completed/failed tasks, search through all instances
+	for _, inst := range m.session.Instances {
+		if strings.Contains(inst.Task, taskID) {
+			return inst.ID
+		}
+	}
+
+	return ""
 }
 
 // isInstanceSelected checks if the given instance ID is currently selected in the TUI
