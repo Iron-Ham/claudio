@@ -106,6 +106,22 @@ type RevisionIssue struct {
 	Suggestion  string   `json:"suggestion,omitempty"`  // Suggested fix
 }
 
+// PlanScore represents the evaluation of a single candidate plan
+type PlanScore struct {
+	Strategy   string `json:"strategy"`
+	Score      int    `json:"score"`
+	Strengths  string `json:"strengths"`
+	Weaknesses string `json:"weaknesses"`
+}
+
+// PlanDecision captures the coordinator-manager's decision when evaluating multiple plans
+type PlanDecision struct {
+	Action        string      `json:"action"`         // "select" or "merge"
+	SelectedIndex int         `json:"selected_index"` // 0-2 or -1 for merge
+	Reasoning     string      `json:"reasoning"`
+	PlanScores    []PlanScore `json:"plan_scores"`
+}
+
 // RevisionState tracks the state of the revision phase
 type RevisionState struct {
 	Issues           []RevisionIssue `json:"issues"`                      // Issues identified during synthesis
@@ -182,6 +198,45 @@ func ParseRevisionIssuesFromOutput(output string) ([]RevisionIssue, error) {
 	}
 
 	return validIssues, nil
+}
+
+// ParsePlanDecisionFromOutput extracts the plan decision from coordinator-manager output
+// It looks for JSON wrapped in <plan_decision></plan_decision> tags
+func ParsePlanDecisionFromOutput(output string) (*PlanDecision, error) {
+	// Look for <plan_decision>...</plan_decision> tags
+	re := regexp.MustCompile(`(?s)<plan_decision>\s*(.*?)\s*</plan_decision>`)
+	matches := re.FindStringSubmatch(output)
+
+	if len(matches) < 2 {
+		return nil, fmt.Errorf("no plan decision found in output (expected <plan_decision>JSON</plan_decision>)")
+	}
+
+	jsonStr := strings.TrimSpace(matches[1])
+
+	if jsonStr == "" {
+		return nil, fmt.Errorf("empty plan decision block")
+	}
+
+	// Parse the JSON
+	var decision PlanDecision
+	if err := json.Unmarshal([]byte(jsonStr), &decision); err != nil {
+		return nil, fmt.Errorf("failed to parse plan decision JSON: %w", err)
+	}
+
+	// Validate the decision
+	if decision.Action != "select" && decision.Action != "merge" {
+		return nil, fmt.Errorf("invalid plan decision action: %q (expected \"select\" or \"merge\")", decision.Action)
+	}
+
+	if decision.Action == "select" && (decision.SelectedIndex < 0 || decision.SelectedIndex > 2) {
+		return nil, fmt.Errorf("invalid selected_index for select action: %d (expected 0-2)", decision.SelectedIndex)
+	}
+
+	if decision.Action == "merge" && decision.SelectedIndex != -1 {
+		return nil, fmt.Errorf("selected_index should be -1 for merge action, got %d", decision.SelectedIndex)
+	}
+
+	return &decision, nil
 }
 
 // TaskWorktreeInfo holds information about a task's worktree for consolidation
@@ -1369,3 +1424,51 @@ When consolidation is complete, you MUST write a completion file:
 6. List all PR URLs in prs_created array
 
 This file signals that consolidation is done and provides a record of the PRs created.`
+
+// PlanManagerPromptTemplate is the prompt for the coordinator-manager in multi-pass mode
+// It receives all candidate plans and must select the best one or merge them
+const PlanManagerPromptTemplate = `You are a senior technical lead evaluating multiple implementation plans.
+
+## Objective
+%s
+
+## Candidate Plans
+Three different planning strategies have produced the following plans:
+
+%s
+
+## Your Task
+
+Evaluate each plan based on:
+1. **Parallelism potential**: How many tasks can run concurrently?
+2. **Task granularity**: Are tasks appropriately sized (prefer smaller, focused tasks)?
+3. **Dependency structure**: Is the dependency graph sensible and minimal?
+4. **File ownership**: Do tasks have clear, non-overlapping file assignments?
+5. **Completeness**: Does the plan fully address the objective?
+6. **Risk mitigation**: Are constraints and risks properly identified?
+
+## Decision
+
+You must either:
+1. **Select** the best plan as-is, OR
+2. **Merge** the best elements from multiple plans into a superior plan
+
+## Output
+
+Write your final plan to ` + "`" + PlanFileName + "`" + ` using the standard plan JSON schema.
+
+Before the plan file, output your reasoning in this format:
+<plan_decision>
+{
+  "action": "select" or "merge",
+  "selected_index": 0-2 (if select) or -1 (if merge),
+  "reasoning": "Brief explanation of your decision",
+  "plan_scores": [
+    {"strategy": "maximize-parallelism", "score": 1-10, "strengths": "...", "weaknesses": "..."},
+    {"strategy": "minimize-complexity", "score": 1-10, "strengths": "...", "weaknesses": "..."},
+    {"strategy": "balanced-approach", "score": 1-10, "strengths": "...", "weaknesses": "..."}
+  ]
+}
+</plan_decision>
+
+Then write the final plan file.`
