@@ -1063,6 +1063,9 @@ Write a JSON file with this structure:
 
 ## Guidelines
 
+- **Prefer many small tasks over fewer large ones** - 10 small tasks are better than 3 medium/large tasks
+- Each task should be completable within a single session without context exhaustion
+- Target "low" complexity tasks; split "medium" or "high" complexity work into multiple smaller tasks
 - Prefer granular tasks that can run in parallel over large sequential ones
 - Assign clear file ownership to avoid merge conflicts
 - Each task description should be complete enough for independent execution
