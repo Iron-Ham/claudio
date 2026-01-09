@@ -559,10 +559,14 @@ func (c *Coordinator) monitorSynthesisInstance(instanceID string) {
 			}
 
 			switch inst.Status {
-			case StatusCompleted, StatusWaitingInput:
-				// Synthesis complete - trigger consolidation or finish
+			case StatusCompleted:
+				// Synthesis fully completed - trigger consolidation or finish
 				c.onSynthesisComplete()
 				return
+
+			// Note: StatusWaitingInput is intentionally NOT treated as completion.
+			// Synthesis may need multiple user interactions. Use TriggerConsolidation()
+			// or the [s] keybinding to manually signal synthesis is done.
 
 			case StatusError, StatusTimeout, StatusStuck:
 				// Synthesis failed
@@ -605,6 +609,32 @@ func (c *Coordinator) onSynthesisComplete() {
 	c.mu.Unlock()
 	_ = c.orch.SaveSession()
 	c.notifyComplete(true, "All tasks completed and synthesized")
+}
+
+// TriggerConsolidation manually signals that synthesis is done and consolidation should proceed.
+// This is called from the TUI when the user indicates they're done with synthesis review.
+func (c *Coordinator) TriggerConsolidation() error {
+	session := c.Session()
+	if session == nil {
+		return fmt.Errorf("no session")
+	}
+
+	// Only allow triggering from synthesis phase
+	if session.Phase != PhaseSynthesis {
+		return fmt.Errorf("can only trigger consolidation during synthesis phase (current: %s)", session.Phase)
+	}
+
+	// Stop the synthesis instance if it's still running
+	if session.SynthesisID != "" {
+		inst := c.orch.GetInstance(session.SynthesisID)
+		if inst != nil {
+			_ = c.orch.StopInstance(inst)
+		}
+	}
+
+	// Proceed to consolidation (or completion if no consolidation configured)
+	c.onSynthesisComplete()
+	return nil
 }
 
 // StartConsolidation begins the consolidation phase
