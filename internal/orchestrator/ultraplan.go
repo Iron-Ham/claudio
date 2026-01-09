@@ -388,6 +388,12 @@ func (s *UltraPlanSession) GetReadyTasks() []string {
 		return nil
 	}
 
+	// CRITICAL: Never return tasks from the next group while awaiting a decision
+	// about a partial failure. The next group cannot start without consolidation.
+	if s.GroupDecision != nil && s.GroupDecision.AwaitingDecision {
+		return nil
+	}
+
 	// Build set of started/completed tasks
 	startedOrCompleted := make(map[string]bool)
 	for _, taskID := range s.CompletedTasks {

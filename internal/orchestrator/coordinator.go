@@ -742,51 +742,62 @@ func (c *Coordinator) checkAndAdvanceGroup() {
 		return
 	}
 
-	c.mu.Lock()
-	advanced, previousGroup := session.AdvanceGroupIfComplete()
-	c.mu.Unlock()
+	// CRITICAL FIX: Check if group is complete WITHOUT advancing CurrentGroup yet.
+	// We must check for partial failure and complete consolidation BEFORE
+	// incrementing CurrentGroup, otherwise GetReadyTasks() will return tasks
+	// from the next group prematurely.
+	c.mu.RLock()
+	isComplete := session.IsCurrentGroupComplete()
+	currentGroup := session.CurrentGroup
+	c.mu.RUnlock()
 
-	if !advanced {
+	if !isComplete {
 		return
 	}
 
-	// Check for partial group failure (some tasks succeeded, some failed)
-	if c.hasPartialGroupFailure(previousGroup) {
-		c.handlePartialGroupFailure(previousGroup)
-		// Don't advance until user decides
+	// Check for partial group failure BEFORE advancing
+	// This ensures CurrentGroup stays at the failed group index
+	if c.hasPartialGroupFailure(currentGroup) {
+		c.handlePartialGroupFailure(currentGroup)
+		// Don't advance until user decides - CurrentGroup remains unchanged
 		return
 	}
 
 	// Emit group complete event
 	c.manager.emitEvent(CoordinatorEvent{
 		Type:    EventGroupComplete,
-		Message: fmt.Sprintf("Group %d complete, consolidating before advancing to group %d", previousGroup+1, session.CurrentGroup+1),
+		Message: fmt.Sprintf("Group %d complete, consolidating before advancing to group %d", currentGroup+1, currentGroup+2),
 	})
 
 	// Start the group consolidator Claude session
 	// This blocks until the consolidator completes (writes completion file)
-	if err := c.startGroupConsolidatorSession(previousGroup); err != nil {
+	if err := c.startGroupConsolidatorSession(currentGroup); err != nil {
 		c.manager.emitEvent(CoordinatorEvent{
 			Type:    EventConflict,
-			Message: fmt.Sprintf("Critical: failed to consolidate group %d: %v", previousGroup+1, err),
+			Message: fmt.Sprintf("Critical: failed to consolidate group %d: %v", currentGroup+1, err),
 		})
 
 		// Mark session as failed since we can't continue without consolidation
 		c.mu.Lock()
 		session.Phase = PhaseFailed
-		session.Error = fmt.Sprintf("consolidation of group %d failed: %v", previousGroup+1, err)
+		session.Error = fmt.Sprintf("consolidation of group %d failed: %v", currentGroup+1, err)
 		c.mu.Unlock()
 		_ = c.orch.SaveSession()
 		c.notifyComplete(false, session.Error)
 		return
 	}
 
+	// NOW advance to the next group - only after consolidation succeeds
+	c.mu.Lock()
+	session.CurrentGroup++
+	c.mu.Unlock()
+
 	// Call the callback
 	c.mu.RLock()
 	cb := c.callbacks
 	c.mu.RUnlock()
 	if cb != nil && cb.OnGroupComplete != nil {
-		cb.OnGroupComplete(previousGroup)
+		cb.OnGroupComplete(currentGroup)
 	}
 
 	// Persist the group advancement
@@ -1837,8 +1848,11 @@ func (c *Coordinator) ResumeWithPartialWork() error {
 		return fmt.Errorf("failed to consolidate partial group: %w", err)
 	}
 
-	// Clear the decision state
+	// Advance to the next group AFTER consolidation succeeds
+	// This is critical - without this, checkAndAdvanceGroup() would detect
+	// the partial failure again and re-prompt the user
 	c.mu.Lock()
+	session.CurrentGroup++
 	session.GroupDecision = nil
 	c.mu.Unlock()
 
@@ -1884,7 +1898,8 @@ func (c *Coordinator) RetryFailedTasks() error {
 		delete(session.TaskToInstance, taskID)
 	}
 
-	// Roll back group advancement
+	// Ensure we stay at the current group (should already be at groupIdx)
+	// and clear the decision state so tasks can be retried
 	session.CurrentGroup = groupIdx
 	session.GroupDecision = nil
 	c.mu.Unlock()
