@@ -484,16 +484,10 @@ func (c *Coordinator) monitorTaskInstance(taskID, instanceID string, completionC
 				completionChan <- result
 				return
 
-			case StatusWaitingInput:
-				// Task is waiting at prompt without writing completion file.
-				// This could be the old behavior or a task that got stuck.
-				// Stop the instance to free up resources.
-				_ = c.orch.StopInstance(inst)
-
-				// Verify work was done before marking as success
-				result := c.verifyTaskWork(taskID, inst)
-				completionChan <- result
-				return
+			// Note: StatusWaitingInput is intentionally NOT treated as completion.
+			// The sentinel file (.claudio-task-complete.json) is the primary completion signal.
+			// StatusWaitingInput can trigger too early from Claude Code's UI elements,
+			// causing tasks to be marked failed before they complete their work.
 
 			case StatusError, StatusTimeout, StatusStuck:
 				completionChan <- taskCompletion{
