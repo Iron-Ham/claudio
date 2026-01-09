@@ -5,6 +5,50 @@ All notable changes to Claudio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-01-09
+
+First release featuring **UltraPlan mode** - an experimental planning and execution orchestration system for complex multi-task projects. While still having some rough edges, UltraPlan enables Claude to break down large projects into coordinated tasks, execute them in parallel across isolated worktrees, and consolidate the results into stacked PRs.
+
+### Added
+
+#### UltraPlan Mode
+- **Planning Phase**: Claude analyzes your project request and creates a structured execution plan with task groups and dependencies
+- **Execution Phase**: Tasks run in parallel across Git worktrees with real-time progress tracking
+- **Synthesis Phase**: Results from each group are synthesized with visibility in the sidebar
+- **Revision Phase**: Intermediate review step between synthesis and consolidation
+- **Consolidation Phase**: Claude-driven consolidation creates stacked PRs from completed work
+
+#### UltraPlan Features
+- **Multi-session Support**: Run concurrent ultraplan sessions (#104)
+- **Task Navigation**: Navigate between tasks during execution with keyboard shortcuts (#87)
+- **Auto-proceed**: Automatically advance after plan detection (#85)
+- **Audible Notifications**: Bell alerts when user input is needed (#107)
+- **Per-group Consolidator Sessions**: Each group gets its own consolidation session (#120)
+- **Sentinel Files**: Robust task completion detection using sentinel files across all phases (#115, #116)
+- **Incremental Group Consolidation**: Preserves context while consolidating (#113)
+
+### Fixed
+
+#### UltraPlan Reliability
+- Gracefully shutdown consolidator after completion file detection (#130)
+- Handle notes field as string or array in completion files (#122)
+- Prevent repeated bell notifications during group decision (#121)
+- Show selection indicator for completed tasks (#119)
+- Prevent premature task verification from false completion detection (#118)
+- Stop treating StatusWaitingInput as task completion (#117)
+- Verify task commits before marking complete (#114)
+- Enforce group boundaries before starting next-phase tasks (#111)
+- Prevent consolidation from firing before synthesis completes (#109)
+- Properly detect task completion in ultraplan mode (#90)
+- Detect task completion when waiting for input (#89)
+- Skip blocked tasks during navigation (#88)
+
+#### TUI Improvements
+- Handle Enter key sent as rune in task input (#112)
+- Show phase-appropriate progress in header (#106)
+- Limit task display to 5 lines to prevent vertical clipping (#86)
+- Reduce default tmux height for better visibility (#84)
+
 ## [0.1.0] - 2026-01-08
 
 Initial release of Claudio - a CLI/TUI orchestration tool for running multiple Claude Code instances simultaneously using Git worktrees.
@@ -89,4 +133,5 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.2.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.1.0
