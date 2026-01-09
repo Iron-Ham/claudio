@@ -627,6 +627,23 @@ func (c *Consolidator) buildPRContent(groupIdx int) *PRContent {
 		body.WriteString(taskContext.FormatForPR())
 	}
 
+	// Add synthesis review context if available
+	if c.session.SynthesisCompletion != nil {
+		synth := c.session.SynthesisCompletion
+		if synth.IntegrationNotes != "" || len(synth.Recommendations) > 0 {
+			body.WriteString("\n## Synthesis Review Notes\n\n")
+			if synth.IntegrationNotes != "" {
+				body.WriteString(fmt.Sprintf("**Integration Notes**: %s\n\n", synth.IntegrationNotes))
+			}
+			if len(synth.Recommendations) > 0 {
+				body.WriteString("**Recommendations**:\n")
+				for _, rec := range synth.Recommendations {
+					body.WriteString(fmt.Sprintf("- %s\n", rec))
+				}
+			}
+		}
+	}
+
 	return &PRContent{Title: title, Body: body.String()}
 }
 

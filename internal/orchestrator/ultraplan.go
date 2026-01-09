@@ -228,6 +228,9 @@ type UltraPlanSession struct {
 	// Revision state (persisted for recovery and display)
 	Revision *RevisionState `json:"revision,omitempty"`
 
+	// Synthesis completion context (populated from sentinel file)
+	SynthesisCompletion *SynthesisCompletionFile `json:"synthesis_completion,omitempty"`
+
 	// Task worktree information for consolidation context
 	TaskWorktrees []TaskWorktreeInfo `json:"task_worktrees,omitempty"`
 
@@ -811,6 +814,125 @@ func ParseTaskCompletionFile(worktreePath string) (*TaskCompletionFile, error) {
 	return &completion, nil
 }
 
+// SynthesisCompletionFileName is the sentinel file that synthesis writes when complete
+const SynthesisCompletionFileName = ".claudio-synthesis-complete.json"
+
+// SynthesisCompletionFile represents the completion report from the synthesis phase
+type SynthesisCompletionFile struct {
+	Status           string          `json:"status"`            // "complete", "needs_revision"
+	RevisionRound    int             `json:"revision_round"`    // Current round (0 for first synthesis)
+	IssuesFound      []RevisionIssue `json:"issues_found"`      // All issues identified
+	TasksAffected    []string        `json:"tasks_affected"`    // Task IDs needing revision
+	IntegrationNotes string          `json:"integration_notes"` // Free-form observations about integration
+	Recommendations  []string        `json:"recommendations"`   // Suggestions for consolidation phase
+}
+
+// SynthesisCompletionFilePath returns the full path to the synthesis completion file
+func SynthesisCompletionFilePath(worktreePath string) string {
+	return filepath.Join(worktreePath, SynthesisCompletionFileName)
+}
+
+// ParseSynthesisCompletionFile reads and parses a synthesis completion file
+func ParseSynthesisCompletionFile(worktreePath string) (*SynthesisCompletionFile, error) {
+	completionPath := SynthesisCompletionFilePath(worktreePath)
+	data, err := os.ReadFile(completionPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var completion SynthesisCompletionFile
+	if err := json.Unmarshal(data, &completion); err != nil {
+		return nil, fmt.Errorf("failed to parse synthesis completion JSON: %w", err)
+	}
+
+	return &completion, nil
+}
+
+// RevisionCompletionFileName is the sentinel file that revision tasks write when complete
+const RevisionCompletionFileName = ".claudio-revision-complete.json"
+
+// RevisionCompletionFile represents the completion report from a revision task
+type RevisionCompletionFile struct {
+	TaskID          string   `json:"task_id"`
+	RevisionRound   int      `json:"revision_round"`
+	IssuesAddressed []string `json:"issues_addressed"`  // Issue descriptions that were fixed
+	Summary         string   `json:"summary"`           // What was changed
+	FilesModified   []string `json:"files_modified"`
+	RemainingIssues []string `json:"remaining_issues"`  // Issues that couldn't be fixed
+}
+
+// RevisionCompletionFilePath returns the full path to the revision completion file
+func RevisionCompletionFilePath(worktreePath string) string {
+	return filepath.Join(worktreePath, RevisionCompletionFileName)
+}
+
+// ParseRevisionCompletionFile reads and parses a revision completion file
+func ParseRevisionCompletionFile(worktreePath string) (*RevisionCompletionFile, error) {
+	completionPath := RevisionCompletionFilePath(worktreePath)
+	data, err := os.ReadFile(completionPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var completion RevisionCompletionFile
+	if err := json.Unmarshal(data, &completion); err != nil {
+		return nil, fmt.Errorf("failed to parse revision completion JSON: %w", err)
+	}
+
+	return &completion, nil
+}
+
+// ConsolidationCompletionFileName is the sentinel file that consolidation writes when complete
+const ConsolidationCompletionFileName = ".claudio-consolidation-complete.json"
+
+// ConsolidationCompletionFile represents the completion report from consolidation
+type ConsolidationCompletionFile struct {
+	Status           string                     `json:"status"` // "complete", "partial", "failed"
+	Mode             string                     `json:"mode"`   // "stacked" or "single"
+	GroupResults     []GroupConsolidationInfo   `json:"group_results"`
+	PRsCreated       []PRInfo                   `json:"prs_created"`
+	SynthesisContext *SynthesisCompletionFile   `json:"synthesis_context,omitempty"`
+	TotalCommits     int                        `json:"total_commits"`
+	FilesChanged     []string                   `json:"files_changed"`
+}
+
+// GroupConsolidationInfo holds info about a consolidated group
+type GroupConsolidationInfo struct {
+	GroupIndex    int      `json:"group_index"`
+	BranchName    string   `json:"branch_name"`
+	TasksIncluded []string `json:"tasks_included"`
+	CommitCount   int      `json:"commit_count"`
+	Success       bool     `json:"success"`
+}
+
+// PRInfo holds information about a created PR
+type PRInfo struct {
+	URL        string `json:"url"`
+	Title      string `json:"title"`
+	GroupIndex int    `json:"group_index"`
+}
+
+// ConsolidationCompletionFilePath returns the full path to the consolidation completion file
+func ConsolidationCompletionFilePath(worktreePath string) string {
+	return filepath.Join(worktreePath, ConsolidationCompletionFileName)
+}
+
+// ParseConsolidationCompletionFile reads and parses a consolidation completion file
+func ParseConsolidationCompletionFile(worktreePath string) (*ConsolidationCompletionFile, error) {
+	completionPath := ConsolidationCompletionFilePath(worktreePath)
+	data, err := os.ReadFile(completionPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var completion ConsolidationCompletionFile
+	if err := json.Unmarshal(data, &completion); err != nil {
+		return nil, fmt.Errorf("failed to parse consolidation completion JSON: %w", err)
+	}
+
+	return &completion, nil
+}
+
 // PlanningPromptTemplate is the prompt used for the planning phase
 const PlanningPromptTemplate = `You are a senior software architect planning a complex task.
 
@@ -864,32 +986,37 @@ const SynthesisPromptTemplate = `You are reviewing the results of a parallel exe
 3. **Verify** that all pieces work together correctly
 4. **Check** for any missing functionality or incomplete implementations
 
-## Output Format
+## Completion Protocol
 
-After your review, you MUST output your findings in a structured format.
+When your review is complete, you MUST write a completion file to signal the orchestrator:
 
-If there are issues that need to be addressed, output them in a <revision_issues> block:
+1. Use Write tool to create ` + "`" + SynthesisCompletionFileName + "`" + ` in your worktree root
+2. Include this JSON structure:
+` + "```json" + `
+{
+  "status": "complete",
+  "revision_round": %d,
+  "issues_found": [
+    {
+      "task_id": "task-id-here",
+      "description": "Clear description of the issue",
+      "files": ["file1.go", "file2.go"],
+      "severity": "critical|major|minor",
+      "suggestion": "How to fix this issue"
+    }
+  ],
+  "tasks_affected": ["task-1", "task-2"],
+  "integration_notes": "Observations about how the pieces integrate",
+  "recommendations": ["Suggestions for the consolidation phase"]
+}
+` + "```" + `
 
-<revision_issues>
-[
-  {
-    "task_id": "task-id-here",
-    "description": "Clear description of the issue",
-    "files": ["file1.go", "file2.go"],
-    "severity": "critical|major|minor",
-    "suggestion": "How to fix this issue"
-  }
-]
-</revision_issues>
+3. Set status to "needs_revision" if critical/major issues require fixing, "complete" otherwise
+4. Leave issues_found as empty array [] if no issues found
+5. Include integration_notes with observations about cross-task integration
+6. Add recommendations for the consolidation phase (merge order, potential conflicts, etc.)
 
-If there are NO issues and the work is complete, output:
-
-<revision_issues>
-[]
-</revision_issues>
-
-IMPORTANT: You MUST always include a <revision_issues> block, even if empty.
-After the issues block, provide a summary of what was accomplished.`
+This file signals that your review is done and provides context for subsequent phases.`
 
 // RevisionPromptTemplate is the prompt used for the revision phase
 // It instructs Claude to fix the identified issues in a specific task's worktree
@@ -902,6 +1029,7 @@ const RevisionPromptTemplate = `You are addressing issues identified during revi
 - Task ID: %s
 - Task Title: %s
 - Original Description: %s
+- Revision Round: %d
 
 ## Issues to Address
 %s
@@ -919,7 +1047,26 @@ All previous changes from this task are already present.
 
 Focus only on addressing the identified issues. Do not refactor or make other changes unless directly related to fixing the issues.
 
-When complete, summarize what you fixed.`
+## Completion Protocol
+
+When your revision is complete, you MUST write a completion file:
+
+1. Use Write tool to create ` + "`" + RevisionCompletionFileName + "`" + ` in your worktree root
+2. Include this JSON structure:
+` + "```json" + `
+{
+  "task_id": "%s",
+  "revision_round": %d,
+  "issues_addressed": ["Description of issue 1 that was fixed", "Description of issue 2"],
+  "summary": "Brief summary of the changes made",
+  "files_modified": ["file1.go", "file2.go"],
+  "remaining_issues": ["Any issues that could not be fixed"]
+}
+` + "```" + `
+
+3. List all issues you successfully addressed in issues_addressed
+4. Leave remaining_issues empty if all issues were fixed
+5. This file signals that your revision is done`
 
 // ConsolidationPromptTemplate is the prompt used for the consolidation phase
 // This prompts Claude to consolidate task branches into group branches and create PRs
@@ -939,6 +1086,10 @@ const ConsolidationPromptTemplate = `You are consolidating completed ultraplan t
 
 ## Task Worktree Details
 The following are the exact worktree paths for each completed task. Use these paths to review the work if needed:
+%s
+
+## Synthesis Review Context
+The following is context from the synthesis review phase:
 %s
 
 ## Instructions
@@ -973,7 +1124,43 @@ Title: "ultraplan: group N - <objective summary>" (for stacked) or "ultraplan: <
 Body should include:
 - The objective
 - Which tasks are included
+- Integration notes from synthesis review (if any)
 - For stacked PRs: note the merge order dependency
 
-### On Completion
-Report the URLs of all created PRs.`
+## Completion Protocol
+
+When consolidation is complete, you MUST write a completion file:
+
+1. Use Write tool to create ` + "`" + ConsolidationCompletionFileName + "`" + ` in your worktree root
+2. Include this JSON structure:
+` + "```json" + `
+{
+  "status": "complete",
+  "mode": "%s",
+  "group_results": [
+    {
+      "group_index": 0,
+      "branch_name": "branch-name",
+      "tasks_included": ["task-1", "task-2"],
+      "commit_count": 5,
+      "success": true
+    }
+  ],
+  "prs_created": [
+    {
+      "url": "https://github.com/owner/repo/pull/123",
+      "title": "PR title",
+      "group_index": 0
+    }
+  ],
+  "total_commits": 10,
+  "files_changed": ["file1.go", "file2.go"]
+}
+` + "```" + `
+
+3. Set status to "complete" if all PRs were created successfully
+4. Set status to "partial" if some PRs failed to create
+5. Set status to "failed" if consolidation could not complete
+6. List all PR URLs in prs_created array
+
+This file signals that consolidation is done and provides a record of the PRs created.`

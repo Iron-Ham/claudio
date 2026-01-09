@@ -509,26 +509,34 @@ func (c *Coordinator) monitorTaskInstance(taskID, instanceID string, completionC
 }
 
 // checkForTaskCompletionFile checks if the task has written its completion sentinel file
+// This checks for both regular task completion (.claudio-task-complete.json) and
+// revision task completion (.claudio-revision-complete.json) since both use this monitor
 func (c *Coordinator) checkForTaskCompletionFile(inst *Instance) bool {
 	if inst.WorktreePath == "" {
 		return false
 	}
 
-	completionPath := TaskCompletionFilePath(inst.WorktreePath)
-	if _, err := os.Stat(completionPath); err != nil {
-		return false // File doesn't exist yet
+	// First check for regular task completion file
+	taskCompletionPath := TaskCompletionFilePath(inst.WorktreePath)
+	if _, err := os.Stat(taskCompletionPath); err == nil {
+		// File exists - try to parse it to ensure it's valid
+		completion, err := ParseTaskCompletionFile(inst.WorktreePath)
+		if err == nil && completion.Status != "" {
+			return true
+		}
 	}
 
-	// File exists - try to parse it to ensure it's valid
-	completion, err := ParseTaskCompletionFile(inst.WorktreePath)
-	if err != nil {
-		// File exists but is invalid/incomplete - might still be writing
-		return false
+	// Also check for revision completion file (revision tasks write this instead)
+	revisionCompletionPath := RevisionCompletionFilePath(inst.WorktreePath)
+	if _, err := os.Stat(revisionCompletionPath); err == nil {
+		// File exists - try to parse it to ensure it's valid
+		completion, err := ParseRevisionCompletionFile(inst.WorktreePath)
+		if err == nil && completion.TaskID != "" {
+			return true
+		}
 	}
 
-	// File is valid - check status
-	// Accept any status as "completion" - even "blocked" or "failed" means task is done
-	return completion.Status != ""
+	return false
 }
 
 // verifyTaskWork checks if a task produced actual commits and determines success/retry
@@ -823,6 +831,13 @@ func (c *Coordinator) monitorSynthesisInstance(instanceID string) {
 				return
 			}
 
+			// Check for sentinel file first - this is the most reliable completion signal
+			// The synthesis agent writes .claudio-synthesis-complete.json when done
+			if c.checkForSynthesisCompletionFile(inst) {
+				c.onSynthesisComplete()
+				return
+			}
+
 			switch inst.Status {
 			case StatusCompleted:
 				// Synthesis fully completed - trigger consolidation or finish
@@ -848,12 +863,41 @@ func (c *Coordinator) monitorSynthesisInstance(instanceID string) {
 	}
 }
 
+// checkForSynthesisCompletionFile checks if the synthesis completion sentinel file exists and is valid
+func (c *Coordinator) checkForSynthesisCompletionFile(inst *Instance) bool {
+	if inst.WorktreePath == "" {
+		return false
+	}
+
+	completionPath := SynthesisCompletionFilePath(inst.WorktreePath)
+	if _, err := os.Stat(completionPath); err != nil {
+		return false // File doesn't exist yet
+	}
+
+	// File exists - try to parse it to ensure it's valid
+	completion, err := ParseSynthesisCompletionFile(inst.WorktreePath)
+	if err != nil {
+		// File exists but is invalid/incomplete - might still be writing
+		return false
+	}
+
+	// File is valid - check status is set
+	return completion.Status != ""
+}
+
 // onSynthesisComplete handles synthesis completion and triggers revision or consolidation
 func (c *Coordinator) onSynthesisComplete() {
 	session := c.Session()
 
-	// Try to parse revision issues from synthesis output
-	issues := c.parseRevisionIssues()
+	// Try to parse synthesis completion from sentinel file (preferred) or stdout (fallback)
+	synthesisCompletion, issues := c.parseRevisionIssues()
+
+	// Store synthesis completion for later use in consolidation
+	if synthesisCompletion != nil {
+		c.mu.Lock()
+		session.SynthesisCompletion = synthesisCompletion
+		c.mu.Unlock()
+	}
 
 	// Filter to only critical/major issues that need revision
 	var issuesNeedingRevision []RevisionIssue
@@ -889,36 +933,46 @@ func (c *Coordinator) onSynthesisComplete() {
 	c.proceedToConsolidationOrComplete()
 }
 
-// parseRevisionIssues extracts revision issues from the synthesis instance output
-func (c *Coordinator) parseRevisionIssues() []RevisionIssue {
+// parseRevisionIssues extracts revision issues from the synthesis completion file (preferred)
+// or falls back to parsing stdout output. Returns the full completion struct (if available) and issues.
+func (c *Coordinator) parseRevisionIssues() (*SynthesisCompletionFile, []RevisionIssue) {
 	session := c.Session()
 	if session.SynthesisID == "" {
-		return nil
+		return nil, nil
 	}
 
 	inst := c.orch.GetInstance(session.SynthesisID)
 	if inst == nil {
-		return nil
+		return nil, nil
 	}
 
-	// Get the output from the instance manager
+	// First, try to read from the sentinel file (preferred method)
+	if inst.WorktreePath != "" {
+		completion, err := ParseSynthesisCompletionFile(inst.WorktreePath)
+		if err == nil && completion != nil {
+			// Successfully parsed sentinel file - return the full completion and issues
+			return completion, completion.IssuesFound
+		}
+	}
+
+	// Fallback: parse revision issues from stdout (legacy method)
 	mgr := c.orch.instances[inst.ID]
 	if mgr == nil {
-		return nil
+		return nil, nil
 	}
 
 	outputBytes := mgr.GetOutput()
 	if len(outputBytes) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	issues, err := ParseRevisionIssuesFromOutput(string(outputBytes))
 	if err != nil {
 		// Log but don't fail - just proceed without revision
-		return nil
+		return nil, nil
 	}
 
-	return issues
+	return nil, issues
 }
 
 // captureTaskWorktreeInfo captures worktree information for all completed tasks
@@ -1107,12 +1161,21 @@ func (c *Coordinator) buildRevisionPrompt(task *PlannedTask) string {
 		issuesStr.WriteString("\n")
 	}
 
+	// Get current revision round (default to 1 if not set)
+	revisionRound := 1
+	if session.Revision != nil {
+		revisionRound = session.Revision.RevisionRound + 1
+	}
+
 	return fmt.Sprintf(RevisionPromptTemplate,
 		session.Objective,
 		task.ID,
 		task.Title,
 		task.Description,
+		revisionRound,
 		issuesStr.String(),
+		task.ID,       // For completion file JSON
+		revisionRound, // For completion file JSON
 	)
 }
 
@@ -1335,6 +1398,29 @@ func (c *Coordinator) buildConsolidationPrompt() string {
 		worktreeInfo.WriteString("\nYou do NOT need to cherry-pick individual task branches - just create PRs from these consolidated branches.\n")
 	}
 
+	// Build synthesis context from the synthesis completion file
+	var synthesisContext strings.Builder
+	if session.SynthesisCompletion != nil {
+		synthesisContext.WriteString(fmt.Sprintf("Status: %s\n", session.SynthesisCompletion.Status))
+		if session.SynthesisCompletion.IntegrationNotes != "" {
+			synthesisContext.WriteString(fmt.Sprintf("Integration Notes: %s\n", session.SynthesisCompletion.IntegrationNotes))
+		}
+		if len(session.SynthesisCompletion.Recommendations) > 0 {
+			synthesisContext.WriteString("Recommendations:\n")
+			for _, rec := range session.SynthesisCompletion.Recommendations {
+				synthesisContext.WriteString(fmt.Sprintf("- %s\n", rec))
+			}
+		}
+		if len(session.SynthesisCompletion.IssuesFound) > 0 {
+			synthesisContext.WriteString(fmt.Sprintf("Issues Found: %d\n", len(session.SynthesisCompletion.IssuesFound)))
+			for _, issue := range session.SynthesisCompletion.IssuesFound {
+				synthesisContext.WriteString(fmt.Sprintf("- [%s] %s\n", issue.Severity, issue.Description))
+			}
+		}
+	} else {
+		synthesisContext.WriteString("No synthesis context available (synthesis may have used legacy mode)\n")
+	}
+
 	return fmt.Sprintf(ConsolidationPromptTemplate,
 		session.Objective,
 		branchPrefix,
@@ -1343,6 +1429,8 @@ func (c *Coordinator) buildConsolidationPrompt() string {
 		createDrafts,
 		groupsInfo.String(),
 		worktreeInfo.String(),
+		synthesisContext.String(),
+		mode, // For completion file JSON
 	)
 }
 
@@ -1506,7 +1594,13 @@ func (c *Coordinator) buildSynthesisPrompt() string {
 		resultsSummary.WriteString("\n")
 	}
 
-	return fmt.Sprintf(SynthesisPromptTemplate, session.Objective, taskList.String(), resultsSummary.String())
+	// Get current revision round (0 for first synthesis)
+	revisionRound := 0
+	if session.Revision != nil {
+		revisionRound = session.Revision.RevisionRound
+	}
+
+	return fmt.Sprintf(SynthesisPromptTemplate, session.Objective, taskList.String(), resultsSummary.String(), revisionRound)
 }
 
 // Cancel cancels the ultra-plan execution
