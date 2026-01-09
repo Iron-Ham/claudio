@@ -17,6 +17,7 @@ type UltraPlanPhase string
 
 const (
 	PhasePlanning      UltraPlanPhase = "planning"
+	PhasePlanSelection UltraPlanPhase = "plan_selection" // Multi-pass: comparing and selecting best plan
 	PhaseRefresh       UltraPlanPhase = "context_refresh"
 	PhaseExecuting     UltraPlanPhase = "executing"
 	PhaseSynthesis     UltraPlanPhase = "synthesis"
