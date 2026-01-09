@@ -197,8 +197,15 @@ func (c *Coordinator) notifyComplete(success bool, summary string) {
 
 // RunPlanning executes the planning phase
 // This creates a coordinator instance that explores the codebase and generates a plan
+// If MultiPass is enabled, it spawns three coordinators with different strategies
 func (c *Coordinator) RunPlanning() error {
 	session := c.Session()
+
+	// Check if multi-pass planning is enabled
+	if session.Config.MultiPass {
+		return c.RunMultiPassPlanning()
+	}
+
 	c.notifyPhaseChange(PhasePlanning)
 
 	// Create the planning prompt
@@ -220,6 +227,406 @@ func (c *Coordinator) RunPlanning() error {
 	// Wait for the instance to complete
 	// The TUI will handle monitoring; here we just set up the session state
 	return nil
+}
+
+// RunMultiPassPlanning executes multi-pass planning with three coordinators.
+// Each coordinator uses a different strategy to create a plan:
+// - maximize-parallelism: Optimizes for maximum parallel execution
+// - minimize-complexity: Optimizes for simplicity and clarity
+// - balanced-approach: Balances parallelism, complexity, and dependencies
+func (c *Coordinator) RunMultiPassPlanning() error {
+	session := c.Session()
+	c.notifyPhaseChange(PhasePlanning)
+
+	// Create three coordinator instances with different strategies
+	for i, strategyPrompt := range MultiPassPlanningPrompts {
+		prompt := GetMultiPassPlanningPrompt(strategyPrompt.Strategy, session.Objective)
+
+		inst, err := c.orch.AddInstance(c.baseSession, prompt)
+		if err != nil {
+			return fmt.Errorf("failed to create planning instance %d (%s): %w", i, strategyPrompt.Strategy, err)
+		}
+
+		session.PlanCoordinatorIDs = append(session.PlanCoordinatorIDs, inst.ID)
+
+		if err := c.orch.StartInstance(inst); err != nil {
+			return fmt.Errorf("failed to start planning instance %d (%s): %w", i, strategyPrompt.Strategy, err)
+		}
+
+		// Emit event for TUI to track progress
+		c.manager.emitEvent(CoordinatorEvent{
+			Type:      EventTaskStarted,
+			InstanceID: inst.ID,
+			PlanIndex: i,
+			Strategy:  strategyPrompt.Strategy,
+			Message:   fmt.Sprintf("Started planning coordinator %d: %s", i+1, strategyPrompt.Description),
+		})
+	}
+
+	// Monitor all three instances for completion
+	c.wg.Add(1)
+	go c.monitorMultiPassPlanningInstances()
+
+	return nil
+}
+
+// monitorMultiPassPlanningInstances monitors all three planning instances and collects their plans.
+// When all instances complete, it transitions to PhasePlanSelection.
+func (c *Coordinator) monitorMultiPassPlanningInstances() {
+	defer c.wg.Done()
+
+	session := c.Session()
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	// Track which instances have completed
+	completedPlans := make(map[string]*PlanSpec) // instanceID -> plan
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+
+		case <-ticker.C:
+			// Check each planning instance
+			for i, instanceID := range session.PlanCoordinatorIDs {
+				// Skip if already processed
+				if _, done := completedPlans[instanceID]; done {
+					continue
+				}
+
+				inst := c.orch.GetInstance(instanceID)
+				if inst == nil {
+					// Instance gone - mark as failed with nil plan
+					completedPlans[instanceID] = nil
+					continue
+				}
+
+				// Check for plan file in the instance's worktree
+				if inst.WorktreePath != "" {
+					planPath := PlanFilePath(inst.WorktreePath)
+					if _, err := os.Stat(planPath); err == nil {
+						// Plan file exists - try to parse it
+						plan, err := ParsePlanFromFile(planPath, session.Objective)
+						if err == nil && plan != nil {
+							completedPlans[instanceID] = plan
+
+							// Stop the instance since planning is done
+							_ = c.orch.StopInstance(inst)
+
+							// Emit event for this plan
+							strategy := ""
+							if i < len(MultiPassPlanningPrompts) {
+								strategy = MultiPassPlanningPrompts[i].Strategy
+							}
+							c.manager.emitEvent(CoordinatorEvent{
+								Type:       EventMultiPassPlanGenerated,
+								InstanceID: instanceID,
+								PlanIndex:  i,
+								Strategy:   strategy,
+								Message:    fmt.Sprintf("Plan %d (%s) generated with %d tasks", i+1, strategy, len(plan.Tasks)),
+							})
+						}
+					}
+				}
+
+				// Also check instance status for errors
+				switch inst.Status {
+				case StatusError, StatusTimeout, StatusStuck:
+					// Mark as failed
+					completedPlans[instanceID] = nil
+
+					strategy := ""
+					if i < len(MultiPassPlanningPrompts) {
+						strategy = MultiPassPlanningPrompts[i].Strategy
+					}
+					c.manager.emitEvent(CoordinatorEvent{
+						Type:       EventMultiPassPlanGenerated,
+						InstanceID: instanceID,
+						PlanIndex:  i,
+						Strategy:   strategy,
+						Message:    fmt.Sprintf("Plan %d (%s) failed: %s", i+1, strategy, inst.Status),
+					})
+				}
+			}
+
+			// Check if all instances have completed
+			if len(completedPlans) >= len(session.PlanCoordinatorIDs) {
+				// All planning instances are done - collect plans and transition
+				c.onAllPlansGenerated(completedPlans)
+				return
+			}
+		}
+	}
+}
+
+// onAllPlansGenerated handles completion of all multi-pass planning instances.
+// It stores the candidate plans and transitions to PhasePlanSelection.
+func (c *Coordinator) onAllPlansGenerated(completedPlans map[string]*PlanSpec) {
+	session := c.Session()
+
+	// Collect plans in order (matching PlanCoordinatorIDs order)
+	c.mu.Lock()
+	session.CandidatePlans = make([]*PlanSpec, 0, len(session.PlanCoordinatorIDs))
+	validPlanCount := 0
+	for _, instanceID := range session.PlanCoordinatorIDs {
+		plan := completedPlans[instanceID]
+		session.CandidatePlans = append(session.CandidatePlans, plan)
+		if plan != nil {
+			validPlanCount++
+		}
+	}
+	c.mu.Unlock()
+
+	// Emit event that all plans are generated
+	c.manager.emitEvent(CoordinatorEvent{
+		Type:    EventAllPlansGenerated,
+		Message: fmt.Sprintf("All %d planning coordinators completed (%d valid plans)", len(session.PlanCoordinatorIDs), validPlanCount),
+	})
+
+	// Check if we have any valid plans
+	if validPlanCount == 0 {
+		// All plans failed - transition to failed state
+		c.mu.Lock()
+		session.Phase = PhaseFailed
+		session.Error = "all planning coordinators failed to produce a plan"
+		c.mu.Unlock()
+		_ = c.orch.SaveSession()
+		c.notifyComplete(false, session.Error)
+		return
+	}
+
+	// If only one valid plan, use it directly
+	if validPlanCount == 1 {
+		for i, plan := range session.CandidatePlans {
+			if plan != nil {
+				c.mu.Lock()
+				session.SelectedPlanIndex = i
+				c.mu.Unlock()
+
+				// Set the plan and transition to refresh phase
+				if err := c.SetPlan(plan); err != nil {
+					c.mu.Lock()
+					session.Phase = PhaseFailed
+					session.Error = fmt.Sprintf("failed to set plan: %v", err)
+					c.mu.Unlock()
+					_ = c.orch.SaveSession()
+					c.notifyComplete(false, session.Error)
+					return
+				}
+
+				c.manager.emitEvent(CoordinatorEvent{
+					Type:      EventPlanSelected,
+					PlanIndex: i,
+					Strategy:  MultiPassPlanningPrompts[i].Strategy,
+					Message:   fmt.Sprintf("Only one valid plan available - selected plan %d (%s)", i+1, MultiPassPlanningPrompts[i].Strategy),
+				})
+				return
+			}
+		}
+	}
+
+	// Multiple valid plans - transition to plan selection phase
+	c.notifyPhaseChange(PhasePlanSelection)
+
+	// Emit event that plan selection has started
+	c.manager.emitEvent(CoordinatorEvent{
+		Type:    EventPlanSelectionStarted,
+		Message: fmt.Sprintf("Evaluating %d candidate plans", validPlanCount),
+	})
+
+	// Start the plan manager coordinator to evaluate and select/merge plans
+	if err := c.startPlanManagerCoordinator(); err != nil {
+		c.mu.Lock()
+		session.Phase = PhaseFailed
+		session.Error = fmt.Sprintf("failed to start plan manager: %v", err)
+		c.mu.Unlock()
+		_ = c.orch.SaveSession()
+		c.notifyComplete(false, session.Error)
+	}
+}
+
+// startPlanManagerCoordinator creates and starts the coordinator-manager instance
+// that evaluates all candidate plans and selects or merges the best one.
+func (c *Coordinator) startPlanManagerCoordinator() error {
+	session := c.Session()
+
+	// Build the plans summary for the prompt
+	var plansSummary strings.Builder
+	for i, plan := range session.CandidatePlans {
+		if plan == nil {
+			plansSummary.WriteString(fmt.Sprintf("### Plan %d (%s): FAILED\n\n", i+1, MultiPassPlanningPrompts[i].Strategy))
+			continue
+		}
+
+		plansSummary.WriteString(fmt.Sprintf("### Plan %d: %s\n", i+1, MultiPassPlanningPrompts[i].Strategy))
+		plansSummary.WriteString(fmt.Sprintf("**Summary**: %s\n\n", plan.Summary))
+		plansSummary.WriteString(fmt.Sprintf("**Tasks** (%d total):\n", len(plan.Tasks)))
+		for _, task := range plan.Tasks {
+			deps := "none"
+			if len(task.DependsOn) > 0 {
+				deps = strings.Join(task.DependsOn, ", ")
+			}
+			plansSummary.WriteString(fmt.Sprintf("- `%s`: %s (complexity: %s, depends: %s)\n",
+				task.ID, task.Title, task.EstComplexity, deps))
+		}
+		plansSummary.WriteString(fmt.Sprintf("\n**Execution Groups**: %d parallel groups\n", len(plan.ExecutionOrder)))
+		for gi, group := range plan.ExecutionOrder {
+			plansSummary.WriteString(fmt.Sprintf("  - Group %d: %s\n", gi+1, strings.Join(group, ", ")))
+		}
+		if len(plan.Insights) > 0 {
+			plansSummary.WriteString("\n**Insights**:\n")
+			for _, insight := range plan.Insights {
+				plansSummary.WriteString(fmt.Sprintf("- %s\n", insight))
+			}
+		}
+		if len(plan.Constraints) > 0 {
+			plansSummary.WriteString("\n**Constraints**:\n")
+			for _, constraint := range plan.Constraints {
+				plansSummary.WriteString(fmt.Sprintf("- %s\n", constraint))
+			}
+		}
+		plansSummary.WriteString("\n---\n\n")
+	}
+
+	// Create the prompt using PlanManagerPromptTemplate
+	prompt := fmt.Sprintf(PlanManagerPromptTemplate, session.Objective, plansSummary.String())
+
+	// Create the plan manager instance
+	inst, err := c.orch.AddInstance(c.baseSession, prompt)
+	if err != nil {
+		return fmt.Errorf("failed to create plan manager instance: %w", err)
+	}
+
+	c.mu.Lock()
+	session.PlanManagerID = inst.ID
+	c.mu.Unlock()
+
+	// Start the instance
+	if err := c.orch.StartInstance(inst); err != nil {
+		return fmt.Errorf("failed to start plan manager instance: %w", err)
+	}
+
+	// Monitor the plan manager for completion
+	c.wg.Add(1)
+	go c.monitorPlanManagerInstance(inst.ID)
+
+	return nil
+}
+
+// monitorPlanManagerInstance monitors the plan manager and handles its completion.
+func (c *Coordinator) monitorPlanManagerInstance(instanceID string) {
+	defer c.wg.Done()
+
+	session := c.Session()
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+
+		case <-ticker.C:
+			inst := c.orch.GetInstance(instanceID)
+			if inst == nil {
+				c.onPlanManagerFailed("plan manager instance not found")
+				return
+			}
+
+			// Check for plan file in the instance's worktree
+			if inst.WorktreePath != "" {
+				planPath := PlanFilePath(inst.WorktreePath)
+				if _, err := os.Stat(planPath); err == nil {
+					// Plan file exists - parse it
+					plan, err := ParsePlanFromFile(planPath, session.Objective)
+					if err != nil {
+						// Plan file exists but is invalid - keep waiting
+						continue
+					}
+
+					// Stop the instance
+					_ = c.orch.StopInstance(inst)
+
+					// Try to parse the decision from the output
+					c.onPlanManagerComplete(plan, inst)
+					return
+				}
+			}
+
+			// Check instance status for errors
+			switch inst.Status {
+			case StatusError, StatusTimeout, StatusStuck:
+				c.onPlanManagerFailed(fmt.Sprintf("plan manager failed: %s", inst.Status))
+				return
+			}
+		}
+	}
+}
+
+// onPlanManagerComplete handles successful completion of the plan manager.
+func (c *Coordinator) onPlanManagerComplete(plan *PlanSpec, inst *Instance) {
+	session := c.Session()
+
+	// Try to parse the decision from the instance output
+	var decision *PlanDecision
+	if mgr := c.orch.GetInstanceManager(inst.ID); mgr != nil {
+		outputBytes := mgr.GetOutput()
+		if len(outputBytes) > 0 {
+			decision, _ = ParsePlanDecisionFromOutput(string(outputBytes))
+		}
+	}
+
+	// Record the decision
+	c.mu.Lock()
+	if decision != nil {
+		session.SelectedPlanIndex = decision.SelectedIndex
+	} else {
+		session.SelectedPlanIndex = -1 // Unknown/merged
+	}
+	c.mu.Unlock()
+
+	// Emit selection event
+	eventMsg := "Plan selected by coordinator-manager"
+	if decision != nil {
+		if decision.Action == "select" {
+			eventMsg = fmt.Sprintf("Selected plan %d (%s): %s",
+				decision.SelectedIndex+1,
+				MultiPassPlanningPrompts[decision.SelectedIndex].Strategy,
+				decision.Reasoning)
+		} else {
+			eventMsg = fmt.Sprintf("Merged best elements from multiple plans: %s", decision.Reasoning)
+		}
+	}
+
+	c.manager.emitEvent(CoordinatorEvent{
+		Type:      EventPlanSelected,
+		PlanIndex: session.SelectedPlanIndex,
+		Message:   eventMsg,
+	})
+
+	// Set the final plan
+	if err := c.SetPlan(plan); err != nil {
+		c.mu.Lock()
+		session.Phase = PhaseFailed
+		session.Error = fmt.Sprintf("failed to set final plan: %v", err)
+		c.mu.Unlock()
+		_ = c.orch.SaveSession()
+		c.notifyComplete(false, session.Error)
+	}
+}
+
+// onPlanManagerFailed handles plan manager failure.
+func (c *Coordinator) onPlanManagerFailed(reason string) {
+	session := c.Session()
+
+	c.mu.Lock()
+	session.Phase = PhaseFailed
+	session.Error = reason
+	c.mu.Unlock()
+
+	_ = c.orch.SaveSession()
+	c.notifyComplete(false, reason)
 }
 
 // SetPlan sets the plan for this ultra-plan session (used after planning completes)
