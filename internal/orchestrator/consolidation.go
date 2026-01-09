@@ -587,14 +587,30 @@ func (c *Consolidator) buildPRContent(groupIdx int) *PRContent {
 		}
 	}
 
-	// Tasks included
+	// Tasks included with summaries from completion files
 	body.WriteString("## Tasks Included\n\n")
+	var taskIDs []string
 	if groupIdx < len(c.session.Plan.ExecutionOrder) {
-		for _, taskID := range c.session.Plan.ExecutionOrder[groupIdx] {
-			task := c.session.GetTask(taskID)
-			if task != nil {
-				body.WriteString(fmt.Sprintf("- **%s**: %s\n", task.ID, task.Title))
+		taskIDs = c.session.Plan.ExecutionOrder[groupIdx]
+	} else if c.config.Mode == ModeSinglePR {
+		// Single mode: all tasks
+		for _, group := range c.session.Plan.ExecutionOrder {
+			taskIDs = append(taskIDs, group...)
+		}
+	}
+
+	// Gather completion context for these tasks
+	taskContext := c.gatherTaskCompletionContext(taskIDs)
+
+	for _, taskID := range taskIDs {
+		task := c.session.GetTask(taskID)
+		if task != nil {
+			taskLine := fmt.Sprintf("- **%s**: %s", task.ID, task.Title)
+			// Add summary from completion file if available
+			if summary, ok := taskContext.TaskSummaries[taskID]; ok && summary != "" {
+				taskLine += fmt.Sprintf("\n  - %s", summary)
 			}
+			body.WriteString(taskLine + "\n")
 		}
 	}
 
@@ -604,6 +620,11 @@ func (c *Consolidator) buildPRContent(groupIdx int) *PRContent {
 		for _, f := range c.results[groupIdx].FilesChanged {
 			body.WriteString(fmt.Sprintf("- `%s`\n", f))
 		}
+	}
+
+	// Add aggregated context from task completion files
+	if taskContext.HasContent() {
+		body.WriteString(taskContext.FormatForPR())
 	}
 
 	return &PRContent{Title: title, Body: body.String()}
@@ -718,6 +739,120 @@ type ConflictError struct {
 
 func (e *ConflictError) Error() string {
 	return fmt.Sprintf("conflict merging task %s from branch %s: %v", e.TaskID, e.Branch, e.Underlying)
+}
+
+// gatherTaskCompletionContext reads completion files from all completed task worktrees
+// and aggregates the context for use in consolidation prompts and PR descriptions
+func (c *Consolidator) gatherTaskCompletionContext(taskIDs []string) *AggregatedTaskContext {
+	context := &AggregatedTaskContext{
+		TaskSummaries: make(map[string]string),
+		AllIssues:     make([]string, 0),
+		AllSuggestions: make([]string, 0),
+		Dependencies:  make([]string, 0),
+	}
+
+	seenDeps := make(map[string]bool)
+
+	for _, taskID := range taskIDs {
+		// Find the instance for this task
+		var inst *Instance
+		for _, i := range c.baseSession.Instances {
+			if strings.Contains(i.Task, taskID) || c.matchTaskToInstance(taskID, i) {
+				inst = i
+				break
+			}
+		}
+		if inst == nil || inst.WorktreePath == "" {
+			continue
+		}
+
+		// Try to read the completion file
+		completion, err := ParseTaskCompletionFile(inst.WorktreePath)
+		if err != nil {
+			continue // No completion file or invalid
+		}
+
+		// Store task summary
+		context.TaskSummaries[taskID] = completion.Summary
+
+		// Aggregate issues (prefix with task ID for context)
+		for _, issue := range completion.Issues {
+			if issue != "" {
+				context.AllIssues = append(context.AllIssues, fmt.Sprintf("[%s] %s", taskID, issue))
+			}
+		}
+
+		// Aggregate suggestions
+		for _, suggestion := range completion.Suggestions {
+			if suggestion != "" {
+				context.AllSuggestions = append(context.AllSuggestions, fmt.Sprintf("[%s] %s", taskID, suggestion))
+			}
+		}
+
+		// Aggregate dependencies (deduplicated)
+		for _, dep := range completion.Dependencies {
+			if dep != "" && !seenDeps[dep] {
+				seenDeps[dep] = true
+				context.Dependencies = append(context.Dependencies, dep)
+			}
+		}
+
+		// Collect notes
+		if completion.Notes != "" {
+			context.Notes = append(context.Notes, fmt.Sprintf("**%s**: %s", taskID, completion.Notes))
+		}
+	}
+
+	return context
+}
+
+// AggregatedTaskContext holds the aggregated context from all task completion files
+type AggregatedTaskContext struct {
+	TaskSummaries  map[string]string // taskID -> summary
+	AllIssues      []string          // All issues from all tasks
+	AllSuggestions []string          // All suggestions from all tasks
+	Dependencies   []string          // Deduplicated list of new dependencies
+	Notes          []string          // Implementation notes from all tasks
+}
+
+// HasContent returns true if there is any aggregated context worth displaying
+func (a *AggregatedTaskContext) HasContent() bool {
+	return len(a.AllIssues) > 0 || len(a.AllSuggestions) > 0 || len(a.Dependencies) > 0 || len(a.Notes) > 0
+}
+
+// FormatForPR formats the aggregated context for inclusion in a PR description
+func (a *AggregatedTaskContext) FormatForPR() string {
+	var sb strings.Builder
+
+	if len(a.Notes) > 0 {
+		sb.WriteString("\n## Implementation Notes\n\n")
+		for _, note := range a.Notes {
+			sb.WriteString(fmt.Sprintf("- %s\n", note))
+		}
+	}
+
+	if len(a.AllIssues) > 0 {
+		sb.WriteString("\n## Issues/Concerns Flagged\n\n")
+		for _, issue := range a.AllIssues {
+			sb.WriteString(fmt.Sprintf("- %s\n", issue))
+		}
+	}
+
+	if len(a.AllSuggestions) > 0 {
+		sb.WriteString("\n## Integration Suggestions\n\n")
+		for _, suggestion := range a.AllSuggestions {
+			sb.WriteString(fmt.Sprintf("- %s\n", suggestion))
+		}
+	}
+
+	if len(a.Dependencies) > 0 {
+		sb.WriteString("\n## New Dependencies\n\n")
+		for _, dep := range a.Dependencies {
+			sb.WriteString(fmt.Sprintf("- `%s`\n", dep))
+		}
+	}
+
+	return sb.String()
 }
 
 // Helper functions
