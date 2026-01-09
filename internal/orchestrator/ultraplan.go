@@ -208,6 +208,11 @@ type UltraPlanSession struct {
 	// Task worktree information for consolidation context
 	TaskWorktrees []TaskWorktreeInfo `json:"task_worktrees,omitempty"`
 
+	// Per-group consolidated branches: index -> branch name
+	// After each group completes, parallel task branches are merged into one consolidated branch
+	// The next group's tasks use this consolidated branch as their base
+	GroupConsolidatedBranches []string `json:"group_consolidated_branches,omitempty"`
+
 	// Consolidation results (persisted for recovery and display)
 	Consolidation *ConsolidationState `json:"consolidation,omitempty"`
 	PRUrls        []string            `json:"pr_urls,omitempty"`
