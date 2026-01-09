@@ -118,6 +118,8 @@ type ResourceConfig struct {
 
 // UltraplanConfig controls ultraplan behavior
 type UltraplanConfig struct {
+	// MaxParallel is the maximum number of concurrent child sessions (default: 3)
+	MaxParallel int `mapstructure:"max_parallel"`
 	// Notifications controls audio notifications for user input
 	Notifications NotificationConfig `mapstructure:"notifications"`
 }
@@ -179,6 +181,7 @@ func Default() *Config {
 			ShowMetricsInSidebar:  true,  // Show metrics by default
 		},
 		Ultraplan: UltraplanConfig{
+			MaxParallel: 3,
 			Notifications: NotificationConfig{
 				Enabled:   true,
 				UseSound:  false,
@@ -250,6 +253,7 @@ func SetDefaults() {
 	viper.SetDefault("resources.show_metrics_in_sidebar", defaults.Resources.ShowMetricsInSidebar)
 
 	// Ultraplan defaults
+	viper.SetDefault("ultraplan.max_parallel", defaults.Ultraplan.MaxParallel)
 	viper.SetDefault("ultraplan.notifications.enabled", defaults.Ultraplan.Notifications.Enabled)
 	viper.SetDefault("ultraplan.notifications.use_sound", defaults.Ultraplan.Notifications.UseSound)
 	viper.SetDefault("ultraplan.notifications.sound_path", defaults.Ultraplan.Notifications.SoundPath)

@@ -73,7 +73,7 @@ func init() {
 	rootCmd.AddCommand(ultraplanCmd)
 
 	ultraplanCmd.Flags().StringVar(&ultraplanPlanFile, "plan", "", "Use existing plan file instead of planning phase")
-	ultraplanCmd.Flags().IntVar(&ultraplanMaxParallel, "max-parallel", 3, "Maximum concurrent child sessions")
+	ultraplanCmd.Flags().IntVar(&ultraplanMaxParallel, "max-parallel", 3, "Maximum concurrent child sessions (0 = unlimited)")
 	ultraplanCmd.Flags().BoolVar(&ultraplanDryRun, "dry-run", false, "Run planning only, output plan without executing")
 	ultraplanCmd.Flags().BoolVar(&ultraplanNoSynthesis, "no-synthesis", false, "Skip synthesis phase after execution")
 	ultraplanCmd.Flags().BoolVar(&ultraplanAutoApprove, "auto-approve", false, "Auto-approve spawned tasks without confirmation")
@@ -124,13 +124,20 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to start session: %w", err)
 	}
 
-	// Create ultra-plan configuration from defaults, then override with flags
-	config := orchestrator.DefaultUltraPlanConfig()
-	config.MaxParallel = ultraplanMaxParallel
-	config.DryRun = ultraplanDryRun
-	config.NoSynthesis = ultraplanNoSynthesis
-	config.AutoApprove = ultraplanAutoApprove
-	config.Review = ultraplanReview
+	// Create ultra-plan configuration from defaults, then override with config file, then flags
+	ultraConfig := orchestrator.DefaultUltraPlanConfig()
+
+	// Apply config file settings (viper default is 3, user can set to 0 for unlimited)
+	ultraConfig.MaxParallel = cfg.Ultraplan.MaxParallel
+
+	// CLI flags override config file (only if explicitly set)
+	if cmd.Flags().Changed("max-parallel") {
+		ultraConfig.MaxParallel = ultraplanMaxParallel
+	}
+	ultraConfig.DryRun = ultraplanDryRun
+	ultraConfig.NoSynthesis = ultraplanNoSynthesis
+	ultraConfig.AutoApprove = ultraplanAutoApprove
+	ultraConfig.Review = ultraplanReview
 
 	// Create or load the plan
 	var plan *orchestrator.PlanSpec
@@ -143,7 +150,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create ultra-plan session
-	ultraSession := orchestrator.NewUltraPlanSession(objective, config)
+	ultraSession := orchestrator.NewUltraPlanSession(objective, ultraConfig)
 	if plan != nil {
 		ultraSession.Plan = plan
 		ultraSession.Phase = orchestrator.PhaseRefresh // Skip to refresh if plan provided

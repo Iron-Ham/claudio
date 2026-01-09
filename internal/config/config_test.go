@@ -255,3 +255,27 @@ func TestConfig_ResourceConfig_Values(t *testing.T) {
 		t.Errorf("TokenLimitPerInstance should not be negative, got %d", cfg.Resources.TokenLimitPerInstance)
 	}
 }
+
+func TestConfig_UltraplanConfig_Values(t *testing.T) {
+	cfg := Default()
+
+	// MaxParallel should default to 3
+	if cfg.Ultraplan.MaxParallel != 3 {
+		t.Errorf("Ultraplan.MaxParallel = %d, want 3", cfg.Ultraplan.MaxParallel)
+	}
+
+	// Notifications should be enabled by default
+	if !cfg.Ultraplan.Notifications.Enabled {
+		t.Error("Ultraplan.Notifications.Enabled should be true by default")
+	}
+
+	// UseSound should be disabled by default
+	if cfg.Ultraplan.Notifications.UseSound {
+		t.Error("Ultraplan.Notifications.UseSound should be false by default")
+	}
+
+	// SoundPath should be empty by default
+	if cfg.Ultraplan.Notifications.SoundPath != "" {
+		t.Errorf("Ultraplan.Notifications.SoundPath should be empty, got %q", cfg.Ultraplan.Notifications.SoundPath)
+	}
+}

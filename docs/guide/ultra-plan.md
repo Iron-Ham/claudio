@@ -50,7 +50,7 @@ claudio ultraplan [objective] [flags]
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--max-parallel` | Maximum concurrent child sessions | 3 |
+| `--max-parallel` | Maximum concurrent child sessions (0 = unlimited) | 3 |
 | `--plan` | Use existing plan file instead of planning phase | - |
 | `--dry-run` | Run planning only, output plan without executing | false |
 | `--no-synthesis` | Skip synthesis phase after execution | false |

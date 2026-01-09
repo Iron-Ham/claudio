@@ -208,6 +208,34 @@ resources:
 
 ---
 
+### ultraplan
+
+Controls ultra-plan mode behavior.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `ultraplan.max_parallel` | int | `3` | Maximum concurrent child sessions (0 = unlimited) |
+| `ultraplan.notifications.enabled` | bool | `true` | Play notifications when user input needed |
+| `ultraplan.notifications.use_sound` | bool | `false` | Use system sound (macOS only) |
+| `ultraplan.notifications.sound_path` | string | `""` | Custom sound file path (macOS only) |
+
+**Why limit parallelism?**
+- Anthropic API rate limits can throttle many parallel requests
+- Each parallel session incurs API costs
+- More sessions = higher merge conflict risk during consolidation
+- Easier to monitor fewer concurrent sessions
+
+```yaml
+ultraplan:
+  max_parallel: 3
+  notifications:
+    enabled: true
+    use_sound: false
+    sound_path: ""
+```
+
+---
+
 ## Environment Variables
 
 All options can be set via environment variables:
@@ -224,6 +252,7 @@ Replace dots with underscores and use uppercase:
 | `pr.draft` | `CLAUDIO_PR_DRAFT` |
 | `pr.use_ai` | `CLAUDIO_PR_USE_AI` |
 | `resources.cost_limit` | `CLAUDIO_RESOURCES_COST_LIMIT` |
+| `ultraplan.max_parallel` | `CLAUDIO_ULTRAPLAN_MAX_PARALLEL` |
 
 **Priority:** Environment variables override config file values.
 
@@ -280,6 +309,13 @@ resources:
   cost_limit: 0
   token_limit_per_instance: 0
   show_metrics_in_sidebar: true
+
+# Ultra-plan settings
+ultraplan:
+  max_parallel: 3
+  notifications:
+    enabled: true
+    use_sound: false
 ```
 
 ---
