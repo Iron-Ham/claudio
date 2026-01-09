@@ -1,0 +1,75 @@
+# Task: Implement plan editor keyboard handling
+
+## Part of Ultra-Plan: Implement an interactive plan editor TUI that allows users to review and modify ultraplan execution plans before proceeding to execution. This feature introduces a new 'review' phase between planning and execution.
+
+## Your Task
+
+Add keyboard handling for the plan editor in internal/tui/planeditor.go. Create a `handlePlanEditorKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd)` function that handles:
+
+1. Navigation (when not editing a field):
+   - `j`/`down` - move to next task
+   - `k`/`up` - move to previous task
+   - `g` - jump to first task
+   - `G` - jump to last task
+   - `tab` - cycle through tasks
+
+2. Task operations:
+   - `enter` - start editing selected task's description
+   - `t` - edit task title
+   - `d` - edit task description
+   - `f` - edit files list (comma-separated)
+   - `p` - edit priority (number input)
+   - `c` - cycle complexity (low/medium/high)
+   - `x` - edit dependencies (comma-separated task IDs)
+   - `D` - delete task (with confirmation)
+   - `n` - add new task after current
+   - `J` - move task down (swap with next)
+   - `K` - move task up (swap with previous)
+
+3. Edit mode (when editing a field):
+   - Standard text input handling (typing, backspace, delete)
+   - `escape` - cancel edit and restore original value
+   - `enter` - confirm edit and save
+   - Arrow keys for cursor movement
+   - `ctrl+a` - select all / move to start
+   - `ctrl+e` - move to end
+
+4. Global:
+   - `q`/`escape` (when not editing) - exit plan editor without changes
+   - `e`/`enter` (when not editing and on footer) - confirm plan and start execution
+   - `s` - save current edits to plan file
+
+Follow keyboard handling patterns from handleUltraPlanKeypress in ultraplan.go.
+
+## Expected Files
+
+You are expected to work with these files:
+- internal/tui/planeditor.go
+
+## Guidelines
+
+- Focus only on this specific task
+- Do not modify files outside of your assigned scope unless necessary
+- Commit your changes before writing the completion file
+
+## Completion Protocol
+
+When your task is complete, you MUST write a completion file to signal the orchestrator:
+
+1. Use Write tool to create `.claudio-task-complete.json` in your worktree root
+2. Include this JSON structure:
+```json
+{
+  "task_id": "task-3-plan-editor-keys",
+  "status": "complete",
+  "summary": "Brief description of what you accomplished",
+  "files_modified": ["list", "of", "files", "you", "changed"],
+  "notes": "Any implementation notes for the consolidation phase",
+  "issues": ["Any concerns or blocking issues found"],
+  "suggestions": ["Suggestions for integration with other tasks"],
+  "dependencies": ["Any new runtime dependencies added"]
+}
+```
+
+3. Use status "blocked" if you cannot complete (explain in issues), or "failed" if something broke
+4. This file signals that your work is done and provides context for consolidation
