@@ -234,6 +234,67 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 	b.WriteString("\n")
 	lineCount++
 
+	// ========== PLAN SELECTION SECTION (for multi-pass planning) ==========
+	// Only show this section if multi-pass planning is being used (detected by presence of
+	// PlanCoordinatorIDs, PlanManagerID, or being in PhasePlanSelection)
+	isMultiPassPlanning := len(session.PlanCoordinatorIDs) > 0 ||
+		session.PlanManagerID != "" ||
+		session.Phase == orchestrator.PhasePlanSelection
+
+	if isMultiPassPlanning && lineCount < availableLines {
+		selStatus := m.getPhaseSectionStatus(orchestrator.PhasePlanSelection, session)
+		selHeader := fmt.Sprintf("▼ PLAN SELECTION %s", selStatus)
+
+		switch session.Phase {
+		case orchestrator.PhasePlanSelection:
+			b.WriteString(styles.SidebarTitle.Render(selHeader))
+		case orchestrator.PhasePlanning:
+			b.WriteString(styles.Muted.Render(selHeader))
+		default:
+			b.WriteString(styles.SidebarTitle.Render(selHeader))
+		}
+		b.WriteString("\n")
+		lineCount++
+
+		// Show plan selection status with more detail
+		switch session.Phase {
+		case orchestrator.PhasePlanning:
+			// Still planning - show pending status
+			b.WriteString(styles.Muted.Render("  ○ Awaiting candidate plans"))
+		case orchestrator.PhasePlanSelection:
+			// Actively comparing plans
+			numCandidates := len(session.CandidatePlans)
+			if numCandidates > 0 {
+				b.WriteString(styles.Muted.Render(fmt.Sprintf("  ⟳ Comparing %d plans...", numCandidates)))
+			} else {
+				b.WriteString(styles.Muted.Render("  ⟳ Comparing plans..."))
+			}
+		default:
+			// Plan selected - show which one if available
+			if session.SelectedPlanIndex >= 0 {
+				b.WriteString(styles.Muted.Render(fmt.Sprintf("  ✓ Plan %d selected", session.SelectedPlanIndex+1)))
+			} else {
+				b.WriteString(styles.Muted.Render("  ✓ Best plan selected"))
+			}
+		}
+		b.WriteString("\n")
+		lineCount++
+
+		// Show plan manager instance if present
+		if session.PlanManagerID != "" && lineCount < availableLines {
+			inst := m.orchestrator.GetInstance(session.PlanManagerID)
+			selected := m.isInstanceSelected(session.PlanManagerID)
+			navigable := inst != nil && inst.Status != orchestrator.StatusPending
+			line := m.renderPhaseInstanceLine(inst, "Plan Manager", selected, navigable, width-4)
+			b.WriteString(line)
+			b.WriteString("\n")
+			lineCount++
+		}
+
+		b.WriteString("\n")
+		lineCount++
+	}
+
 	// ========== EXECUTION SECTION ==========
 	if session.Plan != nil && lineCount < availableLines {
 		executionStarted := session.Phase == orchestrator.PhaseExecuting ||
@@ -796,6 +857,22 @@ func (m *Model) getNavigableInstances() []string {
 		inst := m.orchestrator.GetInstance(session.CoordinatorID)
 		if inst != nil && inst.Status != orchestrator.StatusPending {
 			instances = append(instances, session.CoordinatorID)
+		}
+	}
+
+	// Plan Selection (multi-pass) - plan coordinators and plan manager
+	for _, coordID := range session.PlanCoordinatorIDs {
+		if coordID != "" {
+			inst := m.orchestrator.GetInstance(coordID)
+			if inst != nil && inst.Status != orchestrator.StatusPending {
+				instances = append(instances, coordID)
+			}
+		}
+	}
+	if session.PlanManagerID != "" {
+		inst := m.orchestrator.GetInstance(session.PlanManagerID)
+		if inst != nil && inst.Status != orchestrator.StatusPending {
+			instances = append(instances, session.PlanManagerID)
 		}
 	}
 
