@@ -1162,6 +1162,42 @@ func (m Model) renderPlanView(width int) string {
 	plan := session.Plan
 	var b strings.Builder
 
+	// Multi-pass planning source header (if applicable)
+	if session.Config.MultiPass && len(session.CandidatePlans) > 0 {
+		b.WriteString(styles.SidebarTitle.Render("Plan Source"))
+		b.WriteString("\n")
+
+		if session.SelectedPlanIndex == -1 {
+			// Merged plan
+			mergedStyle := lipgloss.NewStyle().Foreground(styles.PurpleColor)
+			b.WriteString(mergedStyle.Render("⚡ Merged from multiple strategies"))
+			b.WriteString("\n")
+			// List the strategies that contributed
+			strategyNames := orchestrator.GetMultiPassStrategyNames()
+			contributingStrategies := []string{}
+			for i := range session.CandidatePlans {
+				if i < len(strategyNames) {
+					contributingStrategies = append(contributingStrategies, strategyNames[i])
+				}
+			}
+			if len(contributingStrategies) > 0 {
+				b.WriteString(styles.Muted.Render("  Combined: " + strings.Join(contributingStrategies, ", ")))
+				b.WriteString("\n")
+			}
+		} else if session.SelectedPlanIndex >= 0 {
+			// Selected a specific strategy's plan
+			strategyNames := orchestrator.GetMultiPassStrategyNames()
+			strategyName := "unknown"
+			if session.SelectedPlanIndex < len(strategyNames) {
+				strategyName = strategyNames[session.SelectedPlanIndex]
+			}
+			selectedStyle := lipgloss.NewStyle().Foreground(styles.GreenColor)
+			b.WriteString(selectedStyle.Render(fmt.Sprintf("✓ Strategy: %s (selected)", strategyName)))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+
 	// Plan summary
 	b.WriteString(styles.SidebarTitle.Render("Plan Summary"))
 	b.WriteString("\n\n")

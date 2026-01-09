@@ -1,0 +1,46 @@
+# Task: Update plan view to show multi-pass decision info
+
+## Part of Ultra-Plan: Implement multi-pass planning orchestration that spawns three parallel coordinators with different strategies, then uses a coordinator-manager to select or merge the best plan. The infrastructure (config, session state, prompts, events) already exists - we need to wire up the orchestration logic.
+
+## Your Task
+
+Modify `renderPlanView()` in `internal/tui/ultraplan.go` to show multi-pass decision context when available:
+
+1. If `session.SelectedPlanIndex >= 0`, show which strategy was selected
+2. If `session.SelectedPlanIndex == -1` (merged), indicate it was a merged plan
+3. Add a small header section like:
+   - "Plan Source: maximize-parallelism (selected)" OR
+   - "Plan Source: merged from multiple strategies"
+
+## Expected Files
+
+You are expected to work with these files:
+- internal/tui/ultraplan.go
+
+## Guidelines
+
+- Focus only on this specific task
+- Do not modify files outside of your assigned scope unless necessary
+- Commit your changes before writing the completion file
+
+## Completion Protocol
+
+When your task is complete, you MUST write a completion file to signal the orchestrator:
+
+1. Use Write tool to create `.claudio-task-complete.json` in your worktree root
+2. Include this JSON structure:
+```json
+{
+  "task_id": "task-10-tui-plan-view-multipass",
+  "status": "complete",
+  "summary": "Brief description of what you accomplished",
+  "files_modified": ["list", "of", "files", "you", "changed"],
+  "notes": "Any implementation notes for the consolidation phase",
+  "issues": ["Any concerns or blocking issues found"],
+  "suggestions": ["Suggestions for integration with other tasks"],
+  "dependencies": ["Any new runtime dependencies added"]
+}
+```
+
+3. Use status "blocked" if you cannot complete (explain in issues), or "failed" if something broke
+4. This file signals that your work is done and provides context for consolidation
