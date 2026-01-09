@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/worktree"
 	"github.com/spf13/cobra"
 )
 
@@ -27,14 +28,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	// Check if we're in a git repository
-	gitDir := filepath.Join(cwd, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-		return fmt.Errorf("not a git repository (no .git directory found)")
+	// Find the git repository root (may be in a parent directory)
+	repoRoot, err := worktree.FindGitRoot(cwd)
+	if err != nil {
+		return fmt.Errorf("not a git repository (or any parent up to mount point)")
 	}
 
-	// Initialize orchestrator
-	orch, err := orchestrator.New(cwd)
+	// Initialize orchestrator using the repo root
+	orch, err := orchestrator.New(repoRoot)
 	if err != nil {
 		return fmt.Errorf("failed to create orchestrator: %w", err)
 	}
@@ -44,6 +45,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("Claudio initialized successfully!")
-	fmt.Printf("Session directory: %s\n", filepath.Join(cwd, ".claudio"))
+	fmt.Printf("Session directory: %s\n", filepath.Join(repoRoot, ".claudio"))
 	return nil
 }
