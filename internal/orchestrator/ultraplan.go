@@ -239,6 +239,14 @@ type UltraPlanSession struct {
 	// The next group's tasks use this consolidated branch as their base
 	GroupConsolidatedBranches []string `json:"group_consolidated_branches,omitempty"`
 
+	// Per-group consolidator instance IDs: index -> instance ID
+	// Each group has a dedicated Claude session that consolidates its task branches
+	GroupConsolidatorIDs []string `json:"group_consolidator_ids,omitempty"`
+
+	// Per-group consolidation contexts: index -> completion file data
+	// Stores the context from each group's consolidator to pass to the next group
+	GroupConsolidationContexts []*GroupConsolidationCompletionFile `json:"group_consolidation_contexts,omitempty"`
+
 	// Consolidation results (persisted for recovery and display)
 	Consolidation *ConsolidationState `json:"consolidation,omitempty"`
 	PRUrls        []string            `json:"pr_urls,omitempty"`
@@ -928,6 +936,67 @@ func ParseConsolidationCompletionFile(worktreePath string) (*ConsolidationComple
 	var completion ConsolidationCompletionFile
 	if err := json.Unmarshal(data, &completion); err != nil {
 		return nil, fmt.Errorf("failed to parse consolidation completion JSON: %w", err)
+	}
+
+	return &completion, nil
+}
+
+// GroupConsolidationCompletionFileName is the sentinel file that per-group consolidators write when complete
+const GroupConsolidationCompletionFileName = ".claudio-group-consolidation-complete.json"
+
+// ConflictResolution describes how a merge conflict was resolved
+type ConflictResolution struct {
+	File       string `json:"file"`       // File that had the conflict
+	Resolution string `json:"resolution"` // Description of how it was resolved
+}
+
+// VerificationResult holds the results of build/lint/test verification
+// The consolidator determines appropriate commands based on project type
+type VerificationResult struct {
+	ProjectType  string             `json:"project_type,omitempty"` // Detected: "go", "node", "ios", "python", etc.
+	CommandsRun  []VerificationStep `json:"commands_run"`
+	OverallSuccess bool             `json:"overall_success"`
+	Summary      string             `json:"summary,omitempty"` // Brief summary of verification outcome
+}
+
+// VerificationStep represents a single verification command and its result
+type VerificationStep struct {
+	Name    string `json:"name"`    // e.g., "build", "lint", "test"
+	Command string `json:"command"` // Actual command run
+	Success bool   `json:"success"`
+	Output  string `json:"output,omitempty"` // Truncated output on failure
+}
+
+// GroupConsolidationCompletionFile is written by the per-group consolidator session
+// when it finishes consolidating a group's task branches
+type GroupConsolidationCompletionFile struct {
+	GroupIndex         int                    `json:"group_index"`
+	Status             string                 `json:"status"` // "complete", "failed"
+	BranchName         string                 `json:"branch_name"`
+	TasksConsolidated  []string               `json:"tasks_consolidated"`
+	ConflictsResolved  []ConflictResolution   `json:"conflicts_resolved,omitempty"`
+	Verification       VerificationResult     `json:"verification"`
+	AggregatedContext  *AggregatedTaskContext `json:"aggregated_context,omitempty"`
+	Notes              string                 `json:"notes,omitempty"`               // Consolidator's observations
+	IssuesForNextGroup []string               `json:"issues_for_next_group,omitempty"` // Warnings/concerns to pass forward
+}
+
+// GroupConsolidationCompletionFilePath returns the full path to the group consolidation completion file
+func GroupConsolidationCompletionFilePath(worktreePath string) string {
+	return filepath.Join(worktreePath, GroupConsolidationCompletionFileName)
+}
+
+// ParseGroupConsolidationCompletionFile reads and parses a group consolidation completion file
+func ParseGroupConsolidationCompletionFile(worktreePath string) (*GroupConsolidationCompletionFile, error) {
+	completionPath := GroupConsolidationCompletionFilePath(worktreePath)
+	data, err := os.ReadFile(completionPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var completion GroupConsolidationCompletionFile
+	if err := json.Unmarshal(data, &completion); err != nil {
+		return nil, fmt.Errorf("failed to parse group consolidation completion JSON: %w", err)
 	}
 
 	return &completion, nil
