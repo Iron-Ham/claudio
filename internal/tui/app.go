@@ -534,7 +534,15 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Normal mode - clear info message on most actions
 	m.infoMessage = ""
 
-	// Handle ultra-plan mode specific keys first
+	// Handle plan editor mode specific keys first (highest priority in ultra-plan)
+	if m.IsPlanEditorActive() {
+		handled, model, cmd := m.handlePlanEditorKeypress(msg)
+		if handled {
+			return model, cmd
+		}
+	}
+
+	// Handle ultra-plan mode specific keys
 	if m.IsUltraPlanMode() {
 		handled, model, cmd := m.handleUltraPlanKeypress(msg)
 		if handled {
@@ -1918,9 +1926,11 @@ func (m Model) View() string {
 		b.WriteString(styles.ErrorMsg.Render("Error: " + m.errorMessage))
 	}
 
-	// Help/status bar - use ultra-plan help if in ultra-plan mode
+	// Help/status bar - use appropriate help based on mode
 	b.WriteString("\n")
-	if m.IsUltraPlanMode() {
+	if m.IsPlanEditorActive() {
+		b.WriteString(m.renderPlanEditorHelp())
+	} else if m.IsUltraPlanMode() {
 		b.WriteString(m.renderUltraPlanHelp())
 	} else {
 		b.WriteString(m.renderHelp())

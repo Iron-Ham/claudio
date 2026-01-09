@@ -1032,6 +1032,11 @@ func (m Model) renderUltraPlanContent(width int) string {
 		return m.renderContent(width)
 	}
 
+	// If plan editor is active, render the plan editor view
+	if m.IsPlanEditorActive() && session.Plan != nil {
+		return m.renderPlanEditorView(width)
+	}
+
 	// If showing plan view, render the plan
 	if m.ultraPlan.showPlanView && session.Plan != nil {
 		return m.renderPlanView(width)
@@ -1131,6 +1136,7 @@ func (m Model) renderUltraPlanHelp() string {
 
 	case orchestrator.PhaseRefresh:
 		keys = append(keys, "[e] start execution")
+		keys = append(keys, "[E] edit plan")
 
 	case orchestrator.PhaseExecuting:
 		keys = append(keys, "[tab] next task")
@@ -1318,11 +1324,25 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 	case "e":
 		// Start execution (only during refresh phase when plan is ready)
 		if session.Phase == orchestrator.PhaseRefresh && session.Plan != nil {
+			// Validate plan before starting execution
+			validation := orchestrator.ValidatePlanForEditor(session.Plan)
+			if validation.HasErrors() {
+				m.errorMessage = fmt.Sprintf("Cannot execute: plan has %d validation error(s). Press [E] to review.", validation.ErrorCount)
+				return true, m, nil
+			}
 			if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
 				m.errorMessage = fmt.Sprintf("Failed to start execution: %v", err)
 			} else {
 				m.infoMessage = "Execution started"
 			}
+		}
+		return true, m, nil
+
+	case "E":
+		// Enter plan editor (only during refresh phase when plan is ready)
+		if session.Phase == orchestrator.PhaseRefresh && session.Plan != nil {
+			m.enterPlanEditor()
+			m.infoMessage = "Plan editor opened. Use [enter] to confirm or [esc] to cancel."
 		}
 		return true, m, nil
 
@@ -1496,7 +1516,9 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 				len(plan.Tasks), len(plan.ExecutionOrder))
 		}
 	} else {
-		m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Press [e] to execute.",
+		// Enter plan editor for interactive review
+		m.enterPlanEditor()
+		m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
 			len(plan.Tasks), len(plan.ExecutionOrder))
 		// Notify user that input is needed
 		m.ultraPlan.needsNotification = true
@@ -1575,7 +1597,9 @@ func (m *Model) checkForPlanFile() bool {
 				len(plan.Tasks), len(plan.ExecutionOrder))
 		}
 	} else {
-		m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Press [e] to execute.",
+		// Enter plan editor for interactive review
+		m.enterPlanEditor()
+		m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
 			len(plan.Tasks), len(plan.ExecutionOrder))
 		// Notify user that input is needed
 		m.ultraPlan.needsNotification = true
