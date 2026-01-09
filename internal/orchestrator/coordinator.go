@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -85,6 +86,23 @@ func (c *Coordinator) Manager() *UltraPlanManager {
 // Session returns the ultra-plan session
 func (c *Coordinator) Session() *UltraPlanSession {
 	return c.manager.Session()
+}
+
+// StoreCandidatePlan stores a candidate plan at the given index with proper mutex protection.
+// Returns the count of non-nil plans collected so far.
+func (c *Coordinator) StoreCandidatePlan(planIndex int, plan *PlanSpec) int {
+	return c.manager.StoreCandidatePlan(planIndex, plan)
+}
+
+// CountCandidatePlans returns the number of non-nil candidate plans collected.
+func (c *Coordinator) CountCandidatePlans() int {
+	return c.manager.CountCandidatePlans()
+}
+
+// CountCoordinatorsCompleted returns the number of coordinators that have completed
+// (regardless of whether they produced a valid plan or not).
+func (c *Coordinator) CountCoordinatorsCompleted() int {
+	return c.manager.CountCoordinatorsCompleted()
 }
 
 // Plan returns the current plan, if available
@@ -199,6 +217,12 @@ func (c *Coordinator) notifyComplete(success bool, summary string) {
 // This creates a coordinator instance that explores the codebase and generates a plan
 func (c *Coordinator) RunPlanning() error {
 	session := c.Session()
+
+	// Check if multi-pass planning is enabled
+	if session.Config.MultiPass {
+		return c.RunMultiPassPlanning()
+	}
+
 	c.notifyPhaseChange(PhasePlanning)
 
 	// Create the planning prompt
@@ -221,6 +245,236 @@ func (c *Coordinator) RunPlanning() error {
 	// The TUI will handle monitoring; here we just set up the session state
 	return nil
 }
+
+// RunMultiPassPlanning executes the multi-pass planning phase
+// This creates three coordinator instances in parallel, each using a different
+// planning strategy. The TUI monitors these instances and the coordinator-manager
+// will later select or merge the best plan.
+func (c *Coordinator) RunMultiPassPlanning() error {
+	session := c.Session()
+	c.notifyPhaseChange(PhasePlanning)
+
+	// Get the available strategy names
+	strategies := GetMultiPassStrategyNames()
+	if len(strategies) == 0 {
+		return fmt.Errorf("no multi-pass planning strategies available")
+	}
+
+	// Initialize the PlanCoordinatorIDs slice
+	session.PlanCoordinatorIDs = make([]string, 0, len(strategies))
+
+	// Create and start an instance for each strategy in parallel
+	for i, strategy := range strategies {
+		// Build the strategy-specific prompt
+		prompt := GetMultiPassPlanningPrompt(strategy, session.Objective)
+
+		// Create a coordinator instance for this strategy
+		inst, err := c.orch.AddInstance(c.baseSession, prompt)
+		if err != nil {
+			return fmt.Errorf("failed to create planning instance for strategy %s: %w", strategy, err)
+		}
+
+		// Store the instance ID
+		session.PlanCoordinatorIDs = append(session.PlanCoordinatorIDs, inst.ID)
+
+		// Start the instance
+		if err := c.orch.StartInstance(inst); err != nil {
+			return fmt.Errorf("failed to start planning instance for strategy %s: %w", strategy, err)
+		}
+
+		// Emit event for this planning instance
+		c.manager.emitEvent(CoordinatorEvent{
+			Type:      EventMultiPassPlanGenerated,
+			Message:   fmt.Sprintf("Started planning with strategy: %s", strategy),
+			PlanIndex: i,
+			Strategy:  strategy,
+		})
+	}
+
+	// Persist the session state with all coordinator IDs
+	_ = c.orch.SaveSession()
+
+	// Return without blocking - TUI will monitor completion of all instances
+	return nil
+}
+
+// RunPlanManager starts the plan manager (coordinator-manager) for multi-pass planning.
+// This is called after all candidate plans have been collected from the parallel planning coordinators.
+// The plan manager evaluates all plans and either selects the best one or merges them.
+func (c *Coordinator) RunPlanManager() error {
+	session := c.Session()
+
+	// Validate multi-pass mode and collected plans
+	if !session.Config.MultiPass {
+		return fmt.Errorf("RunPlanManager called but MultiPass mode is not enabled")
+	}
+
+	if len(session.CandidatePlans) < len(session.PlanCoordinatorIDs) {
+		return fmt.Errorf("not all candidate plans collected: have %d, need %d",
+			len(session.CandidatePlans), len(session.PlanCoordinatorIDs))
+	}
+
+	// Verify all plans are non-nil
+	for i, plan := range session.CandidatePlans {
+		if plan == nil {
+			return fmt.Errorf("candidate plan at index %d is nil", i)
+		}
+	}
+
+	// Transition to plan selection phase
+	c.notifyPhaseChange(PhasePlanSelection)
+
+	// Build the plan manager prompt with all candidate plans
+	prompt := c.buildPlanManagerPrompt()
+
+	// Create the plan manager instance
+	inst, err := c.orch.AddInstance(c.baseSession, prompt)
+	if err != nil {
+		return fmt.Errorf("failed to create plan manager instance: %w", err)
+	}
+
+	session.PlanManagerID = inst.ID
+
+	// Persist the state
+	_ = c.orch.SaveSession()
+
+	// Start the instance
+	if err := c.orch.StartInstance(inst); err != nil {
+		return fmt.Errorf("failed to start plan manager instance: %w", err)
+	}
+
+	// The TUI will handle monitoring and parsing the final plan from the manager
+	return nil
+}
+
+// buildPlanManagerPrompt constructs the prompt for the plan manager
+// It includes all candidate plans formatted for comparison
+func (c *Coordinator) buildPlanManagerPrompt() string {
+	session := c.Session()
+	var plansSection strings.Builder
+
+	strategyNames := GetMultiPassStrategyNames()
+	for i, plan := range session.CandidatePlans {
+		strategyName := "unknown"
+		if i < len(strategyNames) {
+			strategyName = strategyNames[i]
+		}
+
+		plansSection.WriteString(fmt.Sprintf("\n### Plan %d: %s Strategy\n\n", i+1, strategyName))
+		plansSection.WriteString(fmt.Sprintf("**Summary:** %s\n\n", plan.Summary))
+		plansSection.WriteString(fmt.Sprintf("**Tasks (%d total):**\n", len(plan.Tasks)))
+		for _, task := range plan.Tasks {
+			deps := "none"
+			if len(task.DependsOn) > 0 {
+				deps = strings.Join(task.DependsOn, ", ")
+			}
+			plansSection.WriteString(fmt.Sprintf("- [%s] %s (complexity: %s, depends: %s)\n",
+				task.ID, task.Title, task.EstComplexity, deps))
+		}
+		plansSection.WriteString(fmt.Sprintf("\n**Execution Groups:** %d parallel groups\n", len(plan.ExecutionOrder)))
+		for groupIdx, group := range plan.ExecutionOrder {
+			plansSection.WriteString(fmt.Sprintf("  - Group %d: %s\n", groupIdx+1, strings.Join(group, ", ")))
+		}
+
+		if len(plan.Insights) > 0 {
+			plansSection.WriteString("\n**Insights:**\n")
+			for _, insight := range plan.Insights {
+				plansSection.WriteString(fmt.Sprintf("- %s\n", insight))
+			}
+		}
+
+		if len(plan.Constraints) > 0 {
+			plansSection.WriteString("\n**Constraints:**\n")
+			for _, constraint := range plan.Constraints {
+				plansSection.WriteString(fmt.Sprintf("- %s\n", constraint))
+			}
+		}
+		plansSection.WriteString("\n---\n")
+	}
+
+	return fmt.Sprintf(PlanManagerPromptTemplate, session.Objective, plansSection.String())
+}
+
+// buildPlanComparisonSection formats all candidate plans for comparison by the plan manager.
+// Each plan includes its strategy name, summary, and full task list in JSON format.
+func (c *Coordinator) buildPlanComparisonSection() string {
+	session := c.Session()
+	var sb strings.Builder
+
+	strategies := GetMultiPassStrategyNames()
+
+	for i, plan := range session.CandidatePlans {
+		if plan == nil {
+			continue
+		}
+
+		// Determine strategy name (use index if out of bounds)
+		strategyName := fmt.Sprintf("strategy-%d", i+1)
+		if i < len(strategies) {
+			strategyName = strategies[i]
+		}
+
+		sb.WriteString(fmt.Sprintf("### Plan %d: %s\n\n", i+1, strategyName))
+		sb.WriteString(fmt.Sprintf("**Summary**: %s\n\n", plan.Summary))
+
+		// Task count and parallelism stats
+		sb.WriteString(fmt.Sprintf("**Task Count**: %d tasks\n", len(plan.Tasks)))
+		if len(plan.ExecutionOrder) > 0 {
+			sb.WriteString(fmt.Sprintf("**Execution Groups**: %d groups\n", len(plan.ExecutionOrder)))
+			// Calculate max parallelism (largest group)
+			maxParallel := 0
+			for _, group := range plan.ExecutionOrder {
+				if len(group) > maxParallel {
+					maxParallel = len(group)
+				}
+			}
+			sb.WriteString(fmt.Sprintf("**Max Parallelism**: %d concurrent tasks\n", maxParallel))
+		}
+		sb.WriteString("\n")
+
+		// Insights
+		if len(plan.Insights) > 0 {
+			sb.WriteString("**Insights**:\n")
+			for _, insight := range plan.Insights {
+				sb.WriteString(fmt.Sprintf("- %s\n", insight))
+			}
+			sb.WriteString("\n")
+		}
+
+		// Constraints
+		if len(plan.Constraints) > 0 {
+			sb.WriteString("**Constraints**:\n")
+			for _, constraint := range plan.Constraints {
+				sb.WriteString(fmt.Sprintf("- %s\n", constraint))
+			}
+			sb.WriteString("\n")
+		}
+
+		// Full task list in JSON format for detailed comparison
+		sb.WriteString("**Tasks (JSON)**:\n```json\n")
+		tasksJSON, err := json.MarshalIndent(plan.Tasks, "", "  ")
+		if err != nil {
+			sb.WriteString(fmt.Sprintf("Error marshaling tasks: %v\n", err))
+		} else {
+			sb.WriteString(string(tasksJSON))
+		}
+		sb.WriteString("\n```\n\n")
+
+		// Execution order visualization
+		if len(plan.ExecutionOrder) > 0 {
+			sb.WriteString("**Execution Order**:\n")
+			for groupIdx, group := range plan.ExecutionOrder {
+				sb.WriteString(fmt.Sprintf("- Group %d: %s\n", groupIdx+1, strings.Join(group, ", ")))
+			}
+			sb.WriteString("\n")
+		}
+
+		sb.WriteString("---\n\n")
+	}
+
+	return sb.String()
+}
+
 
 // SetPlan sets the plan for this ultra-plan session (used after planning completes)
 func (c *Coordinator) SetPlan(plan *PlanSpec) error {
@@ -2638,4 +2892,48 @@ func (c *Coordinator) monitorGroupConsolidator(groupIndex int, instanceID string
 			}
 		}
 	}
+}
+
+// formatCandidatePlansForManager formats candidate plans for the PlanManagerPromptTemplate.
+// Each plan is formatted with its strategy name (from MultiPassPlanningPrompts) and full JSON content.
+func formatCandidatePlansForManager(plans []*PlanSpec) string {
+	if len(plans) == 0 {
+		return "No candidate plans available."
+	}
+
+	var sb strings.Builder
+
+	for i, plan := range plans {
+		// Get the strategy name from the corresponding MultiPassPlanningPrompts entry
+		strategyName := "unknown"
+		if i < len(MultiPassPlanningPrompts) {
+			strategyName = MultiPassPlanningPrompts[i].Strategy
+		}
+
+		// Write the plan header
+		sb.WriteString(fmt.Sprintf("### Plan %d: %s\n", i+1, strategyName))
+
+		// Handle nil plan
+		if plan == nil {
+			sb.WriteString("<plan>\n")
+			sb.WriteString("null\n")
+			sb.WriteString("</plan>\n\n")
+			continue
+		}
+
+		// Marshal the plan to JSON with indentation for readability
+		planJSON, err := json.MarshalIndent(plan, "", "  ")
+		if err != nil {
+			sb.WriteString("<plan>\n")
+			sb.WriteString(fmt.Sprintf("Error marshaling plan: %v\n", err))
+			sb.WriteString("</plan>\n\n")
+			continue
+		}
+
+		sb.WriteString("<plan>\n")
+		sb.WriteString(string(planJSON))
+		sb.WriteString("\n</plan>\n\n")
+	}
+
+	return strings.TrimSuffix(sb.String(), "\n")
 }

@@ -208,25 +208,92 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 	}
 
 	// ========== PLANNING SECTION ==========
-	planningComplete := session.Phase != orchestrator.PhasePlanning
+	planningComplete := session.Phase != orchestrator.PhasePlanning && session.Phase != orchestrator.PhasePlanSelection
 	planningStatus := m.getPhaseSectionStatus(orchestrator.PhasePlanning, session)
 	planningHeader := fmt.Sprintf("▼ PLANNING %s", planningStatus)
 	b.WriteString(styles.SidebarTitle.Render(planningHeader))
 	b.WriteString("\n")
 	lineCount++
 
-	// Show coordinator instance
-	if session.CoordinatorID != "" && lineCount < availableLines {
-		inst := m.orchestrator.GetInstance(session.CoordinatorID)
-		selected := m.isInstanceSelected(session.CoordinatorID)
-		navigable := planningComplete || (inst != nil && inst.Status != orchestrator.StatusPending)
-		line := m.renderPhaseInstanceLine(inst, "Coordinator", selected, navigable, width-4)
-		b.WriteString(line)
-		b.WriteString("\n")
-		lineCount++
+	// Check if multi-pass mode is enabled
+	if session.Config.MultiPass {
+		// Multi-pass planning: show all 3 strategy coordinators
+		lineCount += m.renderMultiPassPlanningSection(&b, session, width, availableLines-lineCount)
+	} else {
+		// Single-pass planning: show single coordinator instance
+		if session.CoordinatorID != "" && lineCount < availableLines {
+			inst := m.orchestrator.GetInstance(session.CoordinatorID)
+			selected := m.isInstanceSelected(session.CoordinatorID)
+			navigable := planningComplete || (inst != nil && inst.Status != orchestrator.StatusPending)
+			line := m.renderPhaseInstanceLine(inst, "Coordinator", selected, navigable, width-4)
+			b.WriteString(line)
+			b.WriteString("\n")
+			lineCount++
+		}
 	}
 	b.WriteString("\n")
 	lineCount++
+
+	// ========== PLAN SELECTION SECTION (for multi-pass planning) ==========
+	// Only show this section if multi-pass planning is being used (detected by presence of
+	// PlanCoordinatorIDs, PlanManagerID, or being in PhasePlanSelection)
+	isMultiPassPlanning := len(session.PlanCoordinatorIDs) > 0 ||
+		session.PlanManagerID != "" ||
+		session.Phase == orchestrator.PhasePlanSelection
+
+	if isMultiPassPlanning && lineCount < availableLines {
+		selStatus := m.getPhaseSectionStatus(orchestrator.PhasePlanSelection, session)
+		selHeader := fmt.Sprintf("▼ PLAN SELECTION %s", selStatus)
+
+		switch session.Phase {
+		case orchestrator.PhasePlanSelection:
+			b.WriteString(styles.SidebarTitle.Render(selHeader))
+		case orchestrator.PhasePlanning:
+			b.WriteString(styles.Muted.Render(selHeader))
+		default:
+			b.WriteString(styles.SidebarTitle.Render(selHeader))
+		}
+		b.WriteString("\n")
+		lineCount++
+
+		// Show plan selection status with more detail
+		switch session.Phase {
+		case orchestrator.PhasePlanning:
+			// Still planning - show pending status
+			b.WriteString(styles.Muted.Render("  ○ Awaiting candidate plans"))
+		case orchestrator.PhasePlanSelection:
+			// Actively comparing plans
+			numCandidates := len(session.CandidatePlans)
+			if numCandidates > 0 {
+				b.WriteString(styles.Muted.Render(fmt.Sprintf("  ⟳ Comparing %d plans...", numCandidates)))
+			} else {
+				b.WriteString(styles.Muted.Render("  ⟳ Comparing plans..."))
+			}
+		default:
+			// Plan selected - show which one if available
+			if session.SelectedPlanIndex >= 0 {
+				b.WriteString(styles.Muted.Render(fmt.Sprintf("  ✓ Plan %d selected", session.SelectedPlanIndex+1)))
+			} else {
+				b.WriteString(styles.Muted.Render("  ✓ Best plan selected"))
+			}
+		}
+		b.WriteString("\n")
+		lineCount++
+
+		// Show plan manager instance if present
+		if session.PlanManagerID != "" && lineCount < availableLines {
+			inst := m.orchestrator.GetInstance(session.PlanManagerID)
+			selected := m.isInstanceSelected(session.PlanManagerID)
+			navigable := inst != nil && inst.Status != orchestrator.StatusPending
+			line := m.renderPhaseInstanceLine(inst, "Plan Manager", selected, navigable, width-4)
+			b.WriteString(line)
+			b.WriteString("\n")
+			lineCount++
+		}
+
+		b.WriteString("\n")
+		lineCount++
+	}
 
 	// ========== EXECUTION SECTION ==========
 	if session.Plan != nil && lineCount < availableLines {
@@ -811,6 +878,22 @@ func (m *Model) getNavigableInstances() []string {
 		}
 	}
 
+	// Plan Selection (multi-pass) - plan coordinators and plan manager
+	for _, coordID := range session.PlanCoordinatorIDs {
+		if coordID != "" {
+			inst := m.orchestrator.GetInstance(coordID)
+			if inst != nil && inst.Status != orchestrator.StatusPending {
+				instances = append(instances, coordID)
+			}
+		}
+	}
+	if session.PlanManagerID != "" {
+		inst := m.orchestrator.GetInstance(session.PlanManagerID)
+		if inst != nil && inst.Status != orchestrator.StatusPending {
+			instances = append(instances, session.PlanManagerID)
+		}
+	}
+
 	// Execution - navigable for tasks with instances (started or completed)
 	if session.Plan != nil {
 		// Add in execution order
@@ -1096,6 +1179,42 @@ func (m Model) renderPlanView(width int) string {
 
 	plan := session.Plan
 	var b strings.Builder
+
+	// Multi-pass planning source header (if applicable)
+	if session.Config.MultiPass && len(session.CandidatePlans) > 0 {
+		b.WriteString(styles.SidebarTitle.Render("Plan Source"))
+		b.WriteString("\n")
+
+		if session.SelectedPlanIndex == -1 {
+			// Merged plan
+			mergedStyle := lipgloss.NewStyle().Foreground(styles.PurpleColor)
+			b.WriteString(mergedStyle.Render("⚡ Merged from multiple strategies"))
+			b.WriteString("\n")
+			// List the strategies that contributed
+			strategyNames := orchestrator.GetMultiPassStrategyNames()
+			contributingStrategies := []string{}
+			for i := range session.CandidatePlans {
+				if i < len(strategyNames) {
+					contributingStrategies = append(contributingStrategies, strategyNames[i])
+				}
+			}
+			if len(contributingStrategies) > 0 {
+				b.WriteString(styles.Muted.Render("  Combined: " + strings.Join(contributingStrategies, ", ")))
+				b.WriteString("\n")
+			}
+		} else if session.SelectedPlanIndex >= 0 {
+			// Selected a specific strategy's plan
+			strategyNames := orchestrator.GetMultiPassStrategyNames()
+			strategyName := "unknown"
+			if session.SelectedPlanIndex < len(strategyNames) {
+				strategyName = strategyNames[session.SelectedPlanIndex]
+			}
+			selectedStyle := lipgloss.NewStyle().Foreground(styles.GreenColor)
+			b.WriteString(selectedStyle.Render(fmt.Sprintf("✓ Strategy: %s (selected)", strategyName)))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
 
 	// Plan summary
 	b.WriteString(styles.SidebarTitle.Render("Plan Summary"))
@@ -1525,6 +1644,94 @@ func (m *Model) selectTaskInstance(session *orchestrator.UltraPlanSession) {
 	m.infoMessage = fmt.Sprintf("Instance for task %s not found", task.Title)
 }
 
+// handlePlanManagerCompletion handles the plan manager instance completing in multi-pass mode.
+// The plan manager evaluates multiple candidate plans and selects or merges the best one.
+// Returns true if this was a plan manager completion that was handled.
+func (m *Model) handlePlanManagerCompletion(inst *orchestrator.Instance) bool {
+	// Not in ultra-plan mode
+	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return false
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil {
+		return false
+	}
+
+	// Only handle during plan selection phase
+	if session.Phase != orchestrator.PhasePlanSelection {
+		return false
+	}
+
+	// Check if this is the plan manager instance
+	if session.PlanManagerID != inst.ID {
+		return false
+	}
+
+	// Parse the plan decision from the output
+	output := m.outputs[inst.ID]
+	decision, err := orchestrator.ParsePlanDecisionFromOutput(output)
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Plan selection completed but failed to parse decision: %v", err)
+		m.ultraPlan.coordinator.Manager().SetPhase(orchestrator.PhaseFailed)
+		return true
+	}
+
+	// Store the decision info in the session
+	session.SelectedPlanIndex = decision.SelectedIndex
+
+	// Parse the final plan from the plan manager's worktree
+	// The plan manager writes its final choice (selected or merged) to the plan file
+	plan, err := m.tryParsePlan(inst, session)
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Plan selection completed but failed to parse final plan: %v", err)
+		m.ultraPlan.coordinator.Manager().SetPhase(orchestrator.PhaseFailed)
+		return true
+	}
+
+	// Set the plan using the coordinator (validates and transitions to PhaseRefresh)
+	if err := m.ultraPlan.coordinator.SetPlan(plan); err != nil {
+		m.errorMessage = fmt.Sprintf("Plan selection completed but plan is invalid: %v", err)
+		m.ultraPlan.coordinator.Manager().SetPhase(orchestrator.PhaseFailed)
+		return true
+	}
+
+	// Build info message based on decision type
+	var decisionDesc string
+	if decision.Action == "select" {
+		strategyNames := orchestrator.GetMultiPassStrategyNames()
+		if decision.SelectedIndex >= 0 && decision.SelectedIndex < len(strategyNames) {
+			decisionDesc = fmt.Sprintf("Selected '%s' plan", strategyNames[decision.SelectedIndex])
+		} else {
+			decisionDesc = fmt.Sprintf("Selected plan %d", decision.SelectedIndex)
+		}
+	} else {
+		decisionDesc = "Merged best elements from multiple plans"
+	}
+
+	// Determine whether to open plan editor or auto-start execution
+	// This follows the same logic as single-pass planning
+	if session.Config.Review || !session.Config.AutoApprove {
+		// Enter plan editor for interactive review
+		m.enterPlanEditor()
+		m.infoMessage = fmt.Sprintf("%s: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
+			decisionDesc, len(plan.Tasks), len(plan.ExecutionOrder))
+		// Notify user that input is needed
+		m.ultraPlan.needsNotification = true
+		m.ultraPlan.lastNotifiedPhase = orchestrator.PhaseRefresh
+	} else {
+		// Auto-start execution (AutoApprove is true and Review is false)
+		if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
+			m.errorMessage = fmt.Sprintf("%s but failed to auto-start: %v", decisionDesc, err)
+		} else {
+			m.infoMessage = fmt.Sprintf("%s: %d tasks in %d groups. Auto-starting execution...",
+				decisionDesc, len(plan.Tasks), len(plan.ExecutionOrder))
+		}
+	}
+
+	return true
+}
+
 // handleUltraPlanCoordinatorCompletion handles auto-parsing when the planning coordinator completes
 // Returns true if this was an ultra-plan coordinator completion that was handled
 func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance) bool {
@@ -1538,6 +1745,24 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 		return false
 	}
 
+	// Multi-pass mode: dispatch to specialized handlers based on phase
+	if session.Config.MultiPass {
+		// During planning phase, check if this is one of the multi-pass coordinators
+		if session.Phase == orchestrator.PhasePlanning {
+			if m.handleMultiPassCoordinatorCompletion(inst) {
+				return true
+			}
+		}
+		// During plan selection phase, check if this is the plan manager
+		if session.Phase == orchestrator.PhasePlanSelection {
+			if m.handlePlanManagerCompletion(inst) {
+				return true
+			}
+		}
+		// Fall through to single-coordinator logic for other instances/phases
+	}
+
+	// Single-pass mode (or fall-through from multi-pass for non-matching instances):
 	// Only auto-parse during planning phase
 	if session.Phase != orchestrator.PhasePlanning {
 		return false
@@ -1577,6 +1802,119 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 		} else {
 			m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Auto-starting execution...",
 				len(plan.Tasks), len(plan.ExecutionOrder))
+		}
+	}
+
+	return true
+}
+
+// handleMultiPassCoordinatorCompletion handles completion of one of the multi-pass planning coordinators.
+// In multi-pass mode, 3 parallel coordinators generate plans with different strategies.
+// This method collects each plan and triggers the plan manager when all 3 are ready.
+// Returns true if this was a multi-pass coordinator completion that was handled.
+func (m *Model) handleMultiPassCoordinatorCompletion(inst *orchestrator.Instance) bool {
+	// Not in ultra-plan mode
+	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return false
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil {
+		return false
+	}
+
+	// Check if multi-pass mode is enabled
+	if !session.Config.MultiPass {
+		return false
+	}
+
+	// Only process during planning phase
+	if session.Phase != orchestrator.PhasePlanning {
+		return false
+	}
+
+	// Check if this instance is one of the plan coordinators
+	planIndex := -1
+	for i, coordID := range session.PlanCoordinatorIDs {
+		if coordID == inst.ID {
+			planIndex = i
+			break
+		}
+	}
+
+	if planIndex == -1 {
+		// Not a multi-pass planning coordinator
+		return false
+	}
+
+	// Parse the plan from the completed instance's worktree
+	plan, parseErr := m.tryParsePlan(inst, session)
+
+	// Determine the strategy name for messages
+	strategyNames := orchestrator.GetMultiPassStrategyNames()
+	strategyName := "unknown"
+	if planIndex < len(strategyNames) {
+		strategyName = strategyNames[planIndex]
+	}
+
+	numCoordinators := len(session.PlanCoordinatorIDs)
+
+	if parseErr != nil {
+		// Store nil for failed coordinator to track completion
+		// This prevents the system from hanging forever waiting for a plan that will never arrive
+		m.ultraPlan.coordinator.StoreCandidatePlan(planIndex, nil)
+		m.errorMessage = fmt.Sprintf("Multi-pass coordinator %d (%s) failed to parse plan: %v", planIndex+1, strategyName, parseErr)
+
+		// Check if all coordinators have completed (even if some failed)
+		completedCount := m.ultraPlan.coordinator.CountCoordinatorsCompleted()
+		if completedCount >= numCoordinators {
+			// All coordinators completed - proceed with valid plans if we have any
+			validCount := m.ultraPlan.coordinator.CountCandidatePlans()
+			if validCount > 0 {
+				m.infoMessage = fmt.Sprintf("%d/%d plans collected. Starting plan evaluation with available plans...",
+					validCount, numCoordinators)
+				if err := m.ultraPlan.coordinator.RunPlanManager(); err != nil {
+					m.errorMessage = fmt.Sprintf("Failed to start plan manager: %v", err)
+				} else {
+					m.infoMessage = fmt.Sprintf("Plan manager started with %d valid plans...", validCount)
+				}
+			} else {
+				// All coordinators failed - transition to failed state
+				m.errorMessage = "All multi-pass coordinators failed to produce valid plans"
+				m.ultraPlan.coordinator.Manager().SetPhase(orchestrator.PhaseFailed)
+			}
+		}
+		return true
+	}
+
+	// Store the plan using mutex-protected method to avoid race conditions
+	collectedCount := m.ultraPlan.coordinator.StoreCandidatePlan(planIndex, plan)
+
+	m.infoMessage = fmt.Sprintf("Multi-pass plan %d/%d collected (%s): %d tasks",
+		collectedCount, numCoordinators, strategyName, len(plan.Tasks))
+
+	// Check if all coordinators have completed
+	completedCount := m.ultraPlan.coordinator.CountCoordinatorsCompleted()
+	if completedCount >= numCoordinators {
+		validCount := m.ultraPlan.coordinator.CountCandidatePlans()
+		if validCount > 0 {
+			// Start plan evaluation with whatever valid plans we have
+			if validCount < numCoordinators {
+				m.infoMessage = fmt.Sprintf("%d/%d plans collected. Starting plan evaluation with available plans...",
+					validCount, numCoordinators)
+			} else {
+				m.infoMessage = "All candidate plans collected. Starting plan evaluation..."
+			}
+			if err := m.ultraPlan.coordinator.RunPlanManager(); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to start plan manager: %v", err)
+			} else {
+				m.infoMessage = "Plan manager started - comparing strategies to select the best plan..."
+			}
+		} else {
+			// All coordinators completed but no valid plans - this shouldn't happen in the success path
+			// but handle defensively to avoid getting stuck
+			m.errorMessage = "All coordinators completed but no valid plans were collected"
+			m.ultraPlan.coordinator.Manager().SetPhase(orchestrator.PhaseFailed)
 		}
 	}
 
@@ -1674,7 +2012,12 @@ func (m Model) renderPlanningSidebar(width int, height int, session *orchestrato
 	b.WriteString(styles.SidebarTitle.Render("Planning Phase"))
 	b.WriteString("\n\n")
 
-	// Show coordinator status
+	// Check if multi-pass mode is enabled
+	if session.Config.MultiPass {
+		return m.renderMultiPassPlanningSidebar(width, height, session)
+	}
+
+	// Show coordinator status (single-pass mode)
 	if session.CoordinatorID != "" {
 		inst := m.orchestrator.GetInstance(session.CoordinatorID)
 		if inst != nil {
@@ -1736,6 +2079,263 @@ func (m Model) renderPlanningSidebar(width int, height int, session *orchestrato
 	b.WriteString(styles.Muted.Render("codebase and creating"))
 	b.WriteString("\n")
 	b.WriteString(styles.Muted.Render("an execution plan."))
+
+	return styles.Sidebar.Width(width - 2).Render(b.String())
+}
+
+// renderMultiPassPlanningSection renders the multi-pass planning coordinators in the unified sidebar
+// Returns the number of lines written
+func (m Model) renderMultiPassPlanningSection(b *strings.Builder, session *orchestrator.UltraPlanSession, width int, availableLines int) int {
+	lineCount := 0
+
+	// Strategy names for display
+	strategyNames := []string{
+		"maximize-parallelism",
+		"minimize-complexity",
+		"balanced-approach",
+	}
+
+	// Count how many plans are ready
+	plansReady := len(session.CandidatePlans)
+	totalCoordinators := len(session.PlanCoordinatorIDs)
+	if totalCoordinators == 0 {
+		totalCoordinators = 3 // Expected count
+	}
+
+	// Show each coordinator with its strategy
+	for i, strategy := range strategyNames {
+		if lineCount >= availableLines {
+			break
+		}
+
+		var statusIcon string
+		var statusStyle lipgloss.Style
+
+		// Determine status for this coordinator
+		if i < len(session.PlanCoordinatorIDs) {
+			instID := session.PlanCoordinatorIDs[i]
+			inst := m.orchestrator.GetInstance(instID)
+			if inst != nil {
+				switch inst.Status {
+				case orchestrator.StatusWorking:
+					statusIcon = "⟳"
+					statusStyle = lipgloss.NewStyle().Foreground(styles.BlueColor)
+				case orchestrator.StatusCompleted:
+					statusIcon = "✓"
+					statusStyle = lipgloss.NewStyle().Foreground(styles.GreenColor)
+				case orchestrator.StatusError, orchestrator.StatusStuck, orchestrator.StatusTimeout:
+					statusIcon = "✗"
+					statusStyle = lipgloss.NewStyle().Foreground(styles.RedColor)
+				case orchestrator.StatusPending:
+					statusIcon = "○"
+					statusStyle = styles.Muted
+				default:
+					statusIcon = "◌"
+					statusStyle = styles.Muted
+				}
+			} else {
+				statusIcon = "○"
+				statusStyle = styles.Muted
+			}
+		} else {
+			// Coordinator not yet spawned
+			statusIcon = "○"
+			statusStyle = styles.Muted
+		}
+
+		// Check if this coordinator is selected (for highlighting)
+		isSelected := false
+		if i < len(session.PlanCoordinatorIDs) {
+			isSelected = m.isInstanceSelected(session.PlanCoordinatorIDs[i])
+		}
+
+		// Format: "  [icon] strategy-name"
+		strategyLine := fmt.Sprintf("  %s %s", statusStyle.Render(statusIcon), strategy)
+
+		if isSelected {
+			b.WriteString(lipgloss.NewStyle().
+				Background(styles.PrimaryColor).
+				Foreground(styles.TextColor).
+				Render(strategyLine))
+		} else {
+			b.WriteString(strategyLine)
+		}
+		b.WriteString("\n")
+		lineCount++
+	}
+
+	// Show plans collected count
+	if lineCount < availableLines {
+		plansCountLine := fmt.Sprintf("  %d/%d plans ready", plansReady, totalCoordinators)
+		if plansReady == totalCoordinators {
+			b.WriteString(lipgloss.NewStyle().Foreground(styles.GreenColor).Render(plansCountLine))
+		} else {
+			b.WriteString(styles.Muted.Render(plansCountLine))
+		}
+		b.WriteString("\n")
+		lineCount++
+	}
+
+	// Show manager status if in PlanSelection phase
+	if session.Phase == orchestrator.PhasePlanSelection && lineCount < availableLines {
+		b.WriteString(lipgloss.NewStyle().Foreground(styles.YellowColor).Bold(true).Render("  Manager comparing plans..."))
+		b.WriteString("\n")
+		lineCount++
+
+		// Show manager instance status if available
+		if session.PlanManagerID != "" && lineCount < availableLines {
+			inst := m.orchestrator.GetInstance(session.PlanManagerID)
+			if inst != nil {
+				var managerIcon string
+				var managerStyle lipgloss.Style
+				switch inst.Status {
+				case orchestrator.StatusWorking:
+					managerIcon = "⟳"
+					managerStyle = lipgloss.NewStyle().Foreground(styles.BlueColor)
+				case orchestrator.StatusCompleted:
+					managerIcon = "✓"
+					managerStyle = lipgloss.NewStyle().Foreground(styles.GreenColor)
+				case orchestrator.StatusError:
+					managerIcon = "✗"
+					managerStyle = lipgloss.NewStyle().Foreground(styles.RedColor)
+				default:
+					managerIcon = "○"
+					managerStyle = styles.Muted
+				}
+				managerLine := fmt.Sprintf("    %s Manager", managerStyle.Render(managerIcon))
+				b.WriteString(managerLine)
+				b.WriteString("\n")
+				lineCount++
+			}
+		}
+	}
+
+	return lineCount
+}
+
+// renderMultiPassPlanningSidebar renders the sidebar for multi-pass planning mode
+func (m Model) renderMultiPassPlanningSidebar(width int, height int, session *orchestrator.UltraPlanSession) string {
+	var b strings.Builder
+
+	// Title with multi-pass indicator
+	b.WriteString(styles.SidebarTitle.Render("Multi-Pass Planning"))
+	b.WriteString("\n\n")
+
+	// Strategy names for display
+	strategyNames := []string{
+		"maximize-parallelism",
+		"minimize-complexity",
+		"balanced-approach",
+	}
+
+	// Count how many plans are ready
+	plansReady := len(session.CandidatePlans)
+	totalCoordinators := len(session.PlanCoordinatorIDs)
+	if totalCoordinators == 0 {
+		totalCoordinators = 3 // Expected count
+	}
+
+	// Show each coordinator with its strategy
+	for i, strategy := range strategyNames {
+		var statusIcon string
+		var statusStyle lipgloss.Style
+
+		// Determine status for this coordinator
+		if i < len(session.PlanCoordinatorIDs) {
+			instID := session.PlanCoordinatorIDs[i]
+			inst := m.orchestrator.GetInstance(instID)
+			if inst != nil {
+				switch inst.Status {
+				case orchestrator.StatusWorking:
+					statusIcon = "⟳"
+					statusStyle = lipgloss.NewStyle().Foreground(styles.BlueColor)
+				case orchestrator.StatusCompleted:
+					statusIcon = "✓"
+					statusStyle = lipgloss.NewStyle().Foreground(styles.GreenColor)
+				case orchestrator.StatusError, orchestrator.StatusStuck, orchestrator.StatusTimeout:
+					statusIcon = "✗"
+					statusStyle = lipgloss.NewStyle().Foreground(styles.RedColor)
+				case orchestrator.StatusPending:
+					statusIcon = "○"
+					statusStyle = styles.Muted
+				default:
+					statusIcon = "◌"
+					statusStyle = styles.Muted
+				}
+			} else {
+				statusIcon = "○"
+				statusStyle = styles.Muted
+			}
+		} else {
+			// Coordinator not yet spawned
+			statusIcon = "○"
+			statusStyle = styles.Muted
+		}
+
+		// Format: "Strategy: name [icon]"
+		strategyLine := fmt.Sprintf("Strategy: %s [%s]", strategy, statusStyle.Render(statusIcon))
+
+		// Check if this coordinator is selected (for highlighting)
+		isSelected := false
+		if i < len(session.PlanCoordinatorIDs) {
+			instID := session.PlanCoordinatorIDs[i]
+			for tabIdx, inst := range m.session.Instances {
+				if inst.ID == instID && m.activeTab == tabIdx {
+					isSelected = true
+					break
+				}
+			}
+		}
+
+		if isSelected {
+			b.WriteString(styles.SidebarItemActive.Render(strategyLine))
+		} else {
+			b.WriteString(strategyLine)
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+
+	// Show plans collected count
+	plansCountLine := fmt.Sprintf("%d/%d plans ready", plansReady, totalCoordinators)
+	if plansReady == totalCoordinators {
+		b.WriteString(lipgloss.NewStyle().Foreground(styles.GreenColor).Render(plansCountLine))
+	} else {
+		b.WriteString(styles.Muted.Render(plansCountLine))
+	}
+	b.WriteString("\n\n")
+
+	// Show manager status if in PlanSelection phase
+	if session.Phase == orchestrator.PhasePlanSelection {
+		b.WriteString(lipgloss.NewStyle().Foreground(styles.YellowColor).Bold(true).Render("Manager comparing plans..."))
+		b.WriteString("\n")
+
+		// Show manager instance status if available
+		if session.PlanManagerID != "" {
+			inst := m.orchestrator.GetInstance(session.PlanManagerID)
+			if inst != nil {
+				var managerStatus string
+				switch inst.Status {
+				case orchestrator.StatusWorking:
+					managerStatus = "  ⟳ Evaluating..."
+				case orchestrator.StatusCompleted:
+					managerStatus = "  ✓ Decision made"
+				case orchestrator.StatusError:
+					managerStatus = "  ✗ Evaluation failed"
+				default:
+					managerStatus = fmt.Sprintf("  %s", inst.Status)
+				}
+				b.WriteString(styles.Muted.Render(managerStatus))
+				b.WriteString("\n")
+			}
+		}
+	} else if plansReady < totalCoordinators {
+		// Still collecting plans
+		b.WriteString(styles.Muted.Render("Coordinators exploring"))
+		b.WriteString("\n")
+		b.WriteString(styles.Muted.Render("with different strategies..."))
+	}
 
 	return styles.Sidebar.Width(width - 2).Render(b.String())
 }

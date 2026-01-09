@@ -482,13 +482,13 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyEnter:
 			if m.taskInput != "" {
-				// Add new instance asynchronously to avoid blocking the UI
-				// while git creates the worktree
+				// Capture task and clear input state first
 				task := m.taskInput
 				m.addingTask = false
 				m.taskInput = ""
 				m.taskInputCursor = 0
 				m.infoMessage = "Adding task..."
+				// Add instance asynchronously to avoid blocking UI during git worktree creation
 				return m, addTaskAsync(m.orchestrator, m.session, task)
 			}
 			m.addingTask = false
@@ -533,15 +533,14 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Handle Enter sent as rune (some terminals/input methods send \n or \r as runes)
 			if char == "\n" || char == "\r" {
 				if m.taskInput != "" {
-					// Add new instance
-					_, err := m.orchestrator.AddInstance(m.session, m.taskInput)
-					if err != nil {
-						m.errorMessage = err.Error()
-					} else {
-						// Switch to the newly added task and ensure it's visible in sidebar
-						m.activeTab = len(m.session.Instances) - 1
-						m.ensureActiveVisible()
-					}
+					// Capture task and clear input state first
+					task := m.taskInput
+					m.addingTask = false
+					m.taskInput = ""
+					m.taskInputCursor = 0
+					m.infoMessage = "Adding task..."
+					// Add instance asynchronously to avoid blocking UI during git worktree creation
+					return m, addTaskAsync(m.orchestrator, m.session, task)
 				}
 				m.addingTask = false
 				m.taskInput = ""

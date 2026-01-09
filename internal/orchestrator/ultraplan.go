@@ -274,10 +274,11 @@ type UltraPlanSession struct {
 	CoordinatorID   string            `json:"coordinator_id,omitempty"`   // Instance ID of the planning coordinator
 
 	// Multi-pass planning state
-	CandidatePlans     []*PlanSpec `json:"candidate_plans,omitempty"`      // Plans from each coordinator (multi-pass)
-	PlanCoordinatorIDs []string    `json:"plan_coordinator_ids,omitempty"` // Instance IDs of planning coordinators
-	PlanManagerID      string      `json:"plan_manager_id,omitempty"`      // Instance ID of the coordinator-manager
-	SelectedPlanIndex  int         `json:"selected_plan_index,omitempty"`  // Index of selected plan (-1 if merged)
+	CandidatePlans        []*PlanSpec    `json:"candidate_plans,omitempty"`         // Plans from each coordinator (multi-pass)
+	PlanCoordinatorIDs    []string       `json:"plan_coordinator_ids,omitempty"`    // Instance IDs of planning coordinators
+	ProcessedCoordinators map[int]bool   `json:"processed_coordinators,omitempty"`  // Tracks which coordinators have completed (index -> completed)
+	PlanManagerID         string         `json:"plan_manager_id,omitempty"`         // Instance ID of the coordinator-manager
+	SelectedPlanIndex     int            `json:"selected_plan_index,omitempty"`     // Index of selected plan (-1 if merged)
 
 	SynthesisID     string            `json:"synthesis_id,omitempty"`     // Instance ID of the synthesis reviewer
 	RevisionID      string            `json:"revision_id,omitempty"`      // Instance ID of the current revision coordinator
@@ -345,9 +346,10 @@ func NewUltraPlanSession(objective string, config UltraPlanConfig) *UltraPlanSes
 		TaskRetries:      make(map[string]*TaskRetryState),
 		TaskCommitCounts: make(map[string]int),
 		// Multi-pass planning state
-		CandidatePlans:     make([]*PlanSpec, 0),
-		PlanCoordinatorIDs: make([]string, 0),
-		SelectedPlanIndex:  -1,
+		CandidatePlans:        make([]*PlanSpec, 0),
+		PlanCoordinatorIDs:    make([]string, 0),
+		ProcessedCoordinators: make(map[int]bool),
+		SelectedPlanIndex:     -1,
 	}
 }
 
@@ -511,7 +513,7 @@ type CoordinatorEvent struct {
 	Timestamp  time.Time            `json:"timestamp"`
 	// Multi-pass planning fields
 	PlanIndex int    `json:"plan_index,omitempty"` // Which plan was generated/selected (0-indexed)
-	Strategy  string `json:"strategy,omitempty"`   // Planning strategy name (e.g., "breadth-first", "depth-first")
+	Strategy  string `json:"strategy,omitempty"`   // Planning strategy name (e.g., "maximize-parallelism", "minimize-complexity", "balanced-approach")
 }
 
 // CoordinatorEventType represents the type of coordinator event
@@ -626,6 +628,72 @@ func (m *UltraPlanManager) SetPhase(phase UltraPlanPhase) {
 		Type:    EventPhaseChange,
 		Message: string(phase),
 	})
+}
+
+// StoreCandidatePlan stores a candidate plan at the given index with proper mutex protection.
+// It initializes the CandidatePlans slice if needed, marks the coordinator as processed,
+// and returns the count of non-nil plans collected.
+// This method is safe for concurrent access from multiple goroutines.
+// Pass nil for plan to mark a coordinator as completed but failed to produce a valid plan.
+func (m *UltraPlanManager) StoreCandidatePlan(planIndex int, plan *PlanSpec) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Initialize CandidatePlans slice if needed
+	numCoordinators := len(m.session.PlanCoordinatorIDs)
+	if len(m.session.CandidatePlans) < numCoordinators {
+		newPlans := make([]*PlanSpec, numCoordinators)
+		copy(newPlans, m.session.CandidatePlans)
+		m.session.CandidatePlans = newPlans
+	}
+
+	// Initialize ProcessedCoordinators map if needed
+	if m.session.ProcessedCoordinators == nil {
+		m.session.ProcessedCoordinators = make(map[int]bool)
+	}
+
+	// Store the plan at the correct index and mark as processed
+	if planIndex >= 0 && planIndex < len(m.session.CandidatePlans) {
+		m.session.CandidatePlans[planIndex] = plan
+		m.session.ProcessedCoordinators[planIndex] = true
+	}
+
+	// Count collected (non-nil) plans
+	count := 0
+	for _, p := range m.session.CandidatePlans {
+		if p != nil {
+			count++
+		}
+	}
+	return count
+}
+
+// CountCandidatePlans returns the number of non-nil candidate plans collected.
+// This method is safe for concurrent access.
+func (m *UltraPlanManager) CountCandidatePlans() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	count := 0
+	for _, p := range m.session.CandidatePlans {
+		if p != nil {
+			count++
+		}
+	}
+	return count
+}
+
+// CountCoordinatorsCompleted returns the number of coordinators that have completed
+// (regardless of whether they produced a valid plan or not).
+// This method is safe for concurrent access.
+func (m *UltraPlanManager) CountCoordinatorsCompleted() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.session.ProcessedCoordinators == nil {
+		return 0
+	}
+	return len(m.session.ProcessedCoordinators)
 }
 
 // MarkTaskComplete marks a task as completed

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -588,13 +589,13 @@ func TestParseTaskCompletionFile_RealWorldArrayNotes(t *testing.T) {
 	// Test parsing a real completion file that has notes as an array
 	// This is a regression test for the bug where notes as array caused parse failure
 	worktreePath := "/Users/zer0/Developer/oss/Claudio/.claudio/worktrees/173e1fdc"
-	
+
 	completion, err := ParseTaskCompletionFile(worktreePath)
 	if err != nil {
 		t.Skipf("Skipping real file test - file not found: %v", err)
 		return
 	}
-	
+
 	if completion.TaskID != "task-12-tests" {
 		t.Errorf("TaskID = %q, want %q", completion.TaskID, "task-12-tests")
 	}
@@ -604,10 +605,218 @@ func TestParseTaskCompletionFile_RealWorldArrayNotes(t *testing.T) {
 	if completion.Status == "" {
 		t.Error("Status is empty - checkForTaskCompletionFile would return false!")
 	}
-	
+
 	// Notes should be non-empty since the real file has notes as an array
 	if completion.Notes == "" {
 		t.Error("Notes is empty - expected array of notes to be joined")
 	}
 	t.Logf("Notes length: %d bytes", len(completion.Notes))
 }
+
+func TestParsePlanDecisionFromOutput(t *testing.T) {
+	tests := []struct {
+		name              string
+		output            string
+		wantErr           bool
+		wantErrContains   string
+		wantAction        string
+		wantSelectedIndex int
+	}{
+		{
+			name: "valid select action - index 0",
+			output: `Here is my analysis of the three plans...
+
+<plan_decision>
+{
+  "action": "select",
+  "selected_index": 0,
+  "reasoning": "Plan 0 has the best task organization and clearest dependencies",
+  "plan_scores": [
+    {"strategy": "bottom-up", "score": 85, "strengths": "Good modularity", "weaknesses": "None"},
+    {"strategy": "top-down", "score": 70, "strengths": "Clear flow", "weaknesses": "Too complex"},
+    {"strategy": "risk-first", "score": 65, "strengths": "Safe", "weaknesses": "Slow"}
+  ]
+}
+</plan_decision>
+
+That concludes my evaluation.`,
+			wantErr:           false,
+			wantAction:        "select",
+			wantSelectedIndex: 0,
+		},
+		{
+			name: "valid select action - index 2",
+			output: `<plan_decision>
+{
+  "action": "select",
+  "selected_index": 2,
+  "reasoning": "Risk-first approach is best for this critical system",
+  "plan_scores": [
+    {"strategy": "bottom-up", "score": 60, "strengths": "Fast", "weaknesses": "Risky"},
+    {"strategy": "top-down", "score": 70, "strengths": "Structured", "weaknesses": "Slow"},
+    {"strategy": "risk-first", "score": 90, "strengths": "Safe and thorough", "weaknesses": "None"}
+  ]
+}
+</plan_decision>`,
+			wantErr:           false,
+			wantAction:        "select",
+			wantSelectedIndex: 2,
+		},
+		{
+			name: "valid merge action",
+			output: `After careful analysis...
+
+<plan_decision>
+{
+  "action": "merge",
+  "selected_index": -1,
+  "reasoning": "Each plan has unique strengths that should be combined",
+  "plan_scores": [
+    {"strategy": "bottom-up", "score": 75, "strengths": "Good foundation tasks", "weaknesses": "Missing tests"},
+    {"strategy": "top-down", "score": 75, "strengths": "Clear integration tests", "weaknesses": "Missing setup"},
+    {"strategy": "risk-first", "score": 75, "strengths": "Good error handling", "weaknesses": "Missing features"}
+  ]
+}
+</plan_decision>`,
+			wantErr:           false,
+			wantAction:        "merge",
+			wantSelectedIndex: -1,
+		},
+		{
+			name:            "missing decision block",
+			output:          "Here is my analysis of the three plans. They are all good.",
+			wantErr:         true,
+			wantErrContains: "no plan decision found",
+		},
+		{
+			name:            "missing closing tag",
+			output:          "<plan_decision>{\"action\": \"select\", \"selected_index\": 0}",
+			wantErr:         true,
+			wantErrContains: "no plan decision found",
+		},
+		{
+			name: "empty decision block",
+			output: `<plan_decision>
+</plan_decision>`,
+			wantErr:         true,
+			wantErrContains: "empty plan decision block",
+		},
+		{
+			name: "whitespace-only decision block",
+			output: `<plan_decision>
+
+</plan_decision>`,
+			wantErr:         true,
+			wantErrContains: "empty plan decision block",
+		},
+		{
+			name: "invalid action",
+			output: `<plan_decision>
+{
+  "action": "combine",
+  "selected_index": 0,
+  "reasoning": "Test"
+}
+</plan_decision>`,
+			wantErr:         true,
+			wantErrContains: "invalid plan decision action",
+		},
+		{
+			name: "select with invalid index - negative",
+			output: `<plan_decision>
+{
+  "action": "select",
+  "selected_index": -1,
+  "reasoning": "Test"
+}
+</plan_decision>`,
+			wantErr:         true,
+			wantErrContains: "invalid selected_index for select action",
+		},
+		{
+			name: "select with invalid index - too high",
+			output: `<plan_decision>
+{
+  "action": "select",
+  "selected_index": 5,
+  "reasoning": "Test"
+}
+</plan_decision>`,
+			wantErr:         true,
+			wantErrContains: "invalid selected_index for select action",
+		},
+		{
+			name: "merge with non-negative-one index",
+			output: `<plan_decision>
+{
+  "action": "merge",
+  "selected_index": 0,
+  "reasoning": "Test"
+}
+</plan_decision>`,
+			wantErr:         true,
+			wantErrContains: "selected_index should be -1 for merge action",
+		},
+		{
+			name: "malformed JSON",
+			output: `<plan_decision>
+{ this is not valid json }
+</plan_decision>`,
+			wantErr:         true,
+			wantErrContains: "failed to parse plan decision JSON",
+		},
+		{
+			name: "incomplete JSON",
+			output: `<plan_decision>
+{"action": "select", "selected_index":
+</plan_decision>`,
+			wantErr:         true,
+			wantErrContains: "failed to parse plan decision JSON",
+		},
+		{
+			name: "valid decision with extra whitespace in tags",
+			output: `<plan_decision>
+{
+  "action": "select",
+  "selected_index": 1,
+  "reasoning": "Middle plan is best"
+}
+   </plan_decision>`,
+			wantErr:           false,
+			wantAction:        "select",
+			wantSelectedIndex: 1,
+		},
+		{
+			name: "valid decision with minimal fields",
+			output: `<plan_decision>{"action":"select","selected_index":0,"reasoning":"","plan_scores":[]}</plan_decision>`,
+			wantErr:           false,
+			wantAction:        "select",
+			wantSelectedIndex: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decision, err := ParsePlanDecisionFromOutput(tt.output)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParsePlanDecisionFromOutput() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr {
+				if tt.wantErrContains != "" && err != nil {
+					if !strings.Contains(err.Error(), tt.wantErrContains) {
+						t.Errorf("ParsePlanDecisionFromOutput() error = %q, want error containing %q", err.Error(), tt.wantErrContains)
+					}
+				}
+				return
+			}
+			if decision.Action != tt.wantAction {
+				t.Errorf("ParsePlanDecisionFromOutput() action = %q, want %q", decision.Action, tt.wantAction)
+			}
+			if decision.SelectedIndex != tt.wantSelectedIndex {
+				t.Errorf("ParsePlanDecisionFromOutput() selectedIndex = %d, want %d", decision.SelectedIndex, tt.wantSelectedIndex)
+			}
+		})
+	}
+}
+
