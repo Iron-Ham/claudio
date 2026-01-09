@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/spf13/viper"
@@ -19,6 +21,7 @@ type Config struct {
 	Cleanup    CleanupConfig    `mapstructure:"cleanup"`
 	Resources  ResourceConfig   `mapstructure:"resources"`
 	Ultraplan  UltraplanConfig  `mapstructure:"ultraplan"`
+	Review     ReviewConfig     `mapstructure:"review"`
 }
 
 // CompletionConfig controls what happens when an instance completes
@@ -132,6 +135,64 @@ type NotificationConfig struct {
 	SoundPath string `mapstructure:"sound_path"`
 }
 
+// ReviewConfig controls the parallel code review system behavior
+type ReviewConfig struct {
+	// EnabledAgents specifies which review agents to use by default
+	// Valid values: "security", "performance", "style", "tests", "general"
+	EnabledAgents []string `mapstructure:"enabled_agents"`
+
+	// SeverityThreshold is the minimum severity level to report
+	// Valid values: "info", "minor", "major", "critical"
+	// Default: "minor"
+	SeverityThreshold string `mapstructure:"severity_threshold"`
+
+	// WatchMode enables continuous file watching for real-time reviews
+	// Default: false
+	WatchMode bool `mapstructure:"watch_mode"`
+
+	// DebounceMs is the debounce interval in milliseconds for file watching
+	// Prevents excessive review triggers during rapid file changes
+	// Default: 500
+	DebounceMs int `mapstructure:"debounce_ms"`
+
+	// AutoPauseOnCritical pauses the implementer session when critical issues are found
+	// This provides a safety mechanism for severe problems
+	// Default: false
+	AutoPauseOnCritical bool `mapstructure:"auto_pause_on_critical"`
+
+	// MaxParallelAgents limits the number of concurrent review agents
+	// Higher values increase parallelism but also resource usage
+	// Default: 3
+	MaxParallelAgents int `mapstructure:"max_parallel_agents"`
+
+	// Prompts contains custom prompt overrides for each agent type
+	Prompts ReviewPromptsConfig `mapstructure:"prompts"`
+
+	// OutputFormat specifies how review results are formatted
+	// Valid values: "json", "markdown", "inline"
+	// Default: "markdown"
+	OutputFormat string `mapstructure:"output_format"`
+}
+
+// ReviewPromptsConfig contains custom prompt overrides for review agents
+// Empty strings use the default built-in prompts
+type ReviewPromptsConfig struct {
+	// Security is a custom prompt for the security review agent
+	Security string `mapstructure:"security"`
+
+	// Performance is a custom prompt for the performance review agent
+	Performance string `mapstructure:"performance"`
+
+	// Style is a custom prompt for the style/code quality review agent
+	Style string `mapstructure:"style"`
+
+	// Tests is a custom prompt for the test coverage review agent
+	Tests string `mapstructure:"tests"`
+
+	// General is a custom prompt for the general review agent
+	General string `mapstructure:"general"`
+}
+
 // Default returns a Config with sensible default values
 func Default() *Config {
 	return &Config{
@@ -184,6 +245,22 @@ func Default() *Config {
 				UseSound:  false,
 				SoundPath: "",
 			},
+		},
+		Review: ReviewConfig{
+			EnabledAgents:       []string{"security", "performance", "style"},
+			SeverityThreshold:   "minor",
+			WatchMode:           false,
+			DebounceMs:          500,
+			AutoPauseOnCritical: false,
+			MaxParallelAgents:   3,
+			Prompts: ReviewPromptsConfig{
+				Security:    "",
+				Performance: "",
+				Style:       "",
+				Tests:       "",
+				General:     "",
+			},
+			OutputFormat: "markdown",
 		},
 	}
 }
@@ -253,6 +330,20 @@ func SetDefaults() {
 	viper.SetDefault("ultraplan.notifications.enabled", defaults.Ultraplan.Notifications.Enabled)
 	viper.SetDefault("ultraplan.notifications.use_sound", defaults.Ultraplan.Notifications.UseSound)
 	viper.SetDefault("ultraplan.notifications.sound_path", defaults.Ultraplan.Notifications.SoundPath)
+
+	// Review defaults
+	viper.SetDefault("review.enabled_agents", defaults.Review.EnabledAgents)
+	viper.SetDefault("review.severity_threshold", defaults.Review.SeverityThreshold)
+	viper.SetDefault("review.watch_mode", defaults.Review.WatchMode)
+	viper.SetDefault("review.debounce_ms", defaults.Review.DebounceMs)
+	viper.SetDefault("review.auto_pause_on_critical", defaults.Review.AutoPauseOnCritical)
+	viper.SetDefault("review.max_parallel_agents", defaults.Review.MaxParallelAgents)
+	viper.SetDefault("review.prompts.security", defaults.Review.Prompts.Security)
+	viper.SetDefault("review.prompts.performance", defaults.Review.Prompts.Performance)
+	viper.SetDefault("review.prompts.style", defaults.Review.Prompts.Style)
+	viper.SetDefault("review.prompts.tests", defaults.Review.Prompts.Tests)
+	viper.SetDefault("review.prompts.general", defaults.Review.Prompts.General)
+	viper.SetDefault("review.output_format", defaults.Review.OutputFormat)
 }
 
 // Load reads the configuration from viper into a Config struct
@@ -300,10 +391,72 @@ func ValidCompletionActions() []string {
 
 // IsValidCompletionAction checks if the given action is valid
 func IsValidCompletionAction(action string) bool {
-	for _, valid := range ValidCompletionActions() {
-		if action == valid {
-			return true
+	return slices.Contains(ValidCompletionActions(), action)
+}
+
+// ValidReviewAgents returns the list of valid review agent types
+func ValidReviewAgents() []string {
+	return []string{"security", "performance", "style", "tests", "general"}
+}
+
+// IsValidReviewAgent checks if the given agent type is valid
+func IsValidReviewAgent(agent string) bool {
+	return slices.Contains(ValidReviewAgents(), agent)
+}
+
+// ValidSeverityThresholds returns the list of valid severity threshold values
+func ValidSeverityThresholds() []string {
+	return []string{"info", "minor", "major", "critical"}
+}
+
+// IsValidSeverityThreshold checks if the given severity threshold is valid
+func IsValidSeverityThreshold(threshold string) bool {
+	return slices.Contains(ValidSeverityThresholds(), threshold)
+}
+
+// ValidOutputFormats returns the list of valid review output format values
+func ValidOutputFormats() []string {
+	return []string{"json", "markdown", "inline"}
+}
+
+// IsValidOutputFormat checks if the given output format is valid
+func IsValidOutputFormat(format string) bool {
+	return slices.Contains(ValidOutputFormats(), format)
+}
+
+// ValidateReviewConfig validates the review configuration and returns any errors
+func (c *ReviewConfig) Validate() error {
+	// Validate enabled agents
+	for _, agent := range c.EnabledAgents {
+		if !IsValidReviewAgent(agent) {
+			return fmt.Errorf("invalid review agent %q: valid values are %v", agent, ValidReviewAgents())
 		}
 	}
-	return false
+
+	// Validate severity threshold
+	if !IsValidSeverityThreshold(c.SeverityThreshold) {
+		return fmt.Errorf("invalid severity threshold %q: valid values are %v", c.SeverityThreshold, ValidSeverityThresholds())
+	}
+
+	// Validate output format
+	if !IsValidOutputFormat(c.OutputFormat) {
+		return fmt.Errorf("invalid output format %q: valid values are %v", c.OutputFormat, ValidOutputFormats())
+	}
+
+	// Validate debounce interval (must be positive)
+	if c.DebounceMs < 0 {
+		return fmt.Errorf("debounce_ms must be non-negative, got %d", c.DebounceMs)
+	}
+
+	// Validate max parallel agents (must be at least 1)
+	if c.MaxParallelAgents < 1 {
+		return fmt.Errorf("max_parallel_agents must be at least 1, got %d", c.MaxParallelAgents)
+	}
+
+	return nil
+}
+
+// Debounce returns the debounce interval as a time.Duration
+func (c *ReviewConfig) Debounce() time.Duration {
+	return time.Duration(c.DebounceMs) * time.Millisecond
 }
