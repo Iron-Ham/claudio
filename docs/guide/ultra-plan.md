@@ -55,6 +55,7 @@ claudio ultraplan [objective] [flags]
 | `--dry-run` | Run planning only, output plan without executing | false |
 | `--no-synthesis` | Skip synthesis phase after execution | false |
 | `--auto-approve` | Auto-approve spawned tasks without confirmation | false |
+| `--multi-pass` | Use multi-pass planning with 3 strategies, then select best | false |
 
 ### Examples
 
@@ -73,6 +74,12 @@ claudio ultraplan --plan my-plan.json
 
 # Skip synthesis if you want to review changes manually
 claudio ultraplan --no-synthesis "Update all deprecated API calls"
+
+# Use multi-pass planning for complex tasks
+claudio ultraplan --multi-pass "Redesign the authentication system"
+
+# Combine multi-pass with dry-run to compare strategies
+claudio ultraplan --multi-pass --dry-run "Implement caching layer"
 ```
 
 ## TUI Interface
@@ -215,6 +222,68 @@ The recovered session will:
 - Show completed and pending tasks
 - Allow continuing execution from where it stopped
 
+## Multi-Pass Planning
+
+Multi-pass planning is an advanced mode that improves plan quality by generating multiple plans in parallel using different strategies, then selecting or merging the best approach.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    MULTI-PASS PLANNING                          │
+├─────────────────────────────────────────────────────────────────┤
+│  Phase 1: PARALLEL STRATEGY GENERATION                          │
+│                                                                  │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐            │
+│  │   Balanced   │ │  Depth-First │ │ Breadth-First│            │
+│  │   Strategy   │ │   Strategy   │ │   Strategy   │            │
+│  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘            │
+│         │                │                │                     │
+│         └────────────────┼────────────────┘                     │
+│                          ▼                                      │
+│  Phase 2: PLAN SELECTION                                        │
+│  • Coordinator-manager evaluates all plans                      │
+│  • Selects best plan or merges strategies                       │
+│  • Proceeds with chosen plan                                    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### The Three Strategies
+
+| Strategy | Focus | Best For |
+|----------|-------|----------|
+| **Balanced** | Even split between parallelism and dependencies | General-purpose tasks |
+| **Depth-First** | Minimize task count, prefer sequential chains | Tasks with clear critical paths |
+| **Breadth-First** | Maximize parallelism, prefer independent tasks | Large refactors with isolated changes |
+
+Each strategy coordinator explores the codebase and generates a complete plan independently. This parallel exploration often surfaces different insights about the task.
+
+### When to Use Multi-Pass
+
+**Ideal scenarios:**
+- Complex architectural changes with multiple valid approaches
+- Tasks where optimal decomposition is unclear
+- Large codebases where different exploration paths yield different insights
+- High-stakes changes where plan quality is critical
+
+**May not need multi-pass:**
+- Simple, well-defined tasks
+- Tasks with obvious decomposition
+- Time-sensitive work (multi-pass adds planning overhead)
+
+### Example Usage
+
+```bash
+# Basic multi-pass planning
+claudio ultraplan --multi-pass "Refactor the data layer to use repository pattern"
+
+# Preview plans without executing
+claudio ultraplan --multi-pass --dry-run "Implement event sourcing"
+
+# Multi-pass with controlled parallelism during execution
+claudio ultraplan --multi-pass --max-parallel 4 "Add comprehensive API tests"
+```
+
 ## Best Practices
 
 ### Writing Good Objectives
@@ -259,11 +328,26 @@ If a task fails:
 - Simple bug fixes
 - Tasks with heavy interdependencies
 
+### When to Use Multi-Pass
+
+Consider using `--multi-pass` when:
+
+1. **Decomposition is uncertain** - You're not sure how to best break down the task
+2. **Multiple valid approaches** - The task could be solved different ways
+3. **High complexity** - Architectural changes or major refactors
+4. **Quality matters more than speed** - The extra planning time is worthwhile
+
+Skip multi-pass for:
+- Well-understood tasks with obvious structure
+- Time-critical work where planning speed matters
+- Simple feature additions or bug fixes
+
 ## Phases Reference
 
 | Phase | Description |
 |-------|-------------|
 | `planning` | Coordinator is analyzing and creating plan |
+| `plan_selection` | Multi-pass only: evaluating plans and selecting best approach |
 | `context_refresh` | Plan ready for review/approval |
 | `executing` | Child instances running tasks |
 | `synthesis` | Reviewing and integrating results |
