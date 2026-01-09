@@ -451,6 +451,54 @@ func TestUltraPlanSession_AdvanceGroupIfComplete(t *testing.T) {
 	}
 }
 
+func TestUltraPlanSession_GetReadyTasks_AwaitingDecision(t *testing.T) {
+	// Test that GetReadyTasks returns nil when awaiting a decision about partial failure.
+	// This is critical to prevent starting the next group's tasks before consolidation.
+	session := &UltraPlanSession{
+		Plan: &PlanSpec{
+			Tasks: []PlannedTask{
+				{ID: "task-1", DependsOn: []string{}},
+				{ID: "task-2", DependsOn: []string{}},
+				// Group 1 tasks only depend on task-1, not task-2
+				// This simulates a scenario where we can continue with partial work
+				{ID: "task-3", DependsOn: []string{"task-1"}},
+				{ID: "task-4", DependsOn: []string{"task-1"}},
+			},
+			ExecutionOrder: [][]string{
+				{"task-1", "task-2"}, // Group 0
+				{"task-3", "task-4"}, // Group 1
+			},
+		},
+		CompletedTasks: []string{"task-1"},       // task-1 succeeded
+		FailedTasks:    []string{"task-2"},       // task-2 failed - partial failure
+		TaskToInstance: make(map[string]string),
+		CurrentGroup:   0, // Still at group 0 (not advanced)
+		GroupDecision: &GroupDecisionState{
+			GroupIndex:       0,
+			SucceededTasks:   []string{"task-1"},
+			FailedTasks:      []string{"task-2"},
+			AwaitingDecision: true, // User must decide what to do
+		},
+	}
+
+	// With AwaitingDecision = true, GetReadyTasks MUST return nil
+	// This prevents the next group from starting before consolidation
+	ready := session.GetReadyTasks()
+	if len(ready) > 0 {
+		t.Errorf("GetReadyTasks() = %v, want empty when AwaitingDecision is true", ready)
+	}
+
+	// Clear the decision state (simulating user chose to continue with partial work)
+	session.GroupDecision = nil
+	session.CurrentGroup = 1 // Advance to group 1 after consolidation
+
+	// Now group 1 tasks should be ready (they only depend on task-1 which succeeded)
+	ready = session.GetReadyTasks()
+	if len(ready) != 2 {
+		t.Errorf("GetReadyTasks() returned %d tasks, want 2 (task-3, task-4)", len(ready))
+	}
+}
+
 func TestFlexibleString_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name     string

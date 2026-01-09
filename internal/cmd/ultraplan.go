@@ -28,6 +28,20 @@ The ultra-plan process has four phases:
 3. EXECUTION: Child sessions execute tasks in parallel (respecting dependencies)
 4. SYNTHESIS: Results are reviewed and integrated
 
+Multi-Pass Planning:
+  Use --multi-pass to enable multi-pass planning mode, where three independent
+  coordinators each create their own execution plan using different strategies:
+
+    • maximize-parallelism: Optimizes for maximum concurrent task execution
+    • minimize-complexity: Prioritizes simplicity and clear task boundaries
+    • balanced-approach: Balances parallelism, complexity, and dependencies
+
+  A coordinator-manager then evaluates all three plans, scoring each on criteria
+  like task clarity, dependency structure, and execution efficiency. It either
+  selects the best plan or merges the strongest elements from multiple plans
+  into a canonical execution plan. This produces higher-quality plans through
+  diverse strategic perspectives.
+
 Plan Editor:
   When the plan is ready, an interactive editor opens allowing you to:
   - Review task dependencies and execution order
@@ -55,7 +69,13 @@ Examples:
   claudio ultraplan --auto-approve --review "Add comprehensive test coverage"
 
   # Increase parallelism
-  claudio ultraplan --max-parallel 5 "Add comprehensive test coverage"`,
+  claudio ultraplan --max-parallel 5 "Add comprehensive test coverage"
+
+  # Use multi-pass planning for complex tasks requiring careful decomposition
+  claudio ultraplan --multi-pass "Refactor database layer to use repository pattern"
+
+  # Combine multi-pass with dry-run to compare strategies without executing
+  claudio ultraplan --multi-pass --dry-run "Implement microservices architecture"`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runUltraplan,
 }
@@ -67,6 +87,7 @@ var (
 	ultraplanNoSynthesis bool
 	ultraplanAutoApprove bool
 	ultraplanReview      bool
+	ultraplanMultiPass   bool
 )
 
 func init() {
@@ -78,6 +99,7 @@ func init() {
 	ultraplanCmd.Flags().BoolVar(&ultraplanNoSynthesis, "no-synthesis", false, "Skip synthesis phase after execution")
 	ultraplanCmd.Flags().BoolVar(&ultraplanAutoApprove, "auto-approve", false, "Auto-approve spawned tasks without confirmation")
 	ultraplanCmd.Flags().BoolVar(&ultraplanReview, "review", false, "Review and edit plan before execution (opens plan editor)")
+	ultraplanCmd.Flags().BoolVar(&ultraplanMultiPass, "multi-pass", false, "Enable multi-pass planning with 3 strategic approaches (maximize-parallelism, minimize-complexity, balanced) - best plan is selected or merged")
 }
 
 func runUltraplan(cmd *cobra.Command, args []string) error {
@@ -130,9 +152,15 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	// Apply config file settings (viper default is 3, user can set to 0 for unlimited)
 	ultraConfig.MaxParallel = cfg.Ultraplan.MaxParallel
 
+	// Apply config file settings
+	ultraConfig.MultiPass = cfg.Ultraplan.MultiPass
+
 	// CLI flags override config file (only if explicitly set)
 	if cmd.Flags().Changed("max-parallel") {
 		ultraConfig.MaxParallel = ultraplanMaxParallel
+	}
+	if cmd.Flags().Changed("multi-pass") {
+		ultraConfig.MultiPass = ultraplanMultiPass
 	}
 	ultraConfig.DryRun = ultraplanDryRun
 	ultraConfig.NoSynthesis = ultraplanNoSynthesis

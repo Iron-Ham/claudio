@@ -17,6 +17,7 @@ type UltraPlanPhase string
 
 const (
 	PhasePlanning      UltraPlanPhase = "planning"
+	PhasePlanSelection UltraPlanPhase = "plan_selection" // Multi-pass: comparing and selecting best plan
 	PhaseRefresh       UltraPlanPhase = "context_refresh"
 	PhaseExecuting     UltraPlanPhase = "executing"
 	PhaseSynthesis     UltraPlanPhase = "synthesis"
@@ -66,6 +67,7 @@ type UltraPlanConfig struct {
 	NoSynthesis   bool `json:"no_synthesis"`    // Skip synthesis phase after execution
 	AutoApprove   bool `json:"auto_approve"`    // Auto-approve spawned tasks without confirmation
 	Review        bool `json:"review"`          // Force plan editor to open for review (overrides AutoApprove)
+	MultiPass     bool `json:"multi_pass"`      // Enable multi-pass planning with plan comparison
 
 	// Consolidation settings
 	ConsolidationMode ConsolidationMode `json:"consolidation_mode,omitempty"` // "stacked" or "single"
@@ -85,6 +87,7 @@ func DefaultUltraPlanConfig() UltraPlanConfig {
 		DryRun:                 false,
 		NoSynthesis:            false,
 		AutoApprove:            false,
+		MultiPass:              false,
 		ConsolidationMode:      ModeStackedPRs,
 		CreateDraftPRs:         true,
 		PRLabels:               []string{"ultraplan"},
@@ -101,6 +104,22 @@ type RevisionIssue struct {
 	Files       []string `json:"files,omitempty"`       // Files affected by the issue
 	Severity    string   `json:"severity,omitempty"`    // "critical", "major", "minor"
 	Suggestion  string   `json:"suggestion,omitempty"`  // Suggested fix
+}
+
+// PlanScore represents the evaluation of a single candidate plan
+type PlanScore struct {
+	Strategy   string `json:"strategy"`
+	Score      int    `json:"score"`
+	Strengths  string `json:"strengths"`
+	Weaknesses string `json:"weaknesses"`
+}
+
+// PlanDecision captures the coordinator-manager's decision when evaluating multiple plans
+type PlanDecision struct {
+	Action        string      `json:"action"`         // "select" or "merge"
+	SelectedIndex int         `json:"selected_index"` // 0-2 or -1 for merge
+	Reasoning     string      `json:"reasoning"`
+	PlanScores    []PlanScore `json:"plan_scores"`
 }
 
 // RevisionState tracks the state of the revision phase
@@ -181,6 +200,45 @@ func ParseRevisionIssuesFromOutput(output string) ([]RevisionIssue, error) {
 	return validIssues, nil
 }
 
+// ParsePlanDecisionFromOutput extracts the plan decision from coordinator-manager output
+// It looks for JSON wrapped in <plan_decision></plan_decision> tags
+func ParsePlanDecisionFromOutput(output string) (*PlanDecision, error) {
+	// Look for <plan_decision>...</plan_decision> tags
+	re := regexp.MustCompile(`(?s)<plan_decision>\s*(.*?)\s*</plan_decision>`)
+	matches := re.FindStringSubmatch(output)
+
+	if len(matches) < 2 {
+		return nil, fmt.Errorf("no plan decision found in output (expected <plan_decision>JSON</plan_decision>)")
+	}
+
+	jsonStr := strings.TrimSpace(matches[1])
+
+	if jsonStr == "" {
+		return nil, fmt.Errorf("empty plan decision block")
+	}
+
+	// Parse the JSON
+	var decision PlanDecision
+	if err := json.Unmarshal([]byte(jsonStr), &decision); err != nil {
+		return nil, fmt.Errorf("failed to parse plan decision JSON: %w", err)
+	}
+
+	// Validate the decision
+	if decision.Action != "select" && decision.Action != "merge" {
+		return nil, fmt.Errorf("invalid plan decision action: %q (expected \"select\" or \"merge\")", decision.Action)
+	}
+
+	if decision.Action == "select" && (decision.SelectedIndex < 0 || decision.SelectedIndex > 2) {
+		return nil, fmt.Errorf("invalid selected_index for select action: %d (expected 0-2)", decision.SelectedIndex)
+	}
+
+	if decision.Action == "merge" && decision.SelectedIndex != -1 {
+		return nil, fmt.Errorf("selected_index should be -1 for merge action, got %d", decision.SelectedIndex)
+	}
+
+	return &decision, nil
+}
+
 // TaskWorktreeInfo holds information about a task's worktree for consolidation
 type TaskWorktreeInfo struct {
 	TaskID       string `json:"task_id"`
@@ -214,6 +272,13 @@ type UltraPlanSession struct {
 	Phase           UltraPlanPhase    `json:"phase"`
 	Config          UltraPlanConfig   `json:"config"`
 	CoordinatorID   string            `json:"coordinator_id,omitempty"`   // Instance ID of the planning coordinator
+
+	// Multi-pass planning state
+	CandidatePlans     []*PlanSpec `json:"candidate_plans,omitempty"`      // Plans from each coordinator (multi-pass)
+	PlanCoordinatorIDs []string    `json:"plan_coordinator_ids,omitempty"` // Instance IDs of planning coordinators
+	PlanManagerID      string      `json:"plan_manager_id,omitempty"`      // Instance ID of the coordinator-manager
+	SelectedPlanIndex  int         `json:"selected_plan_index,omitempty"`  // Index of selected plan (-1 if merged)
+
 	SynthesisID     string            `json:"synthesis_id,omitempty"`     // Instance ID of the synthesis reviewer
 	RevisionID      string            `json:"revision_id,omitempty"`      // Instance ID of the current revision coordinator
 	ConsolidationID string            `json:"consolidation_id,omitempty"` // Instance ID of the consolidation agent
@@ -275,6 +340,10 @@ func NewUltraPlanSession(objective string, config UltraPlanConfig) *UltraPlanSes
 		Created:          time.Now(),
 		TaskRetries:      make(map[string]*TaskRetryState),
 		TaskCommitCounts: make(map[string]int),
+		// Multi-pass planning state
+		CandidatePlans:     make([]*PlanSpec, 0),
+		PlanCoordinatorIDs: make([]string, 0),
+		SelectedPlanIndex:  -1,
 	}
 }
 
@@ -316,6 +385,12 @@ func (s *UltraPlanSession) IsTaskReady(taskID string) bool {
 // This respects group boundaries - only tasks from the current execution group are considered
 func (s *UltraPlanSession) GetReadyTasks() []string {
 	if s.Plan == nil {
+		return nil
+	}
+
+	// CRITICAL: Never return tasks from the next group while awaiting a decision
+	// about a partial failure. The next group cannot start without consolidation.
+	if s.GroupDecision != nil && s.GroupDecision.AwaitingDecision {
 		return nil
 	}
 
@@ -430,6 +505,9 @@ type CoordinatorEvent struct {
 	InstanceID string               `json:"instance_id,omitempty"`
 	Message    string               `json:"message,omitempty"`
 	Timestamp  time.Time            `json:"timestamp"`
+	// Multi-pass planning fields
+	PlanIndex int    `json:"plan_index,omitempty"` // Which plan was generated/selected (0-indexed)
+	Strategy  string `json:"strategy,omitempty"`   // Planning strategy name (e.g., "breadth-first", "depth-first")
 }
 
 // CoordinatorEventType represents the type of coordinator event
@@ -444,6 +522,12 @@ const (
 	EventPhaseChange   CoordinatorEventType = "phase_change"
 	EventConflict      CoordinatorEventType = "conflict"
 	EventPlanReady     CoordinatorEventType = "plan_ready"
+
+	// Multi-pass planning events
+	EventMultiPassPlanGenerated CoordinatorEventType = "multipass_plan_generated" // One coordinator finished planning
+	EventAllPlansGenerated      CoordinatorEventType = "all_plans_generated"      // All coordinators finished
+	EventPlanSelectionStarted   CoordinatorEventType = "plan_selection_started"   // Manager started evaluating
+	EventPlanSelected           CoordinatorEventType = "plan_selected"            // Final plan chosen
 )
 
 // UltraPlanManager manages the execution of an ultra-plan session
@@ -1071,6 +1155,104 @@ Write a JSON file with this structure:
 - Each task description should be complete enough for independent execution
 - Use Write tool to create the plan file when ready`
 
+// MultiPassPlanningStrategy defines a strategic approach for multi-pass planning
+type MultiPassPlanningStrategy struct {
+	Strategy    string // Unique identifier for the strategy
+	Description string // Human-readable description
+	Prompt      string // Additional guidance to append to the base planning prompt
+}
+
+// MultiPassPlanningPrompts provides different strategic perspectives for multi-pass planning.
+// Each strategy offers a distinct approach to task decomposition, enabling the multi-pass
+// planning system to generate diverse plans that can be compared and combined.
+var MultiPassPlanningPrompts = []MultiPassPlanningStrategy{
+	{
+		Strategy:    "maximize-parallelism",
+		Description: "Optimize for maximum parallel execution",
+		Prompt: `## Strategic Focus: Maximize Parallelism
+
+When creating your plan, prioritize these principles:
+
+1. **Minimize Dependencies**: Structure tasks to have as few inter-task dependencies as possible. When a dependency seems necessary, consider if the tasks can be restructured to eliminate it.
+
+2. **Prefer Smaller Tasks**: Break work into many small, independent units rather than fewer large ones. A task that can be split into two independent pieces should be split.
+
+3. **Isolate File Ownership**: Assign each file to exactly one task where possible. When multiple tasks must touch the same file, see if the work can be restructured to avoid this.
+
+4. **Flatten the Dependency Graph**: Aim for a wide, shallow execution graph rather than a deep, narrow one. More tasks in the first execution group means more parallelism.
+
+5. **Accept Some Redundancy**: It's acceptable for tasks to have slight overlap in setup or context-building if it means they can run independently.`,
+	},
+	{
+		Strategy:    "minimize-complexity",
+		Description: "Optimize for simplicity and clarity",
+		Prompt: `## Strategic Focus: Minimize Complexity
+
+When creating your plan, prioritize these principles:
+
+1. **Single Responsibility**: Each task should do exactly one thing well. If a task description contains "and" or multiple objectives, consider splitting it.
+
+2. **Clear Boundaries**: Tasks should have well-defined inputs and outputs. Another developer should be able to understand the task's scope without reading other task descriptions.
+
+3. **Natural Code Boundaries**: Align task boundaries with the codebase's natural structure (packages, modules, components). Don't split work that naturally belongs together.
+
+4. **Explicit Over Implicit**: Make dependencies explicit even if it reduces parallelism. A clear sequential flow is better than a parallel structure with hidden assumptions.
+
+5. **Prefer Clarity Over Parallelism**: When there's a tradeoff between task clarity and parallel execution potential, choose clarity. A well-understood task is easier to execute correctly.`,
+	},
+	{
+		Strategy:    "balanced-approach",
+		Description: "Balance parallelism, complexity, and dependencies",
+		Prompt: `## Strategic Focus: Balanced Approach
+
+When creating your plan, balance these competing concerns:
+
+1. **Respect Natural Structure**: Follow the codebase's existing architecture. Group changes that affect related functionality, even if this reduces parallelism.
+
+2. **Pragmatic Dependencies**: Include dependencies that reflect genuine execution order requirements, but don't over-constrain the graph. Consider which dependencies are truly necessary vs. merely convenient.
+
+3. **Right-Sized Tasks**: Tasks should be large enough to represent meaningful work units but small enough to complete in a single focused session. Target 15-45 minutes of work per task.
+
+4. **Consider Integration**: Group changes that will need to be tested together. Tasks that affect the same feature or user flow may benefit from shared context.
+
+5. **Maintain Flexibility**: Leave room for parallel execution where natural, but don't force artificial splits. The goal is a plan that's both efficient and maintainable.`,
+	},
+}
+
+// GetMultiPassPlanningPrompt combines the base PlanningPromptTemplate with strategy-specific
+// guidance for multi-pass planning. The strategy parameter should match one of the Strategy
+// fields in MultiPassPlanningPrompts.
+func GetMultiPassPlanningPrompt(strategy string, objective string) string {
+	// Find the strategy-specific guidance
+	var strategyPrompt string
+	for _, s := range MultiPassPlanningPrompts {
+		if s.Strategy == strategy {
+			strategyPrompt = s.Prompt
+			break
+		}
+	}
+
+	// Build the base prompt with the objective
+	basePrompt := fmt.Sprintf(PlanningPromptTemplate, objective)
+
+	// If no matching strategy found, return just the base prompt
+	if strategyPrompt == "" {
+		return basePrompt
+	}
+
+	// Combine base prompt with strategy-specific guidance
+	return basePrompt + "\n\n" + strategyPrompt
+}
+
+// GetMultiPassStrategyNames returns the list of available strategy names
+func GetMultiPassStrategyNames() []string {
+	names := make([]string, len(MultiPassPlanningPrompts))
+	for i, s := range MultiPassPlanningPrompts {
+		names[i] = s.Strategy
+	}
+	return names
+}
+
 // SynthesisPromptTemplate is the prompt used for the synthesis phase
 const SynthesisPromptTemplate = `You are reviewing the results of a parallel execution plan.
 
@@ -1268,3 +1450,51 @@ When consolidation is complete, you MUST write a completion file:
 6. List all PR URLs in prs_created array
 
 This file signals that consolidation is done and provides a record of the PRs created.`
+
+// PlanManagerPromptTemplate is the prompt for the coordinator-manager in multi-pass mode
+// It receives all candidate plans and must select the best one or merge them
+const PlanManagerPromptTemplate = `You are a senior technical lead evaluating multiple implementation plans.
+
+## Objective
+%s
+
+## Candidate Plans
+Three different planning strategies have produced the following plans:
+
+%s
+
+## Your Task
+
+Evaluate each plan based on:
+1. **Parallelism potential**: How many tasks can run concurrently?
+2. **Task granularity**: Are tasks appropriately sized (prefer smaller, focused tasks)?
+3. **Dependency structure**: Is the dependency graph sensible and minimal?
+4. **File ownership**: Do tasks have clear, non-overlapping file assignments?
+5. **Completeness**: Does the plan fully address the objective?
+6. **Risk mitigation**: Are constraints and risks properly identified?
+
+## Decision
+
+You must either:
+1. **Select** the best plan as-is, OR
+2. **Merge** the best elements from multiple plans into a superior plan
+
+## Output
+
+Write your final plan to ` + "`" + PlanFileName + "`" + ` using the standard plan JSON schema.
+
+Before the plan file, output your reasoning in this format:
+<plan_decision>
+{
+  "action": "select" or "merge",
+  "selected_index": 0-2 (if select) or -1 (if merge),
+  "reasoning": "Brief explanation of your decision",
+  "plan_scores": [
+    {"strategy": "maximize-parallelism", "score": 1-10, "strengths": "...", "weaknesses": "..."},
+    {"strategy": "minimize-complexity", "score": 1-10, "strengths": "...", "weaknesses": "..."},
+    {"strategy": "balanced-approach", "score": 1-10, "strengths": "...", "weaknesses": "..."}
+  ]
+}
+</plan_decision>
+
+Then write the final plan file.`
