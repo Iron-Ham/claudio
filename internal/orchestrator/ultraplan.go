@@ -1074,6 +1074,104 @@ Write a JSON file with this structure:
 - Each task description should be complete enough for independent execution
 - Use Write tool to create the plan file when ready`
 
+// MultiPassPlanningStrategy defines a strategic approach for multi-pass planning
+type MultiPassPlanningStrategy struct {
+	Strategy    string // Unique identifier for the strategy
+	Description string // Human-readable description
+	Prompt      string // Additional guidance to append to the base planning prompt
+}
+
+// MultiPassPlanningPrompts provides different strategic perspectives for multi-pass planning.
+// Each strategy offers a distinct approach to task decomposition, enabling the multi-pass
+// planning system to generate diverse plans that can be compared and combined.
+var MultiPassPlanningPrompts = []MultiPassPlanningStrategy{
+	{
+		Strategy:    "maximize-parallelism",
+		Description: "Optimize for maximum parallel execution",
+		Prompt: `## Strategic Focus: Maximize Parallelism
+
+When creating your plan, prioritize these principles:
+
+1. **Minimize Dependencies**: Structure tasks to have as few inter-task dependencies as possible. When a dependency seems necessary, consider if the tasks can be restructured to eliminate it.
+
+2. **Prefer Smaller Tasks**: Break work into many small, independent units rather than fewer large ones. A task that can be split into two independent pieces should be split.
+
+3. **Isolate File Ownership**: Assign each file to exactly one task where possible. When multiple tasks must touch the same file, see if the work can be restructured to avoid this.
+
+4. **Flatten the Dependency Graph**: Aim for a wide, shallow execution graph rather than a deep, narrow one. More tasks in the first execution group means more parallelism.
+
+5. **Accept Some Redundancy**: It's acceptable for tasks to have slight overlap in setup or context-building if it means they can run independently.`,
+	},
+	{
+		Strategy:    "minimize-complexity",
+		Description: "Optimize for simplicity and clarity",
+		Prompt: `## Strategic Focus: Minimize Complexity
+
+When creating your plan, prioritize these principles:
+
+1. **Single Responsibility**: Each task should do exactly one thing well. If a task description contains "and" or multiple objectives, consider splitting it.
+
+2. **Clear Boundaries**: Tasks should have well-defined inputs and outputs. Another developer should be able to understand the task's scope without reading other task descriptions.
+
+3. **Natural Code Boundaries**: Align task boundaries with the codebase's natural structure (packages, modules, components). Don't split work that naturally belongs together.
+
+4. **Explicit Over Implicit**: Make dependencies explicit even if it reduces parallelism. A clear sequential flow is better than a parallel structure with hidden assumptions.
+
+5. **Prefer Clarity Over Parallelism**: When there's a tradeoff between task clarity and parallel execution potential, choose clarity. A well-understood task is easier to execute correctly.`,
+	},
+	{
+		Strategy:    "balanced-approach",
+		Description: "Balance parallelism, complexity, and dependencies",
+		Prompt: `## Strategic Focus: Balanced Approach
+
+When creating your plan, balance these competing concerns:
+
+1. **Respect Natural Structure**: Follow the codebase's existing architecture. Group changes that affect related functionality, even if this reduces parallelism.
+
+2. **Pragmatic Dependencies**: Include dependencies that reflect genuine execution order requirements, but don't over-constrain the graph. Consider which dependencies are truly necessary vs. merely convenient.
+
+3. **Right-Sized Tasks**: Tasks should be large enough to represent meaningful work units but small enough to complete in a single focused session. Target 15-45 minutes of work per task.
+
+4. **Consider Integration**: Group changes that will need to be tested together. Tasks that affect the same feature or user flow may benefit from shared context.
+
+5. **Maintain Flexibility**: Leave room for parallel execution where natural, but don't force artificial splits. The goal is a plan that's both efficient and maintainable.`,
+	},
+}
+
+// GetMultiPassPlanningPrompt combines the base PlanningPromptTemplate with strategy-specific
+// guidance for multi-pass planning. The strategy parameter should match one of the Strategy
+// fields in MultiPassPlanningPrompts.
+func GetMultiPassPlanningPrompt(strategy string, objective string) string {
+	// Find the strategy-specific guidance
+	var strategyPrompt string
+	for _, s := range MultiPassPlanningPrompts {
+		if s.Strategy == strategy {
+			strategyPrompt = s.Prompt
+			break
+		}
+	}
+
+	// Build the base prompt with the objective
+	basePrompt := fmt.Sprintf(PlanningPromptTemplate, objective)
+
+	// If no matching strategy found, return just the base prompt
+	if strategyPrompt == "" {
+		return basePrompt
+	}
+
+	// Combine base prompt with strategy-specific guidance
+	return basePrompt + "\n\n" + strategyPrompt
+}
+
+// GetMultiPassStrategyNames returns the list of available strategy names
+func GetMultiPassStrategyNames() []string {
+	names := make([]string, len(MultiPassPlanningPrompts))
+	for i, s := range MultiPassPlanningPrompts {
+		names[i] = s.Strategy
+	}
+	return names
+}
+
 // SynthesisPromptTemplate is the prompt used for the synthesis phase
 const SynthesisPromptTemplate = `You are reviewing the results of a parallel execution plan.
 
