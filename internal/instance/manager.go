@@ -623,8 +623,10 @@ func (m *Manager) SendKey(key string) {
 		return
 	}
 
-	// Use CombinedOutput to capture any error
-	_ = exec.Command("tmux", "send-keys", "-t", sessionName, key).Run()
+	// Run async to avoid blocking the UI thread
+	go func() {
+		_ = exec.Command("tmux", "send-keys", "-t", sessionName, key).Run()
+	}()
 }
 
 // SendLiteral sends literal text to the tmux session (no interpretation)
@@ -638,8 +640,11 @@ func (m *Manager) SendLiteral(text string) {
 		return
 	}
 
+	// Run async to avoid blocking the UI thread
 	// -l flag sends keys literally without interpretation
-	_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
+	go func() {
+		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
+	}()
 }
 
 // SendPaste sends pasted text to the tmux session with bracketed paste sequences
@@ -654,18 +659,22 @@ func (m *Manager) SendPaste(text string) {
 		return
 	}
 
-	// Bracketed paste mode escape sequences
-	// Start: ESC[200~ End: ESC[201~
-	// This tells the receiving application that the following text is pasted
-	pasteStart := "\x1b[200~"
-	pasteEnd := "\x1b[201~"
+	// Run async to avoid blocking the UI thread
+	// Commands run sequentially within the goroutine to maintain paste order
+	go func() {
+		// Bracketed paste mode escape sequences
+		// Start: ESC[200~ End: ESC[201~
+		// This tells the receiving application that the following text is pasted
+		pasteStart := "\x1b[200~"
+		pasteEnd := "\x1b[201~"
 
-	// Send bracketed paste start
-	_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteStart).Run()
-	// Send the pasted content
-	_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
-	// Send bracketed paste end
-	_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteEnd).Run()
+		// Send bracketed paste start
+		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteStart).Run()
+		// Send the pasted content
+		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
+		// Send bracketed paste end
+		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteEnd).Run()
+	}()
 }
 
 // GetOutput returns all buffered output
