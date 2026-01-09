@@ -1516,7 +1516,9 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 				len(plan.Tasks), len(plan.ExecutionOrder))
 		}
 	} else {
-		m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Press [e] to execute.",
+		// Enter plan editor for interactive review
+		m.enterPlanEditor()
+		m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
 			len(plan.Tasks), len(plan.ExecutionOrder))
 		// Notify user that input is needed
 		m.ultraPlan.needsNotification = true
@@ -1595,7 +1597,9 @@ func (m *Model) checkForPlanFile() bool {
 				len(plan.Tasks), len(plan.ExecutionOrder))
 		}
 	} else {
-		m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Press [e] to execute.",
+		// Enter plan editor for interactive review
+		m.enterPlanEditor()
+		m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
 			len(plan.Tasks), len(plan.ExecutionOrder))
 		// Notify user that input is needed
 		m.ultraPlan.needsNotification = true
