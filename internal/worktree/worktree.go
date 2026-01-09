@@ -39,6 +39,22 @@ func (m *Manager) Create(path, branch string) error {
 	return nil
 }
 
+// CreateFromBranch creates a new worktree at the given path with a new branch based off a specific base branch.
+// This is used when we want a task's branch to start from a consolidated branch rather than HEAD.
+func (m *Manager) CreateFromBranch(path, newBranch, baseBranch string) error {
+	// Use git worktree add -b <newBranch> <path> <baseBranch>
+	// This creates a worktree at <path> with a new branch <newBranch> starting from <baseBranch>
+	cmd := exec.Command("git", "worktree", "add", "-b", newBranch, path, baseBranch)
+	cmd.Dir = m.repoDir
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to create worktree from branch %s: %w\n%s", baseBranch, err, string(output))
+	}
+
+	return nil
+}
+
 // Remove removes a worktree
 func (m *Manager) Remove(path string) error {
 	// First, try to remove the worktree

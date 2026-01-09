@@ -453,6 +453,53 @@ func (o *Orchestrator) AddInstanceToWorktree(session *Session, task string, work
 	return inst, nil
 }
 
+// AddInstanceFromBranch adds a new Claude instance with a worktree branched from a specific base branch.
+// This is used for ultraplan tasks where the next group should build on the consolidated branch from the previous group.
+func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, baseBranch string) (*Instance, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Create instance
+	inst := NewInstance(task)
+
+	// Generate branch name from task using configured naming convention
+	branchSlug := slugify(task)
+	inst.Branch = o.generateBranchName(inst.ID, branchSlug)
+
+	// Create worktree from the specified base branch
+	wtPath := filepath.Join(o.worktreeDir, inst.ID)
+	if err := o.wt.CreateFromBranch(wtPath, inst.Branch, baseBranch); err != nil {
+		return nil, fmt.Errorf("failed to create worktree from branch %s: %w", baseBranch, err)
+	}
+	inst.WorktreePath = wtPath
+
+	// Add to session
+	session.Instances = append(session.Instances, inst)
+
+	// Create instance manager with config
+	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, task)
+	o.instances[inst.ID] = mgr
+
+	// Register with conflict detector
+	if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
+		// Non-fatal, just log
+		fmt.Fprintf(os.Stderr, "Warning: failed to watch instance for conflicts: %v\n", err)
+	}
+
+	// Update shared context
+	if err := o.updateContext(); err != nil {
+		// Non-fatal, just log
+		fmt.Fprintf(os.Stderr, "Warning: failed to update context: %v\n", err)
+	}
+
+	// Save session
+	if err := o.saveSession(); err != nil {
+		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
+	return inst, nil
+}
+
 // StartInstance starts a Claude process for an instance
 func (o *Orchestrator) StartInstance(inst *Instance) error {
 	o.mu.Lock()

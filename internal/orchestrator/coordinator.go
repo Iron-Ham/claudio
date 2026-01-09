@@ -341,8 +341,21 @@ func (c *Coordinator) startTask(taskID string, completionChan chan<- taskComplet
 	// Create the task prompt with context
 	prompt := c.buildTaskPrompt(task)
 
+	// Determine the base branch for this task
+	// For tasks in group 0, use the default (HEAD/main)
+	// For tasks in later groups, use the consolidated branch from the previous group
+	baseBranch := c.getBaseBranchForGroup(session.CurrentGroup)
+
 	// Create a new instance for this task
-	inst, err := c.orch.AddInstance(c.baseSession, prompt)
+	var inst *Instance
+	var err error
+	if baseBranch != "" {
+		// Use the consolidated branch from the previous group as the base
+		inst, err = c.orch.AddInstanceFromBranch(c.baseSession, prompt, baseBranch)
+	} else {
+		// Use the default (HEAD/main)
+		inst, err = c.orch.AddInstance(c.baseSession, prompt)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create instance for task %s: %w", taskID, err)
 	}
@@ -477,7 +490,9 @@ func (c *Coordinator) handleTaskCompletion(completion taskCompletion) {
 }
 
 // checkAndAdvanceGroup checks if the current execution group is complete
-// and advances to the next group, emitting EventGroupComplete
+// and advances to the next group, emitting EventGroupComplete.
+// When a group completes, it consolidates all parallel task branches from that group
+// into a single branch, which becomes the base for the next group's tasks.
 func (c *Coordinator) checkAndAdvanceGroup() {
 	session := c.Session()
 	if session == nil || session.Plan == nil {
@@ -494,6 +509,19 @@ func (c *Coordinator) checkAndAdvanceGroup() {
 			Type:    EventGroupComplete,
 			Message: fmt.Sprintf("Group %d complete, advancing to group %d", previousGroup+1, session.CurrentGroup+1),
 		})
+
+		// Consolidate the completed group's parallel task branches into one branch
+		// This runs asynchronously so it doesn't block the execution loop
+		c.wg.Add(1)
+		go func(groupIdx int) {
+			defer c.wg.Done()
+			if err := c.consolidateGroup(groupIdx); err != nil {
+				c.manager.emitEvent(CoordinatorEvent{
+					Type:    EventConflict,
+					Message: fmt.Sprintf("Warning: failed to consolidate group %d: %v", groupIdx+1, err),
+				})
+			}
+		}(previousGroup)
 
 		// Call the callback
 		c.mu.RLock()
@@ -1032,10 +1060,24 @@ func (c *Coordinator) buildConsolidationPrompt() string {
 	mode := string(session.Config.ConsolidationMode)
 	createDrafts := session.Config.CreateDraftPRs
 
+	// Check if we have pre-consolidated group branches (from incremental consolidation)
+	hasPreConsolidatedBranches := len(session.GroupConsolidatedBranches) > 0
+
 	// Build the execution groups and task branches information
 	var groupsInfo strings.Builder
 	for groupIdx, taskIDs := range session.Plan.ExecutionOrder {
 		groupsInfo.WriteString(fmt.Sprintf("\n### Group %d\n", groupIdx+1))
+
+		// If we have a pre-consolidated branch for this group, include it
+		if hasPreConsolidatedBranches && groupIdx < len(session.GroupConsolidatedBranches) {
+			consolidatedBranch := session.GroupConsolidatedBranches[groupIdx]
+			if consolidatedBranch != "" {
+				groupsInfo.WriteString(fmt.Sprintf("**CONSOLIDATED BRANCH (ALREADY MERGED)**: %s\n", consolidatedBranch))
+				groupsInfo.WriteString("The tasks in this group have already been consolidated into this branch.\n")
+			}
+		}
+
+		groupsInfo.WriteString("Tasks in this group:\n")
 		for _, taskID := range taskIDs {
 			task := session.GetTask(taskID)
 			if task == nil {
@@ -1080,6 +1122,18 @@ func (c *Coordinator) buildConsolidationPrompt() string {
 				}
 			}
 		}
+	}
+
+	// Add note about pre-consolidated branches if available
+	if hasPreConsolidatedBranches {
+		worktreeInfo.WriteString("\n## Pre-Consolidated Group Branches\n")
+		worktreeInfo.WriteString("**IMPORTANT**: Groups have already been incrementally consolidated. Use these branches directly:\n")
+		for groupIdx, branch := range session.GroupConsolidatedBranches {
+			if branch != "" {
+				worktreeInfo.WriteString(fmt.Sprintf("- Group %d: %s\n", groupIdx+1, branch))
+			}
+		}
+		worktreeInfo.WriteString("\nYou do NOT need to cherry-pick individual task branches - just create PRs from these consolidated branches.\n")
 	}
 
 	return fmt.Sprintf(ConsolidationPromptTemplate,
@@ -1282,4 +1336,147 @@ func (c *Coordinator) GetRunningTasks() map[string]string {
 		result[k] = v
 	}
 	return result
+}
+
+// consolidateGroup consolidates all task branches from a completed group into a single branch.
+// This runs after each group completes, allowing the next group's tasks to build on the consolidated work.
+// If the group has only one task, the task's branch becomes the consolidated branch directly.
+func (c *Coordinator) consolidateGroup(groupIndex int) error {
+	session := c.Session()
+	if session == nil || session.Plan == nil {
+		return fmt.Errorf("no session or plan")
+	}
+
+	if groupIndex < 0 || groupIndex >= len(session.Plan.ExecutionOrder) {
+		return fmt.Errorf("invalid group index: %d", groupIndex)
+	}
+
+	taskIDs := session.Plan.ExecutionOrder[groupIndex]
+	if len(taskIDs) == 0 {
+		return nil // Empty group, nothing to consolidate
+	}
+
+	// Collect task branches for this group
+	var taskBranches []string
+	for _, taskID := range taskIDs {
+		task := session.GetTask(taskID)
+		if task == nil {
+			continue
+		}
+
+		// Find the instance that executed this task
+		for _, inst := range c.baseSession.Instances {
+			if strings.Contains(inst.Task, taskID) || strings.Contains(inst.Branch, slugify(task.Title)) {
+				taskBranches = append(taskBranches, inst.Branch)
+				break
+			}
+		}
+	}
+
+	if len(taskBranches) == 0 {
+		return fmt.Errorf("no task branches found for group %d", groupIndex)
+	}
+
+	// Generate consolidated branch name
+	branchPrefix := session.Config.BranchPrefix
+	if branchPrefix == "" {
+		branchPrefix = c.orch.config.Branch.Prefix
+	}
+	if branchPrefix == "" {
+		branchPrefix = "Iron-Ham"
+	}
+	planID := session.ID
+	if len(planID) > 8 {
+		planID = planID[:8]
+	}
+	consolidatedBranch := fmt.Sprintf("%s/ultraplan-%s-group-%d", branchPrefix, planID, groupIndex+1)
+
+	// If there's only one task in the group, we can just use its branch as the base for the next group
+	// But we still create a consolidated branch to maintain consistent naming
+	var baseBranch string
+	if groupIndex == 0 {
+		baseBranch = c.orch.wt.FindMainBranch()
+	} else if groupIndex-1 < len(session.GroupConsolidatedBranches) {
+		baseBranch = session.GroupConsolidatedBranches[groupIndex-1]
+	} else {
+		baseBranch = c.orch.wt.FindMainBranch()
+	}
+
+	// Create the consolidated branch from the base
+	if err := c.orch.wt.CreateBranchFrom(consolidatedBranch, baseBranch); err != nil {
+		return fmt.Errorf("failed to create consolidated branch %s: %w", consolidatedBranch, err)
+	}
+
+	// Create a temporary worktree for cherry-picking
+	worktreeBase := fmt.Sprintf("%s/consolidation-group-%d", c.orch.claudioDir, groupIndex)
+	if err := c.orch.wt.CreateWorktreeFromBranch(worktreeBase, consolidatedBranch); err != nil {
+		return fmt.Errorf("failed to create consolidation worktree: %w", err)
+	}
+	defer func() {
+		// Clean up the worktree when done
+		_ = c.orch.wt.Remove(worktreeBase)
+	}()
+
+	// Cherry-pick commits from each task branch
+	for _, branch := range taskBranches {
+		if err := c.orch.wt.CherryPickBranch(worktreeBase, branch); err != nil {
+			// If cherry-pick fails, log but continue - the user may need to resolve conflicts later
+			c.manager.emitEvent(CoordinatorEvent{
+				Type:    EventConflict,
+				Message: fmt.Sprintf("Failed to cherry-pick from %s: %v", branch, err),
+			})
+			// Try to abort the cherry-pick and continue
+			_ = c.orch.wt.AbortCherryPick(worktreeBase)
+			continue
+		}
+	}
+
+	// Push the consolidated branch so it's available for remote operations
+	if err := c.orch.wt.Push(worktreeBase, false); err != nil {
+		// Push failure is not fatal - the branch exists locally
+		c.manager.emitEvent(CoordinatorEvent{
+			Type:    EventGroupComplete,
+			Message: fmt.Sprintf("Warning: failed to push consolidated branch %s: %v", consolidatedBranch, err),
+		})
+	}
+
+	// Store the consolidated branch
+	c.mu.Lock()
+	// Ensure the slice is large enough
+	for len(session.GroupConsolidatedBranches) <= groupIndex {
+		session.GroupConsolidatedBranches = append(session.GroupConsolidatedBranches, "")
+	}
+	session.GroupConsolidatedBranches[groupIndex] = consolidatedBranch
+	c.mu.Unlock()
+
+	// Persist the state
+	_ = c.orch.SaveSession()
+
+	c.manager.emitEvent(CoordinatorEvent{
+		Type:    EventGroupComplete,
+		Message: fmt.Sprintf("Group %d consolidated into branch %s", groupIndex+1, consolidatedBranch),
+	})
+
+	return nil
+}
+
+// getBaseBranchForGroup returns the base branch that new tasks in a group should use.
+// For group 0, this is the main branch. For other groups, it's the consolidated branch from the previous group.
+func (c *Coordinator) getBaseBranchForGroup(groupIndex int) string {
+	session := c.Session()
+
+	if groupIndex == 0 {
+		return "" // Use default (HEAD/main)
+	}
+
+	// Check if we have a consolidated branch from the previous group
+	previousGroupIndex := groupIndex - 1
+	if session != nil && previousGroupIndex < len(session.GroupConsolidatedBranches) {
+		consolidatedBranch := session.GroupConsolidatedBranches[previousGroupIndex]
+		if consolidatedBranch != "" {
+			return consolidatedBranch
+		}
+	}
+
+	return "" // Use default
 }
