@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -448,4 +449,117 @@ func TestUltraPlanSession_AdvanceGroupIfComplete(t *testing.T) {
 	if session.CurrentGroup != 2 {
 		t.Errorf("CurrentGroup = %d, want 2 (past last group)", session.CurrentGroup)
 	}
+}
+
+func TestFlexibleString_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     string
+		expected string
+	}{
+		{
+			name:     "string value",
+			json:     `{"notes": "simple note"}`,
+			expected: "simple note",
+		},
+		{
+			name:     "array of strings",
+			json:     `{"notes": ["note 1", "note 2", "note 3"]}`,
+			expected: "note 1\nnote 2\nnote 3",
+		},
+		{
+			name:     "empty string",
+			json:     `{"notes": ""}`,
+			expected: "",
+		},
+		{
+			name:     "empty array",
+			json:     `{"notes": []}`,
+			expected: "",
+		},
+		{
+			name:     "null value",
+			json:     `{"notes": null}`,
+			expected: "",
+		},
+		{
+			name:     "missing field",
+			json:     `{}`,
+			expected: "",
+		},
+		{
+			name:     "single element array",
+			json:     `{"notes": ["only one"]}`,
+			expected: "only one",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var result struct {
+				Notes FlexibleString `json:"notes"`
+			}
+			if err := json.Unmarshal([]byte(tt.json), &result); err != nil {
+				t.Fatalf("Unmarshal failed: %v", err)
+			}
+			if string(result.Notes) != tt.expected {
+				t.Errorf("Notes = %q, want %q", result.Notes, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTaskCompletionFile_ParseWithArrayNotes(t *testing.T) {
+	// This tests the real-world scenario where Claude writes notes as an array
+	jsonData := `{
+		"task_id": "task-12-tests",
+		"status": "complete",
+		"summary": "Added tests",
+		"files_modified": ["test.go"],
+		"notes": ["First note about tests", "Second note about implementation"]
+	}`
+
+	var completion TaskCompletionFile
+	if err := json.Unmarshal([]byte(jsonData), &completion); err != nil {
+		t.Fatalf("Failed to parse completion file with array notes: %v", err)
+	}
+
+	if completion.TaskID != "task-12-tests" {
+		t.Errorf("TaskID = %q, want %q", completion.TaskID, "task-12-tests")
+	}
+	if completion.Status != "complete" {
+		t.Errorf("Status = %q, want %q", completion.Status, "complete")
+	}
+	expectedNotes := "First note about tests\nSecond note about implementation"
+	if string(completion.Notes) != expectedNotes {
+		t.Errorf("Notes = %q, want %q", completion.Notes, expectedNotes)
+	}
+}
+
+func TestParseTaskCompletionFile_RealWorldArrayNotes(t *testing.T) {
+	// Test parsing a real completion file that has notes as an array
+	// This is a regression test for the bug where notes as array caused parse failure
+	worktreePath := "/Users/zer0/Developer/oss/Claudio/.claudio/worktrees/173e1fdc"
+	
+	completion, err := ParseTaskCompletionFile(worktreePath)
+	if err != nil {
+		t.Skipf("Skipping real file test - file not found: %v", err)
+		return
+	}
+	
+	if completion.TaskID != "task-12-tests" {
+		t.Errorf("TaskID = %q, want %q", completion.TaskID, "task-12-tests")
+	}
+	if completion.Status != "complete" {
+		t.Errorf("Status = %q, want %q", completion.Status, "complete")
+	}
+	if completion.Status == "" {
+		t.Error("Status is empty - checkForTaskCompletionFile would return false!")
+	}
+	
+	// Notes should be non-empty since the real file has notes as an array
+	if completion.Notes == "" {
+		t.Error("Notes is empty - expected array of notes to be joined")
+	}
+	t.Logf("Notes length: %d bytes", len(completion.Notes))
 }
