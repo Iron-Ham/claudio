@@ -2545,6 +2545,8 @@ func (c *Coordinator) monitorGroupConsolidator(groupIndex int, instanceID string
 
 					// Check status
 					if completion.Status == "failed" {
+						// Stop the consolidator instance even on failure
+						_ = c.orch.StopInstance(inst)
 						return fmt.Errorf("group %d consolidation failed: %s", groupIndex+1, completion.Notes)
 					}
 
@@ -2564,6 +2566,9 @@ func (c *Coordinator) monitorGroupConsolidator(groupIndex int, instanceID string
 
 					// Persist state
 					_ = c.orch.SaveSession()
+
+					// Stop the consolidator instance to free up resources
+					_ = c.orch.StopInstance(inst)
 
 					// Emit success event
 					c.manager.emitEvent(CoordinatorEvent{
