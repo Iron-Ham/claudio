@@ -479,7 +479,17 @@ func (c *Coordinator) monitorTaskInstance(taskID, instanceID string, completionC
 			// This handles legacy behavior and edge cases
 			switch inst.Status {
 			case StatusCompleted:
-				// Instance process has exited - verify work was done
+				// StatusCompleted can be triggered by false positive pattern detection
+				// while the instance is still actively working. Only treat as actual
+				// completion if the tmux session has truly exited.
+				mgr := c.orch.GetInstanceManager(instanceID)
+				if mgr != nil && mgr.TmuxSessionExists() {
+					// Tmux session still running - this was a false positive completion detection
+					// Reset status to working and continue monitoring for sentinel file
+					inst.Status = StatusWorking
+					continue
+				}
+				// Tmux session has exited - verify work was done
 				result := c.verifyTaskWork(taskID, inst)
 				completionChan <- result
 				return

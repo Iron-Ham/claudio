@@ -110,14 +110,12 @@ func NewDetector() *Detector {
 		`>\s+.*↵`,
 	}
 
-	// Completion patterns - Claude has finished its task
-	completionStrings := []string{
-		`(?i)(?:task|work|implementation|changes?) (?:is |are )?(?:complete|done|finished)`,
-		`(?i)(?:i'?ve|I have) (?:completed|finished|done)`,
-		`(?i)(?:successfully|all done|that'?s it)`,
-		`(?i)let me know if (?:you need|there'?s) anything else`,
-		`(?i)is there anything else`,
-	}
+	// Completion patterns - intentionally empty
+	// For Claudio tasks, the sentinel file (.claudio-task-complete.json) is the
+	// authoritative completion signal. Text-based completion detection caused
+	// false positives that triggered premature task verification.
+	// The inputWaitingPatterns above already detect when Claude is at its prompt.
+	completionStrings := []string{}
 
 	// Error patterns - Claude encountered a critical issue that stopped it
 	// These patterns should be specific to actual Claude failures, not just error text appearing in output
