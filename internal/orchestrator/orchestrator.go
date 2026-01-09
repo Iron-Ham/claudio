@@ -427,6 +427,32 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 	return inst, nil
 }
 
+// AddInstanceToWorktree adds a new instance that uses an existing worktree
+// This is used for revision tasks that need to work in the same worktree as the original task
+func (o *Orchestrator) AddInstanceToWorktree(session *Session, task string, worktreePath string, branch string) (*Instance, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Create instance with pre-set worktree info
+	inst := NewInstance(task)
+	inst.WorktreePath = worktreePath
+	inst.Branch = branch
+
+	// Add to session
+	session.Instances = append(session.Instances, inst)
+
+	// Create instance manager with config
+	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, task)
+	o.instances[inst.ID] = mgr
+
+	// Save session
+	if err := o.saveSession(); err != nil {
+		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
+	return inst, nil
+}
+
 // StartInstance starts a Claude process for an instance
 func (o *Orchestrator) StartInstance(inst *Instance) error {
 	o.mu.Lock()

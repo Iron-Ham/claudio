@@ -46,6 +46,13 @@ func (m *Model) checkForPhaseNotification() {
 		return
 	}
 
+	// Check for revision phase (issues were found, user may want to know)
+	if session.Phase == orchestrator.PhaseRevision && m.ultraPlan.lastNotifiedPhase != orchestrator.PhaseRevision {
+		m.ultraPlan.needsNotification = true
+		m.ultraPlan.lastNotifiedPhase = orchestrator.PhaseRevision
+		return
+	}
+
 	// Check for consolidation pause (conflict detected, needs user attention)
 	if session.Phase == orchestrator.PhaseConsolidating && session.Consolidation != nil {
 		if session.Consolidation.Phase == orchestrator.ConsolidationPaused &&
@@ -99,6 +106,22 @@ func (m Model) renderUltraPlanHeader() string {
 	case orchestrator.PhaseSynthesis:
 		// During synthesis, show that review is in progress
 		progressDisplay = "reviewing..."
+
+	case orchestrator.PhaseRevision:
+		// During revision, show revision progress
+		if session.Revision != nil {
+			revised := len(session.Revision.RevisedTasks)
+			total := len(session.Revision.TasksToRevise)
+			if total > 0 {
+				pct := float64(revised) / float64(total) * 100
+				progressBar := renderProgressBar(int(pct), 20)
+				progressDisplay = fmt.Sprintf("%s round %d (%d/%d)", progressBar, session.Revision.RevisionRound, revised, total)
+			} else {
+				progressDisplay = fmt.Sprintf("round %d", session.Revision.RevisionRound)
+			}
+		} else {
+			progressDisplay = "addressing issues..."
+		}
 
 	case orchestrator.PhaseConsolidating:
 		// During consolidation, show consolidation progress if available
@@ -235,6 +258,7 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 	// ========== SYNTHESIS SECTION ==========
 	if lineCount < availableLines {
 		synthesisStarted := session.Phase == orchestrator.PhaseSynthesis ||
+			session.Phase == orchestrator.PhaseRevision ||
 			session.Phase == orchestrator.PhaseConsolidating ||
 			session.Phase == orchestrator.PhaseComplete
 
@@ -264,6 +288,91 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 		}
 		b.WriteString("\n")
 		lineCount++
+	}
+
+	// ========== REVISION SECTION ==========
+	if lineCount < availableLines {
+		revisionStarted := session.Phase == orchestrator.PhaseRevision ||
+			session.Phase == orchestrator.PhaseConsolidating ||
+			session.Phase == orchestrator.PhaseComplete
+
+		// Only show revision section if there are/were issues
+		hasRevision := session.Revision != nil && len(session.Revision.Issues) > 0
+
+		if hasRevision || session.Phase == orchestrator.PhaseRevision {
+			revStatus := m.getPhaseSectionStatus(orchestrator.PhaseRevision, session)
+			revHeader := fmt.Sprintf("▼ REVISION %s", revStatus)
+			if !revisionStarted && session.RevisionID == "" {
+				b.WriteString(styles.Muted.Render(revHeader))
+			} else {
+				b.WriteString(styles.SidebarTitle.Render(revHeader))
+			}
+			b.WriteString("\n")
+			lineCount++
+
+			// Show revision info
+			if session.Revision != nil && lineCount < availableLines {
+				// Show round number
+				roundInfo := fmt.Sprintf("  Round %d/%d", session.Revision.RevisionRound, session.Revision.MaxRevisions)
+				b.WriteString(styles.Muted.Render(roundInfo))
+				b.WriteString("\n")
+				lineCount++
+
+				// Show issues count
+				issueInfo := fmt.Sprintf("  %d issue(s) to address", len(session.Revision.Issues))
+				b.WriteString(styles.Muted.Render(issueInfo))
+				b.WriteString("\n")
+				lineCount++
+
+				// Show revision instance if active
+				if session.RevisionID != "" && lineCount < availableLines {
+					inst := m.orchestrator.GetInstance(session.RevisionID)
+					selected := m.isInstanceSelected(session.RevisionID)
+					navigable := true
+					line := m.renderPhaseInstanceLine(inst, "Reviser", selected, navigable, width-4)
+					b.WriteString(line)
+					b.WriteString("\n")
+					lineCount++
+				}
+
+				// Show tasks being revised
+				if len(session.Revision.TasksToRevise) > 0 && lineCount < availableLines {
+					for _, taskID := range session.Revision.TasksToRevise {
+						if lineCount >= availableLines-2 {
+							break
+						}
+						task := session.GetTask(taskID)
+						if task == nil {
+							continue
+						}
+						// Check if revised
+						revised := false
+						for _, rt := range session.Revision.RevisedTasks {
+							if rt == taskID {
+								revised = true
+								break
+							}
+						}
+						icon := "○"
+						if revised {
+							icon = "✓"
+						} else if session.Phase == orchestrator.PhaseRevision {
+							icon = "⟳"
+						}
+						taskLine := fmt.Sprintf("    %s %s", icon, truncate(task.Title, width-10))
+						b.WriteString(styles.Muted.Render(taskLine))
+						b.WriteString("\n")
+						lineCount++
+					}
+				}
+			} else if !revisionStarted && lineCount < availableLines {
+				b.WriteString(styles.Muted.Render("  ○ No issues"))
+				b.WriteString("\n")
+				lineCount++
+			}
+			b.WriteString("\n")
+			lineCount++
+		}
 	}
 
 	// ========== CONSOLIDATION SECTION ==========
@@ -388,8 +497,25 @@ func (m Model) getPhaseSectionStatus(phase orchestrator.UltraPlanPhase, session 
 		if session.Phase == orchestrator.PhaseSynthesis {
 			return "[⟳]"
 		}
-		if session.Phase == orchestrator.PhaseConsolidating || session.Phase == orchestrator.PhaseComplete {
+		if session.Phase == orchestrator.PhaseRevision || session.Phase == orchestrator.PhaseConsolidating || session.Phase == orchestrator.PhaseComplete {
 			return "[✓]"
+		}
+		return "[○]"
+
+	case orchestrator.PhaseRevision:
+		if session.Phase == orchestrator.PhaseRevision {
+			if session.Revision != nil {
+				revised := len(session.Revision.RevisedTasks)
+				total := len(session.Revision.TasksToRevise)
+				return fmt.Sprintf("[%d/%d]", revised, total)
+			}
+			return "[⟳]"
+		}
+		if session.Phase == orchestrator.PhaseConsolidating || session.Phase == orchestrator.PhaseComplete {
+			if session.Revision != nil && len(session.Revision.Issues) > 0 {
+				return "[✓]"
+			}
+			return "[○]" // No revision was needed
 		}
 		return "[○]"
 
@@ -573,6 +699,11 @@ func (m *Model) getNavigableInstances() []string {
 	// Synthesis - navigable once created
 	if session.SynthesisID != "" {
 		instances = append(instances, session.SynthesisID)
+	}
+
+	// Revision - navigable once created
+	if session.RevisionID != "" {
+		instances = append(instances, session.RevisionID)
 	}
 
 	// Consolidation - navigable once created
@@ -841,6 +972,13 @@ func (m Model) renderUltraPlanHelp() string {
 		keys = append(keys, "[v] toggle plan view")
 		keys = append(keys, "[s] done → consolidate")
 
+	case orchestrator.PhaseRevision:
+		keys = append(keys, "[tab] next instance")
+		keys = append(keys, "[v] toggle plan view")
+		if session.Revision != nil {
+			keys = append(keys, fmt.Sprintf("round %d/%d", session.Revision.RevisionRound, session.Revision.MaxRevisions))
+		}
+
 	case orchestrator.PhaseConsolidating:
 		keys = append(keys, "[v] toggle plan view")
 		if session.Consolidation != nil && session.Consolidation.Phase == orchestrator.ConsolidationPaused {
@@ -884,6 +1022,8 @@ func phaseToString(phase orchestrator.UltraPlanPhase) string {
 		return "EXECUTING"
 	case orchestrator.PhaseSynthesis:
 		return "SYNTHESIS"
+	case orchestrator.PhaseRevision:
+		return "REVISION"
 	case orchestrator.PhaseConsolidating:
 		return "CONSOLIDATING"
 	case orchestrator.PhaseComplete:
@@ -906,6 +1046,8 @@ func phaseStyle(phase orchestrator.UltraPlanPhase) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(styles.BlueColor).Bold(true)
 	case orchestrator.PhaseSynthesis:
 		return lipgloss.NewStyle().Foreground(styles.PurpleColor)
+	case orchestrator.PhaseRevision:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true) // Orange for revision
 	case orchestrator.PhaseConsolidating:
 		return lipgloss.NewStyle().Foreground(styles.YellowColor).Bold(true)
 	case orchestrator.PhaseComplete:
