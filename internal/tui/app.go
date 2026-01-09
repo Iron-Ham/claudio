@@ -492,6 +492,24 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyRunes:
 			char := string(msg.Runes)
+			// Handle Enter sent as rune (some terminals/input methods send \n or \r as runes)
+			if char == "\n" || char == "\r" {
+				if m.taskInput != "" {
+					// Add new instance
+					_, err := m.orchestrator.AddInstance(m.session, m.taskInput)
+					if err != nil {
+						m.errorMessage = err.Error()
+					} else {
+						// Switch to the newly added task and ensure it's visible in sidebar
+						m.activeTab = len(m.session.Instances) - 1
+						m.ensureActiveVisible()
+					}
+				}
+				m.addingTask = false
+				m.taskInput = ""
+				m.taskInputCursor = 0
+				return m, nil
+			}
 			// Detect "/" at start of input or after newline to show templates
 			cursorAtLineStart := m.taskInputCursor == 0 ||
 				(m.taskInputCursor > 0 && []rune(m.taskInput)[m.taskInputCursor-1] == '\n')
