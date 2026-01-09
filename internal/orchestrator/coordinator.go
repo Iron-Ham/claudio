@@ -43,6 +43,9 @@ type Coordinator struct {
 	baseSession *Session
 	callbacks   *CoordinatorCallbacks
 
+	// Phase handlers
+	planningPhase *PlanningPhase
+
 	// Running state
 	ctx        context.Context
 	cancelFunc context.CancelFunc
@@ -60,7 +63,7 @@ func NewCoordinator(orch *Orchestrator, baseSession *Session, ultraSession *Ultr
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &Coordinator{
+	coord := &Coordinator{
 		manager:      manager,
 		orch:         orch,
 		baseSession:  baseSession,
@@ -68,6 +71,11 @@ func NewCoordinator(orch *Orchestrator, baseSession *Session, ultraSession *Ultr
 		cancelFunc:   cancel,
 		runningTasks: make(map[string]string),
 	}
+
+	// Initialize phase handlers
+	coord.planningPhase = NewPlanningPhase(orch, baseSession)
+
+	return coord
 }
 
 // SetCallbacks sets the coordinator callbacks
@@ -75,6 +83,11 @@ func (c *Coordinator) SetCallbacks(cb *CoordinatorCallbacks) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.callbacks = cb
+
+	// Propagate callbacks to phase handlers
+	if c.planningPhase != nil {
+		c.planningPhase.SetCallbacks(cb)
+	}
 }
 
 // Manager returns the underlying ultra-plan manager
@@ -196,46 +209,39 @@ func (c *Coordinator) notifyComplete(success bool, summary string) {
 }
 
 // RunPlanning executes the planning phase
-// This creates a coordinator instance that explores the codebase and generates a plan
+// This creates a coordinator instance that explores the codebase and generates a plan.
+// Delegates to PlanningPhase handler for actual execution.
 func (c *Coordinator) RunPlanning() error {
 	session := c.Session()
 	c.notifyPhaseChange(PhasePlanning)
 
-	// Create the planning prompt
-	prompt := fmt.Sprintf(PlanningPromptTemplate, session.Objective)
-
-	// Create a coordinator instance for planning
-	inst, err := c.orch.AddInstance(c.baseSession, prompt)
-	if err != nil {
-		return fmt.Errorf("failed to create planning instance: %w", err)
+	// Delegate to PlanningPhase handler
+	if err := c.planningPhase.Execute(c.ctx, session); err != nil {
+		return err
 	}
 
-	session.CoordinatorID = inst.ID
-
-	// Start the instance
-	if err := c.orch.StartInstance(inst); err != nil {
-		return fmt.Errorf("failed to start planning instance: %w", err)
-	}
-
-	// Wait for the instance to complete
 	// The TUI will handle monitoring; here we just set up the session state
 	return nil
 }
 
-// SetPlan sets the plan for this ultra-plan session (used after planning completes)
-func (c *Coordinator) SetPlan(plan *PlanSpec) error {
-	if err := ValidatePlan(plan); err != nil {
-		return fmt.Errorf("invalid plan: %w", err)
-	}
+// GetPlanningPhase returns the planning phase handler for direct access.
+// This allows callers to monitor planning progress or access additional functionality.
+func (c *Coordinator) GetPlanningPhase() *PlanningPhase {
+	return c.planningPhase
+}
 
-	c.mu.Lock()
-	c.manager.session.Plan = plan
-	c.mu.Unlock()
+// SetPlan sets the plan for this ultra-plan session (used after planning completes).
+// Delegates validation and optimization to PlanningPhase handler.
+func (c *Coordinator) SetPlan(plan *PlanSpec) error {
+	session := c.Session()
+
+	// Delegate to PlanningPhase for validation and optimization
+	if err := c.planningPhase.SetPlan(session, plan); err != nil {
+		return err
+	}
 
 	// Persist the plan
 	_ = c.orch.SaveSession()
-
-	c.notifyPlanReady(plan)
 
 	// Transition to refresh phase (plan ready, waiting for execution)
 	c.notifyPhaseChange(PhaseRefresh)
