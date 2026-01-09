@@ -272,6 +272,13 @@ type UltraPlanSession struct {
 	Phase           UltraPlanPhase    `json:"phase"`
 	Config          UltraPlanConfig   `json:"config"`
 	CoordinatorID   string            `json:"coordinator_id,omitempty"`   // Instance ID of the planning coordinator
+
+	// Multi-pass planning state
+	CandidatePlans     []*PlanSpec `json:"candidate_plans,omitempty"`      // Plans from each coordinator (multi-pass)
+	PlanCoordinatorIDs []string    `json:"plan_coordinator_ids,omitempty"` // Instance IDs of planning coordinators
+	PlanManagerID      string      `json:"plan_manager_id,omitempty"`      // Instance ID of the coordinator-manager
+	SelectedPlanIndex  int         `json:"selected_plan_index,omitempty"`  // Index of selected plan (-1 if merged)
+
 	SynthesisID     string            `json:"synthesis_id,omitempty"`     // Instance ID of the synthesis reviewer
 	RevisionID      string            `json:"revision_id,omitempty"`      // Instance ID of the current revision coordinator
 	ConsolidationID string            `json:"consolidation_id,omitempty"` // Instance ID of the consolidation agent
@@ -333,6 +340,10 @@ func NewUltraPlanSession(objective string, config UltraPlanConfig) *UltraPlanSes
 		Created:          time.Now(),
 		TaskRetries:      make(map[string]*TaskRetryState),
 		TaskCommitCounts: make(map[string]int),
+		// Multi-pass planning state
+		CandidatePlans:     make([]*PlanSpec, 0),
+		PlanCoordinatorIDs: make([]string, 0),
+		SelectedPlanIndex:  -1,
 	}
 }
 
