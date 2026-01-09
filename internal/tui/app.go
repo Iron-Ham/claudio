@@ -103,6 +103,16 @@ func (a *App) Run() error {
 		a.program.Send(bellMsg{instanceID: instanceID})
 	})
 
+	// Set up coordinator event callback for ultra-plan mode (multi-pass planning events)
+	if a.model.ultraPlan != nil && a.model.ultraPlan.coordinator != nil {
+		manager := a.model.ultraPlan.coordinator.Manager()
+		if manager != nil {
+			manager.SetEventCallback(func(event orchestrator.CoordinatorEvent) {
+				a.program.Send(coordinatorEventMsg{event: event})
+			})
+		}
+	}
+
 	_, err := a.program.Run()
 
 	// Clean up signal handler
@@ -159,6 +169,12 @@ type timeoutMsg struct {
 
 type bellMsg struct {
 	instanceID string
+}
+
+// coordinatorEventMsg wraps a coordinator event from the ultra-plan manager
+// This allows the TUI to react to multi-pass planning events in real-time
+type coordinatorEventMsg struct {
+	event orchestrator.CoordinatorEvent
 }
 
 // Commands
@@ -351,6 +367,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bellMsg:
 		// Terminal bell detected in a tmux session - forward it to the parent terminal
 		return m, ringBell()
+
+	case coordinatorEventMsg:
+		// Handle coordinator events from ultra-plan multi-pass planning
+		return m.handleCoordinatorEvent(msg.event)
 	}
 
 	return m, nil

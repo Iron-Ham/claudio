@@ -2163,3 +2163,72 @@ func openURL(url string) error {
 
 	return cmd.Start()
 }
+
+// handleCoordinatorEvent handles events from the ultra-plan coordinator.
+// This provides real-time updates for multi-pass planning events.
+func (m Model) handleCoordinatorEvent(event orchestrator.CoordinatorEvent) (tea.Model, tea.Cmd) {
+	// Only process events if we're in ultra-plan mode
+	if m.ultraPlan == nil {
+		return m, nil
+	}
+
+	var cmds []tea.Cmd
+
+	switch event.Type {
+	case orchestrator.EventMultiPassPlanGenerated:
+		// One of the planning coordinators completed their plan
+		// Update the info message to show progress
+		strategyName := event.Strategy
+		if strategyName == "" {
+			strategyName = fmt.Sprintf("Plan %d", event.PlanIndex+1)
+		}
+		m.infoMessage = fmt.Sprintf("Coordinator %d (%s) completed plan generation", event.PlanIndex+1, strategyName)
+
+	case orchestrator.EventAllPlansGenerated:
+		// All planning coordinators have finished
+		// Show a prominent message and optionally notify user
+		m.infoMessage = "All planning coordinators finished. Selecting best plan..."
+		// Optionally trigger notification since this is an important milestone
+		m.ultraPlan.needsNotification = true
+
+	case orchestrator.EventPlanSelectionStarted:
+		// The plan manager has started evaluating candidates
+		m.infoMessage = fmt.Sprintf("Plan manager evaluating candidate plans: %s", event.Message)
+
+	case orchestrator.EventPlanSelected:
+		// Final plan has been selected
+		// This is a key event - notify user that plan is ready for review
+		strategyName := event.Strategy
+		if event.PlanIndex == -1 {
+			m.infoMessage = "Plan selected: Merged best elements from multiple plans"
+		} else if strategyName != "" {
+			m.infoMessage = fmt.Sprintf("Plan selected: %s (Plan %d)", strategyName, event.PlanIndex+1)
+		} else {
+			m.infoMessage = fmt.Sprintf("Plan selected: Plan %d", event.PlanIndex+1)
+		}
+		// Trigger notification since plan is ready for user review/execution
+		m.ultraPlan.needsNotification = true
+
+	case orchestrator.EventPhaseChange:
+		// Phase changed - this is informational
+		// The phase display is already updated via state polling, but we can
+		// log transitions for debugging or add specific handling here
+		// For PhasePlanSelection specifically, show a message
+		if event.Message == string(orchestrator.PhasePlanSelection) {
+			m.infoMessage = "Entering plan selection phase..."
+		}
+
+	case orchestrator.EventPlanReady:
+		// Single-pass planning completed (non-multi-pass)
+		// This is handled elsewhere but we can acknowledge it here
+		if event.Message != "" {
+			m.infoMessage = event.Message
+		}
+
+	default:
+		// Other event types (task events, etc.) are handled via state polling
+		// We don't need to duplicate that handling here
+	}
+
+	return m, tea.Batch(cmds...)
+}
