@@ -24,9 +24,19 @@ sessions for execution, and manages the overall workflow.
 
 The ultra-plan process has four phases:
 1. PLANNING: Claude explores the codebase and creates an execution plan
-2. CONTEXT REFRESH: The plan is compacted for efficient execution
+2. REVIEW: (optional) Interactive plan editor to review and modify the plan
 3. EXECUTION: Child sessions execute tasks in parallel (respecting dependencies)
 4. SYNTHESIS: Results are reviewed and integrated
+
+Plan Editor:
+  When the plan is ready, an interactive editor opens allowing you to:
+  - Review task dependencies and execution order
+  - Add, edit, or remove tasks
+  - Modify task priorities and complexity estimates
+  - Validate the plan for dependency cycles before execution
+
+  Use --review to always open the plan editor, even with --auto-approve.
+  Use --auto-approve without --review to skip the editor entirely.
 
 Examples:
   # Start ultra-plan with an objective
@@ -35,8 +45,14 @@ Examples:
   # Start with a pre-existing plan file
   claudio ultraplan --plan plan.json
 
+  # Review and edit a plan before execution
+  claudio ultraplan --plan plan.json --review
+
   # Dry run - only generate the plan, don't execute
   claudio ultraplan --dry-run "Refactor the API layer"
+
+  # Auto-approve but still review the plan first
+  claudio ultraplan --auto-approve --review "Add comprehensive test coverage"
 
   # Increase parallelism
   claudio ultraplan --max-parallel 5 "Add comprehensive test coverage"`,
@@ -50,6 +66,7 @@ var (
 	ultraplanDryRun      bool
 	ultraplanNoSynthesis bool
 	ultraplanAutoApprove bool
+	ultraplanReview      bool
 )
 
 func init() {
@@ -60,6 +77,7 @@ func init() {
 	ultraplanCmd.Flags().BoolVar(&ultraplanDryRun, "dry-run", false, "Run planning only, output plan without executing")
 	ultraplanCmd.Flags().BoolVar(&ultraplanNoSynthesis, "no-synthesis", false, "Skip synthesis phase after execution")
 	ultraplanCmd.Flags().BoolVar(&ultraplanAutoApprove, "auto-approve", false, "Auto-approve spawned tasks without confirmation")
+	ultraplanCmd.Flags().BoolVar(&ultraplanReview, "review", false, "Review and edit plan before execution (opens plan editor)")
 }
 
 func runUltraplan(cmd *cobra.Command, args []string) error {
@@ -112,6 +130,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	config.DryRun = ultraplanDryRun
 	config.NoSynthesis = ultraplanNoSynthesis
 	config.AutoApprove = ultraplanAutoApprove
+	config.Review = ultraplanReview
 
 	// Create or load the plan
 	var plan *orchestrator.PlanSpec

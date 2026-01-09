@@ -65,6 +65,7 @@ type UltraPlanConfig struct {
 	DryRun        bool `json:"dry_run"`         // Run planning only, don't execute
 	NoSynthesis   bool `json:"no_synthesis"`    // Skip synthesis phase after execution
 	AutoApprove   bool `json:"auto_approve"`    // Auto-approve spawned tasks without confirmation
+	Review        bool `json:"review"`          // Force plan editor to open for review (overrides AutoApprove)
 
 	// Consolidation settings
 	ConsolidationMode ConsolidationMode `json:"consolidation_mode,omitempty"` // "stacked" or "single"

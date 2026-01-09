@@ -1507,15 +1507,9 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 		return true
 	}
 
-	// Auto-start execution if configured
-	if session.Config.AutoApprove {
-		if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
-			m.errorMessage = fmt.Sprintf("Plan ready but failed to auto-start: %v", err)
-		} else {
-			m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Auto-starting execution...",
-				len(plan.Tasks), len(plan.ExecutionOrder))
-		}
-	} else {
+	// Determine whether to open plan editor or auto-start execution
+	// Review flag forces plan editor open, even if AutoApprove is also set
+	if session.Config.Review || !session.Config.AutoApprove {
 		// Enter plan editor for interactive review
 		m.enterPlanEditor()
 		m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
@@ -1523,6 +1517,14 @@ func (m *Model) handleUltraPlanCoordinatorCompletion(inst *orchestrator.Instance
 		// Notify user that input is needed
 		m.ultraPlan.needsNotification = true
 		m.ultraPlan.lastNotifiedPhase = orchestrator.PhaseRefresh
+	} else {
+		// Auto-start execution (AutoApprove is true and Review is false)
+		if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
+			m.errorMessage = fmt.Sprintf("Plan ready but failed to auto-start: %v", err)
+		} else {
+			m.infoMessage = fmt.Sprintf("Plan ready: %d tasks in %d groups. Auto-starting execution...",
+				len(plan.Tasks), len(plan.ExecutionOrder))
+		}
 	}
 
 	return true
@@ -1588,15 +1590,9 @@ func (m *Model) checkForPlanFile() bool {
 	// Plan detected - stop the coordinator instance (it's done its job)
 	_ = m.orchestrator.StopInstance(inst)
 
-	// Auto-start execution if configured
-	if session.Config.AutoApprove {
-		if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
-			m.errorMessage = fmt.Sprintf("Plan detected but failed to auto-start: %v", err)
-		} else {
-			m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Auto-starting execution...",
-				len(plan.Tasks), len(plan.ExecutionOrder))
-		}
-	} else {
+	// Determine whether to open plan editor or auto-start execution
+	// Review flag forces plan editor open, even if AutoApprove is also set
+	if session.Config.Review || !session.Config.AutoApprove {
 		// Enter plan editor for interactive review
 		m.enterPlanEditor()
 		m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
@@ -1604,6 +1600,14 @@ func (m *Model) checkForPlanFile() bool {
 		// Notify user that input is needed
 		m.ultraPlan.needsNotification = true
 		m.ultraPlan.lastNotifiedPhase = orchestrator.PhaseRefresh
+	} else {
+		// Auto-start execution (AutoApprove is true and Review is false)
+		if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
+			m.errorMessage = fmt.Sprintf("Plan detected but failed to auto-start: %v", err)
+		} else {
+			m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Auto-starting execution...",
+				len(plan.Tasks), len(plan.ExecutionOrder))
+		}
 	}
 
 	return true
