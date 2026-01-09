@@ -579,8 +579,114 @@ func (c *Coordinator) monitorSynthesisInstance(instanceID string) {
 	}
 }
 
-// onSynthesisComplete handles synthesis completion and triggers consolidation
+// onSynthesisComplete handles synthesis completion and triggers revision or consolidation
 func (c *Coordinator) onSynthesisComplete() {
+	session := c.Session()
+
+	// Try to parse revision issues from synthesis output
+	issues := c.parseRevisionIssues()
+
+	// Filter to only critical/major issues that need revision
+	var issuesNeedingRevision []RevisionIssue
+	for _, issue := range issues {
+		if issue.Severity == "critical" || issue.Severity == "major" || issue.Severity == "" {
+			issuesNeedingRevision = append(issuesNeedingRevision, issue)
+		}
+	}
+
+	// If there are issues that need revision, start the revision phase
+	if len(issuesNeedingRevision) > 0 {
+		// Check if we've already had too many revision rounds
+		if session.Revision != nil && session.Revision.RevisionRound >= session.Revision.MaxRevisions {
+			// Max revisions reached, proceed to consolidation anyway
+			c.captureTaskWorktreeInfo()
+			c.proceedToConsolidationOrComplete()
+			return
+		}
+
+		if err := c.StartRevision(issuesNeedingRevision); err != nil {
+			c.mu.Lock()
+			session.Phase = PhaseFailed
+			session.Error = fmt.Sprintf("revision failed: %v", err)
+			c.mu.Unlock()
+			_ = c.orch.SaveSession()
+			c.notifyComplete(false, session.Error)
+		}
+		return
+	}
+
+	// No issues - capture worktree info and proceed to consolidation or complete
+	c.captureTaskWorktreeInfo()
+	c.proceedToConsolidationOrComplete()
+}
+
+// parseRevisionIssues extracts revision issues from the synthesis instance output
+func (c *Coordinator) parseRevisionIssues() []RevisionIssue {
+	session := c.Session()
+	if session.SynthesisID == "" {
+		return nil
+	}
+
+	inst := c.orch.GetInstance(session.SynthesisID)
+	if inst == nil {
+		return nil
+	}
+
+	// Get the output from the instance manager
+	mgr := c.orch.instances[inst.ID]
+	if mgr == nil {
+		return nil
+	}
+
+	outputBytes := mgr.GetOutput()
+	if len(outputBytes) == 0 {
+		return nil
+	}
+
+	issues, err := ParseRevisionIssuesFromOutput(string(outputBytes))
+	if err != nil {
+		// Log but don't fail - just proceed without revision
+		return nil
+	}
+
+	return issues
+}
+
+// captureTaskWorktreeInfo captures worktree information for all completed tasks
+func (c *Coordinator) captureTaskWorktreeInfo() {
+	session := c.Session()
+	if session.Plan == nil {
+		return
+	}
+
+	var worktreeInfo []TaskWorktreeInfo
+	for _, taskID := range session.CompletedTasks {
+		task := session.GetTask(taskID)
+		if task == nil {
+			continue
+		}
+
+		// Find the instance for this task
+		for _, inst := range c.baseSession.Instances {
+			if strings.Contains(inst.Task, taskID) || strings.Contains(inst.Branch, slugify(task.Title)) {
+				worktreeInfo = append(worktreeInfo, TaskWorktreeInfo{
+					TaskID:       taskID,
+					TaskTitle:    task.Title,
+					WorktreePath: inst.WorktreePath,
+					Branch:       inst.Branch,
+				})
+				break
+			}
+		}
+	}
+
+	c.mu.Lock()
+	session.TaskWorktrees = worktreeInfo
+	c.mu.Unlock()
+}
+
+// proceedToConsolidationOrComplete moves to consolidation if configured, otherwise completes
+func (c *Coordinator) proceedToConsolidationOrComplete() {
 	session := c.Session()
 
 	// Check if consolidation is configured
@@ -605,6 +711,198 @@ func (c *Coordinator) onSynthesisComplete() {
 	c.mu.Unlock()
 	_ = c.orch.SaveSession()
 	c.notifyComplete(true, "All tasks completed and synthesized")
+}
+
+// StartRevision begins the revision phase to address identified issues
+func (c *Coordinator) StartRevision(issues []RevisionIssue) error {
+	session := c.Session()
+	c.notifyPhaseChange(PhaseRevision)
+
+	// Initialize or update revision state
+	c.mu.Lock()
+	if session.Revision == nil {
+		session.Revision = NewRevisionState(issues)
+		now := time.Now()
+		session.Revision.StartedAt = &now
+	} else {
+		// Increment revision round
+		session.Revision.RevisionRound++
+		session.Revision.Issues = issues
+		session.Revision.TasksToRevise = extractTasksToRevise(issues)
+		session.Revision.RevisedTasks = make([]string, 0)
+	}
+	c.mu.Unlock()
+
+	// Start revision tasks for each affected task
+	completionChan := make(chan taskCompletion, 100)
+
+	for _, taskID := range session.Revision.TasksToRevise {
+		if err := c.startRevisionTask(taskID, completionChan); err != nil {
+			c.notifyTaskFailed(taskID, fmt.Sprintf("revision failed: %v", err))
+		}
+	}
+
+	// Monitor revision tasks in a goroutine
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.monitorRevisionTasks(completionChan)
+	}()
+
+	return nil
+}
+
+// startRevisionTask starts a revision task for a specific task
+func (c *Coordinator) startRevisionTask(taskID string, completionChan chan<- taskCompletion) error {
+	session := c.Session()
+	task := session.GetTask(taskID)
+	if task == nil {
+		return fmt.Errorf("task %s not found", taskID)
+	}
+
+	// Find the original instance for this task to get its worktree
+	var originalInst *Instance
+	for _, inst := range c.baseSession.Instances {
+		if strings.Contains(inst.Task, taskID) || strings.Contains(inst.Branch, slugify(task.Title)) {
+			originalInst = inst
+			break
+		}
+	}
+
+	if originalInst == nil {
+		return fmt.Errorf("original instance for task %s not found", taskID)
+	}
+
+	// Build the revision prompt
+	prompt := c.buildRevisionPrompt(task)
+
+	// Create a new instance using the SAME worktree as the original task
+	inst, err := c.orch.AddInstanceToWorktree(c.baseSession, prompt, originalInst.WorktreePath, originalInst.Branch)
+	if err != nil {
+		return fmt.Errorf("failed to create revision instance for task %s: %w", taskID, err)
+	}
+
+	c.mu.Lock()
+	session.RevisionID = inst.ID
+	c.mu.Unlock()
+
+	// Track the running task
+	c.mu.Lock()
+	c.runningTasks[taskID] = inst.ID
+	c.runningCount++
+	c.mu.Unlock()
+
+	c.notifyTaskStart(taskID, inst.ID)
+
+	// Start the instance
+	if err := c.orch.StartInstance(inst); err != nil {
+		c.mu.Lock()
+		delete(c.runningTasks, taskID)
+		c.runningCount--
+		c.mu.Unlock()
+		return fmt.Errorf("failed to start revision instance for task %s: %w", taskID, err)
+	}
+
+	// Monitor the instance for completion
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		c.monitorTaskInstance(taskID, inst.ID, completionChan)
+	}()
+
+	return nil
+}
+
+// buildRevisionPrompt creates the prompt for a revision task
+func (c *Coordinator) buildRevisionPrompt(task *PlannedTask) string {
+	session := c.Session()
+
+	// Gather issues for this specific task
+	var taskIssues []RevisionIssue
+	for _, issue := range session.Revision.Issues {
+		if issue.TaskID == task.ID || issue.TaskID == "" {
+			taskIssues = append(taskIssues, issue)
+		}
+	}
+
+	// Format issues as a readable list
+	var issuesStr strings.Builder
+	for i, issue := range taskIssues {
+		issuesStr.WriteString(fmt.Sprintf("%d. **%s**: %s\n", i+1, issue.Severity, issue.Description))
+		if len(issue.Files) > 0 {
+			issuesStr.WriteString(fmt.Sprintf("   Files: %s\n", strings.Join(issue.Files, ", ")))
+		}
+		if issue.Suggestion != "" {
+			issuesStr.WriteString(fmt.Sprintf("   Suggestion: %s\n", issue.Suggestion))
+		}
+		issuesStr.WriteString("\n")
+	}
+
+	return fmt.Sprintf(RevisionPromptTemplate,
+		session.Objective,
+		task.ID,
+		task.Title,
+		task.Description,
+		issuesStr.String(),
+	)
+}
+
+// monitorRevisionTasks monitors all revision tasks and triggers re-synthesis when complete
+func (c *Coordinator) monitorRevisionTasks(completionChan <-chan taskCompletion) {
+	session := c.Session()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+
+		case completion := <-completionChan:
+			c.handleRevisionTaskCompletion(completion)
+
+			// Check if all revision tasks are complete
+			c.mu.RLock()
+			allComplete := len(session.Revision.RevisedTasks) >= len(session.Revision.TasksToRevise)
+			c.mu.RUnlock()
+
+			if allComplete {
+				c.onRevisionComplete()
+				return
+			}
+		}
+	}
+}
+
+// handleRevisionTaskCompletion handles a revision task completion
+func (c *Coordinator) handleRevisionTaskCompletion(completion taskCompletion) {
+	session := c.Session()
+
+	c.mu.Lock()
+	delete(c.runningTasks, completion.taskID)
+	c.runningCount--
+
+	if completion.success {
+		session.Revision.RevisedTasks = append(session.Revision.RevisedTasks, completion.taskID)
+	}
+	c.mu.Unlock()
+
+	if completion.success {
+		c.notifyTaskComplete(completion.taskID)
+	} else {
+		c.notifyTaskFailed(completion.taskID, completion.error)
+	}
+}
+
+// onRevisionComplete handles completion of all revision tasks
+func (c *Coordinator) onRevisionComplete() {
+	session := c.Session()
+
+	c.mu.Lock()
+	now := time.Now()
+	session.Revision.CompletedAt = &now
+	c.mu.Unlock()
+
+	// Re-run synthesis to check if issues are resolved
+	_ = c.RunSynthesis()
 }
 
 // StartConsolidation begins the consolidation phase
@@ -689,6 +987,32 @@ func (c *Coordinator) buildConsolidationPrompt() string {
 		}
 	}
 
+	// Build worktree details from captured task worktree info
+	var worktreeInfo strings.Builder
+	if len(session.TaskWorktrees) > 0 {
+		for _, twi := range session.TaskWorktrees {
+			worktreeInfo.WriteString(fmt.Sprintf("- **%s** (%s)\n", twi.TaskTitle, twi.TaskID))
+			worktreeInfo.WriteString(fmt.Sprintf("  - Worktree: %s\n", twi.WorktreePath))
+			worktreeInfo.WriteString(fmt.Sprintf("  - Branch: %s\n", twi.Branch))
+		}
+	} else {
+		// Fall back to building from instances if TaskWorktrees wasn't captured
+		for _, taskID := range session.CompletedTasks {
+			task := session.GetTask(taskID)
+			if task == nil {
+				continue
+			}
+			for _, inst := range c.baseSession.Instances {
+				if strings.Contains(inst.Task, taskID) || strings.Contains(inst.Branch, slugify(task.Title)) {
+					worktreeInfo.WriteString(fmt.Sprintf("- **%s** (%s)\n", task.Title, taskID))
+					worktreeInfo.WriteString(fmt.Sprintf("  - Worktree: %s\n", inst.WorktreePath))
+					worktreeInfo.WriteString(fmt.Sprintf("  - Branch: %s\n", inst.Branch))
+					break
+				}
+			}
+		}
+	}
+
 	return fmt.Sprintf(ConsolidationPromptTemplate,
 		session.Objective,
 		branchPrefix,
@@ -696,6 +1020,7 @@ func (c *Coordinator) buildConsolidationPrompt() string {
 		mode,
 		createDrafts,
 		groupsInfo.String(),
+		worktreeInfo.String(),
 	)
 }
 

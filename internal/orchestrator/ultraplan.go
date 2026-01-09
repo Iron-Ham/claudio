@@ -20,6 +20,7 @@ const (
 	PhaseRefresh       UltraPlanPhase = "context_refresh"
 	PhaseExecuting     UltraPlanPhase = "executing"
 	PhaseSynthesis     UltraPlanPhase = "synthesis"
+	PhaseRevision      UltraPlanPhase = "revision"
 	PhaseConsolidating UltraPlanPhase = "consolidating"
 	PhaseComplete      UltraPlanPhase = "complete"
 	PhaseFailed        UltraPlanPhase = "failed"
@@ -86,6 +87,101 @@ func DefaultUltraPlanConfig() UltraPlanConfig {
 	}
 }
 
+// RevisionIssue represents an issue identified during synthesis that needs to be addressed
+type RevisionIssue struct {
+	TaskID      string   `json:"task_id"`               // Task ID that needs revision (empty for cross-cutting issues)
+	Description string   `json:"description"`           // Description of the issue
+	Files       []string `json:"files,omitempty"`       // Files affected by the issue
+	Severity    string   `json:"severity,omitempty"`    // "critical", "major", "minor"
+	Suggestion  string   `json:"suggestion,omitempty"`  // Suggested fix
+}
+
+// RevisionState tracks the state of the revision phase
+type RevisionState struct {
+	Issues           []RevisionIssue `json:"issues"`                      // Issues identified during synthesis
+	RevisionRound    int             `json:"revision_round"`              // Current revision iteration (starts at 1)
+	MaxRevisions     int             `json:"max_revisions"`               // Maximum allowed revision rounds
+	TasksToRevise    []string        `json:"tasks_to_revise,omitempty"`   // Task IDs that need revision
+	RevisedTasks     []string        `json:"revised_tasks,omitempty"`     // Task IDs that have been revised
+	RevisionPrompts  map[string]string `json:"revision_prompts,omitempty"` // Task ID -> revision prompt
+	StartedAt        *time.Time      `json:"started_at,omitempty"`
+	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
+}
+
+// NewRevisionState creates a new revision state
+func NewRevisionState(issues []RevisionIssue) *RevisionState {
+	return &RevisionState{
+		Issues:          issues,
+		RevisionRound:   1,
+		MaxRevisions:    3, // Default max revision rounds
+		TasksToRevise:   extractTasksToRevise(issues),
+		RevisedTasks:    make([]string, 0),
+		RevisionPrompts: make(map[string]string),
+	}
+}
+
+// extractTasksToRevise extracts unique task IDs from issues
+func extractTasksToRevise(issues []RevisionIssue) []string {
+	taskSet := make(map[string]bool)
+	var tasks []string
+	for _, issue := range issues {
+		if issue.TaskID != "" && !taskSet[issue.TaskID] {
+			taskSet[issue.TaskID] = true
+			tasks = append(tasks, issue.TaskID)
+		}
+	}
+	return tasks
+}
+
+// IsComplete returns true if all tasks have been revised
+func (r *RevisionState) IsComplete() bool {
+	return len(r.RevisedTasks) >= len(r.TasksToRevise)
+}
+
+// ParseRevisionIssuesFromOutput extracts revision issues from synthesis output
+// It looks for JSON wrapped in <revision_issues></revision_issues> tags
+func ParseRevisionIssuesFromOutput(output string) ([]RevisionIssue, error) {
+	// Look for <revision_issues>...</revision_issues> tags
+	re := regexp.MustCompile(`(?s)<revision_issues>\s*(.*?)\s*</revision_issues>`)
+	matches := re.FindStringSubmatch(output)
+
+	if len(matches) < 2 {
+		// No revision issues block found - assume no issues
+		return nil, nil
+	}
+
+	jsonStr := strings.TrimSpace(matches[1])
+
+	// Handle empty array
+	if jsonStr == "[]" || jsonStr == "" {
+		return nil, nil
+	}
+
+	// Parse the JSON array
+	var issues []RevisionIssue
+	if err := json.Unmarshal([]byte(jsonStr), &issues); err != nil {
+		return nil, fmt.Errorf("failed to parse revision issues JSON: %w", err)
+	}
+
+	// Filter to only include issues with actual content
+	var validIssues []RevisionIssue
+	for _, issue := range issues {
+		if issue.Description != "" {
+			validIssues = append(validIssues, issue)
+		}
+	}
+
+	return validIssues, nil
+}
+
+// TaskWorktreeInfo holds information about a task's worktree for consolidation
+type TaskWorktreeInfo struct {
+	TaskID       string `json:"task_id"`
+	TaskTitle    string `json:"task_title"`
+	WorktreePath string `json:"worktree_path"`
+	Branch       string `json:"branch"`
+}
+
 // UltraPlanSession represents an ultra-plan orchestration session
 type UltraPlanSession struct {
 	ID              string            `json:"id"`
@@ -95,6 +191,7 @@ type UltraPlanSession struct {
 	Config          UltraPlanConfig   `json:"config"`
 	CoordinatorID   string            `json:"coordinator_id,omitempty"`   // Instance ID of the planning coordinator
 	SynthesisID     string            `json:"synthesis_id,omitempty"`     // Instance ID of the synthesis reviewer
+	RevisionID      string            `json:"revision_id,omitempty"`      // Instance ID of the current revision coordinator
 	ConsolidationID string            `json:"consolidation_id,omitempty"` // Instance ID of the consolidation agent
 	TaskToInstance  map[string]string `json:"task_to_instance"`           // PlannedTask.ID -> Instance.ID
 	CompletedTasks  []string          `json:"completed_tasks"`
@@ -104,6 +201,12 @@ type UltraPlanSession struct {
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
 	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
 	Error           string            `json:"error,omitempty"` // Error message if failed
+
+	// Revision state (persisted for recovery and display)
+	Revision *RevisionState `json:"revision,omitempty"`
+
+	// Task worktree information for consolidation context
+	TaskWorktrees []TaskWorktreeInfo `json:"task_worktrees,omitempty"`
 
 	// Consolidation results (persisted for recovery and display)
 	Consolidation *ConsolidationState `json:"consolidation,omitempty"`
@@ -606,11 +709,66 @@ const SynthesisPromptTemplate = `You are reviewing the results of a parallel exe
 ## Instructions
 
 1. **Review** all completed work to ensure it meets the original objective
-2. **Identify** any integration issues or conflicts that need resolution
+2. **Identify** any integration issues, bugs, or conflicts that need resolution
 3. **Verify** that all pieces work together correctly
-4. **Summarize** what was accomplished
+4. **Check** for any missing functionality or incomplete implementations
 
-If there are any issues that need manual resolution, clearly list them. Otherwise, confirm that the objective has been successfully achieved.`
+## Output Format
+
+After your review, you MUST output your findings in a structured format.
+
+If there are issues that need to be addressed, output them in a <revision_issues> block:
+
+<revision_issues>
+[
+  {
+    "task_id": "task-id-here",
+    "description": "Clear description of the issue",
+    "files": ["file1.go", "file2.go"],
+    "severity": "critical|major|minor",
+    "suggestion": "How to fix this issue"
+  }
+]
+</revision_issues>
+
+If there are NO issues and the work is complete, output:
+
+<revision_issues>
+[]
+</revision_issues>
+
+IMPORTANT: You MUST always include a <revision_issues> block, even if empty.
+After the issues block, provide a summary of what was accomplished.`
+
+// RevisionPromptTemplate is the prompt used for the revision phase
+// It instructs Claude to fix the identified issues in a specific task's worktree
+const RevisionPromptTemplate = `You are addressing issues identified during review of completed work.
+
+## Original Objective
+%s
+
+## Task Being Revised
+- Task ID: %s
+- Task Title: %s
+- Original Description: %s
+
+## Issues to Address
+%s
+
+## Worktree Information
+You are working in the same worktree that was used for the original task.
+All previous changes from this task are already present.
+
+## Instructions
+
+1. **Review** the issues identified above
+2. **Fix** each issue in the codebase
+3. **Test** that your fixes don't break existing functionality
+4. **Commit** your changes with a clear message describing the fixes
+
+Focus only on addressing the identified issues. Do not refactor or make other changes unless directly related to fixing the issues.
+
+When complete, summarize what you fixed.`
 
 // ConsolidationPromptTemplate is the prompt used for the consolidation phase
 // This prompts Claude to consolidate task branches into group branches and create PRs
@@ -626,6 +784,10 @@ const ConsolidationPromptTemplate = `You are consolidating completed ultraplan t
 - Create drafts: %v
 
 ## Execution Groups and Task Branches
+%s
+
+## Task Worktree Details
+The following are the exact worktree paths for each completed task. Use these paths to review the work if needed:
 %s
 
 ## Instructions
@@ -653,6 +815,7 @@ Your job is to consolidate all the task branches into group branches and create 
 - Use ` + "`" + `git push -u origin <branch>` + "`" + ` to push branches
 - Use ` + "`" + `gh pr create` + "`" + ` to create pull requests
 - If cherry-pick has conflicts, resolve them or report them clearly
+- You can use the worktree paths above to review file changes if needed
 
 ### PR Format
 Title: "ultraplan: group N - <objective summary>" (for stacked) or "ultraplan: <objective summary>" (for single)
