@@ -13,7 +13,7 @@ Step-by-step guides for common Claudio workflows.
 **15-20 minutes** - Build a complete feature by breaking it into parallel tasks. Learn to coordinate multiple instances working on different components.
 
 ### [Code Review Workflow](code-review-workflow.md)
-**10 minutes** - Use multiple specialized instances for thorough code reviews: security, performance, bugs, and documentation.
+**15 minutes** - Use multiple specialized instances for thorough code reviews: security, performance, bugs, and documentation. Learn to run parallel reviews alongside implementation sessions.
 
 ### [Large Refactor](large-refactor.md)
 **20 minutes** - Coordinate a major refactoring effort across your codebase. Handle dependencies, conflicts, and staged rollout.

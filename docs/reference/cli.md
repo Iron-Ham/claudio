@@ -428,6 +428,113 @@ claudio completion fish > ~/.config/fish/completions/claudio.fish
 
 ---
 
+### claudio ultraplan
+
+Run orchestrated multi-task execution with parallel instances.
+
+```bash
+claudio ultraplan [flags] <objective>
+```
+
+**Arguments:**
+| Argument | Description |
+|----------|-------------|
+| `objective` | High-level objective for Claude to plan and execute |
+
+**Flags:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--max-parallel` | `-p` | Maximum parallel instances (default: 3) |
+| `--dry-run` | | Plan only, don't execute |
+| `--no-synthesis` | | Skip synthesis/review phase |
+| `--auto-approve` | | Skip confirmation prompts |
+| `--consolidation` | | PR mode: "stacked" or "single" (default: stacked) |
+
+**Examples:**
+```bash
+# Basic usage
+claudio ultraplan "Refactor authentication to use JWT tokens"
+
+# Parallel execution with more instances
+claudio ultraplan -p 5 "Add comprehensive test coverage"
+
+# Preview plan only
+claudio ultraplan --dry-run "Migrate database schema"
+
+# Single PR for all changes
+claudio ultraplan --consolidation single "Update API endpoints"
+```
+
+---
+
+## Review Workflows
+
+Claudio supports parallel code review workflows using specialized instances. While there's no dedicated `review` command, you can leverage existing commands for comprehensive review sessions.
+
+### Quick Review Command Reference
+
+```bash
+# Start a review session
+claudio start review-session
+
+# Add specialized review instances
+claudio add "Security review: Check for OWASP Top 10 vulnerabilities"
+claudio add "Performance review: Identify N+1 queries and bottlenecks"
+claudio add "Style review: Ensure coding standards compliance"
+
+# Monitor progress
+claudio status
+
+# Export results
+claudio status --verbose > review-results.txt
+```
+
+### Parallel Review with Sessions
+
+```bash
+# Terminal 1: Implementation session
+claudio start implementation
+
+# Terminal 2: Review session (separate terminal)
+claudio start --new review-session
+claudio add "Watch implementation and review for security issues"
+```
+
+### Session Management for Reviews
+
+```bash
+# List all active sessions
+claudio sessions list
+
+# Attach to existing review session
+claudio start --session <session-id>
+
+# View session status
+claudio status --session <session-id>
+```
+
+### Review-Optimized Configuration
+
+```yaml
+# config.yaml for review workflows
+completion:
+  default_action: keep_branch
+
+instance:
+  output_buffer_size: 200000
+  activity_timeout_minutes: 45
+  completion_timeout_minutes: 180
+  stale_detection: true
+
+resources:
+  cost_limit: 20.00
+  show_metrics_in_sidebar: true
+```
+
+See the [Code Review Workflow Tutorial](../tutorials/code-review-workflow.md) for detailed usage.
+
+---
+
 ## Exit Codes
 
 | Code | Meaning |

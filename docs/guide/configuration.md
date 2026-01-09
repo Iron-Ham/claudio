@@ -374,6 +374,62 @@ cleanup:
   keep_remote_branches: false
 ```
 
+### Code Review Workflow
+
+Optimized configuration for parallel code reviews with specialized agents:
+
+```yaml
+# config.yaml - Review-optimized configuration
+# Use this when running parallel review sessions
+
+completion:
+  # Keep branches for review - don't auto-merge findings
+  default_action: keep_branch
+
+tui:
+  # Auto-focus instances that need input
+  auto_focus_on_input: true
+  # More output lines for detailed review findings
+  max_output_lines: 2000
+
+instance:
+  # Larger buffer for comprehensive review output
+  output_buffer_size: 200000  # 200KB (double default)
+  # Fast polling for responsive watch mode
+  capture_interval_ms: 100
+  # Wider tmux for code display with line numbers
+  tmux_width: 200
+  tmux_height: 50
+  # Longer timeouts for thorough reviews
+  activity_timeout_minutes: 45
+  completion_timeout_minutes: 180
+  # Detect stuck review processes
+  stale_detection: true
+
+pr:
+  # Don't auto-create PRs for review findings
+  auto_pr_on_stop: false
+
+resources:
+  # Cap review session costs
+  cost_warning_threshold: 5.00
+  cost_limit: 20.00
+  # Show metrics for cost tracking during reviews
+  show_metrics_in_sidebar: true
+```
+
+**Key settings for reviews:**
+
+| Setting | Review Value | Why |
+|---------|--------------|-----|
+| `output_buffer_size` | 200000 | Reviews produce extensive findings |
+| `max_output_lines` | 2000 | See full review context in TUI |
+| `activity_timeout_minutes` | 45 | Allow thorough analysis time |
+| `completion_timeout_minutes` | 180 | Complex reviews take longer |
+| `cost_limit` | 20.00 | Reviews are read-heavy, lower cost |
+
+See [Code Review Workflow Tutorial](../tutorials/code-review-workflow.md) for usage.
+
 ## Validating Configuration
 
 ```bash

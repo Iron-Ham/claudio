@@ -36,6 +36,26 @@ Quick reference card for TUI keyboard shortcuts.
 | `claudio remove <id>` | Remove instance |
 | `claudio stats` | Show resource usage |
 | `claudio sessions` | Manage sessions |
+| `claudio ultraplan` | Orchestrated multi-task execution |
+
+## Review Workflow Quick Reference
+
+For parallel code review with specialized agents:
+
+```bash
+# Start review session
+claudio start review-session
+
+# Add specialized reviewers
+claudio add "Security review: OWASP Top 10 vulnerabilities"
+claudio add "Performance review: N+1 queries, bottlenecks"
+claudio add "Style review: coding standards compliance"
+
+# Monitor and export
+claudio status --verbose > review-results.txt
+```
+
+See [Code Review Workflow Tutorial](../tutorials/code-review-workflow.md) for details.
 
 ## Environment Variables
 
