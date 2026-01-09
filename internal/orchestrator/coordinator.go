@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -273,6 +274,127 @@ func (c *Coordinator) RunMultiPassPlanning() error {
 	// Return without blocking - TUI will monitor completion of all instances
 	return nil
 }
+
+// RunPlanManager executes the plan selection phase in multi-pass planning.
+// This is called after all 3 candidate plans have been collected.
+// It creates a coordinator-manager instance that evaluates and selects/merges the best plan.
+func (c *Coordinator) RunPlanManager() error {
+	session := c.Session()
+
+	// Verify we have candidate plans to evaluate
+	if len(session.CandidatePlans) == 0 {
+		return fmt.Errorf("no candidate plans available for evaluation")
+	}
+
+	// Set the phase to plan selection
+	c.notifyPhaseChange(PhasePlanSelection)
+
+	// Build the plan comparison section
+	plansComparison := c.buildPlanComparisonSection()
+
+	// Create the plan manager prompt
+	prompt := fmt.Sprintf(PlanManagerPromptTemplate, session.Objective, plansComparison)
+
+	// Create a coordinator-manager instance for plan selection
+	inst, err := c.orch.AddInstance(c.baseSession, prompt)
+	if err != nil {
+		return fmt.Errorf("failed to create plan manager instance: %w", err)
+	}
+
+	session.PlanManagerID = inst.ID
+
+	// Persist the state
+	_ = c.orch.SaveSession()
+
+	// Start the instance
+	if err := c.orch.StartInstance(inst); err != nil {
+		return fmt.Errorf("failed to start plan manager instance: %w", err)
+	}
+
+	// The TUI will handle monitoring; here we just set up the session state
+	return nil
+}
+
+// buildPlanComparisonSection formats all candidate plans for comparison by the plan manager.
+// Each plan includes its strategy name, summary, and full task list in JSON format.
+func (c *Coordinator) buildPlanComparisonSection() string {
+	session := c.Session()
+	var sb strings.Builder
+
+	strategies := GetMultiPassStrategyNames()
+
+	for i, plan := range session.CandidatePlans {
+		if plan == nil {
+			continue
+		}
+
+		// Determine strategy name (use index if out of bounds)
+		strategyName := fmt.Sprintf("strategy-%d", i+1)
+		if i < len(strategies) {
+			strategyName = strategies[i]
+		}
+
+		sb.WriteString(fmt.Sprintf("### Plan %d: %s\n\n", i+1, strategyName))
+		sb.WriteString(fmt.Sprintf("**Summary**: %s\n\n", plan.Summary))
+
+		// Task count and parallelism stats
+		sb.WriteString(fmt.Sprintf("**Task Count**: %d tasks\n", len(plan.Tasks)))
+		if len(plan.ExecutionOrder) > 0 {
+			sb.WriteString(fmt.Sprintf("**Execution Groups**: %d groups\n", len(plan.ExecutionOrder)))
+			// Calculate max parallelism (largest group)
+			maxParallel := 0
+			for _, group := range plan.ExecutionOrder {
+				if len(group) > maxParallel {
+					maxParallel = len(group)
+				}
+			}
+			sb.WriteString(fmt.Sprintf("**Max Parallelism**: %d concurrent tasks\n", maxParallel))
+		}
+		sb.WriteString("\n")
+
+		// Insights
+		if len(plan.Insights) > 0 {
+			sb.WriteString("**Insights**:\n")
+			for _, insight := range plan.Insights {
+				sb.WriteString(fmt.Sprintf("- %s\n", insight))
+			}
+			sb.WriteString("\n")
+		}
+
+		// Constraints
+		if len(plan.Constraints) > 0 {
+			sb.WriteString("**Constraints**:\n")
+			for _, constraint := range plan.Constraints {
+				sb.WriteString(fmt.Sprintf("- %s\n", constraint))
+			}
+			sb.WriteString("\n")
+		}
+
+		// Full task list in JSON format for detailed comparison
+		sb.WriteString("**Tasks (JSON)**:\n```json\n")
+		tasksJSON, err := json.MarshalIndent(plan.Tasks, "", "  ")
+		if err != nil {
+			sb.WriteString(fmt.Sprintf("Error marshaling tasks: %v\n", err))
+		} else {
+			sb.WriteString(string(tasksJSON))
+		}
+		sb.WriteString("\n```\n\n")
+
+		// Execution order visualization
+		if len(plan.ExecutionOrder) > 0 {
+			sb.WriteString("**Execution Order**:\n")
+			for groupIdx, group := range plan.ExecutionOrder {
+				sb.WriteString(fmt.Sprintf("- Group %d: %s\n", groupIdx+1, strings.Join(group, ", ")))
+			}
+			sb.WriteString("\n")
+		}
+
+		sb.WriteString("---\n\n")
+	}
+
+	return sb.String()
+}
+
 
 // SetPlan sets the plan for this ultra-plan session (used after planning completes)
 func (c *Coordinator) SetPlan(plan *PlanSpec) error {
