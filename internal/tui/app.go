@@ -161,6 +161,12 @@ type bellMsg struct {
 	instanceID string
 }
 
+// taskAddedMsg is sent when async task addition completes
+type taskAddedMsg struct {
+	instance *orchestrator.Instance
+	err      error
+}
+
 // Commands
 
 func tick() tea.Cmd {
@@ -201,6 +207,15 @@ func notifyUser() tea.Cmd {
 			_ = exec.Command("afplay", soundPath).Start()
 		}
 		return nil
+	}
+}
+
+// addTaskAsync returns a command that adds a task asynchronously
+// This prevents the UI from blocking while git creates the worktree
+func addTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string) tea.Cmd {
+	return func() tea.Msg {
+		inst, err := o.AddInstance(session, task)
+		return taskAddedMsg{instance: inst, err: err}
 	}
 }
 
@@ -351,6 +366,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bellMsg:
 		// Terminal bell detected in a tmux session - forward it to the parent terminal
 		return m, ringBell()
+
+	case taskAddedMsg:
+		// Async task addition completed
+		m.infoMessage = "" // Clear the "Adding task..." message
+		if msg.err != nil {
+			m.errorMessage = msg.err.Error()
+		} else {
+			// Switch to the newly added task and ensure it's visible in sidebar
+			m.activeTab = len(m.session.Instances) - 1
+			m.ensureActiveVisible()
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -455,15 +482,14 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyEnter:
 			if m.taskInput != "" {
-				// Add new instance
-				_, err := m.orchestrator.AddInstance(m.session, m.taskInput)
-				if err != nil {
-					m.errorMessage = err.Error()
-				} else {
-					// Switch to the newly added task and ensure it's visible in sidebar
-					m.activeTab = len(m.session.Instances) - 1
-					m.ensureActiveVisible()
-				}
+				// Add new instance asynchronously to avoid blocking the UI
+				// while git creates the worktree
+				task := m.taskInput
+				m.addingTask = false
+				m.taskInput = ""
+				m.taskInputCursor = 0
+				m.infoMessage = "Adding task..."
+				return m, addTaskAsync(m.orchestrator, m.session, task)
 			}
 			m.addingTask = false
 			m.taskInput = ""
