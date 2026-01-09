@@ -179,35 +179,52 @@ func TestDetector_QuestionPatterns(t *testing.T) {
 func TestDetector_CompletionPatterns(t *testing.T) {
 	d := NewDetector()
 
+	// NOTE: Completion patterns are intentionally DISABLED.
+	// For Claudio tasks, the sentinel file (.claudio-task-complete.json) is the
+	// authoritative completion signal. Text-based completion detection caused
+	// false positives that triggered premature task verification.
+	// All these phrases should return StateWorking (or other non-completed states).
 	tests := []struct {
 		name     string
 		output   string
 		expected WaitingState
 	}{
+		// None of these should match StateCompleted anymore - completion is
+		// determined by sentinel file, not text patterns
 		{
-			name:     "task complete",
+			name:     "task complete - no longer detected from text",
 			output:   "Task complete!",
-			expected: StateCompleted,
+			expected: StateWorking,
 		},
 		{
-			name:     "I've completed",
+			name:     "the task is complete - no longer detected from text",
+			output:   "The task is complete.",
+			expected: StateWorking,
+		},
+		{
+			name:     "work is done - no longer detected from text",
+			output:   "The work is done.",
+			expected: StateWorking,
+		},
+		{
+			name:     "I've completed the task - no longer detected from text",
+			output:   "I've completed the task as requested.",
+			expected: StateWorking,
+		},
+		{
+			name:     "casual completion phrase",
 			output:   "I've completed all the requested changes",
-			expected: StateCompleted,
+			expected: StateWorking,
 		},
 		{
-			name:     "all done",
+			name:     "all done with X",
 			output:   "All done with the implementation",
-			expected: StateCompleted,
+			expected: StateWorking,
 		},
 		{
-			name:     "let me know if anything else",
-			output:   "Let me know if you need anything else",
-			expected: StateCompleted,
-		},
-		{
-			name:     "is there anything else",
+			name:     "is there anything else - detected as question",
 			output:   "Is there anything else I can help with?",
-			expected: StateCompleted,
+			expected: StateWaitingQuestion, // Questions still match question patterns
 		},
 	}
 
