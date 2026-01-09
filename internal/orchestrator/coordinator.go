@@ -2786,3 +2786,47 @@ func (c *Coordinator) monitorGroupConsolidator(groupIndex int, instanceID string
 		}
 	}
 }
+
+// formatCandidatePlansForManager formats candidate plans for the PlanManagerPromptTemplate.
+// Each plan is formatted with its strategy name (from MultiPassPlanningPrompts) and full JSON content.
+func formatCandidatePlansForManager(plans []*PlanSpec) string {
+	if len(plans) == 0 {
+		return "No candidate plans available."
+	}
+
+	var sb strings.Builder
+
+	for i, plan := range plans {
+		// Get the strategy name from the corresponding MultiPassPlanningPrompts entry
+		strategyName := "unknown"
+		if i < len(MultiPassPlanningPrompts) {
+			strategyName = MultiPassPlanningPrompts[i].Strategy
+		}
+
+		// Write the plan header
+		sb.WriteString(fmt.Sprintf("### Plan %d: %s\n", i+1, strategyName))
+
+		// Handle nil plan
+		if plan == nil {
+			sb.WriteString("<plan>\n")
+			sb.WriteString("null\n")
+			sb.WriteString("</plan>\n\n")
+			continue
+		}
+
+		// Marshal the plan to JSON with indentation for readability
+		planJSON, err := json.MarshalIndent(plan, "", "  ")
+		if err != nil {
+			sb.WriteString("<plan>\n")
+			sb.WriteString(fmt.Sprintf("Error marshaling plan: %v\n", err))
+			sb.WriteString("</plan>\n\n")
+			continue
+		}
+
+		sb.WriteString("<plan>\n")
+		sb.WriteString(string(planJSON))
+		sb.WriteString("\n</plan>\n\n")
+	}
+
+	return strings.TrimSuffix(sb.String(), "\n")
+}
