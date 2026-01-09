@@ -229,6 +229,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeypress(msg)
 
 	case tea.WindowSizeMsg:
+		wasReady := m.ready
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ready = true
@@ -241,6 +242,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Ensure active instance is still visible after resize
 		m.ensureActiveVisible()
+
+		// On first ready (TUI just started), check if we should open plan editor
+		// This handles the case when --plan FILE --review is provided
+		if !wasReady && m.ultraPlan != nil && m.ultraPlan.coordinator != nil {
+			session := m.ultraPlan.coordinator.Session()
+			if session != nil && session.Phase == orchestrator.PhaseRefresh && session.Plan != nil && session.Config.Review {
+				m.enterPlanEditor()
+				m.infoMessage = fmt.Sprintf("Plan loaded: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
+					len(session.Plan.Tasks), len(session.Plan.ExecutionOrder))
+			}
+		}
 
 		return m, nil
 
