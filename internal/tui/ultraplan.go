@@ -837,7 +837,9 @@ func (m Model) renderUltraPlanHelp() string {
 		keys = append(keys, "[c] cancel")
 
 	case orchestrator.PhaseSynthesis:
+		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
+		keys = append(keys, "[s] done → consolidate")
 
 	case orchestrator.PhaseConsolidating:
 		keys = append(keys, "[v] toggle plan view")
@@ -1038,6 +1040,17 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 			session.Consolidation.Phase == orchestrator.ConsolidationPaused {
 			// TODO: Implement resume functionality when coordinator exposes it
 			m.infoMessage = "Resuming consolidation..."
+		}
+		return true, m, nil
+
+	case "s":
+		// Signal synthesis is done, proceed to consolidation
+		if session.Phase == orchestrator.PhaseSynthesis {
+			if err := m.ultraPlan.coordinator.TriggerConsolidation(); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to proceed: %v", err)
+			} else {
+				m.infoMessage = "Proceeding to consolidation..."
+			}
 		}
 		return true, m, nil
 	}
