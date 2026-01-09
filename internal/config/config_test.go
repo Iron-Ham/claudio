@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/spf13/viper"
 )
 
 func TestDefault(t *testing.T) {
@@ -264,6 +266,11 @@ func TestConfig_UltraplanConfig_Values(t *testing.T) {
 		t.Errorf("Ultraplan.MaxParallel = %d, want 3", cfg.Ultraplan.MaxParallel)
 	}
 
+	// MultiPass should default to false
+	if cfg.Ultraplan.MultiPass {
+		t.Error("Ultraplan.MultiPass should be false by default")
+	}
+
 	// Notifications should be enabled by default
 	if !cfg.Ultraplan.Notifications.Enabled {
 		t.Error("Ultraplan.Notifications.Enabled should be true by default")
@@ -278,4 +285,81 @@ func TestConfig_UltraplanConfig_Values(t *testing.T) {
 	if cfg.Ultraplan.Notifications.SoundPath != "" {
 		t.Errorf("Ultraplan.Notifications.SoundPath should be empty, got %q", cfg.Ultraplan.Notifications.SoundPath)
 	}
+}
+
+func TestConfig_UltraplanMultiPass_ViperLoading(t *testing.T) {
+	// Reset viper to clean state for this test
+	viper.Reset()
+	SetDefaults()
+
+	// After SetDefaults, Get() should return default MultiPass=false
+	cfg := Get()
+	if cfg.Ultraplan.MultiPass {
+		t.Error("Ultraplan.MultiPass should be false after SetDefaults()")
+	}
+
+	// Verify viper has the default value set
+	if viper.GetBool("ultraplan.multi_pass") {
+		t.Error("viper.GetBool('ultraplan.multi_pass') should be false by default")
+	}
+}
+
+func TestConfig_UltraplanMultiPass_ConfigCascade(t *testing.T) {
+	// Test the config cascade: default -> config file -> CLI flag (viper.Set)
+	// This simulates how the --multi-pass CLI flag would override config
+
+	t.Run("default value", func(t *testing.T) {
+		viper.Reset()
+		SetDefaults()
+
+		cfg := Get()
+		if cfg.Ultraplan.MultiPass {
+			t.Error("default: Ultraplan.MultiPass should be false")
+		}
+	})
+
+	t.Run("viper.Set overrides default (simulates CLI flag)", func(t *testing.T) {
+		viper.Reset()
+		SetDefaults()
+
+		// Simulate CLI flag setting (--multi-pass)
+		viper.Set("ultraplan.multi_pass", true)
+
+		cfg := Get()
+		if !cfg.Ultraplan.MultiPass {
+			t.Error("after viper.Set: Ultraplan.MultiPass should be true")
+		}
+	})
+
+	t.Run("explicit false overrides default false", func(t *testing.T) {
+		viper.Reset()
+		SetDefaults()
+
+		// Explicitly set to false (should still work)
+		viper.Set("ultraplan.multi_pass", false)
+
+		cfg := Get()
+		if cfg.Ultraplan.MultiPass {
+			t.Error("after viper.Set(false): Ultraplan.MultiPass should be false")
+		}
+	})
+
+	t.Run("viper.Set true then false", func(t *testing.T) {
+		viper.Reset()
+		SetDefaults()
+
+		// Set to true first
+		viper.Set("ultraplan.multi_pass", true)
+		cfg1 := Get()
+		if !cfg1.Ultraplan.MultiPass {
+			t.Error("after first viper.Set(true): Ultraplan.MultiPass should be true")
+		}
+
+		// Override with false
+		viper.Set("ultraplan.multi_pass", false)
+		cfg2 := Get()
+		if cfg2.Ultraplan.MultiPass {
+			t.Error("after second viper.Set(false): Ultraplan.MultiPass should be false")
+		}
+	})
 }
