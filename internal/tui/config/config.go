@@ -173,6 +173,110 @@ func New() Model {
 				},
 			},
 		},
+		{
+			Name: "Branch",
+			Items: []ConfigItem{
+				{
+					Key:         "branch.prefix",
+					Label:       "Branch Prefix",
+					Description: "Prefix for auto-generated branch names (e.g., 'claudio', 'feature')",
+					Type:        "string",
+					Category:    "branch",
+				},
+				{
+					Key:         "branch.include_id",
+					Label:       "Include Instance ID",
+					Description: "Include instance ID in branch names for uniqueness",
+					Type:        "bool",
+					Category:    "branch",
+				},
+			},
+		},
+		{
+			Name: "Cleanup",
+			Items: []ConfigItem{
+				{
+					Key:         "cleanup.warn_on_stale",
+					Label:       "Warn on Stale",
+					Description: "Show warning on start if stale resources exist",
+					Type:        "bool",
+					Category:    "cleanup",
+				},
+				{
+					Key:         "cleanup.keep_remote_branches",
+					Label:       "Keep Remote Branches",
+					Description: "Prevent deletion of branches that exist on remote",
+					Type:        "bool",
+					Category:    "cleanup",
+				},
+			},
+		},
+		{
+			Name: "Resources",
+			Items: []ConfigItem{
+				{
+					Key:         "resources.cost_warning_threshold",
+					Label:       "Cost Warning ($)",
+					Description: "Trigger warning when session cost exceeds this amount (USD)",
+					Type:        "float",
+					Category:    "resources",
+				},
+				{
+					Key:         "resources.cost_limit",
+					Label:       "Cost Limit ($)",
+					Description: "Pause instances when session cost exceeds this (0 = no limit)",
+					Type:        "float",
+					Category:    "resources",
+				},
+				{
+					Key:         "resources.token_limit_per_instance",
+					Label:       "Token Limit/Instance",
+					Description: "Max tokens per instance (0 = no limit)",
+					Type:        "int",
+					Category:    "resources",
+				},
+				{
+					Key:         "resources.show_metrics_in_sidebar",
+					Label:       "Show Metrics",
+					Description: "Show token/cost metrics in TUI sidebar",
+					Type:        "bool",
+					Category:    "resources",
+				},
+			},
+		},
+		{
+			Name: "Ultraplan",
+			Items: []ConfigItem{
+				{
+					Key:         "ultraplan.max_parallel",
+					Label:       "Max Parallel Tasks",
+					Description: "Maximum concurrent child sessions (0 = unlimited)",
+					Type:        "int",
+					Category:    "ultraplan",
+				},
+				{
+					Key:         "ultraplan.notifications.enabled",
+					Label:       "Notifications",
+					Description: "Enable audio notifications when user input is needed",
+					Type:        "bool",
+					Category:    "ultraplan",
+				},
+				{
+					Key:         "ultraplan.notifications.use_sound",
+					Label:       "Use System Sound",
+					Description: "Play macOS system sound in addition to terminal bell",
+					Type:        "bool",
+					Category:    "ultraplan",
+				},
+				{
+					Key:         "ultraplan.notifications.sound_path",
+					Label:       "Custom Sound Path",
+					Description: "Path to custom sound file (macOS only, leave empty for default)",
+					Type:        "string",
+					Category:    "ultraplan",
+				},
+			},
+		},
 	}
 
 	return Model{
@@ -496,6 +600,8 @@ func (m Model) getCurrentValue() string {
 		return fmt.Sprintf("%v", viper.GetBool(item.Key))
 	case "int":
 		return fmt.Sprintf("%d", viper.GetInt(item.Key))
+	case "float":
+		return fmt.Sprintf("%.2f", viper.GetFloat64(item.Key))
 	default:
 		return viper.GetString(item.Key)
 	}
@@ -510,6 +616,8 @@ func (m Model) getDisplayValue(item ConfigItem) string {
 		return "false"
 	case "int":
 		return fmt.Sprintf("%d", viper.GetInt(item.Key))
+	case "float":
+		return fmt.Sprintf("%.2f", viper.GetFloat64(item.Key))
 	default:
 		return viper.GetString(item.Key)
 	}
@@ -537,6 +645,15 @@ func (m *Model) validateAndSet(item ConfigItem, value string) error {
 			return fmt.Errorf("value must be non-negative")
 		}
 		viper.Set(item.Key, intVal)
+	case "float":
+		floatVal, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return fmt.Errorf("expected decimal value")
+		}
+		if floatVal < 0 {
+			return fmt.Errorf("value must be non-negative")
+		}
+		viper.Set(item.Key, floatVal)
 	case "bool":
 		if value != "true" && value != "false" {
 			return fmt.Errorf("expected true or false")
@@ -583,21 +700,41 @@ func (m *Model) resetCurrentToDefault() {
 	defaults := config.Default()
 
 	// Map of keys to default values
-	defaultValues := map[string]interface{}{
-		"completion.default_action":             defaults.Completion.DefaultAction,
-		"tui.auto_focus_on_input":               defaults.TUI.AutoFocusOnInput,
-		"tui.max_output_lines":                  defaults.TUI.MaxOutputLines,
-		"instance.output_buffer_size":           defaults.Instance.OutputBufferSize,
-		"instance.capture_interval_ms":          defaults.Instance.CaptureIntervalMs,
-		"instance.tmux_width":                   defaults.Instance.TmuxWidth,
-		"instance.tmux_height":                  defaults.Instance.TmuxHeight,
-		"instance.activity_timeout_minutes":     defaults.Instance.ActivityTimeoutMinutes,
-		"instance.completion_timeout_minutes":   defaults.Instance.CompletionTimeoutMinutes,
-		"instance.stale_detection":              defaults.Instance.StaleDetection,
-		"pr.draft":                              defaults.PR.Draft,
-		"pr.auto_rebase":                        defaults.PR.AutoRebase,
-		"pr.use_ai":                             defaults.PR.UseAI,
-		"pr.auto_pr_on_stop":                    defaults.PR.AutoPROnStop,
+	defaultValues := map[string]any{
+		// Completion
+		"completion.default_action": defaults.Completion.DefaultAction,
+		// TUI
+		"tui.auto_focus_on_input": defaults.TUI.AutoFocusOnInput,
+		"tui.max_output_lines":    defaults.TUI.MaxOutputLines,
+		// Instance
+		"instance.output_buffer_size":         defaults.Instance.OutputBufferSize,
+		"instance.capture_interval_ms":        defaults.Instance.CaptureIntervalMs,
+		"instance.tmux_width":                 defaults.Instance.TmuxWidth,
+		"instance.tmux_height":                defaults.Instance.TmuxHeight,
+		"instance.activity_timeout_minutes":   defaults.Instance.ActivityTimeoutMinutes,
+		"instance.completion_timeout_minutes": defaults.Instance.CompletionTimeoutMinutes,
+		"instance.stale_detection":            defaults.Instance.StaleDetection,
+		// Pull Request
+		"pr.draft":          defaults.PR.Draft,
+		"pr.auto_rebase":    defaults.PR.AutoRebase,
+		"pr.use_ai":         defaults.PR.UseAI,
+		"pr.auto_pr_on_stop": defaults.PR.AutoPROnStop,
+		// Branch
+		"branch.prefix":     defaults.Branch.Prefix,
+		"branch.include_id": defaults.Branch.IncludeID,
+		// Cleanup
+		"cleanup.warn_on_stale":        defaults.Cleanup.WarnOnStale,
+		"cleanup.keep_remote_branches": defaults.Cleanup.KeepRemoteBranches,
+		// Resources
+		"resources.cost_warning_threshold":   defaults.Resources.CostWarningThreshold,
+		"resources.cost_limit":               defaults.Resources.CostLimit,
+		"resources.token_limit_per_instance": defaults.Resources.TokenLimitPerInstance,
+		"resources.show_metrics_in_sidebar":  defaults.Resources.ShowMetricsInSidebar,
+		// Ultraplan
+		"ultraplan.max_parallel":            defaults.Ultraplan.MaxParallel,
+		"ultraplan.notifications.enabled":   defaults.Ultraplan.Notifications.Enabled,
+		"ultraplan.notifications.use_sound": defaults.Ultraplan.Notifications.UseSound,
+		"ultraplan.notifications.sound_path": defaults.Ultraplan.Notifications.SoundPath,
 	}
 
 	if defaultVal, ok := defaultValues[item.Key]; ok {
