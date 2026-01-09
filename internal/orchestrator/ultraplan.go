@@ -71,19 +71,25 @@ type UltraPlanConfig struct {
 	CreateDraftPRs    bool              `json:"create_draft_prs"`             // Create PRs as drafts
 	PRLabels          []string          `json:"pr_labels,omitempty"`          // Labels to add to PRs
 	BranchPrefix      string            `json:"branch_prefix,omitempty"`      // Branch prefix for consolidated branches
+
+	// Task verification settings
+	MaxTaskRetries         int  `json:"max_task_retries,omitempty"`   // Max retry attempts for tasks with no commits (default: 3)
+	RequireVerifiedCommits bool `json:"require_verified_commits"`     // If true, tasks must produce commits to be marked successful (default: true)
 }
 
 // DefaultUltraPlanConfig returns the default configuration
 func DefaultUltraPlanConfig() UltraPlanConfig {
 	return UltraPlanConfig{
-		MaxParallel:       3,
-		DryRun:            false,
-		NoSynthesis:       false,
-		AutoApprove:       false,
-		ConsolidationMode: ModeStackedPRs,
-		CreateDraftPRs:    true,
-		PRLabels:          []string{"ultraplan"},
-		BranchPrefix:      "", // Uses config.Branch.Prefix if empty
+		MaxParallel:            3,
+		DryRun:                 false,
+		NoSynthesis:            false,
+		AutoApprove:            false,
+		ConsolidationMode:      ModeStackedPRs,
+		CreateDraftPRs:         true,
+		PRLabels:               []string{"ultraplan"},
+		BranchPrefix:           "", // Uses config.Branch.Prefix if empty
+		MaxTaskRetries:         3,
+		RequireVerifiedCommits: true,
 	}
 }
 
@@ -182,6 +188,23 @@ type TaskWorktreeInfo struct {
 	Branch       string `json:"branch"`
 }
 
+// TaskRetryState tracks retry attempts for a task that produces no commits
+type TaskRetryState struct {
+	TaskID       string `json:"task_id"`
+	RetryCount   int    `json:"retry_count"`
+	MaxRetries   int    `json:"max_retries"`
+	LastError    string `json:"last_error,omitempty"`
+	CommitCounts []int  `json:"commit_counts,omitempty"` // Commits per attempt (for debugging)
+}
+
+// GroupDecisionState tracks state when a group has partial success/failure
+type GroupDecisionState struct {
+	GroupIndex       int      `json:"group_index"`
+	SucceededTasks   []string `json:"succeeded_tasks"`   // Tasks with verified commits
+	FailedTasks      []string `json:"failed_tasks"`      // Tasks that failed or produced no commits
+	AwaitingDecision bool     `json:"awaiting_decision"` // True when paused for user input
+}
+
 // UltraPlanSession represents an ultra-plan orchestration session
 type UltraPlanSession struct {
 	ID              string            `json:"id"`
@@ -216,19 +239,30 @@ type UltraPlanSession struct {
 	// Consolidation results (persisted for recovery and display)
 	Consolidation *ConsolidationState `json:"consolidation,omitempty"`
 	PRUrls        []string            `json:"pr_urls,omitempty"`
+
+	// Task retry tracking: task ID -> retry state
+	TaskRetries map[string]*TaskRetryState `json:"task_retries,omitempty"`
+
+	// Group decision state (set when group has mix of success/failure)
+	GroupDecision *GroupDecisionState `json:"group_decision,omitempty"`
+
+	// Verified commit counts per task (populated after task completion)
+	TaskCommitCounts map[string]int `json:"task_commit_counts,omitempty"`
 }
 
 // NewUltraPlanSession creates a new ultra-plan session
 func NewUltraPlanSession(objective string, config UltraPlanConfig) *UltraPlanSession {
 	return &UltraPlanSession{
-		ID:             generateID(),
-		Objective:      objective,
-		Phase:          PhasePlanning,
-		Config:         config,
-		TaskToInstance: make(map[string]string),
-		CompletedTasks: make([]string, 0),
-		FailedTasks:    make([]string, 0),
-		Created:        time.Now(),
+		ID:               generateID(),
+		Objective:        objective,
+		Phase:            PhasePlanning,
+		Config:           config,
+		TaskToInstance:   make(map[string]string),
+		CompletedTasks:   make([]string, 0),
+		FailedTasks:      make([]string, 0),
+		Created:          time.Now(),
+		TaskRetries:      make(map[string]*TaskRetryState),
+		TaskCommitCounts: make(map[string]int),
 	}
 }
 

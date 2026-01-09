@@ -324,10 +324,12 @@ func (c *Coordinator) executionLoop() {
 
 // taskCompletion represents a task completion notification
 type taskCompletion struct {
-	taskID     string
-	instanceID string
-	success    bool
-	error      string
+	taskID      string
+	instanceID  string
+	success     bool
+	error       string
+	needsRetry  bool // Indicates task should be retried (no commits produced)
+	commitCount int  // Number of commits produced by this task
 }
 
 // startTask starts a single task as a new instance
@@ -440,11 +442,9 @@ func (c *Coordinator) monitorTaskInstance(taskID, instanceID string, completionC
 
 			switch inst.Status {
 			case StatusCompleted:
-				completionChan <- taskCompletion{
-					taskID:     taskID,
-					instanceID: instanceID,
-					success:    true,
-				}
+				// Verify work was done before marking as success
+				result := c.verifyTaskWork(taskID, inst)
+				completionChan <- result
 				return
 
 			case StatusWaitingInput:
@@ -452,11 +452,10 @@ func (c *Coordinator) monitorTaskInstance(taskID, instanceID string, completionC
 				// For ultraplan tasks, this means the task is complete.
 				// Stop the instance to free up resources.
 				_ = c.orch.StopInstance(inst)
-				completionChan <- taskCompletion{
-					taskID:     taskID,
-					instanceID: instanceID,
-					success:    true,
-				}
+
+				// Verify work was done before marking as success
+				result := c.verifyTaskWork(taskID, inst)
+				completionChan <- result
 				return
 
 			case StatusError, StatusTimeout, StatusStuck:
@@ -472,12 +471,137 @@ func (c *Coordinator) monitorTaskInstance(taskID, instanceID string, completionC
 	}
 }
 
+// verifyTaskWork checks if a task produced actual commits and determines success/retry
+func (c *Coordinator) verifyTaskWork(taskID string, inst *Instance) taskCompletion {
+	session := c.Session()
+	config := session.Config
+
+	result := taskCompletion{
+		taskID:     taskID,
+		instanceID: inst.ID,
+		success:    true,
+	}
+
+	// Skip verification if not required
+	if !config.RequireVerifiedCommits {
+		return result
+	}
+
+	// Determine the base branch for this task
+	baseBranch := c.getBaseBranchForGroup(session.CurrentGroup)
+	if baseBranch == "" {
+		baseBranch = c.orch.wt.FindMainBranch()
+	}
+
+	// Count commits on the task branch beyond the base
+	commitCount, err := c.orch.wt.CountCommitsBetween(inst.WorktreePath, baseBranch, "HEAD")
+	if err != nil {
+		// If we can't count commits, log warning but don't fail
+		c.manager.emitEvent(CoordinatorEvent{
+			Type:    EventConflict,
+			TaskID:  taskID,
+			Message: fmt.Sprintf("Warning: could not verify commits for task %s: %v", taskID, err),
+		})
+		return result
+	}
+
+	// Store commit count for later reference
+	c.mu.Lock()
+	if session.TaskCommitCounts == nil {
+		session.TaskCommitCounts = make(map[string]int)
+	}
+	session.TaskCommitCounts[taskID] = commitCount
+	c.mu.Unlock()
+
+	result.commitCount = commitCount
+
+	// Check if task produced any commits
+	if commitCount == 0 {
+		// No commits - check retry status
+		maxRetries := config.MaxTaskRetries
+		if maxRetries == 0 {
+			maxRetries = 3 // Default if not set
+		}
+		retryState := c.getOrCreateRetryState(taskID, maxRetries)
+		retryState.CommitCounts = append(retryState.CommitCounts, 0)
+
+		if retryState.RetryCount < retryState.MaxRetries {
+			// Trigger retry
+			retryState.RetryCount++
+			retryState.LastError = "task produced no commits"
+
+			result.success = false
+			result.needsRetry = true
+			result.error = "no_commits_retry"
+
+			c.manager.emitEvent(CoordinatorEvent{
+				Type:    EventTaskStarted, // Reuse for retry notification
+				TaskID:  taskID,
+				Message: fmt.Sprintf("Task %s produced no commits, scheduling retry %d/%d", taskID, retryState.RetryCount, retryState.MaxRetries),
+			})
+		} else {
+			// Max retries exhausted
+			result.success = false
+			result.needsRetry = false
+			result.error = fmt.Sprintf("task produced no commits after %d attempts", retryState.MaxRetries)
+
+			c.manager.emitEvent(CoordinatorEvent{
+				Type:    EventTaskFailed,
+				TaskID:  taskID,
+				Message: fmt.Sprintf("Task %s failed: no commits after %d retry attempts", taskID, retryState.MaxRetries),
+			})
+		}
+	}
+
+	return result
+}
+
+// getOrCreateRetryState returns or creates retry state for a task
+func (c *Coordinator) getOrCreateRetryState(taskID string, maxRetries int) *TaskRetryState {
+	session := c.Session()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if session.TaskRetries == nil {
+		session.TaskRetries = make(map[string]*TaskRetryState)
+	}
+
+	state, exists := session.TaskRetries[taskID]
+	if !exists {
+		state = &TaskRetryState{
+			TaskID:       taskID,
+			MaxRetries:   maxRetries,
+			CommitCounts: make([]int, 0),
+		}
+		session.TaskRetries[taskID] = state
+	}
+
+	return state
+}
+
 // handleTaskCompletion handles a task completion notification
 func (c *Coordinator) handleTaskCompletion(completion taskCompletion) {
 	c.mu.Lock()
 	delete(c.runningTasks, completion.taskID)
 	c.runningCount--
 	c.mu.Unlock()
+
+	// Handle retry case - task needs to be re-run
+	if completion.needsRetry {
+		session := c.Session()
+
+		// Remove from TaskToInstance so it becomes "ready" again for the execution loop
+		c.mu.Lock()
+		delete(session.TaskToInstance, completion.taskID)
+		c.mu.Unlock()
+
+		// Save state for persistence
+		_ = c.orch.SaveSession()
+
+		// Don't mark as complete or failed - execution loop will pick it up again
+		return
+	}
 
 	if completion.success {
 		c.notifyTaskComplete(completion.taskID)
@@ -493,6 +617,7 @@ func (c *Coordinator) handleTaskCompletion(completion taskCompletion) {
 // and advances to the next group, emitting EventGroupComplete.
 // When a group completes, it consolidates all parallel task branches from that group
 // into a single branch, which becomes the base for the next group's tasks.
+// IMPORTANT: This now runs consolidation SYNCHRONOUSLY and blocks until it succeeds.
 func (c *Coordinator) checkAndAdvanceGroup() {
 	session := c.Session()
 	if session == nil || session.Plan == nil {
@@ -503,37 +628,51 @@ func (c *Coordinator) checkAndAdvanceGroup() {
 	advanced, previousGroup := session.AdvanceGroupIfComplete()
 	c.mu.Unlock()
 
-	if advanced {
-		// Emit group complete event
+	if !advanced {
+		return
+	}
+
+	// Check for partial group failure (some tasks succeeded, some failed)
+	if c.hasPartialGroupFailure(previousGroup) {
+		c.handlePartialGroupFailure(previousGroup)
+		// Don't advance until user decides
+		return
+	}
+
+	// Emit group complete event
+	c.manager.emitEvent(CoordinatorEvent{
+		Type:    EventGroupComplete,
+		Message: fmt.Sprintf("Group %d complete, consolidating before advancing to group %d", previousGroup+1, session.CurrentGroup+1),
+	})
+
+	// SYNCHRONOUSLY consolidate the completed group's parallel task branches
+	// This blocks until consolidation succeeds with verified commits
+	if err := c.consolidateGroupWithVerification(previousGroup); err != nil {
 		c.manager.emitEvent(CoordinatorEvent{
-			Type:    EventGroupComplete,
-			Message: fmt.Sprintf("Group %d complete, advancing to group %d", previousGroup+1, session.CurrentGroup+1),
+			Type:    EventConflict,
+			Message: fmt.Sprintf("Critical: failed to consolidate group %d: %v", previousGroup+1, err),
 		})
 
-		// Consolidate the completed group's parallel task branches into one branch
-		// This runs asynchronously so it doesn't block the execution loop
-		c.wg.Add(1)
-		go func(groupIdx int) {
-			defer c.wg.Done()
-			if err := c.consolidateGroup(groupIdx); err != nil {
-				c.manager.emitEvent(CoordinatorEvent{
-					Type:    EventConflict,
-					Message: fmt.Sprintf("Warning: failed to consolidate group %d: %v", groupIdx+1, err),
-				})
-			}
-		}(previousGroup)
-
-		// Call the callback
-		c.mu.RLock()
-		cb := c.callbacks
-		c.mu.RUnlock()
-		if cb != nil && cb.OnGroupComplete != nil {
-			cb.OnGroupComplete(previousGroup)
-		}
-
-		// Persist the group advancement
+		// Mark session as failed since we can't continue without consolidation
+		c.mu.Lock()
+		session.Phase = PhaseFailed
+		session.Error = fmt.Sprintf("consolidation of group %d failed: %v", previousGroup+1, err)
+		c.mu.Unlock()
 		_ = c.orch.SaveSession()
+		c.notifyComplete(false, session.Error)
+		return
 	}
+
+	// Call the callback
+	c.mu.RLock()
+	cb := c.callbacks
+	c.mu.RUnlock()
+	if cb != nil && cb.OnGroupComplete != nil {
+		cb.OnGroupComplete(previousGroup)
+	}
+
+	// Persist the group advancement
+	_ = c.orch.SaveSession()
 }
 
 // finishExecution completes the execution phase
@@ -1253,8 +1392,20 @@ func (c *Coordinator) buildSynthesisPrompt() string {
 
 	for _, taskID := range session.CompletedTasks {
 		task := session.GetTask(taskID)
-		if task != nil {
-			taskList.WriteString(fmt.Sprintf("- [%s] %s\n", task.ID, task.Title))
+		if task == nil {
+			continue
+		}
+
+		// Include commit count in task list
+		commitCount := 0
+		if count, ok := session.TaskCommitCounts[taskID]; ok {
+			commitCount = count
+		}
+
+		if commitCount > 0 {
+			taskList.WriteString(fmt.Sprintf("- [%s] %s (%d commits)\n", task.ID, task.Title, commitCount))
+		} else {
+			taskList.WriteString(fmt.Sprintf("- [%s] %s (NO COMMITS - verify this task)\n", task.ID, task.Title))
 		}
 	}
 
@@ -1265,11 +1416,34 @@ func (c *Coordinator) buildSynthesisPrompt() string {
 		if task != nil && inst != nil {
 			resultsSummary.WriteString(fmt.Sprintf("### %s\n", task.Title))
 			resultsSummary.WriteString(fmt.Sprintf("Status: %s\n", inst.Status))
+
+			// Add commit count
+			if count, ok := session.TaskCommitCounts[taskID]; ok {
+				resultsSummary.WriteString(fmt.Sprintf("Commits: %d\n", count))
+			}
+
 			if len(inst.FilesModified) > 0 {
 				resultsSummary.WriteString(fmt.Sprintf("Files modified: %s\n", strings.Join(inst.FilesModified, ", ")))
 			}
 			resultsSummary.WriteString("\n")
 		}
+	}
+
+	// Also include tasks that completed but are no longer in TaskToInstance
+	for _, taskID := range session.CompletedTasks {
+		if _, inMap := session.TaskToInstance[taskID]; inMap {
+			continue // Already processed above
+		}
+		task := session.GetTask(taskID)
+		if task == nil {
+			continue
+		}
+		resultsSummary.WriteString(fmt.Sprintf("### %s\n", task.Title))
+		resultsSummary.WriteString("Status: completed\n")
+		if count, ok := session.TaskCommitCounts[taskID]; ok {
+			resultsSummary.WriteString(fmt.Sprintf("Commits: %d\n", count))
+		}
+		resultsSummary.WriteString("\n")
 	}
 
 	return fmt.Sprintf(SynthesisPromptTemplate, session.Objective, taskList.String(), resultsSummary.String())
@@ -1336,6 +1510,317 @@ func (c *Coordinator) GetRunningTasks() map[string]string {
 		result[k] = v
 	}
 	return result
+}
+
+// hasPartialGroupFailure checks if a group has a mix of successful and failed tasks
+func (c *Coordinator) hasPartialGroupFailure(groupIndex int) bool {
+	session := c.Session()
+	if session == nil || session.Plan == nil {
+		return false
+	}
+
+	if groupIndex >= len(session.Plan.ExecutionOrder) {
+		return false
+	}
+
+	taskIDs := session.Plan.ExecutionOrder[groupIndex]
+	successCount := 0
+	failureCount := 0
+
+	for _, taskID := range taskIDs {
+		// Check if in completed with verified commits
+		isCompleted := false
+		for _, ct := range session.CompletedTasks {
+			if ct == taskID {
+				isCompleted = true
+				break
+			}
+		}
+
+		if isCompleted {
+			// Verify it has commits
+			if count, ok := session.TaskCommitCounts[taskID]; ok && count > 0 {
+				successCount++
+			} else {
+				failureCount++
+			}
+			continue
+		}
+
+		// Check if in failed
+		for _, ft := range session.FailedTasks {
+			if ft == taskID {
+				failureCount++
+				break
+			}
+		}
+	}
+
+	// Partial failure = at least one success AND at least one failure
+	return successCount > 0 && failureCount > 0
+}
+
+// handlePartialGroupFailure pauses execution and waits for user decision
+func (c *Coordinator) handlePartialGroupFailure(groupIndex int) {
+	session := c.Session()
+
+	taskIDs := session.Plan.ExecutionOrder[groupIndex]
+	var succeeded, failed []string
+
+	for _, taskID := range taskIDs {
+		isCompleted := false
+		for _, ct := range session.CompletedTasks {
+			if ct == taskID {
+				isCompleted = true
+				break
+			}
+		}
+
+		if isCompleted {
+			if count, ok := session.TaskCommitCounts[taskID]; ok && count > 0 {
+				succeeded = append(succeeded, taskID)
+			} else {
+				failed = append(failed, taskID)
+			}
+		} else {
+			// Check if failed
+			for _, ft := range session.FailedTasks {
+				if ft == taskID {
+					failed = append(failed, taskID)
+					break
+				}
+			}
+		}
+	}
+
+	c.mu.Lock()
+	session.GroupDecision = &GroupDecisionState{
+		GroupIndex:       groupIndex,
+		SucceededTasks:   succeeded,
+		FailedTasks:      failed,
+		AwaitingDecision: true,
+	}
+	c.mu.Unlock()
+
+	c.manager.emitEvent(CoordinatorEvent{
+		Type:    EventGroupComplete,
+		Message: fmt.Sprintf("Group %d has partial success (%d/%d tasks succeeded). Awaiting user decision.", groupIndex+1, len(succeeded), len(taskIDs)),
+	})
+
+	_ = c.orch.SaveSession()
+}
+
+// ResumeWithPartialWork continues execution with only the successful tasks
+func (c *Coordinator) ResumeWithPartialWork() error {
+	session := c.Session()
+	if session.GroupDecision == nil || !session.GroupDecision.AwaitingDecision {
+		return fmt.Errorf("no pending group decision")
+	}
+
+	groupIdx := session.GroupDecision.GroupIndex
+
+	c.mu.Lock()
+	session.GroupDecision.AwaitingDecision = false
+	c.mu.Unlock()
+
+	c.manager.emitEvent(CoordinatorEvent{
+		Type:    EventGroupComplete,
+		Message: fmt.Sprintf("Continuing group %d with partial work (%d tasks)", groupIdx+1, len(session.GroupDecision.SucceededTasks)),
+	})
+
+	// Consolidate only the successful tasks
+	if err := c.consolidateGroupWithVerification(groupIdx); err != nil {
+		return fmt.Errorf("failed to consolidate partial group: %w", err)
+	}
+
+	// Clear the decision state
+	c.mu.Lock()
+	session.GroupDecision = nil
+	c.mu.Unlock()
+
+	// Continue execution
+	_ = c.orch.SaveSession()
+	return nil
+}
+
+// RetryFailedTasks retries the failed tasks in the current group
+func (c *Coordinator) RetryFailedTasks() error {
+	session := c.Session()
+	if session.GroupDecision == nil || !session.GroupDecision.AwaitingDecision {
+		return fmt.Errorf("no pending group decision")
+	}
+
+	failedTasks := session.GroupDecision.FailedTasks
+	groupIdx := session.GroupDecision.GroupIndex
+
+	// Reset retry states and remove from failed list
+	c.mu.Lock()
+	for _, taskID := range failedTasks {
+		// Reset retry counter
+		if state, ok := session.TaskRetries[taskID]; ok {
+			state.RetryCount = 0
+		}
+		// Remove from failed list
+		newFailed := make([]string, 0)
+		for _, ft := range session.FailedTasks {
+			if ft != taskID {
+				newFailed = append(newFailed, ft)
+			}
+		}
+		session.FailedTasks = newFailed
+		// Remove from completed list (in case it was there with 0 commits)
+		newCompleted := make([]string, 0)
+		for _, ct := range session.CompletedTasks {
+			if ct != taskID {
+				newCompleted = append(newCompleted, ct)
+			}
+		}
+		session.CompletedTasks = newCompleted
+		// Remove from TaskToInstance so they become ready again
+		delete(session.TaskToInstance, taskID)
+	}
+
+	// Roll back group advancement
+	session.CurrentGroup = groupIdx
+	session.GroupDecision = nil
+	c.mu.Unlock()
+
+	c.manager.emitEvent(CoordinatorEvent{
+		Type:    EventGroupComplete,
+		Message: fmt.Sprintf("Retrying %d failed tasks in group %d", len(failedTasks), groupIdx+1),
+	})
+
+	_ = c.orch.SaveSession()
+	return nil
+}
+
+// consolidateGroupWithVerification consolidates a group and verifies commits exist
+func (c *Coordinator) consolidateGroupWithVerification(groupIndex int) error {
+	session := c.Session()
+	if session == nil || session.Plan == nil {
+		return fmt.Errorf("no session or plan")
+	}
+
+	if groupIndex < 0 || groupIndex >= len(session.Plan.ExecutionOrder) {
+		return fmt.Errorf("invalid group index: %d", groupIndex)
+	}
+
+	taskIDs := session.Plan.ExecutionOrder[groupIndex]
+	if len(taskIDs) == 0 {
+		return nil // Empty group, nothing to consolidate
+	}
+
+	// Collect task branches for this group, filtering to only those with verified commits
+	var taskBranches []string
+	var activeTasks []string
+
+	for _, taskID := range taskIDs {
+		// Skip tasks that failed or have no commits
+		commitCount, ok := session.TaskCommitCounts[taskID]
+		if !ok || commitCount == 0 {
+			continue
+		}
+
+		task := session.GetTask(taskID)
+		if task == nil {
+			continue
+		}
+
+		// Find the instance that executed this task
+		for _, inst := range c.baseSession.Instances {
+			if strings.Contains(inst.Task, taskID) || strings.Contains(inst.Branch, slugify(task.Title)) {
+				taskBranches = append(taskBranches, inst.Branch)
+				activeTasks = append(activeTasks, taskID)
+				break
+			}
+		}
+	}
+
+	if len(taskBranches) == 0 {
+		// No branches with work - this is an error now, not silent success
+		return fmt.Errorf("no task branches with verified commits found for group %d", groupIndex)
+	}
+
+	// Generate consolidated branch name
+	branchPrefix := session.Config.BranchPrefix
+	if branchPrefix == "" {
+		branchPrefix = c.orch.config.Branch.Prefix
+	}
+	if branchPrefix == "" {
+		branchPrefix = "Iron-Ham"
+	}
+	planID := session.ID
+	if len(planID) > 8 {
+		planID = planID[:8]
+	}
+	consolidatedBranch := fmt.Sprintf("%s/ultraplan-%s-group-%d", branchPrefix, planID, groupIndex+1)
+
+	// Determine base branch
+	var baseBranch string
+	if groupIndex == 0 {
+		baseBranch = c.orch.wt.FindMainBranch()
+	} else if groupIndex-1 < len(session.GroupConsolidatedBranches) {
+		baseBranch = session.GroupConsolidatedBranches[groupIndex-1]
+	} else {
+		baseBranch = c.orch.wt.FindMainBranch()
+	}
+
+	// Create the consolidated branch from the base
+	if err := c.orch.wt.CreateBranchFrom(consolidatedBranch, baseBranch); err != nil {
+		return fmt.Errorf("failed to create consolidated branch %s: %w", consolidatedBranch, err)
+	}
+
+	// Create a temporary worktree for cherry-picking
+	worktreeBase := fmt.Sprintf("%s/consolidation-group-%d", c.orch.claudioDir, groupIndex)
+	if err := c.orch.wt.CreateWorktreeFromBranch(worktreeBase, consolidatedBranch); err != nil {
+		return fmt.Errorf("failed to create consolidation worktree: %w", err)
+	}
+	defer func() {
+		_ = c.orch.wt.Remove(worktreeBase)
+	}()
+
+	// Cherry-pick commits from each task branch - failures are now blocking
+	for i, branch := range taskBranches {
+		if err := c.orch.wt.CherryPickBranch(worktreeBase, branch); err != nil {
+			// Cherry-pick failed - this is now a blocking error
+			_ = c.orch.wt.AbortCherryPick(worktreeBase)
+			return fmt.Errorf("failed to cherry-pick task %s (branch %s): %w", activeTasks[i], branch, err)
+		}
+	}
+
+	// Verify the consolidated branch has commits
+	consolidatedCommitCount, err := c.orch.wt.CountCommitsBetween(worktreeBase, baseBranch, "HEAD")
+	if err != nil {
+		return fmt.Errorf("failed to verify consolidated branch commits: %w", err)
+	}
+
+	if consolidatedCommitCount == 0 {
+		return fmt.Errorf("consolidated branch has no commits after cherry-picking %d branches", len(taskBranches))
+	}
+
+	// Push the consolidated branch
+	if err := c.orch.wt.Push(worktreeBase, false); err != nil {
+		c.manager.emitEvent(CoordinatorEvent{
+			Type:    EventGroupComplete,
+			Message: fmt.Sprintf("Warning: failed to push consolidated branch %s: %v", consolidatedBranch, err),
+		})
+		// Not fatal - branch exists locally
+	}
+
+	// Store the consolidated branch
+	c.mu.Lock()
+	for len(session.GroupConsolidatedBranches) <= groupIndex {
+		session.GroupConsolidatedBranches = append(session.GroupConsolidatedBranches, "")
+	}
+	session.GroupConsolidatedBranches[groupIndex] = consolidatedBranch
+	c.mu.Unlock()
+
+	c.manager.emitEvent(CoordinatorEvent{
+		Type:    EventGroupComplete,
+		Message: fmt.Sprintf("Group %d consolidated into %s (%d commits from %d tasks)", groupIndex+1, consolidatedBranch, consolidatedCommitCount, len(taskBranches)),
+	})
+
+	return nil
 }
 
 // consolidateGroup consolidates all task branches from a completed group into a single branch.

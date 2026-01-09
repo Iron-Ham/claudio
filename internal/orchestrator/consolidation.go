@@ -429,10 +429,16 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, groupWor
 		activeTasks = append(activeTasks, taskID)
 	}
 
+	// CHANGED: Return error when no active tasks instead of silent success
 	if len(activeTasks) == 0 {
-		result.Success = true
-		return result, nil
+		return result, fmt.Errorf("no task branches with commits found for group %d", groupIdx)
 	}
+
+	// Get base branch for commit counting
+	baseBranch := c.wt.FindMainBranch()
+
+	// Track initial commit count
+	initialCommits, _ := c.wt.CountCommitsBetween(groupWorktree, baseBranch, "HEAD")
 
 	// Cherry-pick each task's commits
 	for _, taskID := range activeTasks {
@@ -474,9 +480,19 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, groupWor
 		})
 	}
 
+	// Verify commits were actually added
+	finalCommits, _ := c.wt.CountCommitsBetween(groupWorktree, baseBranch, "HEAD")
+	addedCommits := finalCommits - initialCommits
+
+	// CHANGED: Fail if no commits were added despite cherry-picking
+	if addedCommits == 0 && len(activeTasks) > 0 {
+		return result, fmt.Errorf("cherry-picked %d branches but no commits were added - task branches may have been empty", len(activeTasks))
+	}
+
 	// Get changed files for the result
 	files, _ := c.wt.GetChangedFiles(groupWorktree)
 	result.FilesChanged = files
+	result.CommitCount = addedCommits
 	result.Success = true
 
 	c.mu.Lock()
