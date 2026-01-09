@@ -7,6 +7,28 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 )
 
+// PlanEditorState holds the state for the interactive plan editor
+type PlanEditorState struct {
+	// active indicates whether the plan editor is currently shown
+	active bool
+
+	// selectedTaskIdx is the index of the currently selected task in the task list
+	selectedTaskIdx int
+
+	// editingField indicates which field is being edited (empty if not editing)
+	// Valid values: 'title', 'description', 'files', 'depends_on', 'priority', 'complexity'
+	editingField string
+
+	// editBuffer holds the current edit buffer content when editing a field
+	editBuffer string
+
+	// editCursor is the cursor position within the edit buffer (0 = before first char)
+	editCursor int
+
+	// scrollOffset is the vertical scroll offset for the task list
+	scrollOffset int
+}
+
 // Model holds the TUI application state
 type Model struct {
 	// Core components
@@ -15,6 +37,9 @@ type Model struct {
 
 	// Ultra-plan mode (nil if not in ultra-plan mode)
 	ultraPlan *UltraPlanState
+
+	// Plan editor mode (nil if not in plan editor mode)
+	planEditor *PlanEditorState
 
 	// UI state
 	activeTab      int
@@ -80,6 +105,28 @@ type Model struct {
 // IsUltraPlanMode returns true if the model is in ultra-plan mode
 func (m Model) IsUltraPlanMode() bool {
 	return m.ultraPlan != nil
+}
+
+// IsPlanEditorActive returns true if the plan editor is currently active and visible
+func (m Model) IsPlanEditorActive() bool {
+	return m.planEditor != nil && m.planEditor.active
+}
+
+// enterPlanEditor initializes the plan editor state when entering edit mode
+func (m *Model) enterPlanEditor() {
+	m.planEditor = &PlanEditorState{
+		active:          true,
+		selectedTaskIdx: 0,
+		editingField:    "",
+		editBuffer:      "",
+		editCursor:      0,
+		scrollOffset:    0,
+	}
+}
+
+// exitPlanEditor cleans up the plan editor state when exiting edit mode
+func (m *Model) exitPlanEditor() {
+	m.planEditor = nil
 }
 
 // NewModel creates a new TUI model
