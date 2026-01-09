@@ -64,6 +64,12 @@ func (m *Model) checkForPhaseNotification() {
 		// Track consolidation phase changes
 		m.ultraPlan.lastConsolidationPhase = session.Consolidation.Phase
 	}
+
+	// Check for group decision needed (partial success/failure)
+	if session.GroupDecision != nil && session.GroupDecision.AwaitingDecision {
+		m.ultraPlan.needsNotification = true
+		return
+	}
 }
 
 // renderUltraPlanHeader renders the ultra-plan header with phase and progress
@@ -176,6 +182,15 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 	var b strings.Builder
 	lineCount := 0
 	availableLines := height - 4
+
+	// ========== GROUP DECISION SECTION (if awaiting decision) ==========
+	if session.GroupDecision != nil && session.GroupDecision.AwaitingDecision {
+		// Render prominent decision dialog
+		decisionContent := m.renderGroupDecisionSection(session.GroupDecision, width-4)
+		b.WriteString(decisionContent)
+		b.WriteString("\n\n")
+		lineCount += 12 // Reserve space for decision section
+	}
 
 	// ========== PLANNING SECTION ==========
 	planningComplete := session.Phase != orchestrator.PhasePlanning
@@ -814,6 +829,63 @@ func (m *Model) selectInstanceByID(instanceID string) bool {
 	return false
 }
 
+// renderGroupDecisionSection renders the group decision dialog when user input is needed
+func (m Model) renderGroupDecisionSection(decision *orchestrator.GroupDecisionState, maxWidth int) string {
+	var b strings.Builder
+
+	// Warning header
+	warningStyle := lipgloss.NewStyle().
+		Foreground(styles.YellowColor).
+		Bold(true)
+	b.WriteString(warningStyle.Render("⚠ PARTIAL GROUP FAILURE"))
+	b.WriteString("\n\n")
+
+	// Group info
+	b.WriteString(fmt.Sprintf("Group %d has mixed results:\n", decision.GroupIndex+1))
+
+	// Succeeded tasks
+	if len(decision.SucceededTasks) > 0 {
+		successStyle := lipgloss.NewStyle().Foreground(styles.GreenColor)
+		b.WriteString(successStyle.Render(fmt.Sprintf("  ✓ %d task(s) succeeded", len(decision.SucceededTasks))))
+		b.WriteString("\n")
+	}
+
+	// Failed tasks
+	if len(decision.FailedTasks) > 0 {
+		failStyle := lipgloss.NewStyle().Foreground(styles.RedColor)
+		b.WriteString(failStyle.Render(fmt.Sprintf("  ✗ %d task(s) failed", len(decision.FailedTasks))))
+		b.WriteString("\n")
+
+		// List failed task IDs (truncated)
+		maxToShow := 3
+		for i, taskID := range decision.FailedTasks {
+			if i >= maxToShow {
+				remaining := len(decision.FailedTasks) - maxToShow
+				b.WriteString(styles.Muted.Render(fmt.Sprintf("    ... +%d more", remaining)))
+				b.WriteString("\n")
+				break
+			}
+			taskDisplay := truncate(taskID, maxWidth-8)
+			b.WriteString(styles.Muted.Render("    - " + taskDisplay))
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n")
+
+	// Options
+	b.WriteString(styles.SidebarTitle.Render("Choose action:"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("  [c] Continue with successful tasks"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("  [r] Retry failed tasks"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("  [q] Cancel ultraplan"))
+	b.WriteString("\n")
+
+	return b.String()
+}
+
 // renderTaskLine renders a single task line in the sidebar
 func (m Model) renderTaskLine(session *orchestrator.UltraPlanSession, task *orchestrator.PlannedTask, maxWidth int, selected bool) string {
 	// Determine task status
@@ -946,6 +1018,15 @@ func (m Model) renderUltraPlanHelp() string {
 	}
 
 	var keys []string
+
+	// Group decision mode takes priority
+	if session.GroupDecision != nil && session.GroupDecision.AwaitingDecision {
+		keys = append(keys, "[c] continue partial")
+		keys = append(keys, "[r] retry failed")
+		keys = append(keys, "[q] cancel")
+		keys = append(keys, "[↑↓] nav")
+		return styles.HelpBar.Width(m.width).Render(strings.Join(keys, "  "))
+	}
 
 	// Common keys
 	keys = append(keys, "[q] quit")
@@ -1083,6 +1164,35 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 	session := m.ultraPlan.coordinator.Session()
 	if session == nil {
 		return false, m, nil
+	}
+
+	// Group decision handling takes priority
+	if session.GroupDecision != nil && session.GroupDecision.AwaitingDecision {
+		switch msg.String() {
+		case "c":
+			// Continue with partial work (successful tasks only)
+			if err := m.ultraPlan.coordinator.ResumeWithPartialWork(); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to continue: %v", err)
+			} else {
+				m.infoMessage = "Continuing with successful tasks..."
+			}
+			return true, m, nil
+
+		case "r":
+			// Retry failed tasks
+			if err := m.ultraPlan.coordinator.RetryFailedTasks(); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to retry: %v", err)
+			} else {
+				m.infoMessage = "Retrying failed tasks..."
+			}
+			return true, m, nil
+
+		case "q":
+			// Cancel the ultraplan
+			m.ultraPlan.coordinator.Cancel()
+			m.infoMessage = "Ultraplan cancelled"
+			return true, m, nil
+		}
 	}
 
 	switch msg.String() {

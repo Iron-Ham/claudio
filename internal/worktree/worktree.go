@@ -403,6 +403,22 @@ func (m *Manager) GetCommitsBetween(path, baseBranch, headBranch string) ([]stri
 	return strings.Split(lines, "\n"), nil
 }
 
+// CountCommitsBetween returns the number of commits between base and head branches.
+// This is more efficient than GetCommitsBetween when you only need the count.
+func (m *Manager) CountCommitsBetween(path, baseBranch, headBranch string) (int, error) {
+	cmd := exec.Command("git", "rev-list", "--count", baseBranch+".."+headBranch)
+	cmd.Dir = path
+
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("failed to count commits between %s and %s: %w", baseBranch, headBranch, err)
+	}
+
+	count := 0
+	_, _ = fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &count)
+	return count, nil
+}
+
 // CherryPickBranch cherry-picks all commits from sourceBranch that aren't in the current branch
 // It cherry-picks commits one by one in order (oldest first)
 func (m *Manager) CherryPickBranch(path, sourceBranch string) error {
