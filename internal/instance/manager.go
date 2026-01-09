@@ -55,6 +55,19 @@ func DefaultManagerConfig() ManagerConfig {
 // MetricsChangeCallback is called when metrics are updated
 type MetricsChangeCallback func(instanceID string, metrics *ParsedMetrics)
 
+// Compile-time interface checks for Manager
+var (
+	_ Runner           = (*Manager)(nil)
+	_ RunnerLifecycle  = (*Manager)(nil)
+	_ RunnerResizable  = (*Manager)(nil)
+	_ StateObserver    = (*Manager)(nil)
+	_ MetricsSource    = (*Manager)(nil)
+	_ TimeoutObserver  = (*Manager)(nil)
+	_ BellObserver     = (*Manager)(nil)
+	_ InstanceInfo     = (*Manager)(nil)
+	_ FullRunner       = (*Manager)(nil)
+)
+
 // Manager handles a single Claude Code instance running in a tmux session
 type Manager struct {
 	id          string
@@ -571,12 +584,12 @@ func (m *Manager) Resume() error {
 }
 
 // SendInput sends input to the tmux session
-func (m *Manager) SendInput(data []byte) {
+func (m *Manager) SendInput(data []byte) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	if !m.running {
-		return
+		return fmt.Errorf("instance not running")
 	}
 
 	// Convert bytes to string for send-keys
@@ -608,23 +621,28 @@ func (m *Manager) SendInput(data []byte) {
 			}
 		}
 
-		_ = exec.Command("tmux", "send-keys", "-t", m.sessionName, "-l", key).Run()
+		if err := exec.Command("tmux", "send-keys", "-t", m.sessionName, "-l", key).Run(); err != nil {
+			return fmt.Errorf("failed to send input: %w", err)
+		}
 	}
+	return nil
 }
 
 // SendKey sends a special key to the tmux session
-func (m *Manager) SendKey(key string) {
+func (m *Manager) SendKey(key string) error {
 	m.mu.RLock()
 	sessionName := m.sessionName
 	running := m.running
 	m.mu.RUnlock()
 
 	if !running {
-		return
+		return fmt.Errorf("instance not running")
 	}
 
-	// Use CombinedOutput to capture any error
-	_ = exec.Command("tmux", "send-keys", "-t", sessionName, key).Run()
+	if err := exec.Command("tmux", "send-keys", "-t", sessionName, key).Run(); err != nil {
+		return fmt.Errorf("failed to send key: %w", err)
+	}
+	return nil
 }
 
 // SendLiteral sends literal text to the tmux session (no interpretation)

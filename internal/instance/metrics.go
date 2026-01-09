@@ -16,6 +16,9 @@ type ParsedMetrics struct {
 	APICalls     int
 }
 
+// Compile-time interface check for MetricsParser
+var _ MetricsParsing = (*MetricsParser)(nil)
+
 // MetricsParser extracts resource metrics from Claude Code output
 type MetricsParser struct {
 	// Compiled regex patterns

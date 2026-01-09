@@ -2,6 +2,9 @@ package instance
 
 import "sync"
 
+// Compile-time interface check for RingBuffer
+var _ OutputBuffer = (*RingBuffer)(nil)
+
 // RingBuffer is a thread-safe ring buffer for output
 type RingBuffer struct {
 	data  []byte

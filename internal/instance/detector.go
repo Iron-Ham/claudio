@@ -52,6 +52,9 @@ func (s WaitingState) IsWaiting() bool {
 	return s == StateWaitingPermission || s == StateWaitingQuestion || s == StateWaitingInput
 }
 
+// Compile-time interface check for Detector
+var _ StateDetector = (*Detector)(nil)
+
 // Detector analyzes Claude's output to determine if it's waiting for user input
 type Detector struct {
 	// Compiled regex patterns for efficiency
