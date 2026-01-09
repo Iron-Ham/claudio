@@ -208,25 +208,182 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 	}
 
 	// ========== PLANNING SECTION ==========
-	planningComplete := session.Phase != orchestrator.PhasePlanning
+	planningComplete := session.Phase != orchestrator.PhasePlanning && session.Phase != orchestrator.PhasePlanSelection
 	planningStatus := m.getPhaseSectionStatus(orchestrator.PhasePlanning, session)
 	planningHeader := fmt.Sprintf("▼ PLANNING %s", planningStatus)
 	b.WriteString(styles.SidebarTitle.Render(planningHeader))
 	b.WriteString("\n")
 	lineCount++
 
-	// Show coordinator instance
-	if session.CoordinatorID != "" && lineCount < availableLines {
-		inst := m.orchestrator.GetInstance(session.CoordinatorID)
-		selected := m.isInstanceSelected(session.CoordinatorID)
-		navigable := planningComplete || (inst != nil && inst.Status != orchestrator.StatusPending)
-		line := m.renderPhaseInstanceLine(inst, "Coordinator", selected, navigable, width-4)
-		b.WriteString(line)
+	// Multi-pass planning mode: show all three coordinators
+	if session.Config.MultiPass && len(session.PlanCoordinatorIDs) > 0 {
+		// Show "Multi-Pass Planning" indicator
+		multiPassStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Bold(true) // Orange
+		b.WriteString(multiPassStyle.Render("  Multi-Pass Planning"))
 		b.WriteString("\n")
 		lineCount++
+
+		// Show each coordinator with its strategy
+		strategies := orchestrator.GetMultiPassStrategyNames()
+		for i, coordID := range session.PlanCoordinatorIDs {
+			if lineCount >= availableLines-2 {
+				break
+			}
+
+			strategyName := "unknown"
+			if i < len(strategies) {
+				strategyName = strategies[i]
+			}
+
+			inst := m.orchestrator.GetInstance(coordID)
+			selected := m.isInstanceSelected(coordID)
+
+			// Determine status and navigability
+			var statusIcon string
+			var statusStyle lipgloss.Style
+			navigable := false
+
+			if inst == nil {
+				statusIcon = "○"
+				statusStyle = styles.Muted
+			} else {
+				navigable = inst.Status != orchestrator.StatusPending
+				switch inst.Status {
+				case orchestrator.StatusWorking:
+					statusIcon = "⟳"
+					statusStyle = lipgloss.NewStyle().Foreground(styles.BlueColor)
+				case orchestrator.StatusCompleted, orchestrator.StatusWaitingInput:
+					statusIcon = "✓"
+					statusStyle = lipgloss.NewStyle().Foreground(styles.GreenColor)
+				case orchestrator.StatusError, orchestrator.StatusStuck, orchestrator.StatusTimeout:
+					statusIcon = "✗"
+					statusStyle = lipgloss.NewStyle().Foreground(styles.RedColor)
+				default:
+					statusIcon = "○"
+					statusStyle = styles.Muted
+				}
+			}
+
+			// Check if this coordinator has produced a plan
+			planReady := i < len(session.CandidatePlans) && session.CandidatePlans[i] != nil
+
+			// Format: "  ⟳ Coord 1 (maximize-parallelism)"
+			coordLabel := fmt.Sprintf("Coord %d (%s)", i+1, truncate(strategyName, 18))
+			if planReady {
+				coordLabel += " ✓"
+			}
+
+			line := fmt.Sprintf("    %s %s", statusStyle.Render(statusIcon), coordLabel)
+
+			if selected {
+				line = lipgloss.NewStyle().
+					Background(styles.PrimaryColor).
+					Foreground(styles.TextColor).
+					Render(line)
+			} else if !navigable {
+				line = styles.Muted.Render(line)
+			}
+
+			b.WriteString(line)
+			b.WriteString("\n")
+			lineCount++
+		}
+
+		// Show plan manager instance if in plan selection phase
+		if session.Phase == orchestrator.PhasePlanSelection && session.PlanManagerID != "" && lineCount < availableLines {
+			inst := m.orchestrator.GetInstance(session.PlanManagerID)
+			selected := m.isInstanceSelected(session.PlanManagerID)
+			navigable := inst != nil && inst.Status != orchestrator.StatusPending
+			line := m.renderPhaseInstanceLine(inst, "Plan Manager", selected, navigable, width-4)
+			b.WriteString(line)
+			b.WriteString("\n")
+			lineCount++
+		}
+	} else {
+		// Standard single-pass planning: show single coordinator instance
+		if session.CoordinatorID != "" && lineCount < availableLines {
+			inst := m.orchestrator.GetInstance(session.CoordinatorID)
+			selected := m.isInstanceSelected(session.CoordinatorID)
+			navigable := planningComplete || (inst != nil && inst.Status != orchestrator.StatusPending)
+			line := m.renderPhaseInstanceLine(inst, "Coordinator", selected, navigable, width-4)
+			b.WriteString(line)
+			b.WriteString("\n")
+			lineCount++
+		}
 	}
 	b.WriteString("\n")
 	lineCount++
+
+	// ========== PLAN SELECTION SECTION (Multi-pass only) ==========
+	if session.Config.MultiPass && session.Phase == orchestrator.PhasePlanSelection && lineCount < availableLines {
+		selectionStatus := m.getPhaseSectionStatus(orchestrator.PhasePlanSelection, session)
+		selectionHeader := fmt.Sprintf("▼ PLAN SELECTION %s", selectionStatus)
+		b.WriteString(styles.SidebarTitle.Render(selectionHeader))
+		b.WriteString("\n")
+		lineCount++
+
+		// Show "Selecting Best Plan..." indicator
+		selectingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("208")) // Orange
+		b.WriteString(selectingStyle.Render("  Comparing plans..."))
+		b.WriteString("\n")
+		lineCount++
+
+		// Show brief summary of each candidate plan
+		strategies := orchestrator.GetMultiPassStrategyNames()
+		for i, plan := range session.CandidatePlans {
+			if lineCount >= availableLines-4 || plan == nil {
+				continue
+			}
+
+			strategyName := "unknown"
+			if i < len(strategies) {
+				strategyName = strategies[i]
+			}
+
+			// Calculate parallelism score: number of tasks in first group / total tasks
+			parallelismInfo := ""
+			if len(plan.ExecutionOrder) > 0 && len(plan.Tasks) > 0 {
+				firstGroupSize := len(plan.ExecutionOrder[0])
+				parallelismInfo = fmt.Sprintf(" (P:%d/%d G:%d)", firstGroupSize, len(plan.Tasks), len(plan.ExecutionOrder))
+			}
+
+			planLine := fmt.Sprintf("    Plan %d: %s%s", i+1, truncate(strategyName, 14), parallelismInfo)
+			b.WriteString(styles.Muted.Render(planLine))
+			b.WriteString("\n")
+			lineCount++
+		}
+		b.WriteString("\n")
+		lineCount++
+	}
+
+	// ========== SELECTED PLAN INFO (after multi-pass selection) ==========
+	if session.Config.MultiPass && session.SelectedPlanIndex >= -1 && session.Plan != nil && lineCount < availableLines {
+		// Only show after plan selection is complete (PhaseRefresh or later)
+		showSelectedInfo := session.Phase == orchestrator.PhaseRefresh ||
+			session.Phase == orchestrator.PhaseExecuting ||
+			session.Phase == orchestrator.PhaseSynthesis ||
+			session.Phase == orchestrator.PhaseRevision ||
+			session.Phase == orchestrator.PhaseConsolidating ||
+			session.Phase == orchestrator.PhaseComplete
+
+		if showSelectedInfo {
+			selectedStyle := lipgloss.NewStyle().Foreground(styles.GreenColor)
+			strategies := orchestrator.GetMultiPassStrategyNames()
+
+			var selectionText string
+			if session.SelectedPlanIndex == -1 {
+				selectionText = "Merged plan"
+			} else if session.SelectedPlanIndex >= 0 && session.SelectedPlanIndex < len(strategies) {
+				selectionText = fmt.Sprintf("Plan %d (%s)", session.SelectedPlanIndex+1, strategies[session.SelectedPlanIndex])
+			} else {
+				selectionText = fmt.Sprintf("Plan %d", session.SelectedPlanIndex+1)
+			}
+
+			b.WriteString(selectedStyle.Render(fmt.Sprintf("  ✓ Selected: %s", selectionText)))
+			b.WriteString("\n")
+			lineCount++
+		}
+	}
 
 	// ========== EXECUTION SECTION ==========
 	if session.Plan != nil && lineCount < availableLines {
@@ -785,11 +942,32 @@ func (m *Model) getNavigableInstances() []string {
 
 	var instances []string
 
-	// Planning - navigable once started (has instance)
-	if session.CoordinatorID != "" {
-		inst := m.orchestrator.GetInstance(session.CoordinatorID)
-		if inst != nil && inst.Status != orchestrator.StatusPending {
-			instances = append(instances, session.CoordinatorID)
+	// Multi-pass planning mode: add all coordinator instances
+	if session.Config.MultiPass && len(session.PlanCoordinatorIDs) > 0 {
+		for _, coordID := range session.PlanCoordinatorIDs {
+			if coordID == "" {
+				continue
+			}
+			inst := m.orchestrator.GetInstance(coordID)
+			if inst != nil && inst.Status != orchestrator.StatusPending {
+				instances = append(instances, coordID)
+			}
+		}
+
+		// Add plan manager instance if in plan selection phase
+		if session.PlanManagerID != "" {
+			inst := m.orchestrator.GetInstance(session.PlanManagerID)
+			if inst != nil && inst.Status != orchestrator.StatusPending {
+				instances = append(instances, session.PlanManagerID)
+			}
+		}
+	} else {
+		// Standard single-pass planning - navigable once started (has instance)
+		if session.CoordinatorID != "" {
+			inst := m.orchestrator.GetInstance(session.CoordinatorID)
+			if inst != nil && inst.Status != orchestrator.StatusPending {
+				instances = append(instances, session.CoordinatorID)
+			}
 		}
 	}
 
