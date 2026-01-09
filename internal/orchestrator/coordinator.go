@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -412,7 +413,27 @@ func (c *Coordinator) buildTaskPrompt(task *PlannedTask) string {
 	sb.WriteString("## Guidelines\n\n")
 	sb.WriteString("- Focus only on this specific task\n")
 	sb.WriteString("- Do not modify files outside of your assigned scope unless necessary\n")
-	sb.WriteString("- Complete the task and provide a summary of changes when done\n")
+	sb.WriteString("- Commit your changes before writing the completion file\n\n")
+
+	// Add completion protocol instructions
+	sb.WriteString("## Completion Protocol\n\n")
+	sb.WriteString("When your task is complete, you MUST write a completion file to signal the orchestrator:\n\n")
+	sb.WriteString(fmt.Sprintf("1. Use Write tool to create `%s` in your worktree root\n", TaskCompletionFileName))
+	sb.WriteString("2. Include this JSON structure:\n")
+	sb.WriteString("```json\n")
+	sb.WriteString("{\n")
+	sb.WriteString(fmt.Sprintf("  \"task_id\": \"%s\",\n", task.ID))
+	sb.WriteString("  \"status\": \"complete\",\n")
+	sb.WriteString("  \"summary\": \"Brief description of what you accomplished\",\n")
+	sb.WriteString("  \"files_modified\": [\"list\", \"of\", \"files\", \"you\", \"changed\"],\n")
+	sb.WriteString("  \"notes\": \"Any implementation notes for the consolidation phase\",\n")
+	sb.WriteString("  \"issues\": [\"Any concerns or blocking issues found\"],\n")
+	sb.WriteString("  \"suggestions\": [\"Suggestions for integration with other tasks\"],\n")
+	sb.WriteString("  \"dependencies\": [\"Any new runtime dependencies added\"]\n")
+	sb.WriteString("}\n")
+	sb.WriteString("```\n\n")
+	sb.WriteString("3. Use status \"blocked\" if you cannot complete (explain in issues), or \"failed\" if something broke\n")
+	sb.WriteString("4. This file signals that your work is done and provides context for consolidation\n")
 
 	return sb.String()
 }
@@ -440,16 +461,32 @@ func (c *Coordinator) monitorTaskInstance(taskID, instanceID string, completionC
 				return
 			}
 
+			// Primary completion detection: check for sentinel file
+			// This is the preferred method as it's unambiguous - the task explicitly
+			// signals completion by writing this file
+			if c.checkForTaskCompletionFile(inst) {
+				// Sentinel file exists - task has signaled completion
+				// Stop the instance to free up resources
+				_ = c.orch.StopInstance(inst)
+
+				// Verify work was done before marking as success
+				result := c.verifyTaskWork(taskID, inst)
+				completionChan <- result
+				return
+			}
+
+			// Fallback: status-based detection for tasks that don't write completion file
+			// This handles legacy behavior and edge cases
 			switch inst.Status {
 			case StatusCompleted:
-				// Verify work was done before marking as success
+				// Instance process has exited - verify work was done
 				result := c.verifyTaskWork(taskID, inst)
 				completionChan <- result
 				return
 
 			case StatusWaitingInput:
-				// Task finished its assigned work and is now waiting at a prompt.
-				// For ultraplan tasks, this means the task is complete.
+				// Task is waiting at prompt without writing completion file.
+				// This could be the old behavior or a task that got stuck.
 				// Stop the instance to free up resources.
 				_ = c.orch.StopInstance(inst)
 
@@ -469,6 +506,29 @@ func (c *Coordinator) monitorTaskInstance(taskID, instanceID string, completionC
 			}
 		}
 	}
+}
+
+// checkForTaskCompletionFile checks if the task has written its completion sentinel file
+func (c *Coordinator) checkForTaskCompletionFile(inst *Instance) bool {
+	if inst.WorktreePath == "" {
+		return false
+	}
+
+	completionPath := TaskCompletionFilePath(inst.WorktreePath)
+	if _, err := os.Stat(completionPath); err != nil {
+		return false // File doesn't exist yet
+	}
+
+	// File exists - try to parse it to ensure it's valid
+	completion, err := ParseTaskCompletionFile(inst.WorktreePath)
+	if err != nil {
+		// File exists but is invalid/incomplete - might still be writing
+		return false
+	}
+
+	// File is valid - check status
+	// Accept any status as "completion" - even "blocked" or "failed" means task is done
+	return completion.Status != ""
 }
 
 // verifyTaskWork checks if a task produced actual commits and determines success/retry

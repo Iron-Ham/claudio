@@ -773,6 +773,44 @@ func ValidatePlan(plan *PlanSpec) error {
 // PlanFileName is the name of the file where the planning agent writes its plan
 const PlanFileName = ".claudio-plan.json"
 
+// TaskCompletionFileName is the name of the sentinel file that tasks write when complete
+const TaskCompletionFileName = ".claudio-task-complete.json"
+
+// TaskCompletionFile represents the completion report written by a task
+// This file serves as both a sentinel (existence = task done) and a context carrier
+type TaskCompletionFile struct {
+	TaskID        string   `json:"task_id"`
+	Status        string   `json:"status"` // "complete", "blocked", or "failed"
+	Summary       string   `json:"summary"`
+	FilesModified []string `json:"files_modified"`
+	// Rich context for consolidation
+	Notes        string   `json:"notes,omitempty"`        // Free-form implementation notes
+	Issues       []string `json:"issues,omitempty"`       // Blocking issues or concerns found
+	Suggestions  []string `json:"suggestions,omitempty"`  // Integration suggestions for other tasks
+	Dependencies []string `json:"dependencies,omitempty"` // Runtime dependencies added
+}
+
+// TaskCompletionFilePath returns the full path to the task completion file for a given worktree
+func TaskCompletionFilePath(worktreePath string) string {
+	return filepath.Join(worktreePath, TaskCompletionFileName)
+}
+
+// ParseTaskCompletionFile reads and parses a task completion file
+func ParseTaskCompletionFile(worktreePath string) (*TaskCompletionFile, error) {
+	completionPath := TaskCompletionFilePath(worktreePath)
+	data, err := os.ReadFile(completionPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var completion TaskCompletionFile
+	if err := json.Unmarshal(data, &completion); err != nil {
+		return nil, fmt.Errorf("failed to parse task completion JSON: %w", err)
+	}
+
+	return &completion, nil
+}
+
 // PlanningPromptTemplate is the prompt used for the planning phase
 const PlanningPromptTemplate = `You are a senior software architect planning a complex task.
 
