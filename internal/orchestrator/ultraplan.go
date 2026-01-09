@@ -158,12 +158,14 @@ func (s *UltraPlanSession) IsTaskReady(taskID string) bool {
 	return true
 }
 
-// GetReadyTasks returns all tasks that are ready to execute (dependencies met, not yet started)
+// GetReadyTasks returns all tasks that are ready to execute (in current group, dependencies met, not yet started)
+// This respects group boundaries - only tasks from the current execution group are considered
 func (s *UltraPlanSession) GetReadyTasks() []string {
 	if s.Plan == nil {
 		return nil
 	}
 
+	// Build set of started/completed tasks
 	startedOrCompleted := make(map[string]bool)
 	for _, taskID := range s.CompletedTasks {
 		startedOrCompleted[taskID] = true
@@ -175,6 +177,31 @@ func (s *UltraPlanSession) GetReadyTasks() []string {
 		startedOrCompleted[taskID] = true
 	}
 
+	// If we have execution order groups defined, only consider tasks from the current group
+	if len(s.Plan.ExecutionOrder) > 0 {
+		// Ensure CurrentGroup is valid
+		if s.CurrentGroup >= len(s.Plan.ExecutionOrder) {
+			return nil // All groups complete
+		}
+
+		currentGroupTasks := make(map[string]bool)
+		for _, taskID := range s.Plan.ExecutionOrder[s.CurrentGroup] {
+			currentGroupTasks[taskID] = true
+		}
+
+		var ready []string
+		for _, taskID := range s.Plan.ExecutionOrder[s.CurrentGroup] {
+			if startedOrCompleted[taskID] {
+				continue
+			}
+			if s.IsTaskReady(taskID) {
+				ready = append(ready, taskID)
+			}
+		}
+		return ready
+	}
+
+	// Fallback: no execution order defined, use dependency-only logic
 	var ready []string
 	for _, task := range s.Plan.Tasks {
 		if startedOrCompleted[task.ID] {
@@ -185,6 +212,53 @@ func (s *UltraPlanSession) GetReadyTasks() []string {
 		}
 	}
 	return ready
+}
+
+// IsCurrentGroupComplete returns true if all tasks in the current group are completed or failed
+func (s *UltraPlanSession) IsCurrentGroupComplete() bool {
+	if s.Plan == nil || len(s.Plan.ExecutionOrder) == 0 {
+		return false
+	}
+	if s.CurrentGroup >= len(s.Plan.ExecutionOrder) {
+		return true // Already past last group
+	}
+
+	// Build set of completed/failed tasks
+	doneSet := make(map[string]bool)
+	for _, taskID := range s.CompletedTasks {
+		doneSet[taskID] = true
+	}
+	for _, taskID := range s.FailedTasks {
+		doneSet[taskID] = true
+	}
+
+	// Check if all tasks in current group are done
+	for _, taskID := range s.Plan.ExecutionOrder[s.CurrentGroup] {
+		if !doneSet[taskID] {
+			return false
+		}
+	}
+	return true
+}
+
+// AdvanceGroupIfComplete checks if the current group is complete and advances to the next group.
+// Returns true if the group was advanced, along with the previous group index.
+func (s *UltraPlanSession) AdvanceGroupIfComplete() (advanced bool, previousGroup int) {
+	if !s.IsCurrentGroupComplete() {
+		return false, s.CurrentGroup
+	}
+
+	previousGroup = s.CurrentGroup
+	s.CurrentGroup++
+	return true, previousGroup
+}
+
+// HasMoreGroups returns true if there are more groups to execute after the current one
+func (s *UltraPlanSession) HasMoreGroups() bool {
+	if s.Plan == nil || len(s.Plan.ExecutionOrder) == 0 {
+		return false
+	}
+	return s.CurrentGroup < len(s.Plan.ExecutionOrder)
 }
 
 // Progress returns the completion progress as a percentage (0-100)
