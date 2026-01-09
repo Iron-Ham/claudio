@@ -488,6 +488,9 @@ type CoordinatorEvent struct {
 	InstanceID string               `json:"instance_id,omitempty"`
 	Message    string               `json:"message,omitempty"`
 	Timestamp  time.Time            `json:"timestamp"`
+	// Multi-pass planning fields
+	PlanIndex int    `json:"plan_index,omitempty"` // Which plan was generated/selected (0-indexed)
+	Strategy  string `json:"strategy,omitempty"`   // Planning strategy name (e.g., "breadth-first", "depth-first")
 }
 
 // CoordinatorEventType represents the type of coordinator event
@@ -502,6 +505,12 @@ const (
 	EventPhaseChange   CoordinatorEventType = "phase_change"
 	EventConflict      CoordinatorEventType = "conflict"
 	EventPlanReady     CoordinatorEventType = "plan_ready"
+
+	// Multi-pass planning events
+	EventMultiPassPlanGenerated CoordinatorEventType = "multipass_plan_generated" // One coordinator finished planning
+	EventAllPlansGenerated      CoordinatorEventType = "all_plans_generated"      // All coordinators finished
+	EventPlanSelectionStarted   CoordinatorEventType = "plan_selection_started"   // Manager started evaluating
+	EventPlanSelected           CoordinatorEventType = "plan_selected"            // Final plan chosen
 )
 
 // UltraPlanManager manages the execution of an ultra-plan session
