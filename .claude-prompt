@@ -1,21 +1,40 @@
-# Task: Update plan view to show multi-pass decision info
+# Task: Modify RunPlanning to check MultiPass config
 
 ## Part of Ultra-Plan: Implement multi-pass planning orchestration that spawns three parallel coordinators with different strategies, then uses a coordinator-manager to select or merge the best plan. The infrastructure (config, session state, prompts, events) already exists - we need to wire up the orchestration logic.
 
 ## Your Task
 
-Modify `renderPlanView()` in `internal/tui/ultraplan.go` to show multi-pass decision context when available:
+Modify the existing `RunPlanning()` method in `internal/orchestrator/coordinator.go` to:
 
-1. If `session.SelectedPlanIndex >= 0`, show which strategy was selected
-2. If `session.SelectedPlanIndex == -1` (merged), indicate it was a merged plan
-3. Add a small header section like:
-   - "Plan Source: maximize-parallelism (selected)" OR
-   - "Plan Source: merged from multiple strategies"
+1. Check `session.Config.MultiPass` at the start
+2. If true, call `RunMultiPassPlanning()` instead of single-coordinator logic
+3. If false, continue with existing single-coordinator behavior
+
+This is a small conditional dispatch change at the top of `RunPlanning()`:
+```go
+if session.Config.MultiPass {
+    return c.RunMultiPassPlanning()
+}
+```
 
 ## Expected Files
 
 You are expected to work with these files:
-- internal/tui/ultraplan.go
+- internal/orchestrator/coordinator.go
+
+## Context from Previous Group
+
+This task builds on work consolidated from Group 1.
+
+**Consolidator Notes**: Successfully consolidated 10 task branches implementing multi-pass planning orchestration. The consolidated code includes: (1) RunMultiPassPlanning() for spawning 3 parallel planning coordinators with different strategies, (2) RunPlanManager() for starting the plan manager to select/merge plans, (3) TUI handlers for multi-pass coordinator and plan manager completion, (4) Enhanced sidebar and header rendering for multi-pass mode, (5) Plan view updates showing strategy source, (6) Documentation updates, and (7) Comprehensive tests for plan decision parsing. Two helper functions exist for formatting candidate plans: buildPlanManagerPrompt() (used by RunPlanManager) and buildPlanComparisonSection() (provides alternative JSON-based format).
+
+**Important**: The previous group's consolidator flagged these issues:
+- buildPlanComparisonSection() in coordinator.go is currently unused but provides a more detailed JSON-based format for plan comparison. Consider using it or removing it for code cleanliness.
+- formatCandidatePlansForManager() from task-3 appears to be unused after the merge - it was superseded by buildPlanManagerPrompt(). Consider removing it.
+- The orchestration is now set up but the wiring to call handleMultiPassCoordinatorCompletion from app.go's handleInstanceCompleted is still needed (see task-5 integration notes).
+- Similarly, handlePlanManagerCompletion needs to be wired into the instance completion flow in app.go.
+
+The consolidated code from the previous group has been verified (build/lint/tests passed).
 
 ## Guidelines
 
@@ -31,7 +50,7 @@ When your task is complete, you MUST write a completion file to signal the orche
 2. Include this JSON structure:
 ```json
 {
-  "task_id": "task-10-tui-plan-view-multipass",
+  "task_id": "task-4-modify-run-planning",
   "status": "complete",
   "summary": "Brief description of what you accomplished",
   "files_modified": ["list", "of", "files", "you", "changed"],

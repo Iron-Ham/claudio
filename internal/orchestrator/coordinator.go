@@ -200,6 +200,12 @@ func (c *Coordinator) notifyComplete(success bool, summary string) {
 // This creates a coordinator instance that explores the codebase and generates a plan
 func (c *Coordinator) RunPlanning() error {
 	session := c.Session()
+
+	// Check if multi-pass planning is enabled
+	if session.Config.MultiPass {
+		return c.RunMultiPassPlanning()
+	}
+
 	c.notifyPhaseChange(PhasePlanning)
 
 	// Create the planning prompt
