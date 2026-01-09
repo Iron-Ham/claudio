@@ -13,15 +13,38 @@ type Manager struct {
 	repoDir string
 }
 
+// FindGitRoot finds the root of the git repository by traversing up from startDir.
+// It returns the directory containing .git (either a directory or a file for worktrees).
+// Returns an error if no git repository is found.
+func FindGitRoot(startDir string) (string, error) {
+	dir := startDir
+	for {
+		gitPath := filepath.Join(dir, ".git")
+		if info, err := os.Stat(gitPath); err == nil {
+			// .git can be a directory (normal repo) or a file (worktree)
+			if info.IsDir() || info.Mode().IsRegular() {
+				return dir, nil
+			}
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached filesystem root without finding .git
+			return "", fmt.Errorf("not a git repository (or any parent up to mount point)")
+		}
+		dir = parent
+	}
+}
+
 // New creates a new worktree Manager
 func New(repoDir string) (*Manager, error) {
-	// Verify it's a git repository
-	gitDir := filepath.Join(repoDir, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+	// Find the git repository root (may be in a parent directory)
+	gitRoot, err := FindGitRoot(repoDir)
+	if err != nil {
 		return nil, fmt.Errorf("not a git repository: %s", repoDir)
 	}
 
-	return &Manager{repoDir: repoDir}, nil
+	return &Manager{repoDir: gitRoot}, nil
 }
 
 // Create creates a new worktree at the given path with a new branch

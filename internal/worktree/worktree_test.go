@@ -10,6 +10,84 @@ import (
 	"github.com/Iron-Ham/claudio/internal/testutil"
 )
 
+func TestFindGitRoot(t *testing.T) {
+	testutil.SkipIfNoGit(t)
+
+	tests := []struct {
+		name      string
+		setup     func(t *testing.T) (startDir string, wantRoot string)
+		wantErr   bool
+	}{
+		{
+			name: "from repository root",
+			setup: func(t *testing.T) (string, string) {
+				repoDir := testutil.SetupTestRepo(t)
+				return repoDir, repoDir
+			},
+			wantErr: false,
+		},
+		{
+			name: "from subdirectory",
+			setup: func(t *testing.T) (string, string) {
+				repoDir := testutil.SetupTestRepo(t)
+				// Create a nested subdirectory
+				subDir := filepath.Join(repoDir, "web_app", "src", "components")
+				if err := os.MkdirAll(subDir, 0755); err != nil {
+					t.Fatalf("failed to create subdirectory: %v", err)
+				}
+				return subDir, repoDir
+			},
+			wantErr: false,
+		},
+		{
+			name: "from deeply nested subdirectory",
+			setup: func(t *testing.T) (string, string) {
+				repoDir := testutil.SetupTestRepo(t)
+				// Create a very deep nested subdirectory
+				subDir := filepath.Join(repoDir, "a", "b", "c", "d", "e", "f")
+				if err := os.MkdirAll(subDir, 0755); err != nil {
+					t.Fatalf("failed to create subdirectory: %v", err)
+				}
+				return subDir, repoDir
+			},
+			wantErr: false,
+		},
+		{
+			name: "non-git directory",
+			setup: func(t *testing.T) (string, string) {
+				return t.TempDir(), ""
+			},
+			wantErr: true,
+		},
+		{
+			name: "non-existent directory",
+			setup: func(t *testing.T) (string, string) {
+				return "/non/existent/path", ""
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			startDir, wantRoot := tt.setup(t)
+			gotRoot, err := FindGitRoot(startDir)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("FindGitRoot() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				// Resolve symlinks for comparison (macOS /var -> /private/var)
+				resolvedWant, _ := filepath.EvalSymlinks(wantRoot)
+				resolvedGot, _ := filepath.EvalSymlinks(gotRoot)
+				if resolvedGot != resolvedWant {
+					t.Errorf("FindGitRoot() = %v, want %v", gotRoot, wantRoot)
+				}
+			}
+		})
+	}
+}
+
 func TestNew(t *testing.T) {
 	testutil.SkipIfNoGit(t)
 
@@ -22,6 +100,18 @@ func TestNew(t *testing.T) {
 			name: "valid git repository",
 			setup: func(t *testing.T) string {
 				return testutil.SetupTestRepo(t)
+			},
+			wantErr: false,
+		},
+		{
+			name: "from subdirectory of git repository",
+			setup: func(t *testing.T) string {
+				repoDir := testutil.SetupTestRepo(t)
+				subDir := filepath.Join(repoDir, "ios_app")
+				if err := os.MkdirAll(subDir, 0755); err != nil {
+					t.Fatalf("failed to create subdirectory: %v", err)
+				}
+				return subDir
 			},
 			wantErr: false,
 		},
