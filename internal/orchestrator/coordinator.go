@@ -299,15 +299,15 @@ func (c *Coordinator) executionLoop() {
 				return
 			}
 
-			// Check if we can start more tasks
-			if runningCount < config.MaxParallel {
+			// Check if we can start more tasks (MaxParallel <= 0 means unlimited)
+			if config.MaxParallel <= 0 || runningCount < config.MaxParallel {
 				readyTasks := session.GetReadyTasks()
 				for _, taskID := range readyTasks {
 					c.mu.RLock()
 					currentRunning := c.runningCount
 					c.mu.RUnlock()
 
-					if currentRunning >= config.MaxParallel {
+					if config.MaxParallel > 0 && currentRunning >= config.MaxParallel {
 						break
 					}
 
