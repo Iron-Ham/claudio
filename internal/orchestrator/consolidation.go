@@ -264,7 +264,89 @@ func (c *Consolidator) matchTaskToInstance(taskID string, inst *Instance) bool {
 }
 
 // runStackedMode consolidates work into stacked branches (one per group)
+// With per-group consolidators, branches are already created and stable.
+// This function now just uses the pre-consolidated branches for PR creation.
 func (c *Consolidator) runStackedMode() error {
+	// Check if we have pre-consolidated branches from per-group consolidators
+	if len(c.session.GroupConsolidatedBranches) > 0 {
+		return c.runStackedModeFromPreconsolidated()
+	}
+
+	// Fallback to original behavior if no pre-consolidated branches
+	return c.runStackedModeOriginal()
+}
+
+// runStackedModeFromPreconsolidated uses pre-consolidated branches from per-group consolidators
+func (c *Consolidator) runStackedModeFromPreconsolidated() error {
+	c.mu.Lock()
+	c.state.Phase = ConsolidationCreatingBranches
+	c.mu.Unlock()
+
+	// Use the already-consolidated branches
+	for groupIdx, branch := range c.session.GroupConsolidatedBranches {
+		if branch == "" {
+			continue // Skip groups that weren't consolidated
+		}
+
+		c.emitEvent(ConsolidationEvent{
+			Type:     EventConsolidationGroupStarted,
+			GroupIdx: groupIdx,
+			Message:  fmt.Sprintf("Using pre-consolidated branch %s", branch),
+		})
+
+		// Get task IDs for this group
+		var taskIDs []string
+		if groupIdx < len(c.session.Plan.ExecutionOrder) {
+			taskIDs = c.session.Plan.ExecutionOrder[groupIdx]
+		}
+
+		// Build result from pre-consolidated context if available
+		var filesChanged []string
+		if groupIdx < len(c.session.GroupConsolidationContexts) && c.session.GroupConsolidationContexts[groupIdx] != nil {
+			ctx := c.session.GroupConsolidationContexts[groupIdx]
+			// Gather files from aggregated context
+			if ctx.AggregatedContext != nil {
+				for taskID := range ctx.AggregatedContext.TaskSummaries {
+					// Find task worktree to get files
+					for _, inst := range c.baseSession.Instances {
+						if strings.Contains(inst.Task, taskID) {
+							// Read completion file to get files modified
+							if completion, err := ParseTaskCompletionFile(inst.WorktreePath); err == nil {
+								filesChanged = append(filesChanged, completion.FilesModified...)
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+
+		result := &GroupConsolidationResult{
+			GroupIndex:   groupIdx,
+			TaskIDs:      taskIDs,
+			BranchName:   branch,
+			CommitCount:  0, // Not tracked in preconsolidated mode
+			FilesChanged: deduplicateStrings(filesChanged),
+			Success:      true,
+		}
+
+		c.mu.Lock()
+		c.results = append(c.results, result)
+		c.state.GroupBranches = append(c.state.GroupBranches, branch)
+		c.mu.Unlock()
+
+		c.emitEvent(ConsolidationEvent{
+			Type:     EventConsolidationGroupComplete,
+			GroupIdx: groupIdx,
+			Message:  fmt.Sprintf("Group %d ready with branch %s", groupIdx+1, branch),
+		})
+	}
+
+	return nil
+}
+
+// runStackedModeOriginal is the original implementation for when no pre-consolidated branches exist
+func (c *Consolidator) runStackedModeOriginal() error {
 	mainBranch := c.wt.FindMainBranch()
 	worktreeBase := filepath.Join(c.orch.claudioDir, "consolidation")
 
@@ -879,4 +961,16 @@ func truncateString(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+func deduplicateStrings(strs []string) []string {
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(strs))
+	for _, s := range strs {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	return result
 }

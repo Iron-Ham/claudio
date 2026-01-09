@@ -265,6 +265,18 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 				b.WriteString("\n")
 				lineCount++
 			}
+
+			// Show group consolidator instance if it exists
+			if groupIdx < len(session.GroupConsolidatorIDs) && session.GroupConsolidatorIDs[groupIdx] != "" {
+				consolidatorID := session.GroupConsolidatorIDs[groupIdx]
+				inst := m.orchestrator.GetInstance(consolidatorID)
+				selected := m.isInstanceSelected(consolidatorID)
+				navigable := true // Always navigable once created
+				consolidatorLine := m.renderGroupConsolidatorLine(inst, groupIdx, selected, navigable, width-6)
+				b.WriteString(consolidatorLine)
+				b.WriteString("\n")
+				lineCount++
+			}
 		}
 		b.WriteString("\n")
 		lineCount++
@@ -680,6 +692,50 @@ func (m Model) renderExecutionTaskLine(session *orchestrator.UltraPlanSession, t
 	return line
 }
 
+// renderGroupConsolidatorLine renders a consolidator line in the execution section
+func (m Model) renderGroupConsolidatorLine(inst *orchestrator.Instance, groupIndex int, selected, navigable bool, maxWidth int) string {
+	var statusIcon string
+	var statusStyle lipgloss.Style
+
+	if inst == nil {
+		statusIcon = "○"
+		statusStyle = styles.Muted
+	} else {
+		switch inst.Status {
+		case orchestrator.StatusCompleted:
+			statusIcon = "✓"
+			statusStyle = lipgloss.NewStyle().Foreground(styles.GreenColor)
+		case orchestrator.StatusError:
+			statusIcon = "✗"
+			statusStyle = lipgloss.NewStyle().Foreground(styles.RedColor)
+		case orchestrator.StatusWorking, orchestrator.StatusWaitingInput:
+			statusIcon = "⟳"
+			statusStyle = lipgloss.NewStyle().Foreground(styles.BlueColor)
+		default:
+			statusIcon = "○"
+			statusStyle = styles.Muted
+		}
+	}
+
+	// Build line
+	title := fmt.Sprintf("Consolidator (Group %d)", groupIndex+1)
+	titleLen := maxWidth - 6
+	title = truncate(title, titleLen)
+	line := fmt.Sprintf("    %s %s", statusStyle.Render(statusIcon), title)
+
+	// Apply styling
+	if selected {
+		line = lipgloss.NewStyle().
+			Background(styles.PrimaryColor).
+			Foreground(styles.TextColor).
+			Render(line)
+	} else if !navigable {
+		line = styles.Muted.Render(line)
+	}
+
+	return line
+}
+
 // getNavigableInstances returns an ordered list of instance IDs that can be navigated to.
 // Only includes instances from phases that have started or completed.
 // Order: Planning → Execution tasks (in order) → Synthesis → Consolidation
@@ -706,7 +762,7 @@ func (m *Model) getNavigableInstances() []string {
 	// Execution - navigable for tasks with instances (started or completed)
 	if session.Plan != nil {
 		// Add in execution order
-		for _, group := range session.Plan.ExecutionOrder {
+		for groupIdx, group := range session.Plan.ExecutionOrder {
 			for _, taskID := range group {
 				// Check if task has an instance (either still in TaskToInstance or was completed)
 				if instID, ok := session.TaskToInstance[taskID]; ok && instID != "" {
@@ -726,6 +782,11 @@ func (m *Model) getNavigableInstances() []string {
 						}
 					}
 				}
+			}
+
+			// Add group consolidator instance if it exists
+			if groupIdx < len(session.GroupConsolidatorIDs) && session.GroupConsolidatorIDs[groupIdx] != "" {
+				instances = append(instances, session.GroupConsolidatorIDs[groupIdx])
 			}
 		}
 	}

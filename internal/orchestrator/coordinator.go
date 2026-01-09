@@ -410,6 +410,35 @@ func (c *Coordinator) buildTaskPrompt(task *PlannedTask) string {
 		sb.WriteString("\n")
 	}
 
+	// Add context from previous group's consolidator if this task is not in group 0
+	groupIndex := c.getTaskGroupIndex(task.ID)
+	if groupIndex > 0 {
+		prevGroupIdx := groupIndex - 1
+		if prevGroupIdx < len(session.GroupConsolidationContexts) && session.GroupConsolidationContexts[prevGroupIdx] != nil {
+			prevContext := session.GroupConsolidationContexts[prevGroupIdx]
+			sb.WriteString("## Context from Previous Group\n\n")
+			sb.WriteString(fmt.Sprintf("This task builds on work consolidated from Group %d.\n\n", prevGroupIdx+1))
+
+			if prevContext.Notes != "" {
+				sb.WriteString(fmt.Sprintf("**Consolidator Notes**: %s\n\n", prevContext.Notes))
+			}
+
+			if len(prevContext.IssuesForNextGroup) > 0 {
+				sb.WriteString("**Important**: The previous group's consolidator flagged these issues:\n")
+				for _, issue := range prevContext.IssuesForNextGroup {
+					sb.WriteString(fmt.Sprintf("- %s\n", issue))
+				}
+				sb.WriteString("\n")
+			}
+
+			if prevContext.Verification.OverallSuccess {
+				sb.WriteString("The consolidated code from the previous group has been verified (build/lint/tests passed).\n\n")
+			} else {
+				sb.WriteString("**Warning**: The previous group's code verification may have issues. Check carefully.\n\n")
+			}
+		}
+	}
+
 	sb.WriteString("## Guidelines\n\n")
 	sb.WriteString("- Focus only on this specific task\n")
 	sb.WriteString("- Do not modify files outside of your assigned scope unless necessary\n")
@@ -436,6 +465,23 @@ func (c *Coordinator) buildTaskPrompt(task *PlannedTask) string {
 	sb.WriteString("4. This file signals that your work is done and provides context for consolidation\n")
 
 	return sb.String()
+}
+
+// getTaskGroupIndex returns the group index for a given task ID, or -1 if not found
+func (c *Coordinator) getTaskGroupIndex(taskID string) int {
+	session := c.Session()
+	if session == nil || session.Plan == nil {
+		return -1
+	}
+
+	for groupIdx, group := range session.Plan.ExecutionOrder {
+		for _, tid := range group {
+			if tid == taskID {
+				return groupIdx
+			}
+		}
+	}
+	return -1
 }
 
 // monitorTaskInstance monitors an instance and reports when it completes
@@ -717,9 +763,9 @@ func (c *Coordinator) checkAndAdvanceGroup() {
 		Message: fmt.Sprintf("Group %d complete, consolidating before advancing to group %d", previousGroup+1, session.CurrentGroup+1),
 	})
 
-	// SYNCHRONOUSLY consolidate the completed group's parallel task branches
-	// This blocks until consolidation succeeds with verified commits
-	if err := c.consolidateGroupWithVerification(previousGroup); err != nil {
+	// Start the group consolidator Claude session
+	// This blocks until the consolidator completes (writes completion file)
+	if err := c.startGroupConsolidatorSession(previousGroup); err != nil {
 		c.manager.emitEvent(CoordinatorEvent{
 			Type:    EventConflict,
 			Message: fmt.Sprintf("Critical: failed to consolidate group %d: %v", previousGroup+1, err),
@@ -2122,4 +2168,427 @@ func (c *Coordinator) getBaseBranchForGroup(groupIndex int) string {
 	}
 
 	return "" // Use default
+}
+
+// ============================================================================
+// Per-Group Consolidator Session Management
+// ============================================================================
+
+// gatherTaskCompletionContextForGroup reads completion files from all completed tasks in a group
+// and aggregates the context for the group consolidator
+func (c *Coordinator) gatherTaskCompletionContextForGroup(groupIndex int) *AggregatedTaskContext {
+	session := c.Session()
+	if session == nil || session.Plan == nil || groupIndex >= len(session.Plan.ExecutionOrder) {
+		return &AggregatedTaskContext{TaskSummaries: make(map[string]string)}
+	}
+
+	taskIDs := session.Plan.ExecutionOrder[groupIndex]
+	context := &AggregatedTaskContext{
+		TaskSummaries:  make(map[string]string),
+		AllIssues:      make([]string, 0),
+		AllSuggestions: make([]string, 0),
+		Dependencies:   make([]string, 0),
+		Notes:          make([]string, 0),
+	}
+
+	seenDeps := make(map[string]bool)
+
+	for _, taskID := range taskIDs {
+		// Find the instance for this task
+		var inst *Instance
+		for _, i := range c.baseSession.Instances {
+			if strings.Contains(i.Task, taskID) {
+				inst = i
+				break
+			}
+		}
+		if inst == nil || inst.WorktreePath == "" {
+			continue
+		}
+
+		// Try to read the completion file
+		completion, err := ParseTaskCompletionFile(inst.WorktreePath)
+		if err != nil {
+			continue // No completion file or invalid
+		}
+
+		// Store task summary
+		context.TaskSummaries[taskID] = completion.Summary
+
+		// Aggregate issues (prefix with task ID for context)
+		for _, issue := range completion.Issues {
+			if issue != "" {
+				context.AllIssues = append(context.AllIssues, fmt.Sprintf("[%s] %s", taskID, issue))
+			}
+		}
+
+		// Aggregate suggestions
+		for _, suggestion := range completion.Suggestions {
+			if suggestion != "" {
+				context.AllSuggestions = append(context.AllSuggestions, fmt.Sprintf("[%s] %s", taskID, suggestion))
+			}
+		}
+
+		// Aggregate dependencies (deduplicated)
+		for _, dep := range completion.Dependencies {
+			if dep != "" && !seenDeps[dep] {
+				seenDeps[dep] = true
+				context.Dependencies = append(context.Dependencies, dep)
+			}
+		}
+
+		// Collect notes
+		if completion.Notes != "" {
+			context.Notes = append(context.Notes, fmt.Sprintf("**%s**: %s", taskID, completion.Notes))
+		}
+	}
+
+	return context
+}
+
+// getTaskBranchesForGroup returns the branches and commit counts for all tasks in a group
+func (c *Coordinator) getTaskBranchesForGroup(groupIndex int) []TaskWorktreeInfo {
+	session := c.Session()
+	if session == nil || session.Plan == nil || groupIndex >= len(session.Plan.ExecutionOrder) {
+		return nil
+	}
+
+	taskIDs := session.Plan.ExecutionOrder[groupIndex]
+	var branches []TaskWorktreeInfo
+
+	for _, taskID := range taskIDs {
+		task := session.GetTask(taskID)
+		if task == nil {
+			continue
+		}
+
+		// Find the instance for this task
+		for _, inst := range c.baseSession.Instances {
+			if strings.Contains(inst.Task, taskID) {
+				branches = append(branches, TaskWorktreeInfo{
+					TaskID:       taskID,
+					TaskTitle:    task.Title,
+					WorktreePath: inst.WorktreePath,
+					Branch:       inst.Branch,
+				})
+				break
+			}
+		}
+	}
+
+	return branches
+}
+
+// buildGroupConsolidatorPrompt builds the prompt for a per-group consolidator session
+func (c *Coordinator) buildGroupConsolidatorPrompt(groupIndex int) string {
+	session := c.Session()
+	if session == nil || session.Plan == nil {
+		return ""
+	}
+
+	taskContext := c.gatherTaskCompletionContextForGroup(groupIndex)
+	taskBranches := c.getTaskBranchesForGroup(groupIndex)
+
+	// Determine base branch
+	var baseBranch string
+	if groupIndex == 0 {
+		baseBranch = c.orch.wt.FindMainBranch()
+	} else if groupIndex-1 < len(session.GroupConsolidatedBranches) {
+		baseBranch = session.GroupConsolidatedBranches[groupIndex-1]
+	} else {
+		baseBranch = c.orch.wt.FindMainBranch()
+	}
+
+	// Generate consolidated branch name
+	branchPrefix := session.Config.BranchPrefix
+	if branchPrefix == "" {
+		branchPrefix = c.orch.config.Branch.Prefix
+	}
+	if branchPrefix == "" {
+		branchPrefix = "Iron-Ham"
+	}
+	planID := session.ID
+	if len(planID) > 8 {
+		planID = planID[:8]
+	}
+	consolidatedBranch := fmt.Sprintf("%s/ultraplan-%s-group-%d", branchPrefix, planID, groupIndex+1)
+
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("# Group %d Consolidation\n\n", groupIndex+1))
+	sb.WriteString(fmt.Sprintf("## Part of Ultra-Plan: %s\n\n", session.Plan.Summary))
+
+	sb.WriteString("## Objective\n\n")
+	sb.WriteString("Consolidate all completed task branches from this group into a single stable branch.\n")
+	sb.WriteString("You must resolve any merge conflicts, verify the consolidated code works, and pass context to the next group.\n\n")
+
+	// Tasks completed in this group
+	sb.WriteString("## Tasks Completed in This Group\n\n")
+	for _, branch := range taskBranches {
+		sb.WriteString(fmt.Sprintf("### %s: %s\n", branch.TaskID, branch.TaskTitle))
+		sb.WriteString(fmt.Sprintf("- Branch: `%s`\n", branch.Branch))
+		sb.WriteString(fmt.Sprintf("- Worktree: `%s`\n", branch.WorktreePath))
+		if summary, ok := taskContext.TaskSummaries[branch.TaskID]; ok && summary != "" {
+			sb.WriteString(fmt.Sprintf("- Summary: %s\n", summary))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Context from task completion files
+	if len(taskContext.Notes) > 0 {
+		sb.WriteString("## Implementation Notes from Tasks\n\n")
+		for _, note := range taskContext.Notes {
+			sb.WriteString(fmt.Sprintf("- %s\n", note))
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(taskContext.AllIssues) > 0 {
+		sb.WriteString("## Issues Raised by Tasks\n\n")
+		for _, issue := range taskContext.AllIssues {
+			sb.WriteString(fmt.Sprintf("- %s\n", issue))
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(taskContext.AllSuggestions) > 0 {
+		sb.WriteString("## Integration Suggestions from Tasks\n\n")
+		for _, suggestion := range taskContext.AllSuggestions {
+			sb.WriteString(fmt.Sprintf("- %s\n", suggestion))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Context from previous group's consolidator
+	if groupIndex > 0 && groupIndex-1 < len(session.GroupConsolidationContexts) {
+		prevContext := session.GroupConsolidationContexts[groupIndex-1]
+		if prevContext != nil {
+			sb.WriteString("## Context from Previous Group's Consolidator\n\n")
+			if prevContext.Notes != "" {
+				sb.WriteString(fmt.Sprintf("**Notes**: %s\n\n", prevContext.Notes))
+			}
+			if len(prevContext.IssuesForNextGroup) > 0 {
+				sb.WriteString("**Issues/Warnings to Address**:\n")
+				for _, issue := range prevContext.IssuesForNextGroup {
+					sb.WriteString(fmt.Sprintf("- %s\n", issue))
+				}
+				sb.WriteString("\n")
+			}
+		}
+	}
+
+	// Branch configuration
+	sb.WriteString("## Branch Configuration\n\n")
+	sb.WriteString(fmt.Sprintf("- **Base branch**: `%s`\n", baseBranch))
+	sb.WriteString(fmt.Sprintf("- **Target consolidated branch**: `%s`\n", consolidatedBranch))
+	sb.WriteString(fmt.Sprintf("- **Task branches to consolidate**: %d\n\n", len(taskBranches)))
+
+	// Instructions
+	sb.WriteString("## Your Tasks\n\n")
+	sb.WriteString("1. **Create the consolidated branch** from the base branch:\n")
+	sb.WriteString(fmt.Sprintf("   ```bash\n   git checkout -b %s %s\n   ```\n\n", consolidatedBranch, baseBranch))
+
+	sb.WriteString("2. **Cherry-pick commits** from each task branch in order. For each branch:\n")
+	sb.WriteString("   - Review the commits on the branch\n")
+	sb.WriteString("   - Cherry-pick them onto the consolidated branch\n")
+	sb.WriteString("   - Resolve any conflicts intelligently using your understanding of the code\n\n")
+
+	sb.WriteString("3. **Run verification** to ensure the consolidated code is stable:\n")
+	sb.WriteString("   - Detect the project type (Go, Node, Python, iOS, etc.)\n")
+	sb.WriteString("   - Run appropriate build/compile commands\n")
+	sb.WriteString("   - Run linting if available\n")
+	sb.WriteString("   - Run tests if available\n")
+	sb.WriteString("   - Fix any issues that arise\n\n")
+
+	sb.WriteString("4. **Push the consolidated branch** to the remote\n\n")
+
+	sb.WriteString("5. **Write the completion file** to signal success\n\n")
+
+	// Conflict resolution guidelines
+	sb.WriteString("## Conflict Resolution Guidelines\n\n")
+	sb.WriteString("- Prefer changes that preserve functionality from all tasks\n")
+	sb.WriteString("- If there are conflicting approaches, choose the more robust one\n")
+	sb.WriteString("- Document your resolution reasoning in the completion file\n")
+	sb.WriteString("- If you cannot resolve a conflict, document it as an issue\n\n")
+
+	// Completion protocol
+	sb.WriteString("## Completion Protocol\n\n")
+	sb.WriteString(fmt.Sprintf("When consolidation is complete, write `%s` in your worktree root:\n\n", GroupConsolidationCompletionFileName))
+	sb.WriteString("```json\n")
+	sb.WriteString("{\n")
+	sb.WriteString(fmt.Sprintf("  \"group_index\": %d,\n", groupIndex))
+	sb.WriteString("  \"status\": \"complete\",\n")
+	sb.WriteString(fmt.Sprintf("  \"branch_name\": \"%s\",\n", consolidatedBranch))
+	sb.WriteString("  \"tasks_consolidated\": [\"task-id-1\", \"task-id-2\"],\n")
+	sb.WriteString("  \"conflicts_resolved\": [\n")
+	sb.WriteString("    {\"file\": \"path/to/file.go\", \"resolution\": \"Kept both changes, merged logic\"}\n")
+	sb.WriteString("  ],\n")
+	sb.WriteString("  \"verification\": {\n")
+	sb.WriteString("    \"project_type\": \"go\",\n")
+	sb.WriteString("    \"commands_run\": [\n")
+	sb.WriteString("      {\"name\": \"build\", \"command\": \"go build ./...\", \"success\": true},\n")
+	sb.WriteString("      {\"name\": \"lint\", \"command\": \"golangci-lint run\", \"success\": true},\n")
+	sb.WriteString("      {\"name\": \"test\", \"command\": \"go test ./...\", \"success\": true}\n")
+	sb.WriteString("    ],\n")
+	sb.WriteString("    \"overall_success\": true,\n")
+	sb.WriteString("    \"summary\": \"All checks passed\"\n")
+	sb.WriteString("  },\n")
+	sb.WriteString("  \"notes\": \"Any observations about the consolidated code\",\n")
+	sb.WriteString("  \"issues_for_next_group\": [\"Any warnings or concerns for the next group\"]\n")
+	sb.WriteString("}\n")
+	sb.WriteString("```\n\n")
+	sb.WriteString("Use status \"failed\" if consolidation cannot be completed.\n")
+
+	return sb.String()
+}
+
+// startGroupConsolidatorSession creates and starts a Claude session for consolidating a group
+func (c *Coordinator) startGroupConsolidatorSession(groupIndex int) error {
+	session := c.Session()
+	if session == nil || session.Plan == nil {
+		return fmt.Errorf("no session or plan")
+	}
+
+	if groupIndex < 0 || groupIndex >= len(session.Plan.ExecutionOrder) {
+		return fmt.Errorf("invalid group index: %d", groupIndex)
+	}
+
+	taskIDs := session.Plan.ExecutionOrder[groupIndex]
+	if len(taskIDs) == 0 {
+		return nil // Empty group, nothing to consolidate
+	}
+
+	// Check if there are any tasks with verified commits
+	var activeTasks []string
+	for _, taskID := range taskIDs {
+		commitCount, ok := session.TaskCommitCounts[taskID]
+		if ok && commitCount > 0 {
+			activeTasks = append(activeTasks, taskID)
+		}
+	}
+
+	if len(activeTasks) == 0 {
+		return fmt.Errorf("no task branches with verified commits found for group %d", groupIndex)
+	}
+
+	// Build the consolidator prompt
+	prompt := c.buildGroupConsolidatorPrompt(groupIndex)
+
+	// Determine base branch for the consolidator's worktree
+	baseBranch := c.getBaseBranchForGroup(groupIndex)
+
+	// Create the consolidator instance
+	var inst *Instance
+	var err error
+	if baseBranch != "" {
+		inst, err = c.orch.AddInstanceFromBranch(c.baseSession, prompt, baseBranch)
+	} else {
+		inst, err = c.orch.AddInstance(c.baseSession, prompt)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to create group consolidator instance: %w", err)
+	}
+
+	// Store the consolidator instance ID
+	c.mu.Lock()
+	for len(session.GroupConsolidatorIDs) <= groupIndex {
+		session.GroupConsolidatorIDs = append(session.GroupConsolidatorIDs, "")
+	}
+	session.GroupConsolidatorIDs[groupIndex] = inst.ID
+	c.mu.Unlock()
+
+	// Save state
+	_ = c.orch.SaveSession()
+
+	// Emit event
+	c.manager.emitEvent(CoordinatorEvent{
+		Type:    EventGroupComplete,
+		Message: fmt.Sprintf("Starting group %d consolidator session", groupIndex+1),
+	})
+
+	// Start the instance
+	if err := c.orch.StartInstance(inst); err != nil {
+		return fmt.Errorf("failed to start group consolidator instance: %w", err)
+	}
+
+	// Monitor the consolidator synchronously (blocks until completion)
+	return c.monitorGroupConsolidator(groupIndex, inst.ID)
+}
+
+// monitorGroupConsolidator monitors the group consolidator instance and waits for completion
+func (c *Coordinator) monitorGroupConsolidator(groupIndex int, instanceID string) error {
+	session := c.Session()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return fmt.Errorf("context cancelled")
+
+		case <-ticker.C:
+			inst := c.orch.GetInstance(instanceID)
+			if inst == nil {
+				return fmt.Errorf("consolidator instance not found")
+			}
+
+			// Check for the completion file
+			if inst.WorktreePath != "" {
+				completionPath := GroupConsolidationCompletionFilePath(inst.WorktreePath)
+				if _, err := os.Stat(completionPath); err == nil {
+					// Parse the completion file
+					completion, err := ParseGroupConsolidationCompletionFile(inst.WorktreePath)
+					if err != nil {
+						return fmt.Errorf("failed to parse group consolidation completion file: %w", err)
+					}
+
+					// Check status
+					if completion.Status == "failed" {
+						return fmt.Errorf("group %d consolidation failed: %s", groupIndex+1, completion.Notes)
+					}
+
+					// Store the consolidated branch
+					c.mu.Lock()
+					for len(session.GroupConsolidatedBranches) <= groupIndex {
+						session.GroupConsolidatedBranches = append(session.GroupConsolidatedBranches, "")
+					}
+					session.GroupConsolidatedBranches[groupIndex] = completion.BranchName
+
+					// Store the consolidation context for the next group
+					for len(session.GroupConsolidationContexts) <= groupIndex {
+						session.GroupConsolidationContexts = append(session.GroupConsolidationContexts, nil)
+					}
+					session.GroupConsolidationContexts[groupIndex] = completion
+					c.mu.Unlock()
+
+					// Persist state
+					_ = c.orch.SaveSession()
+
+					// Emit success event
+					c.manager.emitEvent(CoordinatorEvent{
+						Type:    EventGroupComplete,
+						Message: fmt.Sprintf("Group %d consolidated into %s (verification: %v)", groupIndex+1, completion.BranchName, completion.Verification.OverallSuccess),
+					})
+
+					return nil
+				}
+			}
+
+			// Check if instance has failed/exited without completion file
+			switch inst.Status {
+			case StatusError:
+				return fmt.Errorf("consolidator instance failed with error")
+			case StatusCompleted:
+				// Check if tmux session still exists
+				mgr := c.orch.GetInstanceManager(instanceID)
+				if mgr != nil && mgr.TmuxSessionExists() {
+					// Still running, keep monitoring
+					continue
+				}
+				// Instance completed without writing completion file
+				return fmt.Errorf("consolidator completed without writing completion file")
+			}
+		}
+	}
 }
