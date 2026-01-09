@@ -222,6 +222,58 @@ func (c *Coordinator) RunPlanning() error {
 	return nil
 }
 
+// RunMultiPassPlanning executes the multi-pass planning phase
+// This creates three coordinator instances in parallel, each using a different
+// planning strategy. The TUI monitors these instances and the coordinator-manager
+// will later select or merge the best plan.
+func (c *Coordinator) RunMultiPassPlanning() error {
+	session := c.Session()
+	c.notifyPhaseChange(PhasePlanning)
+
+	// Get the available strategy names
+	strategies := GetMultiPassStrategyNames()
+	if len(strategies) == 0 {
+		return fmt.Errorf("no multi-pass planning strategies available")
+	}
+
+	// Initialize the PlanCoordinatorIDs slice
+	session.PlanCoordinatorIDs = make([]string, 0, len(strategies))
+
+	// Create and start an instance for each strategy in parallel
+	for i, strategy := range strategies {
+		// Build the strategy-specific prompt
+		prompt := GetMultiPassPlanningPrompt(strategy, session.Objective)
+
+		// Create a coordinator instance for this strategy
+		inst, err := c.orch.AddInstance(c.baseSession, prompt)
+		if err != nil {
+			return fmt.Errorf("failed to create planning instance for strategy %s: %w", strategy, err)
+		}
+
+		// Store the instance ID
+		session.PlanCoordinatorIDs = append(session.PlanCoordinatorIDs, inst.ID)
+
+		// Start the instance
+		if err := c.orch.StartInstance(inst); err != nil {
+			return fmt.Errorf("failed to start planning instance for strategy %s: %w", strategy, err)
+		}
+
+		// Emit event for this planning instance
+		c.manager.emitEvent(CoordinatorEvent{
+			Type:      EventMultiPassPlanGenerated,
+			Message:   fmt.Sprintf("Started planning with strategy: %s", strategy),
+			PlanIndex: i,
+			Strategy:  strategy,
+		})
+	}
+
+	// Persist the session state with all coordinator IDs
+	_ = c.orch.SaveSession()
+
+	// Return without blocking - TUI will monitor completion of all instances
+	return nil
+}
+
 // SetPlan sets the plan for this ultra-plan session (used after planning completes)
 func (c *Coordinator) SetPlan(plan *PlanSpec) error {
 	if err := ValidatePlan(plan); err != nil {
