@@ -302,32 +302,27 @@ func (c *Coordinator) monitorMultiPassPlanningInstances() {
 					continue
 				}
 
-				// Check for plan file in the instance's worktree
-				if inst.WorktreePath != "" {
-					planPath := PlanFilePath(inst.WorktreePath)
-					if _, err := os.Stat(planPath); err == nil {
-						// Plan file exists - try to parse it
-						plan, err := ParsePlanFromFile(planPath, session.Objective)
-						if err == nil && plan != nil {
-							completedPlans[instanceID] = plan
+				// Try to collect the candidate plan using the helper
+				plan, err := c.collectCandidatePlan(instanceID)
+				if err == nil && plan != nil {
+					completedPlans[instanceID] = plan
 
-							// Stop the instance since planning is done
-							_ = c.orch.StopInstance(inst)
+					// Stop the instance since planning is done
+					_ = c.orch.StopInstance(inst)
 
-							// Emit event for this plan
-							strategy := ""
-							if i < len(MultiPassPlanningPrompts) {
-								strategy = MultiPassPlanningPrompts[i].Strategy
-							}
-							c.manager.emitEvent(CoordinatorEvent{
-								Type:       EventMultiPassPlanGenerated,
-								InstanceID: instanceID,
-								PlanIndex:  i,
-								Strategy:   strategy,
-								Message:    fmt.Sprintf("Plan %d (%s) generated with %d tasks", i+1, strategy, len(plan.Tasks)),
-							})
-						}
+					// Emit event for this plan
+					strategy := ""
+					if i < len(MultiPassPlanningPrompts) {
+						strategy = MultiPassPlanningPrompts[i].Strategy
 					}
+					c.manager.emitEvent(CoordinatorEvent{
+						Type:       EventMultiPassPlanGenerated,
+						InstanceID: instanceID,
+						PlanIndex:  i,
+						Strategy:   strategy,
+						Message:    fmt.Sprintf("Plan %d (%s) generated with %d tasks", i+1, strategy, len(plan.Tasks)),
+					})
+					continue
 				}
 
 				// Also check instance status for errors
@@ -358,6 +353,35 @@ func (c *Coordinator) monitorMultiPassPlanningInstances() {
 			}
 		}
 	}
+}
+
+// collectCandidatePlan retrieves and parses the plan from a planning coordinator instance.
+// It returns the parsed plan or an error if the plan could not be collected.
+// This helper encapsulates the plan collection logic for cleaner code organization.
+func (c *Coordinator) collectCandidatePlan(instanceID string) (*PlanSpec, error) {
+	inst := c.orch.GetInstance(instanceID)
+	if inst == nil {
+		return nil, fmt.Errorf("instance not found: %s", instanceID)
+	}
+
+	// Check if the instance has a worktree path
+	if inst.WorktreePath == "" {
+		return nil, fmt.Errorf("instance %s has no worktree path", instanceID)
+	}
+
+	// Read the plan file from the instance's worktree
+	planPath := PlanFilePath(inst.WorktreePath)
+	if _, err := os.Stat(planPath); err != nil {
+		return nil, fmt.Errorf("plan file not found at %s: %w", planPath, err)
+	}
+
+	// Parse the plan
+	plan, err := ParsePlanFromFile(planPath, c.Session().Objective)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse plan from %s: %w", planPath, err)
+	}
+
+	return plan, nil
 }
 
 // onAllPlansGenerated handles completion of all multi-pass planning instances.
