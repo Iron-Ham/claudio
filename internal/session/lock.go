@@ -179,3 +179,33 @@ func isProcessAlive(pid int) bool {
 	err = process.Signal(syscall.Signal(0))
 	return err == nil
 }
+
+// ToLockInfo converts a Lock to a LockInfo.
+// This bridges between the legacy Lock type and the new interface types.
+func (l *Lock) ToLockInfo() *LockInfo {
+	if l == nil {
+		return nil
+	}
+	return &LockInfo{
+		SessionID:  l.SessionID,
+		HolderID:   "", // Legacy locks don't have holder ID
+		PID:        l.PID,
+		Hostname:   l.Hostname,
+		AcquiredAt: l.StartedAt,
+	}
+}
+
+// LockFromLockInfo creates a Lock from a LockInfo.
+// This bridges between the new interface types and the legacy Lock type.
+func LockFromLockInfo(info *LockInfo, lockPath string) *Lock {
+	if info == nil {
+		return nil
+	}
+	return &Lock{
+		SessionID: info.SessionID,
+		PID:       info.PID,
+		Hostname:  info.Hostname,
+		StartedAt: info.AcquiredAt,
+		lockFile:  lockPath,
+	}
+}

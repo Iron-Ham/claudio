@@ -174,3 +174,31 @@ func CleanupStaleLocks(baseDir string) ([]string, error) {
 
 	return cleaned, nil
 }
+
+// -----------------------------------------------------------------------------
+// SessionStore Interface Helpers
+// -----------------------------------------------------------------------------
+
+// NewSessionStoreFromBaseDir creates a FileSessionStore from a base directory.
+// This is a convenience function for creating a session store from existing code.
+func NewSessionStoreFromBaseDir(baseDir string) (SessionStore, error) {
+	return NewFileSessionStore(baseDir)
+}
+
+// NewLockManagerFromBaseDir creates a FileLockManager from a base directory.
+// This is a convenience function for creating a lock manager from existing code.
+func NewLockManagerFromBaseDir(baseDir string) LockManager {
+	return NewFileLockManager(baseDir)
+}
+
+// NewRecoveryManagerFromBaseDir creates a FileRecoveryManager from a base directory.
+// This is a convenience function for creating a recovery manager from existing code.
+func NewRecoveryManagerFromBaseDir(baseDir string) RecoveryManager {
+	return NewFileRecoveryManager(baseDir)
+}
+
+// NewPersistenceLayerFromBaseDir creates a complete FilePersistenceLayer from a base directory.
+// This is a convenience function for creating a full persistence layer from existing code.
+func NewPersistenceLayerFromBaseDir(baseDir string) (PersistenceLayer, error) {
+	return NewFilePersistenceLayer(baseDir)
+}
