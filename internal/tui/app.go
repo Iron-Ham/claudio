@@ -356,8 +356,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleKeypress processes keyboard input
+// handleKeypress processes keyboard input by delegating to the EventRouter.
 func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Delegate all key event routing to the EventRouter
+	if m.eventRouter != nil {
+		return m.eventRouter.RouteKeyEvent(m, msg)
+	}
+
+	// Fallback for nil eventRouter (should not happen in normal operation)
 	// Handle search mode - typing search pattern
 	if m.searchMode {
 		return m.handleSearchInput(msg)

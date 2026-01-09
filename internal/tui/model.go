@@ -47,6 +47,9 @@ type Model struct {
 	orchestrator *orchestrator.Orchestrator
 	session      *orchestrator.Session
 
+	// Event routing (handles keyboard/mouse events)
+	eventRouter *EventRouter
+
 	// Ultra-plan mode (nil if not in ultra-plan mode)
 	ultraPlan *UltraPlanState
 
@@ -203,6 +206,7 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session) Mo
 	return Model{
 		orchestrator:     orch,
 		session:          session,
+		eventRouter:      NewEventRouter(),
 		outputs:          make(map[string]string),
 		outputScrolls:    make(map[string]int),
 		outputAutoScroll: make(map[string]bool),
