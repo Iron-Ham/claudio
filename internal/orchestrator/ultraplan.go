@@ -787,6 +787,37 @@ const PlanFileName = ".claudio-plan.json"
 // TaskCompletionFileName is the name of the sentinel file that tasks write when complete
 const TaskCompletionFileName = ".claudio-task-complete.json"
 
+// FlexibleString is a type that can unmarshal from either a JSON string or an array of strings.
+// When unmarshaling an array, the strings are joined with newlines.
+// This provides flexibility for Claude instances that may write notes as either format.
+type FlexibleString string
+
+// UnmarshalJSON implements json.Unmarshaler for FlexibleString
+func (f *FlexibleString) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as a string first
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*f = FlexibleString(s)
+		return nil
+	}
+
+	// Try to unmarshal as an array of strings
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*f = FlexibleString(strings.Join(arr, "\n"))
+		return nil
+	}
+
+	// If both fail, treat as empty
+	*f = ""
+	return nil
+}
+
+// String returns the underlying string value
+func (f FlexibleString) String() string {
+	return string(f)
+}
+
 // TaskCompletionFile represents the completion report written by a task
 // This file serves as both a sentinel (existence = task done) and a context carrier
 type TaskCompletionFile struct {
@@ -795,10 +826,10 @@ type TaskCompletionFile struct {
 	Summary       string   `json:"summary"`
 	FilesModified []string `json:"files_modified"`
 	// Rich context for consolidation
-	Notes        string   `json:"notes,omitempty"`        // Free-form implementation notes
-	Issues       []string `json:"issues,omitempty"`       // Blocking issues or concerns found
-	Suggestions  []string `json:"suggestions,omitempty"`  // Integration suggestions for other tasks
-	Dependencies []string `json:"dependencies,omitempty"` // Runtime dependencies added
+	Notes        FlexibleString `json:"notes,omitempty"`        // Free-form implementation notes (accepts string or array)
+	Issues       []string       `json:"issues,omitempty"`       // Blocking issues or concerns found
+	Suggestions  []string       `json:"suggestions,omitempty"`  // Integration suggestions for other tasks
+	Dependencies []string       `json:"dependencies,omitempty"` // Runtime dependencies added
 }
 
 // TaskCompletionFilePath returns the full path to the task completion file for a given worktree
