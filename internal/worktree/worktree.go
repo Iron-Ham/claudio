@@ -24,6 +24,11 @@ func New(repoDir string) (*Manager, error) {
 	return &Manager{repoDir: repoDir}, nil
 }
 
+// GetPath returns the repository's root directory.
+func (m *Manager) GetPath() string {
+	return m.repoDir
+}
+
 // Create creates a new worktree at the given path with a new branch
 func (m *Manager) Create(path, branch string) error {
 	// First, create the branch from current HEAD
