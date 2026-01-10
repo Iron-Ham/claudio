@@ -2836,7 +2836,9 @@ func (c *Coordinator) monitorGroupConsolidator(groupIndex int, instanceID string
 					// Parse the completion file
 					completion, err := ParseGroupConsolidationCompletionFile(inst.WorktreePath)
 					if err != nil {
-						return fmt.Errorf("failed to parse group consolidation completion file: %w", err)
+						// File exists but is invalid/incomplete - might still be writing
+						// Continue monitoring and try again on next tick
+						continue
 					}
 
 					// Check status
