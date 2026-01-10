@@ -277,6 +277,33 @@ func New() Model {
 				},
 			},
 		},
+		{
+			Name: "Plan",
+			Items: []ConfigItem{
+				{
+					Key:         "plan.output_format",
+					Label:       "Output Format",
+					Description: "Default output format: json, issues, or both",
+					Type:        "select",
+					Options:     []string{"json", "issues", "both"},
+					Category:    "plan",
+				},
+				{
+					Key:         "plan.multi_pass",
+					Label:       "Multi-Pass Planning",
+					Description: "Use 3-strategy planning for more thorough plans",
+					Type:        "bool",
+					Category:    "plan",
+				},
+				{
+					Key:         "plan.output_file",
+					Label:       "Output File",
+					Description: "Default JSON output file path",
+					Type:        "string",
+					Category:    "plan",
+				},
+			},
+		},
 	}
 
 	return Model{
@@ -731,10 +758,14 @@ func (m *Model) resetCurrentToDefault() {
 		"resources.token_limit_per_instance": defaults.Resources.TokenLimitPerInstance,
 		"resources.show_metrics_in_sidebar":  defaults.Resources.ShowMetricsInSidebar,
 		// Ultraplan
-		"ultraplan.max_parallel":            defaults.Ultraplan.MaxParallel,
-		"ultraplan.notifications.enabled":   defaults.Ultraplan.Notifications.Enabled,
-		"ultraplan.notifications.use_sound": defaults.Ultraplan.Notifications.UseSound,
+		"ultraplan.max_parallel":             defaults.Ultraplan.MaxParallel,
+		"ultraplan.notifications.enabled":    defaults.Ultraplan.Notifications.Enabled,
+		"ultraplan.notifications.use_sound":  defaults.Ultraplan.Notifications.UseSound,
 		"ultraplan.notifications.sound_path": defaults.Ultraplan.Notifications.SoundPath,
+		// Plan
+		"plan.output_format": defaults.Plan.OutputFormat,
+		"plan.multi_pass":    defaults.Plan.MultiPass,
+		"plan.output_file":   defaults.Plan.OutputFile,
 	}
 
 	if defaultVal, ok := defaultValues[item.Key]; ok {
