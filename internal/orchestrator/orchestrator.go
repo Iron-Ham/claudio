@@ -160,7 +160,7 @@ func (o *Orchestrator) StartSession(name string) (*Session, error) {
 
 	// Acquire session lock if using multi-session
 	if o.sessionDir != "" && o.sessionID != "" {
-		lock, err := session.AcquireLock(o.sessionDir, o.sessionID)
+		lock, err := session.AcquireLock(o.sessionDir, o.sessionID, nil)
 		if err != nil {
 			if o.logger != nil {
 				o.logger.Error("failed to acquire session lock", "session_id", o.sessionID, "error", err)
@@ -260,7 +260,7 @@ func (o *Orchestrator) LoadSession() (*Session, error) {
 func (o *Orchestrator) LoadSessionWithLock() (*Session, error) {
 	// Acquire lock first if using multi-session
 	if o.sessionDir != "" && o.sessionID != "" {
-		lock, err := session.AcquireLock(o.sessionDir, o.sessionID)
+		lock, err := session.AcquireLock(o.sessionDir, o.sessionID, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to acquire session lock: %w", err)
 		}

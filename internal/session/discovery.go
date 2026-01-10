@@ -162,7 +162,7 @@ func CleanupStaleLocks(baseDir string) ([]string, error) {
 		sessionID := entry.Name()
 		sessionDir := GetSessionDir(baseDir, sessionID)
 
-		wasCleaned, err := CleanStaleLock(sessionDir)
+		wasCleaned, err := CleanStaleLock(sessionDir, nil)
 		if err != nil {
 			continue // Skip errors, try other sessions
 		}
