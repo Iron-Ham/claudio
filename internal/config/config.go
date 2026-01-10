@@ -20,6 +20,7 @@ type Config struct {
 	Resources  ResourceConfig   `mapstructure:"resources"`
 	Ultraplan  UltraplanConfig  `mapstructure:"ultraplan"`
 	Plan       PlanConfig       `mapstructure:"plan"`
+	Logging    LoggingConfig    `mapstructure:"logging"`
 }
 
 // CompletionConfig controls what happens when an instance completes
@@ -150,6 +151,18 @@ type PlanConfig struct {
 	OutputFile string `mapstructure:"output_file"`
 }
 
+// LoggingConfig controls debug logging behavior
+type LoggingConfig struct {
+	// Enabled controls whether debug logging is enabled (default: true)
+	Enabled bool `mapstructure:"enabled"`
+	// Level is the log level: "debug", "info", "warn", "error" (default: "info")
+	Level string `mapstructure:"level"`
+	// MaxSizeMB is the maximum log file size in megabytes before rotation (default: 10)
+	MaxSizeMB int `mapstructure:"max_size_mb"`
+	// MaxBackups is the number of backup log files to keep (default: 3)
+	MaxBackups int `mapstructure:"max_backups"`
+}
+
 // Default returns a Config with sensible default values
 func Default() *Config {
 	return &Config{
@@ -210,6 +223,12 @@ func Default() *Config {
 			MultiPass:    false,
 			Labels:       []string{},
 			OutputFile:   ".claudio-plan.json",
+		},
+		Logging: LoggingConfig{
+			Enabled:    true,
+			Level:      "info",
+			MaxSizeMB:  10,
+			MaxBackups: 3,
 		},
 	}
 }
@@ -287,6 +306,12 @@ func SetDefaults() {
 	viper.SetDefault("plan.multi_pass", defaults.Plan.MultiPass)
 	viper.SetDefault("plan.labels", defaults.Plan.Labels)
 	viper.SetDefault("plan.output_file", defaults.Plan.OutputFile)
+
+	// Logging defaults
+	viper.SetDefault("logging.enabled", defaults.Logging.Enabled)
+	viper.SetDefault("logging.level", defaults.Logging.Level)
+	viper.SetDefault("logging.max_size_mb", defaults.Logging.MaxSizeMB)
+	viper.SetDefault("logging.max_backups", defaults.Logging.MaxBackups)
 }
 
 // Load reads the configuration from viper into a Config struct
