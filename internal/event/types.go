@@ -263,3 +263,43 @@ func NewMetricsUpdateEvent(instanceID string, inputTokens, outputTokens, cacheRe
 func (e MetricsUpdateEvent) TotalTokens() int64 {
 	return e.InputTokens + e.OutputTokens
 }
+
+// -----------------------------------------------------------------------------
+// Bell Events (Terminal Notification)
+// -----------------------------------------------------------------------------
+
+// BellEvent is emitted when a terminal bell is detected in an instance.
+// Used to forward audio notifications from tmux sessions to the parent terminal.
+type BellEvent struct {
+	baseEvent
+	InstanceID string // Instance that triggered the bell
+}
+
+// NewBellEvent creates a BellEvent.
+func NewBellEvent(instanceID string) BellEvent {
+	return BellEvent{
+		baseEvent:  newBaseEvent("instance.bell"),
+		InstanceID: instanceID,
+	}
+}
+
+// -----------------------------------------------------------------------------
+// PR Opened Events (Inline PR Detection)
+// -----------------------------------------------------------------------------
+
+// PROpenedEvent is emitted when a PR URL is detected in instance output.
+// This indicates an inline PR was created during task execution (via gh pr create).
+type PROpenedEvent struct {
+	baseEvent
+	InstanceID string // Instance that opened the PR
+	PRURL      string // Reserved for future use - currently not populated
+}
+
+// NewPROpenedEvent creates a PROpenedEvent.
+func NewPROpenedEvent(instanceID string, prURL string) PROpenedEvent {
+	return PROpenedEvent{
+		baseEvent:  newBaseEvent("pr.opened"),
+		InstanceID: instanceID,
+		PRURL:      prURL,
+	}
+}
