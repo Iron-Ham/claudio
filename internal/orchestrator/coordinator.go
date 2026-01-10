@@ -895,7 +895,8 @@ func (c *Coordinator) monitorSynthesisInstance(instanceID string) {
 			// Check for sentinel file first - this is the most reliable completion signal
 			// The synthesis agent writes .claudio-synthesis-complete.json when done
 			if c.checkForSynthesisCompletionFile(inst) {
-				c.onSynthesisComplete()
+				// Don't auto-advance - set flag and wait for user approval
+				c.onSynthesisReady()
 				return
 			}
 
@@ -944,6 +945,27 @@ func (c *Coordinator) checkForSynthesisCompletionFile(inst *Instance) bool {
 
 	// File is valid - check status is set
 	return completion.Status != ""
+}
+
+// onSynthesisReady is called when synthesis writes its completion file
+// Instead of auto-advancing, it sets a flag and waits for user approval
+func (c *Coordinator) onSynthesisReady() {
+	session := c.Session()
+
+	// Parse and store synthesis completion data
+	synthesisCompletion, _ := c.parseRevisionIssues()
+	c.mu.Lock()
+	if synthesisCompletion != nil {
+		session.SynthesisCompletion = synthesisCompletion
+	}
+	session.SynthesisAwaitingApproval = true
+	c.mu.Unlock()
+
+	// Save session state
+	_ = c.orch.SaveSession()
+
+	// Notify that user input is needed (but don't advance)
+	c.notifyPhaseChange(PhaseSynthesis)
 }
 
 // onSynthesisComplete handles synthesis completion and triggers revision or consolidation
@@ -1310,6 +1332,11 @@ func (c *Coordinator) TriggerConsolidation() error {
 	if session.Phase != PhaseSynthesis {
 		return fmt.Errorf("can only trigger consolidation during synthesis phase (current: %s)", session.Phase)
 	}
+
+	// Clear the awaiting approval flag
+	c.mu.Lock()
+	session.SynthesisAwaitingApproval = false
+	c.mu.Unlock()
 
 	// Stop the synthesis instance if it's still running
 	if session.SynthesisID != "" {
