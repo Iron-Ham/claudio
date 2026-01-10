@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/pr"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 )
@@ -107,6 +108,7 @@ type Consolidator struct {
 	wt          *worktree.Manager
 	state       *ConsolidationState
 	results     []*GroupConsolidationResult
+	logger      *logging.Logger
 
 	// Task branch mapping: task ID -> branch name
 	taskBranches map[string]string
@@ -120,8 +122,15 @@ type Consolidator struct {
 	stopped  bool
 }
 
-// NewConsolidator creates a new consolidator
-func NewConsolidator(orch *Orchestrator, session *UltraPlanSession, baseSession *Session, config ConsolidationConfig) *Consolidator {
+// NewConsolidator creates a new consolidator.
+// If logger is nil, a NopLogger will be used.
+func NewConsolidator(orch *Orchestrator, session *UltraPlanSession, baseSession *Session, config ConsolidationConfig, logger *logging.Logger) *Consolidator {
+	if logger == nil {
+		logger = logging.NopLogger()
+	}
+	// Create a child logger with the consolidation phase context
+	logger = logger.WithPhase("consolidation")
+
 	return &Consolidator{
 		orch:         orch,
 		session:      session,
@@ -132,6 +141,7 @@ func NewConsolidator(orch *Orchestrator, session *UltraPlanSession, baseSession 
 		results:      make([]*GroupConsolidationResult, 0),
 		taskBranches: make(map[string]string),
 		stopChan:     make(chan struct{}),
+		logger:       logger,
 	}
 }
 
@@ -149,6 +159,21 @@ func (c *Consolidator) State() *ConsolidationState {
 	// Return a copy
 	stateCopy := *c.state
 	return &stateCopy
+}
+
+// setPhase updates the consolidation phase with logging
+func (c *Consolidator) setPhase(phase ConsolidationPhase, groupIdx int) {
+	c.mu.Lock()
+	oldPhase := c.state.Phase
+	c.state.Phase = phase
+	c.state.CurrentGroup = groupIdx
+	c.mu.Unlock()
+
+	c.logger.Info("consolidation phase changed",
+		"old_phase", string(oldPhase),
+		"phase", string(phase),
+		"group_index", groupIdx,
+	)
 }
 
 // Results returns the consolidation results
@@ -179,15 +204,27 @@ func (c *Consolidator) Run() error {
 	c.state.TotalGroups = len(c.session.Plan.ExecutionOrder)
 	c.mu.Unlock()
 
+	c.logger.Info("consolidation started",
+		"total_groups", c.state.TotalGroups,
+		"mode", string(c.config.Mode),
+		"session_id", c.session.ID,
+	)
+
 	c.emitEvent(ConsolidationEvent{
 		Type:    EventConsolidationStarted,
 		Message: fmt.Sprintf("Consolidating %d groups", c.state.TotalGroups),
 	})
 
 	// Build task branch mapping from instances
+	c.logger.Debug("building task branch mapping",
+		"completed_tasks", len(c.session.CompletedTasks),
+	)
 	if err := c.buildTaskBranchMapping(); err != nil {
 		return c.fail(fmt.Errorf("failed to build task branch mapping: %w", err))
 	}
+	c.logger.Debug("task branch mapping built",
+		"mapped_tasks", len(c.taskBranches),
+	)
 
 	// Run the appropriate mode
 	var err error
@@ -215,6 +252,11 @@ func (c *Consolidator) Run() error {
 	c.state.CompletedAt = &completedAt
 	c.state.Phase = ConsolidationComplete
 	c.mu.Unlock()
+
+	c.logger.Info("consolidation completed",
+		"pr_count", len(c.state.PRUrls),
+		"group_branches", len(c.state.GroupBranches),
+	)
 
 	c.emitEvent(ConsolidationEvent{
 		Type:    EventConsolidationComplete,
@@ -278,15 +320,21 @@ func (c *Consolidator) runStackedMode() error {
 
 // runStackedModeFromPreconsolidated uses pre-consolidated branches from per-group consolidators
 func (c *Consolidator) runStackedModeFromPreconsolidated() error {
-	c.mu.Lock()
-	c.state.Phase = ConsolidationCreatingBranches
-	c.mu.Unlock()
+	c.setPhase(ConsolidationCreatingBranches, 0)
 
 	// Use the already-consolidated branches
 	for groupIdx, branch := range c.session.GroupConsolidatedBranches {
 		if branch == "" {
+			c.logger.Debug("skipping empty consolidated branch",
+				"group_index", groupIdx,
+			)
 			continue // Skip groups that weren't consolidated
 		}
+
+		c.logger.Info("using pre-consolidated branch",
+			"branch_name", branch,
+			"group_index", groupIdx,
+		)
 
 		c.emitEvent(ConsolidationEvent{
 			Type:     EventConsolidationGroupStarted,
@@ -335,6 +383,13 @@ func (c *Consolidator) runStackedModeFromPreconsolidated() error {
 		c.state.GroupBranches = append(c.state.GroupBranches, branch)
 		c.mu.Unlock()
 
+		c.logger.Info("consolidated branch created",
+			"branch_name", branch,
+			"group_index", groupIdx,
+			"task_count", len(taskIDs),
+			"files_changed", len(result.FilesChanged),
+		)
+
 		c.emitEvent(ConsolidationEvent{
 			Type:     EventConsolidationGroupComplete,
 			GroupIdx: groupIdx,
@@ -350,16 +405,18 @@ func (c *Consolidator) runStackedModeOriginal() error {
 	mainBranch := c.wt.FindMainBranch()
 	worktreeBase := filepath.Join(c.orch.claudioDir, "consolidation")
 
+	c.logger.Debug("git command executed",
+		"command", "find main branch",
+		"output", mainBranch,
+	)
+
 	// Ensure consolidation worktree directory exists
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
 		return fmt.Errorf("failed to create consolidation directory: %w", err)
 	}
 
 	for groupIdx, taskIDs := range c.session.Plan.ExecutionOrder {
-		c.mu.Lock()
-		c.state.Phase = ConsolidationCreatingBranches
-		c.state.CurrentGroup = groupIdx
-		c.mu.Unlock()
+		c.setPhase(ConsolidationCreatingBranches, groupIdx)
 
 		// Determine base branch
 		var baseBranch string
@@ -372,6 +429,12 @@ func (c *Consolidator) runStackedModeOriginal() error {
 		// Generate group branch name
 		groupBranch := c.generateGroupBranchName(groupIdx)
 
+		c.logger.Debug("creating branch from base",
+			"group_branch", groupBranch,
+			"base_branch", baseBranch,
+			"group_index", groupIdx,
+		)
+
 		c.emitEvent(ConsolidationEvent{
 			Type:     EventConsolidationGroupStarted,
 			GroupIdx: groupIdx,
@@ -380,14 +443,36 @@ func (c *Consolidator) runStackedModeOriginal() error {
 
 		// Create branch from base
 		if err := c.wt.CreateBranchFrom(groupBranch, baseBranch); err != nil {
+			c.logger.Error("git command failed",
+				"command", "create branch",
+				"branch", groupBranch,
+				"base", baseBranch,
+				"error", err.Error(),
+			)
 			return c.fail(fmt.Errorf("failed to create branch %s: %w", groupBranch, err))
 		}
+
+		c.logger.Debug("git command executed",
+			"command", "create branch",
+			"output", groupBranch,
+		)
 
 		// Create worktree for this group
 		groupWorktree := filepath.Join(worktreeBase, fmt.Sprintf("group-%d", groupIdx+1))
 		if err := c.wt.CreateWorktreeFromBranch(groupWorktree, groupBranch); err != nil {
+			c.logger.Error("git command failed",
+				"command", "create worktree",
+				"worktree", groupWorktree,
+				"branch", groupBranch,
+				"error", err.Error(),
+			)
 			return c.fail(fmt.Errorf("failed to create worktree for group %d: %w", groupIdx, err))
 		}
+
+		c.logger.Debug("git command executed",
+			"command", "create worktree",
+			"output", truncateString(groupWorktree, 100),
+		)
 
 		// Consolidate tasks into this group
 		result, err := c.consolidateGroup(groupIdx, taskIDs, groupWorktree)
@@ -405,14 +490,35 @@ func (c *Consolidator) runStackedModeOriginal() error {
 		c.state.GroupBranches = append(c.state.GroupBranches, groupBranch)
 		c.mu.Unlock()
 
+		c.logger.Info("consolidated branch created",
+			"branch_name", groupBranch,
+			"group_index", groupIdx,
+			"task_count", len(taskIDs),
+			"commit_count", result.CommitCount,
+			"files_changed", len(result.FilesChanged),
+		)
+
 		// Push the group branch
-		c.mu.Lock()
-		c.state.Phase = ConsolidationPushing
-		c.mu.Unlock()
+		c.setPhase(ConsolidationPushing, groupIdx)
+
+		c.logger.Debug("pushing branch to remote",
+			"branch", groupBranch,
+			"group_index", groupIdx,
+		)
 
 		if err := c.wt.Push(groupWorktree, false); err != nil {
+			c.logger.Error("git command failed",
+				"command", "push",
+				"branch", groupBranch,
+				"error", err.Error(),
+			)
 			return c.fail(fmt.Errorf("failed to push branch %s: %w", groupBranch, err))
 		}
+
+		c.logger.Debug("git command executed",
+			"command", "push",
+			"output", "success",
+		)
 
 		// Clean up worktree (but keep the branch)
 		_ = c.wt.Remove(groupWorktree)
@@ -432,6 +538,11 @@ func (c *Consolidator) runSingleMode() error {
 	mainBranch := c.wt.FindMainBranch()
 	worktreeBase := filepath.Join(c.orch.claudioDir, "consolidation")
 
+	c.logger.Debug("git command executed",
+		"command", "find main branch",
+		"output", mainBranch,
+	)
+
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
 		return fmt.Errorf("failed to create consolidation directory: %w", err)
 	}
@@ -439,26 +550,59 @@ func (c *Consolidator) runSingleMode() error {
 	// Create single consolidated branch
 	consolidatedBranch := c.generateSingleBranchName()
 
+	c.setPhase(ConsolidationCreatingBranches, 0)
+
+	c.logger.Debug("creating consolidated branch",
+		"branch", consolidatedBranch,
+		"base", mainBranch,
+	)
+
 	c.emitEvent(ConsolidationEvent{
 		Type:    EventConsolidationStarted,
 		Message: fmt.Sprintf("Creating consolidated branch %s", consolidatedBranch),
 	})
 
 	if err := c.wt.CreateBranchFrom(consolidatedBranch, mainBranch); err != nil {
+		c.logger.Error("git command failed",
+			"command", "create branch",
+			"branch", consolidatedBranch,
+			"base", mainBranch,
+			"error", err.Error(),
+		)
 		return c.fail(fmt.Errorf("failed to create branch %s: %w", consolidatedBranch, err))
 	}
+
+	c.logger.Debug("git command executed",
+		"command", "create branch",
+		"output", consolidatedBranch,
+	)
 
 	// Create worktree
 	consolidatedWorktree := filepath.Join(worktreeBase, "consolidated")
 	if err := c.wt.CreateWorktreeFromBranch(consolidatedWorktree, consolidatedBranch); err != nil {
+		c.logger.Error("git command failed",
+			"command", "create worktree",
+			"worktree", consolidatedWorktree,
+			"branch", consolidatedBranch,
+			"error", err.Error(),
+		)
 		return c.fail(fmt.Errorf("failed to create worktree: %w", err))
 	}
+
+	c.logger.Debug("git command executed",
+		"command", "create worktree",
+		"output", truncateString(consolidatedWorktree, 100),
+	)
 
 	// Merge all tasks from all groups in order
 	allTaskIDs := make([]string, 0)
 	for _, group := range c.session.Plan.ExecutionOrder {
 		allTaskIDs = append(allTaskIDs, group...)
 	}
+
+	c.logger.Debug("consolidating all tasks",
+		"total_tasks", len(allTaskIDs),
+	)
 
 	result, err := c.consolidateGroup(0, allTaskIDs, consolidatedWorktree)
 	if err != nil {
@@ -474,14 +618,34 @@ func (c *Consolidator) runSingleMode() error {
 	c.state.GroupBranches = append(c.state.GroupBranches, consolidatedBranch)
 	c.mu.Unlock()
 
+	c.logger.Info("consolidated branch created",
+		"branch_name", consolidatedBranch,
+		"group_index", 0,
+		"task_count", len(allTaskIDs),
+		"commit_count", result.CommitCount,
+		"files_changed", len(result.FilesChanged),
+	)
+
 	// Push
-	c.mu.Lock()
-	c.state.Phase = ConsolidationPushing
-	c.mu.Unlock()
+	c.setPhase(ConsolidationPushing, 0)
+
+	c.logger.Debug("pushing branch to remote",
+		"branch", consolidatedBranch,
+	)
 
 	if err := c.wt.Push(consolidatedWorktree, false); err != nil {
+		c.logger.Error("git command failed",
+			"command", "push",
+			"branch", consolidatedBranch,
+			"error", err.Error(),
+		)
 		return c.fail(fmt.Errorf("failed to push branch: %w", err))
 	}
+
+	c.logger.Debug("git command executed",
+		"command", "push",
+		"output", "success",
+	)
 
 	// Clean up
 	_ = c.wt.Remove(consolidatedWorktree)
@@ -491,9 +655,13 @@ func (c *Consolidator) runSingleMode() error {
 
 // consolidateGroup merges all tasks in a group into the group worktree
 func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, groupWorktree string) (*GroupConsolidationResult, error) {
-	c.mu.Lock()
-	c.state.Phase = ConsolidationMergingTasks
-	c.mu.Unlock()
+	c.setPhase(ConsolidationMergingTasks, groupIdx)
+
+	c.logger.Debug("starting group consolidation",
+		"group_index", groupIdx,
+		"task_count", len(taskIDs),
+		"worktree", truncateString(groupWorktree, 80),
+	)
 
 	result := &GroupConsolidationResult{
 		GroupIndex: groupIdx,
@@ -506,6 +674,10 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, groupWor
 	for _, taskID := range taskIDs {
 		branch := c.taskBranches[taskID]
 		if branch == "" {
+			c.logger.Debug("skipping task without branch",
+				"task_id", taskID,
+				"group_index", groupIdx,
+			)
 			continue // Task has no branch (should not happen if buildTaskBranchMapping worked)
 		}
 		activeTasks = append(activeTasks, taskID)
@@ -513,6 +685,10 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, groupWor
 
 	// CHANGED: Return error when no active tasks instead of silent success
 	if len(activeTasks) == 0 {
+		c.logger.Error("no active tasks found",
+			"group_index", groupIdx,
+			"total_tasks", len(taskIDs),
+		)
 		return result, fmt.Errorf("no task branches with commits found for group %d", groupIdx)
 	}
 
@@ -530,6 +706,12 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, groupWor
 
 		branch := c.taskBranches[taskID]
 
+		c.logger.Debug("git command executed",
+			"command", "cherry-pick start",
+			"task_id", taskID,
+			"branch", branch,
+		)
+
 		c.emitEvent(ConsolidationEvent{
 			Type:     EventConsolidationTaskMerging,
 			GroupIdx: groupIdx,
@@ -543,6 +725,12 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, groupWor
 			// Check for conflict
 			if conflictErr, ok := err.(*worktree.CherryPickConflictError); ok {
 				files, _ := c.wt.GetConflictingFiles(groupWorktree)
+				c.logger.Debug("conflict detection check",
+					"task_id", taskID,
+					"branch", branch,
+					"conflict_detected", true,
+					"conflict_files", len(files),
+				)
 				return result, &ConflictError{
 					TaskID:       taskID,
 					Branch:       branch,
@@ -551,8 +739,20 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, groupWor
 					Underlying:   conflictErr,
 				}
 			}
+			c.logger.Error("git command failed",
+				"command", "cherry-pick",
+				"task_id", taskID,
+				"branch", branch,
+				"error", err.Error(),
+			)
 			return result, fmt.Errorf("failed to cherry-pick task %s: %w", taskID, err)
 		}
+
+		c.logger.Info("task branch merged",
+			"task_id", taskID,
+			"target_branch", groupWorktree,
+			"source_branch", branch,
+		)
 
 		c.emitEvent(ConsolidationEvent{
 			Type:     EventConsolidationTaskMerged,
@@ -586,11 +786,14 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, groupWor
 
 // createPRs creates pull requests for all group branches
 func (c *Consolidator) createPRs() error {
-	c.mu.Lock()
-	c.state.Phase = ConsolidationCreatingPRs
-	c.mu.Unlock()
+	c.setPhase(ConsolidationCreatingPRs, 0)
 
 	mainBranch := c.wt.FindMainBranch()
+
+	c.logger.Debug("creating PRs for group branches",
+		"total_branches", len(c.state.GroupBranches),
+		"main_branch", mainBranch,
+	)
 
 	// Create PRs in reverse order (so base branches exist)
 	for i := len(c.state.GroupBranches) - 1; i >= 0; i-- {
@@ -603,6 +806,13 @@ func (c *Consolidator) createPRs() error {
 		} else {
 			baseBranch = c.state.GroupBranches[i-1]
 		}
+
+		c.logger.Debug("creating PR",
+			"branch", branch,
+			"base_branch", baseBranch,
+			"group_index", i,
+			"is_draft", c.config.CreateDraftPRs,
+		)
 
 		c.emitEvent(ConsolidationEvent{
 			Type:     EventConsolidationPRCreating,
@@ -623,6 +833,12 @@ func (c *Consolidator) createPRs() error {
 		}, baseBranch)
 
 		if err != nil {
+			c.logger.Error("PR creation failed",
+				"branch", branch,
+				"base_branch", baseBranch,
+				"group_index", i,
+				"error", err.Error(),
+			)
 			return fmt.Errorf("failed to create PR for group %d: %w", i+1, err)
 		}
 
@@ -632,6 +848,13 @@ func (c *Consolidator) createPRs() error {
 			c.results[i].PRUrl = prURL
 		}
 		c.mu.Unlock()
+
+		c.logger.Info("PR created",
+			"pr_url", prURL,
+			"group_index", i,
+			"branch", branch,
+			"base_branch", baseBranch,
+		)
 
 		c.emitEvent(ConsolidationEvent{
 			Type:     EventConsolidationPRCreated,
@@ -770,6 +993,18 @@ func (c *Consolidator) handleConflict(groupIdx int, conflictErr *ConflictError) 
 	c.state.ConflictWorktree = conflictErr.WorktreePath
 	c.mu.Unlock()
 
+	c.logger.Warn("merge conflict detected",
+		"conflict_files", strings.Join(conflictErr.Files, ", "),
+		"task_id", conflictErr.TaskID,
+		"branch", conflictErr.Branch,
+		"group_index", groupIdx,
+	)
+
+	c.logger.Warn("consolidation paused",
+		"reason", "merge conflict requires manual resolution",
+		"worktree", conflictErr.WorktreePath,
+	)
+
 	c.emitEvent(ConsolidationEvent{
 		Type:     EventConsolidationConflict,
 		GroupIdx: groupIdx,
@@ -783,7 +1018,13 @@ func (c *Consolidator) fail(err error) error {
 	c.mu.Lock()
 	c.state.Phase = ConsolidationFailed
 	c.state.Error = err.Error()
+	currentGroup := c.state.CurrentGroup
 	c.mu.Unlock()
+
+	c.logger.Error("consolidation failed",
+		"error", err.Error(),
+		"group_index", currentGroup,
+	)
 
 	c.emitEvent(ConsolidationEvent{
 		Type:    EventConsolidationFailed,
