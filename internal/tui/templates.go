@@ -60,6 +60,45 @@ var TaskTemplates = []TaskTemplate{
 		Description: "Perform a security audit and fix any vulnerabilities found.",
 	},
 	{
+		Command: "plan",
+		Name:    "Create Issue Plan",
+		Description: `Create a structured plan for the following objective:
+
+[Your objective here]
+
+Instructions:
+1. Explore the codebase to understand its structure and patterns
+2. Decompose the objective into discrete, parallelizable tasks
+3. Create a detailed execution plan with:
+   - Task breakdown with clear titles and descriptions
+   - File ownership for each task
+   - Dependencies between tasks
+   - Execution order (groups of parallelizable tasks)
+   - Key insights about the codebase
+   - Constraints and risks to consider
+
+4. Output the plan as a JSON object with this structure:
+{
+  "summary": "Brief executive summary",
+  "tasks": [
+    {
+      "id": "task-1-setup",
+      "title": "Short title",
+      "description": "Detailed instructions",
+      "files": ["file1.go", "file2.go"],
+      "depends_on": [],
+      "priority": 1,
+      "est_complexity": "low"
+    }
+  ],
+  "insights": ["Key findings about the codebase"],
+  "constraints": ["Risks or constraints to consider"]
+}
+
+Target "low" complexity tasks. Split larger tasks into multiple smaller ones.
+Prefer many small tasks over fewer large ones - 10 small tasks are better than 3 medium/large tasks.`,
+	},
+	{
 		Command: "megamerge",
 		Name:    "Mega Merge PRs",
 		Description: `Merge all of my open PRs to main. Follow these steps:
