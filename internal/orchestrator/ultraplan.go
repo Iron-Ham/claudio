@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
 // UltraPlanPhase represents the current phase of an ultra-plan session
@@ -541,6 +543,7 @@ type UltraPlanManager struct {
 	session    *UltraPlanSession
 	orch       *Orchestrator
 	baseSession *Session // The underlying Claudio session
+	logger     *logging.Logger
 
 	// Event handling
 	eventChan chan CoordinatorEvent
@@ -555,12 +558,18 @@ type UltraPlanManager struct {
 	stopped  bool
 }
 
-// NewUltraPlanManager creates a new ultra-plan manager
-func NewUltraPlanManager(orch *Orchestrator, baseSession *Session, ultraSession *UltraPlanSession) *UltraPlanManager {
+// NewUltraPlanManager creates a new ultra-plan manager.
+// The logger parameter should be passed from the Coordinator and will be used
+// for structured logging throughout plan lifecycle events.
+func NewUltraPlanManager(orch *Orchestrator, baseSession *Session, ultraSession *UltraPlanSession, logger *logging.Logger) *UltraPlanManager {
+	if logger == nil {
+		logger = logging.NopLogger()
+	}
 	return &UltraPlanManager{
 		session:     ultraSession,
 		orch:        orch,
 		baseSession: baseSession,
+		logger:      logger.WithPhase("ultraplan"),
 		eventChan:   make(chan CoordinatorEvent, 100),
 		stopChan:    make(chan struct{}),
 	}
@@ -630,6 +639,144 @@ func (m *UltraPlanManager) SetPhase(phase UltraPlanPhase) {
 	})
 }
 
+// SetPlan sets the plan on the session and logs the plan creation.
+// The objective is truncated to 100 characters in the log for readability.
+func (m *UltraPlanManager) SetPlan(plan *PlanSpec) {
+	m.mu.Lock()
+	m.session.Plan = plan
+	m.mu.Unlock()
+
+	if plan != nil {
+		// Truncate objective for logging
+		objective := plan.Objective
+		if len(objective) > 100 {
+			objective = objective[:97] + "..."
+		}
+
+		m.logger.Info("plan created",
+			"plan_id", plan.ID,
+			"task_count", len(plan.Tasks),
+			"objective", objective,
+		)
+	}
+
+	m.emitEvent(CoordinatorEvent{
+		Type:    EventPlanReady,
+		Message: "plan ready",
+	})
+}
+
+// SetSelectedPlanIndex sets the selected plan index and logs the selection.
+// This is used during multi-pass planning when a plan is chosen from candidates.
+func (m *UltraPlanManager) SetSelectedPlanIndex(index int, action string) {
+	m.mu.Lock()
+	m.session.SelectedPlanIndex = index
+	m.mu.Unlock()
+
+	m.logger.Info("plan selected",
+		"selected_index", index,
+		"action", action,
+	)
+
+	m.emitEvent(CoordinatorEvent{
+		Type:      EventPlanSelected,
+		PlanIndex: index,
+		Message:   action,
+	})
+}
+
+// ValidatePlanWithLogging validates a plan and logs DEBUG-level information about the validation.
+// It logs the dependency graph structure, execution order calculation, and any validation errors.
+func (m *UltraPlanManager) ValidatePlanWithLogging(plan *PlanSpec) error {
+	if plan == nil {
+		m.logger.Error("plan validation failed", "error", "plan is nil")
+		return fmt.Errorf("plan is nil")
+	}
+
+	// Log dependency graph construction at DEBUG level
+	m.logger.Debug("dependency graph constructed",
+		"task_count", len(plan.Tasks),
+		"dependency_count", countDependencies(plan.DependencyGraph),
+	)
+
+	// Log execution order calculation at DEBUG level
+	if len(plan.ExecutionOrder) > 0 {
+		groupSizes := make([]int, len(plan.ExecutionOrder))
+		for i, group := range plan.ExecutionOrder {
+			groupSizes[i] = len(group)
+		}
+		m.logger.Debug("execution order calculated",
+			"group_count", len(plan.ExecutionOrder),
+			"group_sizes", groupSizes,
+		)
+	}
+
+	// Perform validation
+	err := ValidatePlan(plan)
+	if err != nil {
+		// Check if it's an invalid dependency error
+		if strings.Contains(err.Error(), "depends on unknown task") {
+			m.logger.Error("invalid dependency error", "error", err.Error())
+		} else {
+			m.logger.Debug("plan validation completed with error", "error", err.Error())
+		}
+		return err
+	}
+
+	m.logger.Debug("plan validation completed", "valid", true)
+	return nil
+}
+
+// countDependencies counts the total number of dependencies in the graph
+func countDependencies(deps map[string][]string) int {
+	count := 0
+	for _, d := range deps {
+		count += len(d)
+	}
+	return count
+}
+
+// ParsePlanFromOutputWithLogging parses a plan from Claude's output and logs any errors.
+// On success, it logs DEBUG-level information about the parsed plan.
+// On failure, it logs ERROR-level information about the parsing failure.
+func (m *UltraPlanManager) ParsePlanFromOutputWithLogging(output string, objective string) (*PlanSpec, error) {
+	plan, err := ParsePlanFromOutput(output, objective)
+	if err != nil {
+		m.logger.Error("plan parsing failed",
+			"error", err.Error(),
+			"output_length", len(output),
+		)
+		return nil, err
+	}
+
+	m.logger.Debug("plan parsed successfully",
+		"plan_id", plan.ID,
+		"task_count", len(plan.Tasks),
+	)
+	return plan, nil
+}
+
+// ParsePlanFromFileWithLogging parses a plan from a file and logs any errors.
+// On success, it logs DEBUG-level information about the parsed plan.
+// On failure, it logs ERROR-level information about the parsing failure.
+func (m *UltraPlanManager) ParsePlanFromFileWithLogging(filepath string, objective string) (*PlanSpec, error) {
+	plan, err := ParsePlanFromFile(filepath, objective)
+	if err != nil {
+		m.logger.Error("plan parsing failed",
+			"error", err.Error(),
+			"filepath", filepath,
+		)
+		return nil, err
+	}
+
+	m.logger.Debug("plan parsed successfully",
+		"plan_id", plan.ID,
+		"task_count", len(plan.Tasks),
+		"filepath", filepath,
+	)
+	return plan, nil
+}
+
 // StoreCandidatePlan stores a candidate plan at the given index with proper mutex protection.
 // It initializes the CandidatePlans slice if needed, marks the coordinator as processed,
 // and returns the count of non-nil plans collected.
@@ -665,6 +812,15 @@ func (m *UltraPlanManager) StoreCandidatePlan(planIndex int, plan *PlanSpec) int
 			count++
 		}
 	}
+
+	// Log candidate plan storage (INFO level for multi-pass planning)
+	if plan != nil {
+		m.logger.Info("candidate plan stored",
+			"plan_index", planIndex,
+			"task_count", len(plan.Tasks),
+		)
+	}
+
 	return count
 }
 
@@ -728,6 +884,11 @@ func (m *UltraPlanManager) AssignTaskToInstance(taskID, instanceID string) {
 	m.mu.Lock()
 	m.session.TaskToInstance[taskID] = instanceID
 	m.mu.Unlock()
+
+	m.logger.Info("task assigned to instance",
+		"task_id", taskID,
+		"instance_id", instanceID,
+	)
 
 	m.emitEvent(CoordinatorEvent{
 		Type:       EventTaskStarted,

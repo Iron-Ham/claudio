@@ -13,6 +13,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/instance"
+	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
@@ -29,8 +30,8 @@ type App struct {
 }
 
 // New creates a new TUI application
-func New(orch *orchestrator.Orchestrator, session *orchestrator.Session) *App {
-	model := NewModel(orch, session)
+func New(orch *orchestrator.Orchestrator, session *orchestrator.Session, logger *logging.Logger) *App {
+	model := NewModel(orch, session, logger)
 	return &App{
 		model:        model,
 		orchestrator: orch,
@@ -39,8 +40,8 @@ func New(orch *orchestrator.Orchestrator, session *orchestrator.Session) *App {
 }
 
 // NewWithUltraPlan creates a new TUI application in ultra-plan mode
-func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.Coordinator) *App {
-	model := NewModel(orch, session)
+func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.Coordinator, logger *logging.Logger) *App {
+	model := NewModel(orch, session, logger)
 	model.ultraPlan = &UltraPlanState{
 		coordinator:  coordinator,
 		showPlanView: false,
@@ -380,6 +381,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Switch to the newly added task and ensure it's visible in sidebar
 			m.activeTab = len(m.session.Instances) - 1
 			m.ensureActiveVisible()
+			// Log user adding instance
+			if m.logger != nil && msg.instance != nil {
+				m.logger.Info("user added instance", "task", msg.instance.Task)
+			}
 		}
 		return m, nil
 	}
@@ -600,6 +605,11 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "q", "ctrl+c":
 		m.quitting = true
+		// Log session end with duration
+		if m.logger != nil {
+			duration := time.Since(m.startTime)
+			m.logger.Info("TUI session ended", "duration_ms", duration.Milliseconds())
+		}
 		return m, tea.Quit
 
 	case "?":
@@ -610,6 +620,12 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.instanceCount() > 0 {
 			m.activeTab = (m.activeTab + 1) % m.instanceCount()
 			m.ensureActiveVisible()
+			// Log focus change
+			if m.logger != nil {
+				if inst := m.activeInstance(); inst != nil {
+					m.logger.Info("user focused instance", "instance_id", inst.ID)
+				}
+			}
 		}
 		return m, nil
 
@@ -617,6 +633,12 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.instanceCount() > 0 {
 			m.activeTab = (m.activeTab - 1 + m.instanceCount()) % m.instanceCount()
 			m.ensureActiveVisible()
+			// Log focus change
+			if m.logger != nil {
+				if inst := m.activeInstance(); inst != nil {
+					m.logger.Info("user focused instance", "instance_id", inst.ID)
+				}
+			}
 		}
 		return m, nil
 
@@ -625,6 +647,12 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if idx < m.instanceCount() {
 			m.activeTab = idx
 			m.ensureActiveVisible()
+			// Log focus change
+			if m.logger != nil {
+				if inst := m.activeInstance(); inst != nil {
+					m.logger.Info("user focused instance", "instance_id", inst.ID)
+				}
+			}
 		}
 		return m, nil
 
@@ -947,6 +975,11 @@ func (m Model) executeCommand(cmd string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "q", "quit":
 		m.quitting = true
+		// Log session end with duration
+		if m.logger != nil {
+			duration := time.Since(m.startTime)
+			m.logger.Info("TUI session ended", "duration_ms", duration.Milliseconds())
+		}
 		return m, tea.Quit
 
 	default:
@@ -987,6 +1020,11 @@ func (m Model) cmdStop() (tea.Model, tea.Cmd) {
 	if inst == nil {
 		m.infoMessage = "No instance selected"
 		return m, nil
+	}
+
+	// Log user stopping instance
+	if m.logger != nil {
+		m.logger.Info("user stopped instance", "instance_id", inst.ID)
 	}
 
 	prStarted, err := m.orchestrator.StopInstanceWithAutoPR(inst)

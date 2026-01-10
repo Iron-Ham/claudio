@@ -9,6 +9,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	sessutil "github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -124,28 +125,6 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	sessionID := orchestrator.GenerateID()
 	cfg := config.Get()
 
-	// Create orchestrator with multi-session support
-	orch, err := orchestrator.NewWithSession(cwd, sessionID, cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create orchestrator: %w", err)
-	}
-
-	// Start a new session for the ultra-plan
-	sessionName := "ultraplan"
-	if objective != "" {
-		// Use first few words of objective as session name
-		words := strings.Fields(objective)
-		if len(words) > 3 {
-			words = words[:3]
-		}
-		sessionName = "ultraplan-" + slugifyWords(words)
-	}
-
-	session, err := orch.StartSession(sessionName)
-	if err != nil {
-		return fmt.Errorf("failed to start session: %w", err)
-	}
-
 	// Create ultra-plan configuration from defaults, then override with config file, then flags
 	ultraConfig := orchestrator.DefaultUltraPlanConfig()
 
@@ -167,6 +146,46 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	ultraConfig.AutoApprove = ultraplanAutoApprove
 	ultraConfig.Review = ultraplanReview
 
+	// Create logger if enabled - we need session dir which requires session ID
+	sessionDir := sessutil.GetSessionDir(cwd, sessionID)
+	logger := CreateLogger(sessionDir, cfg)
+	defer logger.Close()
+
+	// Create orchestrator with multi-session support
+	orch, err := orchestrator.NewWithSession(cwd, sessionID, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create orchestrator: %w", err)
+	}
+
+	// Set the logger on the orchestrator
+	orch.SetLogger(logger)
+
+	// Start a new session for the ultra-plan
+	sessionName := "ultraplan"
+	if objective != "" {
+		// Use first few words of objective as session name
+		words := strings.Fields(objective)
+		if len(words) > 3 {
+			words = words[:3]
+		}
+		sessionName = "ultraplan-" + slugifyWords(words)
+	}
+
+	session, err := orch.StartSession(sessionName)
+	if err != nil {
+		return fmt.Errorf("failed to start session: %w", err)
+	}
+
+	// Log startup with objective (truncated) and config summary
+	logger.Info("ultraplan started",
+		"session_id", sessionID,
+		"objective", truncateString(objective, 100),
+		"max_parallel", ultraConfig.MaxParallel,
+		"multi_pass", ultraConfig.MultiPass,
+		"dry_run", ultraConfig.DryRun,
+		"auto_approve", ultraConfig.AutoApprove,
+	)
+
 	// Create or load the plan
 	var plan *orchestrator.PlanSpec
 	if ultraplanPlanFile != "" {
@@ -187,8 +206,8 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	// Link ultra-plan session to main session for persistence
 	session.UltraPlan = ultraSession
 
-	// Create coordinator
-	coordinator := orchestrator.NewCoordinator(orch, session, ultraSession)
+	// Create coordinator with logger
+	coordinator := orchestrator.NewCoordinator(orch, session, ultraSession, logger)
 
 	// Get terminal dimensions
 	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
@@ -199,7 +218,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	}
 
 	// Launch TUI with ultra-plan mode
-	app := tui.NewWithUltraPlan(orch, session, coordinator)
+	app := tui.NewWithUltraPlan(orch, session, coordinator, logger.WithSession(session.ID))
 	if err := app.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/config"
+	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
@@ -118,11 +119,22 @@ func attachToSession(cwd, sessionID string, cfg *config.Config) error {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
+	// Create logger if enabled
+	sessionDir := session.GetSessionDir(cwd, sessionID)
+	logger := CreateLogger(sessionDir, cfg)
+	defer logger.Close()
+
 	// Create orchestrator with the session ID
 	orch, err := orchestrator.NewWithSession(cwd, sessionID, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create orchestrator: %w", err)
 	}
+
+	// Set the logger on the orchestrator
+	orch.SetLogger(logger)
+
+	// Log startup
+	logger.Info("claudio started", "session_id", sessionID, "mode", "attach")
 
 	// Load and lock the session
 	sess, err := orch.LoadSessionWithLock()
@@ -150,7 +162,7 @@ func attachToSession(cwd, sessionID string, cfg *config.Config) error {
 		fmt.Printf("Reconnected to %d running instance(s)\n", len(reconnected))
 	}
 
-	return launchTUI(orch, sess)
+	return launchTUI(cwd, orch, sess, logger)
 }
 
 // startNewSession creates and starts a new session
@@ -158,11 +170,19 @@ func startNewSession(cwd, sessionName string, cfg *config.Config) error {
 	// Generate a new session ID
 	sessionID := orchestrator.GenerateID()
 
+	// Create logger if enabled - we need session dir which requires session ID
+	sessionDir := session.GetSessionDir(cwd, sessionID)
+	logger := CreateLogger(sessionDir, cfg)
+	defer logger.Close()
+
 	// Create orchestrator with the new session ID
 	orch, err := orchestrator.NewWithSession(cwd, sessionID, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create orchestrator: %w", err)
 	}
+
+	// Set the logger on the orchestrator
+	orch.SetLogger(logger)
 
 	// Start the new session
 	sess, err := orch.StartSession(sessionName)
@@ -170,9 +190,12 @@ func startNewSession(cwd, sessionName string, cfg *config.Config) error {
 		return fmt.Errorf("failed to start session: %w", err)
 	}
 
+	// Log startup
+	logger.Info("claudio started", "session_id", sessionID, "mode", "new")
+
 	fmt.Printf("Started new session: %s\n", sessionID)
 
-	return launchTUI(orch, sess)
+	return launchTUI(cwd, orch, sess, logger)
 }
 
 // migrateAndStartLegacySession migrates a legacy session to the new format and starts it
@@ -223,7 +246,7 @@ func migrateAndStartLegacySession(cwd, sessionName string, cfg *config.Config) e
 }
 
 // launchTUI sets up terminal dimensions and launches the TUI
-func launchTUI(orch *orchestrator.Orchestrator, sess *orchestrator.Session) error {
+func launchTUI(cwd string, orch *orchestrator.Orchestrator, sess *orchestrator.Session, logger *logging.Logger) error {
 	// Get terminal dimensions and set them on the orchestrator before launching TUI
 	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
 		contentWidth, contentHeight := tui.CalculateContentDimensions(termWidth, termHeight)
@@ -233,12 +256,39 @@ func launchTUI(orch *orchestrator.Orchestrator, sess *orchestrator.Session) erro
 	}
 
 	// Launch TUI
-	app := tui.New(orch, sess)
+	app := tui.New(orch, sess, logger.WithSession(sess.ID))
 	if err := app.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
 
 	return nil
+}
+
+// CreateLogger creates a logger if logging is enabled in config.
+// Returns a NopLogger if logging is disabled or if creation fails.
+// This function uses NewLoggerWithRotation to respect MaxSizeMB and MaxBackups config.
+func CreateLogger(sessionDir string, cfg *config.Config) *logging.Logger {
+	// Check if logging is enabled
+	if !cfg.Logging.Enabled {
+		return logging.NopLogger()
+	}
+
+	// Build rotation config from logging config
+	rotationConfig := logging.RotationConfig{
+		MaxSizeMB:  cfg.Logging.MaxSizeMB,
+		MaxBackups: cfg.Logging.MaxBackups,
+		Compress:   false, // Not exposed in config yet
+	}
+
+	// Create the logger with rotation support
+	logger, err := logging.NewLoggerWithRotation(sessionDir, cfg.Logging.Level, rotationConfig)
+	if err != nil {
+		// Log creation failure shouldn't prevent the application from starting
+		fmt.Fprintf(os.Stderr, "Warning: failed to create logger: %v\n", err)
+		return logging.NopLogger()
+	}
+
+	return logger
 }
 
 // promptMultiSessionAction prompts the user to choose what to do when sessions exist

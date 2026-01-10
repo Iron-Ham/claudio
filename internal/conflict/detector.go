@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -43,6 +44,9 @@ type Detector struct {
 	// Paths to ignore (e.g., .git, .claudio)
 	ignorePaths []string
 
+	// Logger for structured logging (optional)
+	logger *logging.Logger
+
 	mu     sync.RWMutex
 	stopCh chan struct{}
 }
@@ -71,6 +75,14 @@ func (d *Detector) SetConflictCallback(cb func([]FileConflict)) {
 	d.onConflict = cb
 }
 
+// SetLogger sets the logger for the conflict detector.
+// If set, the detector will log conflict detection events at various levels.
+func (d *Detector) SetLogger(logger *logging.Logger) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.logger = logger
+}
+
 // AddInstance starts watching files for an instance's worktree
 func (d *Detector) AddInstance(instanceID, worktreePath string) error {
 	d.mu.Lock()
@@ -86,7 +98,19 @@ func (d *Detector) AddInstance(instanceID, worktreePath string) error {
 	}
 
 	// Also add subdirectories recursively for better coverage
-	return d.watchDirRecursive(worktreePath)
+	if err := d.watchDirRecursive(worktreePath); err != nil {
+		return err
+	}
+
+	// Log instance registration at INFO level
+	if d.logger != nil {
+		d.logger.Info("instance registered for conflict detection",
+			"instance_id", instanceID,
+			"path", worktreePath,
+		)
+	}
+
+	return nil
 }
 
 // watchDirRecursive adds all subdirectories to the watcher
@@ -176,6 +200,17 @@ func (d *Detector) watchLoop() {
 				continue
 			}
 
+			// Log file watch event at DEBUG level
+			d.mu.RLock()
+			logger := d.logger
+			d.mu.RUnlock()
+			if logger != nil {
+				logger.Debug("file watch event received",
+					"path", event.Name,
+					"operation", event.Op.String(),
+				)
+			}
+
 			// Debounce: collect events for a short period
 			pendingMu.Lock()
 			pendingEvents[event.Name] = event
@@ -199,8 +234,15 @@ func (d *Detector) watchLoop() {
 			if !ok {
 				return
 			}
-			// Log error but continue
-			_ = err
+			// Log watcher error at DEBUG level (errors are typically transient)
+			d.mu.RLock()
+			logger := d.logger
+			d.mu.RUnlock()
+			if logger != nil {
+				logger.Debug("file watcher error",
+					"error", err.Error(),
+				)
+			}
 		}
 	}
 }
@@ -243,6 +285,14 @@ func (d *Detector) handleFileEvent(event fsnotify.Event) {
 	}
 	d.fileModifications[relativePath][matchedInstanceID] = time.Now()
 
+	// Log file modification tracking at DEBUG level
+	if d.logger != nil {
+		d.logger.Debug("file modification tracked",
+			"file_path", relativePath,
+			"instance_id", matchedInstanceID,
+		)
+	}
+
 	// Check for conflicts
 	d.recalculateConflicts()
 }
@@ -264,12 +314,28 @@ func (d *Detector) recalculateConflicts() {
 				}
 			}
 
-			conflicts = append(conflicts, FileConflict{
+			conflict := FileConflict{
 				RelativePath: relPath,
 				Instances:    instanceIDs,
 				LastModified: lastMod,
-			})
+			}
+			conflicts = append(conflicts, conflict)
+
+			// Log conflict at INFO level
+			if d.logger != nil {
+				d.logger.Info("file conflict detected",
+					"file_path", relPath,
+					"instance_ids", instanceIDs,
+				)
+			}
 		}
+	}
+
+	// Log warning if we have potential conflicts (this method is called frequently)
+	if d.logger != nil && len(conflicts) > 0 {
+		d.logger.Warn("potential conflicts detected",
+			"conflict_count", len(conflicts),
+		)
 	}
 
 	d.conflicts = conflicts

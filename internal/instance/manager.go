@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
 // StateChangeCallback is called when the detected waiting state changes
@@ -21,6 +23,20 @@ const (
 	TimeoutCompletion                    // Total runtime exceeded limit
 	TimeoutStale                         // Repeated output detected (stuck in loop)
 )
+
+// timeoutTypeName returns a human-readable name for a timeout type
+func timeoutTypeName(t TimeoutType) string {
+	switch t {
+	case TimeoutActivity:
+		return "activity"
+	case TimeoutCompletion:
+		return "completion"
+	case TimeoutStale:
+		return "stale"
+	default:
+		return "unknown"
+	}
+}
 
 // TimeoutCallback is called when a timeout condition is detected
 type TimeoutCallback func(instanceID string, timeoutType TimeoutType)
@@ -90,8 +106,11 @@ type Manager struct {
 	timeoutType         TimeoutType    // Type of timeout that was triggered
 
 	// Bell tracking
-	bellCallback   BellCallback
-	lastBellState  bool // Track last bell flag state to detect transitions
+	bellCallback  BellCallback
+	lastBellState bool // Track last bell flag state to detect transitions
+
+	// Logger for structured logging
+	logger *logging.Logger
 }
 
 // NewManager creates a new instance manager with default configuration
@@ -171,6 +190,14 @@ func (m *Manager) SetBellCallback(cb BellCallback) {
 	m.bellCallback = cb
 }
 
+// SetLogger sets the logger for the instance manager.
+// If logger is nil, logging is disabled.
+func (m *Manager) SetLogger(logger *logging.Logger) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.logger = logger
+}
+
 // CurrentMetrics returns the currently parsed metrics
 func (m *Manager) CurrentMetrics() *ParsedMetrics {
 	m.mu.RLock()
@@ -239,6 +266,12 @@ func (m *Manager) Start() error {
 	// Inherit full environment (required for Claude credentials) and ensure TERM supports colors
 	createCmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	if err := createCmd.Run(); err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to create tmux session",
+				"session_name", m.sessionName,
+				"workdir", m.workdir,
+				"error", err.Error())
+		}
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
@@ -268,6 +301,11 @@ func (m *Manager) Start() error {
 		// Clean up the session if we failed to start claude
 		_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
 		_ = os.Remove(promptFile)
+		if m.logger != nil {
+			m.logger.Error("failed to start claude in tmux session",
+				"session_name", m.sessionName,
+				"error", err.Error())
+		}
 		return fmt.Errorf("failed to start claude in tmux session: %w", err)
 	}
 
@@ -284,6 +322,12 @@ func (m *Manager) Start() error {
 	// Start background goroutine to capture output periodically
 	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)
 	go m.captureLoop()
+
+	if m.logger != nil {
+		m.logger.Info("tmux session created",
+			"session_name", m.sessionName,
+			"workdir", m.workdir)
+	}
 
 	return nil
 }
@@ -331,6 +375,7 @@ func (m *Manager) captureLoop() {
 			// Always update if content changed
 			currentOutput := string(output)
 			if currentOutput != lastOutput {
+				byteCount := len(output)
 				m.outputBuf.Reset()
 				_, _ = m.outputBuf.Write(output)
 
@@ -339,7 +384,13 @@ func (m *Manager) captureLoop() {
 				m.lastActivityTime = time.Now()
 				m.lastOutputHash = lastOutput
 				m.repeatedOutputCount = 0
+				logger := m.logger
 				m.mu.Unlock()
+
+				if logger != nil {
+					logger.Debug("output captured",
+						"byte_count", byteCount)
+				}
 
 				lastOutput = currentOutput
 
@@ -392,7 +443,9 @@ func (m *Manager) checkTimeouts() {
 	now := time.Now()
 	callback := m.timeoutCallback
 	instanceID := m.id
+	logger := m.logger
 	var triggeredTimeout *TimeoutType
+	repeatCount := m.repeatedOutputCount
 
 	// Check completion timeout (total runtime)
 	if m.config.CompletionTimeoutMinutes > 0 && m.startTime != nil {
@@ -420,7 +473,7 @@ func (m *Manager) checkTimeouts() {
 	// Trigger if we've seen the same output 3000 times (5 minutes at 100ms interval)
 	// This catches stuck loops producing identical output while allowing time for
 	// legitimate long-running operations like planning and exploration
-	if triggeredTimeout == nil && m.config.StaleDetection && m.repeatedOutputCount > 3000 {
+	if triggeredTimeout == nil && m.config.StaleDetection && repeatCount > 3000 {
 		t := TimeoutStale
 		triggeredTimeout = &t
 		m.timedOut = true
@@ -429,9 +482,22 @@ func (m *Manager) checkTimeouts() {
 
 	m.mu.Unlock()
 
-	// Invoke callback outside of lock to prevent deadlocks
-	if triggeredTimeout != nil && callback != nil {
-		callback(instanceID, *triggeredTimeout)
+	// Log and invoke callback outside of lock to prevent deadlocks
+	if triggeredTimeout != nil {
+		if logger != nil {
+			if *triggeredTimeout == TimeoutStale {
+				logger.Warn("stale output detected",
+					"instance_id", instanceID,
+					"repeat_count", repeatCount)
+			} else {
+				logger.Warn("timeout triggered",
+					"instance_id", instanceID,
+					"timeout_type", timeoutTypeName(*triggeredTimeout))
+			}
+		}
+		if callback != nil {
+			callback(instanceID, *triggeredTimeout)
+		}
 	}
 }
 
@@ -450,13 +516,20 @@ func (m *Manager) checkAndForwardBell(sessionName string) {
 	lastBellState := m.lastBellState
 	callback := m.bellCallback
 	instanceID := m.id
+	logger := m.logger
 	m.lastBellState = bellActive
 	m.mu.Unlock()
 
 	// Trigger callback on transition from no-bell to bell (edge detection)
 	// This ensures we only fire once per bell, not continuously while the flag is set
-	if bellActive && !lastBellState && callback != nil {
-		callback(instanceID)
+	if bellActive && !lastBellState {
+		if logger != nil {
+			logger.Debug("bell detected",
+				"instance_id", instanceID)
+		}
+		if callback != nil {
+			callback(instanceID)
+		}
 	}
 }
 
@@ -468,15 +541,24 @@ func (m *Manager) detectAndNotifyState(output []byte) {
 	oldState := m.currentState
 	callback := m.stateCallback
 	instanceID := m.id
+	logger := m.logger
 
 	if newState != oldState {
 		m.currentState = newState
 	}
 	m.mu.Unlock()
 
-	// Invoke callback outside of lock to prevent deadlocks
-	if newState != oldState && callback != nil {
-		callback(instanceID, newState)
+	// Log and invoke callback outside of lock to prevent deadlocks
+	if newState != oldState {
+		if logger != nil {
+			logger.Info("instance state changed",
+				"instance_id", instanceID,
+				"old_state", oldState.String(),
+				"new_state", newState.String())
+		}
+		if callback != nil {
+			callback(instanceID, newState)
+		}
 	}
 
 	// Parse and notify about metrics changes
@@ -494,6 +576,7 @@ func (m *Manager) parseAndNotifyMetrics(output []byte) {
 	oldMetrics := m.currentMetrics
 	callback := m.metricsCallback
 	instanceID := m.id
+	logger := m.logger
 
 	// Check if metrics changed (simple comparison)
 	metricsChanged := oldMetrics == nil ||
@@ -506,9 +589,17 @@ func (m *Manager) parseAndNotifyMetrics(output []byte) {
 	}
 	m.mu.Unlock()
 
-	// Invoke callback outside of lock to prevent deadlocks
-	if metricsChanged && callback != nil {
-		callback(instanceID, newMetrics)
+	// Log and invoke callback outside of lock to prevent deadlocks
+	if metricsChanged {
+		if logger != nil {
+			logger.Debug("metrics updated",
+				"instance_id", instanceID,
+				"tokens", newMetrics.InputTokens+newMetrics.OutputTokens,
+				"cost", newMetrics.Cost)
+		}
+		if callback != nil {
+			callback(instanceID, newMetrics)
+		}
 	}
 }
 
@@ -538,7 +629,18 @@ func (m *Manager) Stop() error {
 	time.Sleep(500 * time.Millisecond)
 
 	// Kill the tmux session
-	_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+	if err := exec.Command("tmux", "kill-session", "-t", m.sessionName).Run(); err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to kill tmux session",
+				"session_name", m.sessionName,
+				"error", err.Error())
+		}
+	} else {
+		if m.logger != nil {
+			m.logger.Info("tmux session stopped",
+				"session_name", m.sessionName)
+		}
+	}
 
 	m.running = false
 	return nil
@@ -768,6 +870,11 @@ func (m *Manager) Reconnect() error {
 	// Start background goroutine to capture output periodically
 	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)
 	go m.captureLoop()
+
+	if m.logger != nil {
+		m.logger.Info("instance reconnected",
+			"session_name", m.sessionName)
+	}
 
 	return nil
 }

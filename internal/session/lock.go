@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
 // LockFileName is the name of the lock file within a session directory
@@ -25,22 +27,45 @@ type Lock struct {
 
 	// Internal fields (not serialized)
 	lockFile string
+	logger   *logging.Logger
 }
 
 // AcquireLock attempts to acquire an exclusive lock on the session directory.
 // Returns ErrSessionLocked if the session is already in use by another process.
-func AcquireLock(sessionDir, sessionID string) (*Lock, error) {
+// The logger parameter is optional and can be nil (useful when lock is acquired
+// before the logger is fully initialized).
+func AcquireLock(sessionDir, sessionID string, logger *logging.Logger) (*Lock, error) {
 	lockPath := filepath.Join(sessionDir, LockFileName)
 
 	// Check for existing lock
 	if existingLock, err := ReadLock(lockPath); err == nil {
 		// Lock file exists - check if the process is still alive
 		if isProcessAlive(existingLock.PID) {
+			reason := fmt.Sprintf("locked by PID %d on %s", existingLock.PID, existingLock.Hostname)
+			if logger != nil {
+				logger.Error("failed to acquire lock",
+					"session_id", sessionID,
+					"reason", reason,
+				)
+			}
 			return nil, fmt.Errorf("%w: PID %d on %s", ErrSessionLocked, existingLock.PID, existingLock.Hostname)
 		}
 		// Stale lock - remove it
+		oldPID := existingLock.PID
 		if err := os.Remove(lockPath); err != nil && !os.IsNotExist(err) {
+			if logger != nil {
+				logger.Error("failed to acquire lock",
+					"session_id", sessionID,
+					"reason", "failed to remove stale lock",
+				)
+			}
 			return nil, fmt.Errorf("failed to remove stale lock: %w", err)
+		}
+		if logger != nil {
+			logger.Warn("stale lock cleaned",
+				"session_id", sessionID,
+				"old_pid", oldPID,
+			)
 		}
 	}
 
@@ -57,11 +82,18 @@ func AcquireLock(sessionDir, sessionID string) (*Lock, error) {
 		Hostname:  hostname,
 		StartedAt: time.Now(),
 		lockFile:  lockPath,
+		logger:    logger,
 	}
 
 	// Write lock file
 	data, err := json.MarshalIndent(lock, "", "  ")
 	if err != nil {
+		if logger != nil {
+			logger.Error("failed to acquire lock",
+				"session_id", sessionID,
+				"reason", "failed to marshal lock data",
+			)
+		}
 		return nil, fmt.Errorf("failed to marshal lock: %w", err)
 	}
 
@@ -71,9 +103,28 @@ func AcquireLock(sessionDir, sessionID string) (*Lock, error) {
 		if os.IsExist(err) {
 			// Another process beat us to it - re-read and report
 			if existingLock, readErr := ReadLock(lockPath); readErr == nil {
+				reason := fmt.Sprintf("locked by PID %d on %s (race condition)", existingLock.PID, existingLock.Hostname)
+				if logger != nil {
+					logger.Error("failed to acquire lock",
+						"session_id", sessionID,
+						"reason", reason,
+					)
+				}
 				return nil, fmt.Errorf("%w: PID %d on %s", ErrSessionLocked, existingLock.PID, existingLock.Hostname)
 			}
+			if logger != nil {
+				logger.Error("failed to acquire lock",
+					"session_id", sessionID,
+					"reason", "lock file exists (race condition)",
+				)
+			}
 			return nil, ErrSessionLocked
+		}
+		if logger != nil {
+			logger.Error("failed to acquire lock",
+				"session_id", sessionID,
+				"reason", fmt.Sprintf("failed to create lock file: %v", err),
+			)
 		}
 		return nil, fmt.Errorf("failed to create lock file: %w", err)
 	}
@@ -81,7 +132,20 @@ func AcquireLock(sessionDir, sessionID string) (*Lock, error) {
 
 	if _, err := f.Write(data); err != nil {
 		os.Remove(lockPath)
+		if logger != nil {
+			logger.Error("failed to acquire lock",
+				"session_id", sessionID,
+				"reason", "failed to write lock file",
+			)
+		}
 		return nil, fmt.Errorf("failed to write lock file: %w", err)
+	}
+
+	if logger != nil {
+		logger.Info("session lock acquired",
+			"session_id", sessionID,
+			"pid", lock.PID,
+		)
 	}
 
 	return lock, nil
@@ -106,7 +170,17 @@ func (l *Lock) Release() error {
 		return nil
 	}
 
-	return os.Remove(l.lockFile)
+	if err := os.Remove(l.lockFile); err != nil {
+		return err
+	}
+
+	if l.logger != nil {
+		l.logger.Info("session lock released",
+			"session_id", l.SessionID,
+		)
+	}
+
+	return nil
 }
 
 // ReadLock reads a lock file and returns the Lock info.
@@ -146,7 +220,8 @@ func IsLocked(sessionDir string) (*Lock, bool) {
 
 // CleanStaleLock removes a stale lock file if the owning process is no longer running.
 // Returns true if a stale lock was cleaned.
-func CleanStaleLock(sessionDir string) (bool, error) {
+// The logger parameter is optional and can be nil.
+func CleanStaleLock(sessionDir string, logger *logging.Logger) (bool, error) {
 	lockPath := filepath.Join(sessionDir, LockFileName)
 
 	lock, err := ReadLock(lockPath)
@@ -160,9 +235,19 @@ func CleanStaleLock(sessionDir string) (bool, error) {
 		return false, nil
 	}
 
+	oldPID := lock.PID
+	sessionID := lock.SessionID
+
 	// Stale lock - remove it
 	if err := os.Remove(lockPath); err != nil {
 		return false, fmt.Errorf("failed to remove stale lock: %w", err)
+	}
+
+	if logger != nil {
+		logger.Warn("stale lock cleaned",
+			"session_id", sessionID,
+			"old_pid", oldPID,
+		)
 	}
 
 	return true, nil

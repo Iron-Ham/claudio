@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
 // CoordinatorCallbacks holds callbacks for coordinator events
@@ -43,6 +45,7 @@ type Coordinator struct {
 	orch        *Orchestrator
 	baseSession *Session
 	callbacks   *CoordinatorCallbacks
+	logger      *logging.Logger
 
 	// Running state
 	ctx        context.Context
@@ -55,16 +58,25 @@ type Coordinator struct {
 	runningCount   int
 }
 
-// NewCoordinator creates a new coordinator for an ultra-plan session
-func NewCoordinator(orch *Orchestrator, baseSession *Session, ultraSession *UltraPlanSession) *Coordinator {
-	manager := NewUltraPlanManager(orch, baseSession, ultraSession)
+// NewCoordinator creates a new coordinator for an ultra-plan session.
+// The logger parameter is optional; if nil, a no-op logger will be used.
+func NewCoordinator(orch *Orchestrator, baseSession *Session, ultraSession *UltraPlanSession, logger *logging.Logger) *Coordinator {
+	// Use NopLogger if no logger provided (needed before we create sessionLogger below)
+	if logger == nil {
+		logger = logging.NopLogger()
+	}
+	manager := NewUltraPlanManager(orch, baseSession, ultraSession, logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Add session context to logger
+	sessionLogger := logger.WithSession(ultraSession.ID).WithPhase("coordinator")
 
 	return &Coordinator{
 		manager:      manager,
 		orch:         orch,
 		baseSession:  baseSession,
+		logger:       sessionLogger,
 		ctx:          ctx,
 		cancelFunc:   cancel,
 		runningTasks: make(map[string]string),
@@ -116,7 +128,21 @@ func (c *Coordinator) Plan() *PlanSpec {
 
 // notifyPhaseChange notifies callbacks of phase change
 func (c *Coordinator) notifyPhaseChange(phase UltraPlanPhase) {
+	// Get the previous phase for logging
+	session := c.Session()
+	fromPhase := PhasePlanning
+	if session != nil {
+		fromPhase = session.Phase
+	}
+
 	c.manager.SetPhase(phase)
+
+	// Log the phase transition
+	c.logger.Info("phase changed",
+		"from_phase", string(fromPhase),
+		"to_phase", string(phase),
+		"session_id", session.ID,
+	)
 
 	// Persist the phase change
 	_ = c.orch.SaveSession()
@@ -134,6 +160,22 @@ func (c *Coordinator) notifyPhaseChange(phase UltraPlanPhase) {
 func (c *Coordinator) notifyTaskStart(taskID, instanceID string) {
 	c.manager.AssignTaskToInstance(taskID, instanceID)
 
+	// Get task title for logging
+	session := c.Session()
+	taskTitle := ""
+	if session != nil {
+		if task := session.GetTask(taskID); task != nil {
+			taskTitle = task.Title
+		}
+	}
+
+	// Log task started
+	c.logger.Info("task started",
+		"task_id", taskID,
+		"instance_id", instanceID,
+		"task_title", taskTitle,
+	)
+
 	c.mu.RLock()
 	cb := c.callbacks
 	c.mu.RUnlock()
@@ -146,6 +188,12 @@ func (c *Coordinator) notifyTaskStart(taskID, instanceID string) {
 // notifyTaskComplete notifies callbacks of task completion
 func (c *Coordinator) notifyTaskComplete(taskID string) {
 	c.manager.MarkTaskComplete(taskID)
+
+	// Log task completed
+	// Note: duration tracking requires instance start time, which could be added in the future
+	c.logger.Info("task completed",
+		"task_id", taskID,
+	)
 
 	// Persist the task completion
 	_ = c.orch.SaveSession()
@@ -163,6 +211,12 @@ func (c *Coordinator) notifyTaskComplete(taskID string) {
 func (c *Coordinator) notifyTaskFailed(taskID, reason string) {
 	c.manager.MarkTaskFailed(taskID, reason)
 
+	// Log task failed
+	c.logger.Info("task failed",
+		"task_id", taskID,
+		"reason", reason,
+	)
+
 	// Persist the task failure
 	_ = c.orch.SaveSession()
 
@@ -177,6 +231,18 @@ func (c *Coordinator) notifyTaskFailed(taskID, reason string) {
 
 // notifyPlanReady notifies callbacks that planning is complete
 func (c *Coordinator) notifyPlanReady(plan *PlanSpec) {
+	// Log plan ready
+	taskCount := 0
+	groupCount := 0
+	if plan != nil {
+		taskCount = len(plan.Tasks)
+		groupCount = len(plan.ExecutionOrder)
+	}
+	c.logger.Info("plan ready",
+		"task_count", taskCount,
+		"group_count", groupCount,
+	)
+
 	c.mu.RLock()
 	cb := c.callbacks
 	c.mu.RUnlock()
@@ -193,17 +259,33 @@ func (c *Coordinator) notifyProgress() {
 		return
 	}
 
+	completed := len(session.CompletedTasks)
+	total := len(session.Plan.Tasks)
+
+	// Log progress update at DEBUG level
+	c.logger.Debug("progress update",
+		"completed", completed,
+		"total", total,
+		"phase", string(session.Phase),
+	)
+
 	c.mu.RLock()
 	cb := c.callbacks
 	c.mu.RUnlock()
 
 	if cb != nil && cb.OnProgress != nil {
-		cb.OnProgress(len(session.CompletedTasks), len(session.Plan.Tasks), session.Phase)
+		cb.OnProgress(completed, total, session.Phase)
 	}
 }
 
 // notifyComplete notifies callbacks of completion
 func (c *Coordinator) notifyComplete(success bool, summary string) {
+	// Log coordinator complete
+	c.logger.Info("coordinator complete",
+		"success", success,
+		"summary", summary,
+	)
+
 	c.mu.RLock()
 	cb := c.callbacks
 	c.mu.RUnlock()
@@ -231,6 +313,10 @@ func (c *Coordinator) RunPlanning() error {
 	// Create a coordinator instance for planning
 	inst, err := c.orch.AddInstance(c.baseSession, prompt)
 	if err != nil {
+		c.logger.Error("planning failed",
+			"error", err.Error(),
+			"stage", "create_instance",
+		)
 		return fmt.Errorf("failed to create planning instance: %w", err)
 	}
 
@@ -238,6 +324,10 @@ func (c *Coordinator) RunPlanning() error {
 
 	// Start the instance
 	if err := c.orch.StartInstance(inst); err != nil {
+		c.logger.Error("planning failed",
+			"error", err.Error(),
+			"stage", "start_instance",
+		)
 		return fmt.Errorf("failed to start planning instance: %w", err)
 	}
 
@@ -257,6 +347,10 @@ func (c *Coordinator) RunMultiPassPlanning() error {
 	// Get the available strategy names
 	strategies := GetMultiPassStrategyNames()
 	if len(strategies) == 0 {
+		c.logger.Error("planning failed",
+			"error", "no multi-pass planning strategies available",
+			"stage", "get_strategies",
+		)
 		return fmt.Errorf("no multi-pass planning strategies available")
 	}
 
@@ -271,6 +365,11 @@ func (c *Coordinator) RunMultiPassPlanning() error {
 		// Create a coordinator instance for this strategy
 		inst, err := c.orch.AddInstance(c.baseSession, prompt)
 		if err != nil {
+			c.logger.Error("planning failed",
+				"error", err.Error(),
+				"strategy", strategy,
+				"stage", "create_instance",
+			)
 			return fmt.Errorf("failed to create planning instance for strategy %s: %w", strategy, err)
 		}
 
@@ -279,6 +378,11 @@ func (c *Coordinator) RunMultiPassPlanning() error {
 
 		// Start the instance
 		if err := c.orch.StartInstance(inst); err != nil {
+			c.logger.Error("planning failed",
+				"error", err.Error(),
+				"strategy", strategy,
+				"stage", "start_instance",
+			)
 			return fmt.Errorf("failed to start planning instance for strategy %s: %w", strategy, err)
 		}
 
@@ -618,6 +722,11 @@ func (c *Coordinator) startTask(taskID string, completionChan chan<- taskComplet
 		inst, err = c.orch.AddInstance(c.baseSession, prompt)
 	}
 	if err != nil {
+		c.logger.Error("task execution failed",
+			"task_id", taskID,
+			"error", err.Error(),
+			"stage", "create_instance",
+		)
 		return fmt.Errorf("failed to create instance for task %s: %w", taskID, err)
 	}
 
@@ -635,6 +744,11 @@ func (c *Coordinator) startTask(taskID string, completionChan chan<- taskComplet
 		delete(c.runningTasks, taskID)
 		c.runningCount--
 		c.mu.Unlock()
+		c.logger.Error("task execution failed",
+			"task_id", taskID,
+			"error", err.Error(),
+			"stage", "start_instance",
+		)
 		return fmt.Errorf("failed to start instance for task %s: %w", taskID, err)
 	}
 
@@ -756,6 +870,11 @@ func (c *Coordinator) monitorTaskInstance(taskID, instanceID string, completionC
 		case <-ticker.C:
 			inst := c.orch.GetInstance(instanceID)
 			if inst == nil {
+				c.logger.Debug("instance status check",
+					"task_id", taskID,
+					"instance_id", instanceID,
+					"status", "not_found",
+				)
 				completionChan <- taskCompletion{
 					taskID:     taskID,
 					instanceID: instanceID,
@@ -764,6 +883,13 @@ func (c *Coordinator) monitorTaskInstance(taskID, instanceID string, completionC
 				}
 				return
 			}
+
+			// Log instance status check at DEBUG level (only when status changes would be interesting)
+			c.logger.Debug("instance status check",
+				"task_id", taskID,
+				"instance_id", instanceID,
+				"status", string(inst.Status),
+			)
 
 			// Primary completion detection: check for sentinel file
 			// This is the preferred method as it's unambiguous - the task explicitly
@@ -1102,6 +1228,16 @@ func (c *Coordinator) checkAndAdvanceGroup() {
 	session.CurrentGroup++
 	c.mu.Unlock()
 
+	// Log group completion
+	taskCount := 0
+	if currentGroup < len(session.Plan.ExecutionOrder) {
+		taskCount = len(session.Plan.ExecutionOrder[currentGroup])
+	}
+	c.logger.Info("group completed",
+		"group_index", currentGroup,
+		"task_count", taskCount,
+	)
+
 	// Call the callback
 	c.mu.RLock()
 	cb := c.callbacks
@@ -1161,6 +1297,10 @@ func (c *Coordinator) RunSynthesis() error {
 	// Create a synthesis instance
 	inst, err := c.orch.AddInstance(c.baseSession, prompt)
 	if err != nil {
+		c.logger.Error("synthesis failed",
+			"error", err.Error(),
+			"stage", "create_instance",
+		)
 		return fmt.Errorf("failed to create synthesis instance: %w", err)
 	}
 
@@ -1170,6 +1310,10 @@ func (c *Coordinator) RunSynthesis() error {
 
 	// Start the instance
 	if err := c.orch.StartInstance(inst); err != nil {
+		c.logger.Error("synthesis failed",
+			"error", err.Error(),
+			"stage", "start_instance",
+		)
 		return fmt.Errorf("failed to start synthesis instance: %w", err)
 	}
 
@@ -1495,6 +1639,11 @@ func (c *Coordinator) startRevisionTask(taskID string, completionChan chan<- tas
 	// Create a new instance using the SAME worktree as the original task
 	inst, err := c.orch.AddInstanceToWorktree(c.baseSession, prompt, originalInst.WorktreePath, originalInst.Branch)
 	if err != nil {
+		c.logger.Error("revision failed",
+			"task_id", taskID,
+			"error", err.Error(),
+			"stage", "create_instance",
+		)
 		return fmt.Errorf("failed to create revision instance for task %s: %w", taskID, err)
 	}
 
@@ -1516,6 +1665,11 @@ func (c *Coordinator) startRevisionTask(taskID string, completionChan chan<- tas
 		delete(c.runningTasks, taskID)
 		c.runningCount--
 		c.mu.Unlock()
+		c.logger.Error("revision failed",
+			"task_id", taskID,
+			"error", err.Error(),
+			"stage", "start_instance",
+		)
 		return fmt.Errorf("failed to start revision instance for task %s: %w", taskID, err)
 	}
 

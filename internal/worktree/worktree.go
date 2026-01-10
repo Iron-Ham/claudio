@@ -6,11 +6,28 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
 // Manager handles git worktree operations
 type Manager struct {
 	repoDir string
+	logger  *logging.Logger
+}
+
+// SetLogger sets the logger for the worktree manager.
+// If not set, the manager will operate without logging.
+func (m *Manager) SetLogger(logger *logging.Logger) {
+	m.logger = logger
+}
+
+// truncateOutput truncates a string to maxLen characters, adding "..." if truncated.
+func truncateOutput(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // FindGitRoot finds the root of the git repository by traversing up from startDir.
@@ -51,12 +68,23 @@ func New(repoDir string) (*Manager, error) {
 func (m *Manager) Create(path, branch string) error {
 	// First, create the branch from current HEAD
 	// Use git worktree add -b to create branch and worktree in one step
-	cmd := exec.Command("git", "worktree", "add", "-b", branch, path)
+	args := []string{"worktree", "add", "-b", branch, path}
+	cmd := exec.Command("git", args...)
 	cmd.Dir = m.repoDir
 
 	output, err := cmd.CombinedOutput()
+	if m.logger != nil {
+		m.logger.Debug("git command", "args", args, "output", truncateOutput(string(output), 500))
+	}
 	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("git command failed", "args", args, "error", err, "stderr", string(output))
+		}
 		return fmt.Errorf("failed to create worktree: %w\n%s", err, string(output))
+	}
+
+	if m.logger != nil {
+		m.logger.Info("worktree created", "path", path, "branch", branch)
 	}
 
 	return nil
@@ -67,12 +95,23 @@ func (m *Manager) Create(path, branch string) error {
 func (m *Manager) CreateFromBranch(path, newBranch, baseBranch string) error {
 	// Use git worktree add -b <newBranch> <path> <baseBranch>
 	// This creates a worktree at <path> with a new branch <newBranch> starting from <baseBranch>
-	cmd := exec.Command("git", "worktree", "add", "-b", newBranch, path, baseBranch)
+	args := []string{"worktree", "add", "-b", newBranch, path, baseBranch}
+	cmd := exec.Command("git", args...)
 	cmd.Dir = m.repoDir
 
 	output, err := cmd.CombinedOutput()
+	if m.logger != nil {
+		m.logger.Debug("git command", "args", args, "output", truncateOutput(string(output), 500))
+	}
 	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("git command failed", "args", args, "error", err, "stderr", string(output))
+		}
 		return fmt.Errorf("failed to create worktree from branch %s: %w\n%s", baseBranch, err, string(output))
+	}
+
+	if m.logger != nil {
+		m.logger.Info("worktree created", "path", path, "branch", newBranch)
 	}
 
 	return nil
@@ -81,10 +120,18 @@ func (m *Manager) CreateFromBranch(path, newBranch, baseBranch string) error {
 // Remove removes a worktree
 func (m *Manager) Remove(path string) error {
 	// First, try to remove the worktree
-	cmd := exec.Command("git", "worktree", "remove", "--force", path)
+	args := []string{"worktree", "remove", "--force", path}
+	cmd := exec.Command("git", args...)
 	cmd.Dir = m.repoDir
 
-	if output, err := cmd.CombinedOutput(); err != nil {
+	output, err := cmd.CombinedOutput()
+	if m.logger != nil {
+		m.logger.Debug("git command", "args", args, "output", truncateOutput(string(output), 500))
+	}
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("git command failed", "args", args, "error", err, "stderr", string(output))
+		}
 		// If worktree remove fails, try to clean up manually
 		_ = os.RemoveAll(path)
 
@@ -94,6 +141,10 @@ func (m *Manager) Remove(path string) error {
 		_ = pruneCmd.Run()
 
 		return fmt.Errorf("failed to remove worktree cleanly: %w\n%s", err, string(output))
+	}
+
+	if m.logger != nil {
+		m.logger.Info("worktree removed", "path", path)
 	}
 
 	return nil
@@ -135,11 +186,23 @@ func (m *Manager) GetBranch(path string) (string, error) {
 
 // DeleteBranch deletes a branch
 func (m *Manager) DeleteBranch(branch string) error {
-	cmd := exec.Command("git", "branch", "-D", branch)
+	args := []string{"branch", "-D", branch}
+	cmd := exec.Command("git", args...)
 	cmd.Dir = m.repoDir
 
-	if output, err := cmd.CombinedOutput(); err != nil {
+	output, err := cmd.CombinedOutput()
+	if m.logger != nil {
+		m.logger.Debug("git command", "args", args, "output", truncateOutput(string(output), 500))
+	}
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("git command failed", "args", args, "error", err, "stderr", string(output))
+		}
 		return fmt.Errorf("failed to delete branch: %w\n%s", err, string(output))
+	}
+
+	if m.logger != nil {
+		m.logger.Info("branch deleted", "branch_name", branch)
 	}
 
 	return nil
@@ -147,15 +210,24 @@ func (m *Manager) DeleteBranch(branch string) error {
 
 // HasUncommittedChanges checks if a worktree has uncommitted changes
 func (m *Manager) HasUncommittedChanges(path string) (bool, error) {
-	cmd := exec.Command("git", "status", "--porcelain")
+	args := []string{"status", "--porcelain"}
+	cmd := exec.Command("git", args...)
 	cmd.Dir = path
 
 	output, err := cmd.Output()
 	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("git command failed", "args", args, "error", err)
+		}
 		return false, fmt.Errorf("failed to check status: %w", err)
 	}
 
-	return len(strings.TrimSpace(string(output))) > 0, nil
+	hasChanges := len(strings.TrimSpace(string(output))) > 0
+	if m.logger != nil {
+		m.logger.Debug("checking uncommitted changes", "path", path, "has_changes", hasChanges)
+	}
+
+	return hasChanges, nil
 }
 
 // CommitAll commits all changes in a worktree

@@ -2,8 +2,10 @@ package tui
 
 import (
 	"regexp"
+	"time"
 
 	"github.com/Iron-Ham/claudio/internal/conflict"
+	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 )
 
@@ -46,6 +48,8 @@ type Model struct {
 	// Core components
 	orchestrator *orchestrator.Orchestrator
 	session      *orchestrator.Session
+	logger       *logging.Logger
+	startTime    time.Time // Time when the TUI session started
 
 	// Ultra-plan mode (nil if not in ultra-plan mode)
 	ultraPlan *UltraPlanState
@@ -199,10 +203,18 @@ func (m *Model) exitPlanEditor() {
 }
 
 // NewModel creates a new TUI model
-func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session) Model {
+func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, logger *logging.Logger) Model {
+	// Create a TUI-specific logger with phase context
+	var tuiLogger *logging.Logger
+	if logger != nil {
+		tuiLogger = logger.WithPhase("tui")
+	}
+
 	return Model{
 		orchestrator:     orch,
 		session:          session,
+		logger:           tuiLogger,
+		startTime:        time.Now(),
 		outputs:          make(map[string]string),
 		outputScrolls:    make(map[string]int),
 		outputAutoScroll: make(map[string]bool),
