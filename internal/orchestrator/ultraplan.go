@@ -297,6 +297,10 @@ type UltraPlanSession struct {
 	// Synthesis completion context (populated from sentinel file)
 	SynthesisCompletion *SynthesisCompletionFile `json:"synthesis_completion,omitempty"`
 
+	// SynthesisAwaitingApproval is true when synthesis is complete but waiting for user review
+	// User must press [s] to approve and proceed to revision/consolidation
+	SynthesisAwaitingApproval bool `json:"synthesis_awaiting_approval,omitempty"`
+
 	// Task worktree information for consolidation context
 	TaskWorktrees []TaskWorktreeInfo `json:"task_worktrees,omitempty"`
 

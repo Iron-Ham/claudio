@@ -323,6 +323,24 @@ func (m Model) renderUltraPlanSidebar(width int, height int) string {
 			b.WriteString(line)
 			b.WriteString("\n")
 			lineCount++
+
+			// Show synthesis findings when awaiting approval
+			if session.SynthesisAwaitingApproval && session.SynthesisCompletion != nil && lineCount < availableLines {
+				issueCount := len(session.SynthesisCompletion.IssuesFound)
+				if issueCount > 0 {
+					issueText := fmt.Sprintf("  ⚠ %d issue(s) found", issueCount)
+					b.WriteString(styles.Warning.Render(issueText))
+				} else {
+					b.WriteString(styles.SuccessMsg.Render("  ✓ No issues found"))
+				}
+				b.WriteString("\n")
+				lineCount++
+
+				// Show prompt to approve
+				b.WriteString(styles.Warning.Render("  Press [s] to approve"))
+				b.WriteString("\n")
+				lineCount++
+			}
 		} else if !synthesisStarted && lineCount < availableLines {
 			b.WriteString(styles.Muted.Render("  ○ Pending"))
 			b.WriteString("\n")
@@ -1175,7 +1193,11 @@ func (m Model) renderUltraPlanHelp() string {
 	case orchestrator.PhaseSynthesis:
 		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
-		keys = append(keys, "[s] done → consolidate")
+		if session.SynthesisAwaitingApproval {
+			keys = append(keys, "[s] approve → proceed")
+		} else {
+			keys = append(keys, "[s] skip → consolidate")
+		}
 
 	case orchestrator.PhaseRevision:
 		keys = append(keys, "[tab] next instance")
