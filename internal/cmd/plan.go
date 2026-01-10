@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/plan"
 	"github.com/spf13/cobra"
@@ -67,6 +68,35 @@ func init() {
 }
 
 func runPlan(cmd *cobra.Command, args []string) error {
+	cfg := config.Get()
+
+	// Apply config file settings, CLI flags override
+	outputFormat := cfg.Plan.OutputFormat
+	if cmd.Flags().Changed("output-format") {
+		outputFormat = planOutputFormat
+	}
+
+	multiPass := cfg.Plan.MultiPass
+	if cmd.Flags().Changed("multi-pass") {
+		multiPass = planMultiPass
+	}
+
+	labels := cfg.Plan.Labels
+	if cmd.Flags().Changed("labels") {
+		labels = planLabels
+	}
+
+	outputFile := cfg.Plan.OutputFile
+	if cmd.Flags().Changed("output") {
+		outputFile = planOutputFile
+	}
+
+	// Update module-level vars so helper functions work correctly
+	planOutputFormat = outputFormat
+	planMultiPass = multiPass
+	planLabels = labels
+	planOutputFile = outputFile
+
 	// Get objective from args or prompt
 	var objective string
 	if len(args) > 0 {

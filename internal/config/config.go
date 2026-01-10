@@ -19,6 +19,7 @@ type Config struct {
 	Cleanup    CleanupConfig    `mapstructure:"cleanup"`
 	Resources  ResourceConfig   `mapstructure:"resources"`
 	Ultraplan  UltraplanConfig  `mapstructure:"ultraplan"`
+	Plan       PlanConfig       `mapstructure:"plan"`
 }
 
 // CompletionConfig controls what happens when an instance completes
@@ -137,6 +138,18 @@ type NotificationConfig struct {
 	SoundPath string `mapstructure:"sound_path"`
 }
 
+// PlanConfig controls plan-only mode behavior
+type PlanConfig struct {
+	// OutputFormat is the default output format: "json", "issues", or "both" (default: "issues")
+	OutputFormat string `mapstructure:"output_format"`
+	// MultiPass enables multi-pass planning by default (default: false)
+	MultiPass bool `mapstructure:"multi_pass"`
+	// Labels are default labels to add to GitHub Issues
+	Labels []string `mapstructure:"labels"`
+	// OutputFile is the default output file path for JSON output (default: ".claudio-plan.json")
+	OutputFile string `mapstructure:"output_file"`
+}
+
 // Default returns a Config with sensible default values
 func Default() *Config {
 	return &Config{
@@ -191,6 +204,12 @@ func Default() *Config {
 				UseSound:  false,
 				SoundPath: "",
 			},
+		},
+		Plan: PlanConfig{
+			OutputFormat: "issues",
+			MultiPass:    false,
+			Labels:       []string{},
+			OutputFile:   ".claudio-plan.json",
 		},
 	}
 }
@@ -262,6 +281,12 @@ func SetDefaults() {
 	viper.SetDefault("ultraplan.notifications.enabled", defaults.Ultraplan.Notifications.Enabled)
 	viper.SetDefault("ultraplan.notifications.use_sound", defaults.Ultraplan.Notifications.UseSound)
 	viper.SetDefault("ultraplan.notifications.sound_path", defaults.Ultraplan.Notifications.SoundPath)
+
+	// Plan defaults
+	viper.SetDefault("plan.output_format", defaults.Plan.OutputFormat)
+	viper.SetDefault("plan.multi_pass", defaults.Plan.MultiPass)
+	viper.SetDefault("plan.labels", defaults.Plan.Labels)
+	viper.SetDefault("plan.output_file", defaults.Plan.OutputFile)
 }
 
 // Load reads the configuration from viper into a Config struct
