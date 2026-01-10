@@ -13,6 +13,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/instance"
+	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 	"github.com/spf13/viper"
@@ -26,6 +27,7 @@ type Orchestrator struct {
 	sessionID   string // Current session ID (for multi-session support)
 	sessionDir  string // Session-specific directory (.claudio/sessions/{sessionID})
 	lock        *session.Lock
+	logger      *logging.Logger // Structured logger for debugging (nil = no logging)
 
 	session          *Session
 	instances        map[string]*instance.Manager
@@ -150,6 +152,9 @@ func (o *Orchestrator) StartSession(name string) (*Session, error) {
 
 	// Ensure initialized
 	if err := o.Init(); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to initialize orchestrator", "error", err)
+		}
 		return nil, err
 	}
 
@@ -157,6 +162,9 @@ func (o *Orchestrator) StartSession(name string) (*Session, error) {
 	if o.sessionDir != "" && o.sessionID != "" {
 		lock, err := session.AcquireLock(o.sessionDir, o.sessionID)
 		if err != nil {
+			if o.logger != nil {
+				o.logger.Error("failed to acquire session lock", "session_id", o.sessionID, "error", err)
+			}
 			return nil, fmt.Errorf("failed to acquire session lock: %w", err)
 		}
 		o.lock = lock
@@ -175,7 +183,19 @@ func (o *Orchestrator) StartSession(name string) (*Session, error) {
 
 	// Save session state
 	if err := o.saveSession(); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to save session", "session_id", sess.ID, "error", err)
+		}
 		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
+	// Log session start
+	if o.logger != nil {
+		o.logger.Info("session started",
+			"session_id", sess.ID,
+			"name", name,
+			"base_dir", o.baseDir,
+		)
 	}
 
 	return o.session, nil
@@ -197,11 +217,17 @@ func (o *Orchestrator) LoadSession() (*Session, error) {
 
 	data, err := os.ReadFile(sessionFile)
 	if err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to read session file", "file_path", sessionFile, "error", err)
+		}
 		return nil, fmt.Errorf("failed to read session file: %w", err)
 	}
 
 	var sess Session
 	if err := json.Unmarshal(data, &sess); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to parse session file", "file_path", sessionFile, "error", err)
+		}
 		return nil, fmt.Errorf("failed to parse session file: %w", err)
 	}
 
@@ -216,6 +242,14 @@ func (o *Orchestrator) LoadSession() (*Session, error) {
 	o.conflictDetector.Start()
 	for _, inst := range sess.Instances {
 		_ = o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath)
+	}
+
+	// Log session loaded
+	if o.logger != nil {
+		o.logger.Info("session loaded",
+			"session_id", sess.ID,
+			"instance_count", len(sess.Instances),
+		)
 	}
 
 	return o.session, nil
@@ -396,6 +430,13 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 	// Create worktree
 	wtPath := filepath.Join(o.worktreeDir, inst.ID)
 	if err := o.wt.Create(wtPath, inst.Branch); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to create worktree",
+				"instance_id", inst.ID,
+				"worktree_path", wtPath,
+				"error", err,
+			)
+		}
 		return nil, fmt.Errorf("failed to create worktree: %w", err)
 	}
 	inst.WorktreePath = wtPath
@@ -409,7 +450,13 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 
 	// Register with conflict detector
 	if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
-		// Non-fatal, just log
+		// Non-fatal, log at DEBUG since this is conflict detection related
+		if o.logger != nil {
+			o.logger.Debug("failed to watch instance for conflicts",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
 		fmt.Fprintf(os.Stderr, "Warning: failed to watch instance for conflicts: %v\n", err)
 	}
 
@@ -421,7 +468,22 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 
 	// Save session
 	if err := o.saveSession(); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to save session after adding instance",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
 		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
+	// Log instance added
+	if o.logger != nil {
+		o.logger.Info("instance added",
+			"instance_id", inst.ID,
+			"task", truncateString(task, 100),
+			"branch", inst.Branch,
+		)
 	}
 
 	return inst, nil
@@ -469,6 +531,13 @@ func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, base
 	// Create worktree from the specified base branch
 	wtPath := filepath.Join(o.worktreeDir, inst.ID)
 	if err := o.wt.CreateFromBranch(wtPath, inst.Branch, baseBranch); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to create worktree from branch",
+				"instance_id", inst.ID,
+				"base_branch", baseBranch,
+				"error", err,
+			)
+		}
 		return nil, fmt.Errorf("failed to create worktree from branch %s: %w", baseBranch, err)
 	}
 	inst.WorktreePath = wtPath
@@ -482,7 +551,13 @@ func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, base
 
 	// Register with conflict detector
 	if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
-		// Non-fatal, just log
+		// Non-fatal, log at DEBUG since this is conflict detection related
+		if o.logger != nil {
+			o.logger.Debug("failed to watch instance for conflicts",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
 		fmt.Fprintf(os.Stderr, "Warning: failed to watch instance for conflicts: %v\n", err)
 	}
 
@@ -494,7 +569,23 @@ func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, base
 
 	// Save session
 	if err := o.saveSession(); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to save session after adding instance from branch",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
 		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
+	// Log instance added
+	if o.logger != nil {
+		o.logger.Info("instance added",
+			"instance_id", inst.ID,
+			"task", truncateString(task, 100),
+			"branch", inst.Branch,
+			"base_branch", baseBranch,
+		)
 	}
 
 	return inst, nil
@@ -541,6 +632,12 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 	})
 
 	if err := mgr.Start(); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to start instance",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
 		return fmt.Errorf("failed to start instance: %w", err)
 	}
 
@@ -554,6 +651,15 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 		inst.Metrics = &Metrics{StartTime: now}
 	} else {
 		inst.Metrics.StartTime = now
+	}
+
+	// Log instance started
+	if o.logger != nil {
+		o.logger.Info("instance started",
+			"instance_id", inst.ID,
+			"tmux_session", inst.TmuxSession,
+			"pid", inst.PID,
+		)
 	}
 
 	return o.saveSession()
@@ -570,11 +676,25 @@ func (o *Orchestrator) StopInstance(inst *Instance) error {
 	}
 
 	if err := mgr.Stop(); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to stop instance",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
 		return fmt.Errorf("failed to stop instance: %w", err)
 	}
 
 	inst.Status = StatusCompleted
 	inst.PID = 0
+
+	// Log instance stopped
+	if o.logger != nil {
+		o.logger.Info("instance stopped",
+			"instance_id", inst.ID,
+			"status", string(inst.Status),
+		)
+	}
 
 	return o.saveSession()
 }
@@ -685,6 +805,21 @@ func (o *Orchestrator) SetBellCallback(cb func(instanceID string)) {
 	o.bellCallback = cb
 }
 
+// SetLogger sets the logger for the orchestrator.
+// If logger is nil, logging is disabled (no-op pattern).
+func (o *Orchestrator) SetLogger(logger *logging.Logger) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.logger = logger
+}
+
+// Logger returns the current logger, or nil if logging is disabled.
+func (o *Orchestrator) Logger() *logging.Logger {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.logger
+}
+
 // GetPRWorkflow returns the PR workflow for an instance, if any
 func (o *Orchestrator) GetPRWorkflow(id string) *instance.PRWorkflow {
 	o.mu.RLock()
@@ -761,6 +896,8 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
+	instanceCount := len(sess.Instances)
+
 	// Stop conflict detector
 	if o.conflictDetector != nil {
 		o.conflictDetector.Stop()
@@ -800,6 +937,14 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 		sessionFile = filepath.Join(o.claudioDir, "session.json")
 	}
 	_ = os.Remove(sessionFile)
+
+	// Log session stopped
+	if o.logger != nil {
+		o.logger.Info("session stopped",
+			"session_id", sess.ID,
+			"instance_count", instanceCount,
+		)
+	}
 
 	return nil
 }
@@ -908,10 +1053,25 @@ func (o *Orchestrator) saveSession() error {
 
 	data, err := json.MarshalIndent(o.session, "", "  ")
 	if err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to marshal session data", "error", err)
+		}
 		return err
 	}
 
-	return os.WriteFile(sessionFile, data, 0644)
+	if err := os.WriteFile(sessionFile, data, 0644); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to write session file", "file_path", sessionFile, "error", err)
+		}
+		return err
+	}
+
+	// Log session saved at DEBUG level
+	if o.logger != nil {
+		o.logger.Debug("session saved", "file_path", sessionFile)
+	}
+
+	return nil
 }
 
 // SaveSession is a public wrapper for saveSession, used by components
@@ -936,6 +1096,9 @@ func (o *Orchestrator) updateContext() error {
 		mainCtx = filepath.Join(o.claudioDir, "context.md")
 	}
 	if err := os.WriteFile(mainCtx, []byte(ctx), 0644); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to write context file", "file_path", mainCtx, "error", err)
+		}
 		return err
 	}
 
@@ -944,6 +1107,11 @@ func (o *Orchestrator) updateContext() error {
 		wtCtx := filepath.Join(inst.WorktreePath, ".claudio", "context.md")
 		_ = os.MkdirAll(filepath.Dir(wtCtx), 0755)
 		_ = os.WriteFile(wtCtx, []byte(ctx), 0644)
+	}
+
+	// Log context update at DEBUG level
+	if o.logger != nil {
+		o.logger.Debug("context updated", "instance_count", len(o.session.Instances))
 	}
 
 	return nil
@@ -1024,6 +1192,20 @@ func slugify(text string) string {
 	return slug
 }
 
+// timeoutTypeString converts a TimeoutType to its string representation for logging.
+func timeoutTypeString(t instance.TimeoutType) string {
+	switch t {
+	case instance.TimeoutActivity:
+		return "activity"
+	case instance.TimeoutCompletion:
+		return "completion"
+	case instance.TimeoutStale:
+		return "stale"
+	default:
+		return "unknown"
+	}
+}
+
 // handleInstanceExit handles when a Claude instance process exits
 func (o *Orchestrator) handleInstanceExit(id string) {
 	inst := o.GetInstance(id)
@@ -1088,6 +1270,12 @@ func (o *Orchestrator) checkBudgetLimits() {
 
 	// Check cost limit
 	if o.config.Resources.CostLimit > 0 && sessionMetrics.TotalCost >= o.config.Resources.CostLimit {
+		if o.logger != nil {
+			o.logger.Warn("budget limit exceeded, pausing all instances",
+				"total_cost", sessionMetrics.TotalCost,
+				"cost_limit", o.config.Resources.CostLimit,
+			)
+		}
 		// Pause all running instances
 		for _, inst := range o.session.Instances {
 			if inst.Status == StatusWorking {
@@ -1102,6 +1290,12 @@ func (o *Orchestrator) checkBudgetLimits() {
 
 	// Check cost warning threshold
 	if o.config.Resources.CostWarningThreshold > 0 && sessionMetrics.TotalCost >= o.config.Resources.CostWarningThreshold {
+		if o.logger != nil {
+			o.logger.Warn("budget warning threshold reached",
+				"total_cost", sessionMetrics.TotalCost,
+				"warning_threshold", o.config.Resources.CostWarningThreshold,
+			)
+		}
 		o.executeNotification("notifications.on_budget_warning", nil)
 	}
 
@@ -1110,6 +1304,13 @@ func (o *Orchestrator) checkBudgetLimits() {
 		for _, inst := range o.session.Instances {
 			if inst.Metrics != nil && inst.Status == StatusWorking {
 				if inst.Metrics.TotalTokens() >= o.config.Resources.TokenLimitPerInstance {
+					if o.logger != nil {
+						o.logger.Warn("instance token limit exceeded",
+							"instance_id", inst.ID,
+							"total_tokens", inst.Metrics.TotalTokens(),
+							"token_limit", o.config.Resources.TokenLimitPerInstance,
+						)
+					}
 					if mgr, ok := o.instances[inst.ID]; ok {
 						_ = mgr.Pause()
 						inst.Status = StatusPaused
@@ -1201,6 +1402,14 @@ func (o *Orchestrator) handleInstanceTimeout(id string, timeoutType instance.Tim
 	inst := o.GetInstance(id)
 	if inst == nil {
 		return
+	}
+
+	// Log timeout detection at WARN level
+	if o.logger != nil {
+		o.logger.Warn("instance timeout detected",
+			"instance_id", id,
+			"timeout_type", timeoutTypeString(timeoutType),
+		)
 	}
 
 	// Update status based on timeout type
