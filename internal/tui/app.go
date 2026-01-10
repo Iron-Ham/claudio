@@ -1832,8 +1832,8 @@ func (m *Model) updateOutputs() {
 			}
 
 			// Update instance status based on detected waiting state
-			// Only update if the instance is currently working (not paused, completed, etc.)
-			if inst.Status == orchestrator.StatusWorking {
+			// Check when working OR waiting for input (to detect completion after waiting)
+			if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
 				m.updateInstanceStatus(inst, mgr)
 			}
 		}

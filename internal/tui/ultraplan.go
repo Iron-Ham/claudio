@@ -2136,7 +2136,8 @@ func (m *Model) checkForPlanManagerPlanFile() bool {
 	// Parse the plan from the file
 	plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
 	if err != nil {
-		// File might be partially written, skip for now
+		// Show error if file exists but can't be parsed (helps debug)
+		m.errorMessage = fmt.Sprintf("Plan file found but parse error: %v", err)
 		return false
 	}
 
