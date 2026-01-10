@@ -122,7 +122,7 @@ func attachToSession(cwd, sessionID string, cfg *config.Config) error {
 	// Create logger if enabled
 	sessionDir := session.GetSessionDir(cwd, sessionID)
 	logger := CreateLogger(sessionDir, cfg)
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 
 	// Create orchestrator with the session ID
 	orch, err := orchestrator.NewWithSession(cwd, sessionID, cfg)
@@ -173,7 +173,7 @@ func startNewSession(cwd, sessionName string, cfg *config.Config) error {
 	// Create logger if enabled - we need session dir which requires session ID
 	sessionDir := session.GetSessionDir(cwd, sessionID)
 	logger := CreateLogger(sessionDir, cfg)
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 
 	// Create orchestrator with the new session ID
 	orch, err := orchestrator.NewWithSession(cwd, sessionID, cfg)

@@ -79,7 +79,7 @@ func AggregateLogs(sessionDir string) ([]LogEntry, error) {
 		}
 		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var entries []LogEntry
 	scanner := bufio.NewScanner(file)
@@ -265,7 +265,7 @@ func ExportLogEntries(entries []LogEntry, outputPath string, format string) erro
 	if err != nil {
 		return fmt.Errorf("failed to create output file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	switch strings.ToLower(format) {
 	case "json":

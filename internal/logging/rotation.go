@@ -83,7 +83,7 @@ func (rw *RotatingWriter) openFile() error {
 	// Get current file size
 	info, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return fmt.Errorf("failed to stat log file: %w", err)
 	}
 
@@ -159,15 +159,15 @@ func (rw *RotatingWriter) rotate() error {
 func (rw *RotatingWriter) rotateBackups() error {
 	if rw.maxBackups <= 0 {
 		// No backups, just remove any existing .1 file
-		os.Remove(rw.backupPath(1))
-		os.Remove(rw.backupPath(1) + ".gz")
+		_ = os.Remove(rw.backupPath(1))
+		_ = os.Remove(rw.backupPath(1) + ".gz")
 		return nil
 	}
 
 	// Remove the oldest backup if it exists
 	oldestPath := rw.backupPath(rw.maxBackups)
-	os.Remove(oldestPath)
-	os.Remove(oldestPath + ".gz")
+	_ = os.Remove(oldestPath)
+	_ = os.Remove(oldestPath + ".gz")
 
 	// Shift all backups up by one
 	for i := rw.maxBackups - 1; i >= 1; i-- {
@@ -176,9 +176,9 @@ func (rw *RotatingWriter) rotateBackups() error {
 
 		// Try both compressed and uncompressed versions
 		if _, err := os.Stat(oldPath + ".gz"); err == nil {
-			os.Rename(oldPath+".gz", newPath+".gz")
+			_ = os.Rename(oldPath+".gz", newPath+".gz")
 		} else if _, err := os.Stat(oldPath); err == nil {
-			os.Rename(oldPath, newPath)
+			_ = os.Rename(oldPath, newPath)
 		}
 	}
 
@@ -208,23 +208,23 @@ func (rw *RotatingWriter) compressFile(path string) {
 		fmt.Fprintf(os.Stderr, "Warning: failed to create compressed log file %s: %v\n", gzPath, err)
 		return
 	}
-	defer gzFile.Close()
+	defer func() { _ = gzFile.Close() }()
 
 	gzWriter := gzip.NewWriter(gzFile)
 	if _, err := gzWriter.Write(data); err != nil {
-		os.Remove(gzPath) // Clean up partial file
+		_ = os.Remove(gzPath) // Clean up partial file
 		fmt.Fprintf(os.Stderr, "Warning: failed to write compressed log data to %s: %v\n", gzPath, err)
 		return
 	}
 
 	if err := gzWriter.Close(); err != nil {
-		os.Remove(gzPath) // Clean up partial file
+		_ = os.Remove(gzPath) // Clean up partial file
 		fmt.Fprintf(os.Stderr, "Warning: failed to finalize compressed log file %s: %v\n", gzPath, err)
 		return
 	}
 
 	// Only remove the original after successful compression
-	os.Remove(path)
+	_ = os.Remove(path)
 }
 
 // Sync flushes any buffered data to the underlying file.

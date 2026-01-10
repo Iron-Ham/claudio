@@ -24,7 +24,7 @@ func TestAggregateLogs(t *testing.T) {
 		logger.WithSession("session-1").WithInstance("inst-2").WithPhase("execution").Debug("message 2")
 		logger.WithSession("session-1").Error("message 3", "code", 500)
 
-		logger.Close()
+		_ = logger.Close()
 
 		// Aggregate the logs
 		entries, err := AggregateLogs(dir)
@@ -241,7 +241,7 @@ func TestExportLogs(t *testing.T) {
 
 	logger.WithSession("sess-1").WithInstance("inst-1").WithPhase("planning").Info("test message", "key", "value")
 	logger.WithSession("sess-1").Error("error message", "code", 500)
-	logger.Close()
+	_ = logger.Close()
 
 	t.Run("exports to JSON format", func(t *testing.T) {
 		outputPath := filepath.Join(t.TempDir(), "output.json")
@@ -308,7 +308,7 @@ func TestExportLogs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to open output file: %v", err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		reader := csv.NewReader(file)
 		records, err := reader.ReadAll()

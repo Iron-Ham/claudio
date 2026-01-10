@@ -525,7 +525,7 @@ func MergeTasks(plan *PlanSpec, taskIDs []string, mergedTitle string) (string, e
 	mergedID := taskIDs[0]
 
 	// Determine complexity (take the highest)
-	var mergedComplexity TaskComplexity = ComplexityLow
+	mergedComplexity := ComplexityLow
 	for _, task := range tasksToMerge {
 		switch task.EstComplexity {
 		case ComplexityHigh:

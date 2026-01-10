@@ -319,7 +319,7 @@ func TestGetTaskByID(t *testing.T) {
 
 	task := GetTaskByID(spec, "task-1")
 	if task == nil {
-		t.Error("Expected to find task-1")
+		t.Fatal("Expected to find task-1")
 	}
 	if task.Title != "Task 1" {
 		t.Errorf("Expected title 'Task 1', got %q", task.Title)

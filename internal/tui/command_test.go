@@ -136,6 +136,10 @@ func TestTaskInputEnter(t *testing.T) {
 
 	t.Run("enter key exits task input mode with task (no orchestrator)", func(t *testing.T) {
 		// Note: Without orchestrator, AddInstance will fail but addingTask should still be cleared
+		// This will panic because orchestrator is nil, so we skip this test
+		// The important test is the empty task one which confirms Enter is detected
+		t.Skip("skipping - requires mock orchestrator")
+
 		m := Model{
 			addingTask:      true,
 			taskInput:       "test task",
@@ -144,9 +148,6 @@ func TestTaskInputEnter(t *testing.T) {
 		}
 
 		msg := tea.KeyMsg{Type: tea.KeyEnter}
-		// This will panic because orchestrator is nil, so we skip this test
-		// The important test is the empty task one which confirms Enter is detected
-		t.Skip("skipping - requires mock orchestrator")
 		result, _ := m.handleKeypress(msg)
 		model := result.(Model)
 

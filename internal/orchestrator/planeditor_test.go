@@ -355,7 +355,7 @@ func TestSplitTask(t *testing.T) {
 	plan := createTestPlan()
 
 	// Set up a task with longer description for splitting
-	UpdateTaskDescription(plan, "task-2", "Part 1: Setup the foundation. Part 2: Implement the logic. Part 3: Add error handling.")
+	_ = UpdateTaskDescription(plan, "task-2", "Part 1: Setup the foundation. Part 2: Implement the logic. Part 3: Add error handling.")
 
 	// Split at two points
 	newIDs, err := SplitTask(plan, "task-2", []int{30, 60})
@@ -510,7 +510,7 @@ func TestGetTaskByID(t *testing.T) {
 
 	task := GetTaskByID(plan, "task-1")
 	if task == nil {
-		t.Error("task-1 should exist")
+		t.Fatal("task-1 should exist")
 	}
 	if task.ID != "task-1" {
 		t.Errorf("expected ID 'task-1', got '%s'", task.ID)
@@ -617,9 +617,9 @@ func TestRecalculatePlanAfterMutations(t *testing.T) {
 	plan := createTestPlan()
 
 	// Make multiple mutations
-	UpdateTaskTitle(plan, "task-1", "Updated Setup")
-	UpdateTaskPriority(plan, "task-2", 10)
-	UpdateTaskDependencies(plan, "task-4", []string{"task-2"})
+	_ = UpdateTaskTitle(plan, "task-1", "Updated Setup")
+	_ = UpdateTaskPriority(plan, "task-2", 10)
+	_ = UpdateTaskDependencies(plan, "task-4", []string{"task-2"})
 
 	// Plan should still be valid
 	if err := ValidatePlan(plan); err != nil {
@@ -1460,7 +1460,7 @@ func TestSplitTask_TableDriven(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			plan := createTestPlan()
-			UpdateTaskDescription(plan, tt.taskID, tt.description)
+			_ = UpdateTaskDescription(plan, tt.taskID, tt.description)
 
 			newIDs, err := SplitTask(plan, tt.taskID, tt.splitPoints)
 
@@ -1585,7 +1585,7 @@ func TestDependencyGraphRecalculation(t *testing.T) {
 	}
 
 	// Modify dependencies
-	UpdateTaskDependencies(plan, "task-4", []string{"task-2", "task-3"})
+	_ = UpdateTaskDependencies(plan, "task-4", []string{"task-2", "task-3"})
 
 	// Verify graph was recalculated
 	graphDeps := plan.DependencyGraph["task-4"]

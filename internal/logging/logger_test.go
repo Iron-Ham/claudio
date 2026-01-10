@@ -16,7 +16,7 @@ func TestNewLogger(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewLogger failed: %v", err)
 		}
-		defer logger.Close()
+		defer func() { _ = logger.Close() }()
 
 		logPath := filepath.Join(dir, "debug.log")
 		if _, err := os.Stat(logPath); os.IsNotExist(err) {
@@ -29,7 +29,7 @@ func TestNewLogger(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewLogger failed: %v", err)
 		}
-		defer logger.Close()
+		defer func() { _ = logger.Close() }()
 
 		if logger.file != nil {
 			t.Error("expected file to be nil when sessionDir is empty")
@@ -43,7 +43,7 @@ func TestNewLogger(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewLogger failed: %v", err)
 		}
-		defer logger.Close()
+		defer func() { _ = logger.Close() }()
 
 		// Logger should have been created successfully
 		if logger.logger == nil {
@@ -66,7 +66,7 @@ func TestLogLevels(t *testing.T) {
 	logger.Warn("warn message", "key", "value")
 	logger.Error("error message", "key", "value")
 
-	logger.Close()
+	_ = logger.Close()
 
 	// Read and verify log file
 	logPath := filepath.Join(dir, "debug.log")
@@ -117,7 +117,7 @@ func TestLogLevelFiltering(t *testing.T) {
 	logger.Warn("warn message")
 	logger.Error("error message")
 
-	logger.Close()
+	_ = logger.Close()
 
 	logPath := filepath.Join(dir, "debug.log")
 	content, err := os.ReadFile(logPath)
@@ -146,7 +146,7 @@ func TestContextPropagation(t *testing.T) {
 
 	childLogger.Info("test message", "extra", "data")
 
-	logger.Close()
+	_ = logger.Close()
 
 	logPath := filepath.Join(dir, "debug.log")
 	content, err := os.ReadFile(logPath)
@@ -185,7 +185,7 @@ func TestWith(t *testing.T) {
 	childLogger := logger.With("foo", "bar", "count", 42)
 	childLogger.Info("test message")
 
-	logger.Close()
+	_ = logger.Close()
 
 	logPath := filepath.Join(dir, "debug.log")
 	content, err := os.ReadFile(logPath)
@@ -318,7 +318,7 @@ func TestConcurrentWrites(t *testing.T) {
 		<-done
 	}
 
-	logger.Close()
+	_ = logger.Close()
 
 	// Verify log file has content
 	logPath := filepath.Join(dir, "debug.log")
@@ -377,7 +377,7 @@ func TestFilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLogger failed: %v", err)
 	}
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 
 	logPath := filepath.Join(dir, "debug.log")
 	info, err := os.Stat(logPath)
@@ -407,7 +407,7 @@ func TestLogLevelFilteringINFO(t *testing.T) {
 	logger.Warn("warn message")
 	logger.Error("error message")
 
-	logger.Close()
+	_ = logger.Close()
 
 	logPath := filepath.Join(dir, "debug.log")
 	content, err := os.ReadFile(logPath)
@@ -450,7 +450,7 @@ func TestLogLevelFilteringERROR(t *testing.T) {
 	logger.Warn("warn message")
 	logger.Error("error message")
 
-	logger.Close()
+	_ = logger.Close()
 
 	logPath := filepath.Join(dir, "debug.log")
 	content, err := os.ReadFile(logPath)
@@ -491,7 +491,7 @@ func TestJSONFormatValidation(t *testing.T) {
 		"nil_key", nil,
 	)
 
-	logger.Close()
+	_ = logger.Close()
 
 	logPath := filepath.Join(dir, "debug.log")
 	content, err := os.ReadFile(logPath)
@@ -545,7 +545,7 @@ func TestWithEmptyArgs(t *testing.T) {
 	sameLogger := logger.With()
 
 	sameLogger.Info("test message")
-	logger.Close()
+	_ = logger.Close()
 
 	// Verify log was written
 	logPath := filepath.Join(dir, "debug.log")
@@ -571,7 +571,7 @@ func TestWithNonStringKey(t *testing.T) {
 	childLogger := logger.With(42, "value", "valid_key", "valid_value")
 
 	childLogger.Info("test message")
-	logger.Close()
+	_ = logger.Close()
 
 	logPath := filepath.Join(dir, "debug.log")
 	content, err := os.ReadFile(logPath)
@@ -609,7 +609,7 @@ func TestChildLoggerInheritance(t *testing.T) {
 	// Also log from parent - should NOT have child attrs
 	logger.Info("parent message")
 
-	logger.Close()
+	_ = logger.Close()
 
 	logPath := filepath.Join(dir, "debug.log")
 	content, err := os.ReadFile(logPath)
@@ -680,7 +680,7 @@ func TestConcurrentChildLoggers(t *testing.T) {
 		<-done
 	}
 
-	logger.Close()
+	_ = logger.Close()
 
 	// Verify log file has all entries
 	logPath := filepath.Join(dir, "debug.log")
@@ -716,7 +716,7 @@ func TestDirectoryCreation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLogger failed: %v", err)
 	}
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 
 	// Verify directory was created
 	info, err := os.Stat(nestedDir)
@@ -743,7 +743,7 @@ func TestAppendToExistingLog(t *testing.T) {
 		t.Fatalf("NewLogger failed: %v", err)
 	}
 	logger1.Info("first message")
-	logger1.Close()
+	_ = logger1.Close()
 
 	// Create second logger and write
 	logger2, err := NewLogger(dir, LevelInfo)
@@ -751,7 +751,7 @@ func TestAppendToExistingLog(t *testing.T) {
 		t.Fatalf("NewLogger failed: %v", err)
 	}
 	logger2.Info("second message")
-	logger2.Close()
+	_ = logger2.Close()
 
 	// Verify both messages are in the log
 	logPath := filepath.Join(dir, "debug.log")

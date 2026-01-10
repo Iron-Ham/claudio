@@ -242,7 +242,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 	}
 
 	// Parse filter options
-	var minLevel int = -1
+	var minLevel = -1
 	if logsLevel != "" {
 		validLevel := logging.ParseLevel(logsLevel)
 		minLevel = levelPriority(validLevel)
@@ -281,7 +281,7 @@ func displayLogs(logPath string, tail int, minLevel int, sinceTime time.Time, gr
 	if err != nil {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var entries []string
 	scanner := bufio.NewScanner(file)
@@ -338,7 +338,7 @@ func followLogs(logPath string, minLevel int, sinceTime time.Time, grepRegex *re
 	if err != nil {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Seek to end of file
 	_, err = file.Seek(0, io.SeekEnd)

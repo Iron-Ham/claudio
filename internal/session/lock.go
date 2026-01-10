@@ -128,10 +128,10 @@ func AcquireLock(sessionDir, sessionID string, logger *logging.Logger) (*Lock, e
 		}
 		return nil, fmt.Errorf("failed to create lock file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := f.Write(data); err != nil {
-		os.Remove(lockPath)
+		_ = os.Remove(lockPath)
 		if logger != nil {
 			logger.Error("failed to acquire lock",
 				"session_id", sessionID,

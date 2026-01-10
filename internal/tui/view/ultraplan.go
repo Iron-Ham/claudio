@@ -487,12 +487,10 @@ func (v *UltraplanView) RenderSidebar(width int, height int) string {
 				prLine := fmt.Sprintf("    %d PR(s) created", len(session.PRUrls))
 				b.WriteString(styles.Muted.Render(prLine))
 				b.WriteString("\n")
-				lineCount++
 			}
 		} else if !consolidationStarted && lineCount < availableLines {
 			b.WriteString(styles.Muted.Render("  ○ Pending"))
 			b.WriteString("\n")
-			lineCount++
 		}
 	}
 
