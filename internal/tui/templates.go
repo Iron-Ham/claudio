@@ -4,7 +4,8 @@ package tui
 type TaskTemplate struct {
 	Command     string // The slash command (e.g., "test", "docs")
 	Name        string // Display name (e.g., "Run Tests")
-	Description string // Full task description that gets expanded
+	Description string // Task description shown to user (what they edit)
+	Suffix      string // Optional suffix appended on submission (not shown during editing)
 }
 
 // TaskTemplates defines the available task templates
@@ -60,11 +61,10 @@ var TaskTemplates = []TaskTemplate{
 		Description: "Perform a security audit and fix any vulnerabilities found.",
 	},
 	{
-		Command: "plan",
-		Name:    "Create Issue Plan",
-		Description: `Create a structured plan for the following objective:
-
-[Your objective here]
+		Command:     "plan",
+		Name:        "Create Issue Plan",
+		Description: "Create a structured plan for the following objective:\n\n",
+		Suffix: `
 
 Instructions:
 1. Explore the codebase to understand its structure and patterns
