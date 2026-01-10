@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/instance/capture"
 	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
@@ -31,7 +32,7 @@ type PRWorkflow struct {
 	task        string
 	sessionName string // tmux session name
 	config      PRWorkflowConfig
-	outputBuf   *RingBuffer
+	outputBuf   *capture.RingBuffer
 	logger      *logging.Logger
 	startTime   time.Time // for tracking workflow duration
 
@@ -52,7 +53,7 @@ func NewPRWorkflow(instanceID, workdir, branch, task string, cfg PRWorkflowConfi
 		task:        task,
 		sessionName: fmt.Sprintf("claudio-%s-pr", instanceID),
 		config:      cfg,
-		outputBuf:   NewRingBuffer(100000), // 100KB buffer
+		outputBuf:   capture.NewRingBuffer(100000), // 100KB buffer
 		doneChan:    make(chan struct{}),
 	}
 }
@@ -77,7 +78,7 @@ func NewPRWorkflowWithSession(sessionID, instanceID, workdir, branch, task strin
 		task:        task,
 		sessionName: sessionName,
 		config:      cfg,
-		outputBuf:   NewRingBuffer(100000), // 100KB buffer
+		outputBuf:   capture.NewRingBuffer(100000), // 100KB buffer
 		doneChan:    make(chan struct{}),
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/instance/capture"
 	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
@@ -78,7 +79,7 @@ type Manager struct {
 	workdir     string
 	task        string
 	sessionName string // tmux session name
-	outputBuf   *RingBuffer
+	outputBuf   *capture.RingBuffer
 	mu          sync.RWMutex
 	running     bool
 	paused      bool
@@ -126,7 +127,7 @@ func NewManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager 
 		workdir:       workdir,
 		task:          task,
 		sessionName:   fmt.Sprintf("claudio-%s", id),
-		outputBuf:     NewRingBuffer(cfg.OutputBufferSize),
+		outputBuf:     capture.NewRingBuffer(cfg.OutputBufferSize),
 		doneChan:      make(chan struct{}),
 		config:        cfg,
 		detector:      NewDetector(),
@@ -153,7 +154,7 @@ func NewManagerWithSession(sessionID, id, workdir, task string, cfg ManagerConfi
 		workdir:       workdir,
 		task:          task,
 		sessionName:   sessionName,
-		outputBuf:     NewRingBuffer(cfg.OutputBufferSize),
+		outputBuf:     capture.NewRingBuffer(cfg.OutputBufferSize),
 		doneChan:      make(chan struct{}),
 		config:        cfg,
 		detector:      NewDetector(),
