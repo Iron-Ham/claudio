@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
+	"github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/instance/process"
 )
 
@@ -194,7 +195,7 @@ func TestFacade_SetCallbacks(t *testing.T) {
 
 	f.SetCallbacks(
 		func(_ detect.WaitingState) { stateChangeCalled = true },
-		func(_ *ParsedMetrics) { metricsCalled = true },
+		func(_ *metrics.ParsedMetrics) { metricsCalled = true },
 		func(_ string) { timeoutCalled = true },
 		func() { bellCalled = true },
 	)

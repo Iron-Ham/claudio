@@ -11,6 +11,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/instance/capture"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
+	"github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
@@ -71,7 +72,7 @@ func DefaultManagerConfig() ManagerConfig {
 }
 
 // MetricsChangeCallback is called when metrics are updated
-type MetricsChangeCallback func(instanceID string, metrics *ParsedMetrics)
+type MetricsChangeCallback func(instanceID string, metrics *metrics.ParsedMetrics)
 
 // Manager handles a single Claude Code instance running in a tmux session
 type Manager struct {
@@ -94,8 +95,8 @@ type Manager struct {
 	stateCallback StateChangeCallback
 
 	// Metrics tracking
-	metricsParser   *MetricsParser
-	currentMetrics  *ParsedMetrics
+	metricsParser   *metrics.MetricsParser
+	currentMetrics  *metrics.ParsedMetrics
 	metricsCallback MetricsChangeCallback
 	startTime       *time.Time
 
@@ -133,7 +134,7 @@ func NewManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager 
 		config:        cfg,
 		detector:      detect.NewDetector(),
 		currentState:  detect.StateWorking,
-		metricsParser: NewMetricsParser(),
+		metricsParser: metrics.NewMetricsParser(),
 	}
 }
 
@@ -160,7 +161,7 @@ func NewManagerWithSession(sessionID, id, workdir, task string, cfg ManagerConfi
 		config:        cfg,
 		detector:      detect.NewDetector(),
 		currentState:  detect.StateWorking,
-		metricsParser: NewMetricsParser(),
+		metricsParser: metrics.NewMetricsParser(),
 	}
 }
 
@@ -201,7 +202,7 @@ func (m *Manager) SetLogger(logger *logging.Logger) {
 }
 
 // CurrentMetrics returns the currently parsed metrics
-func (m *Manager) CurrentMetrics() *ParsedMetrics {
+func (m *Manager) CurrentMetrics() *metrics.ParsedMetrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.currentMetrics
@@ -569,8 +570,8 @@ func (m *Manager) detectAndNotifyState(output []byte) {
 
 // parseAndNotifyMetrics parses metrics from output and notifies if changed
 func (m *Manager) parseAndNotifyMetrics(output []byte) {
-	newMetrics := m.metricsParser.Parse(output)
-	if newMetrics == nil {
+	newMetrics, err := m.metricsParser.Parse(output)
+	if err != nil || newMetrics == nil {
 		return
 	}
 
