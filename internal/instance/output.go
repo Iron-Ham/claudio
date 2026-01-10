@@ -2,8 +2,6 @@ package instance
 
 import (
 	"os/exec"
-	"strings"
-	"time"
 )
 
 // Output capture, polling, and processing logic for the instance manager.
@@ -26,10 +24,11 @@ func (m *Manager) captureLoop() {
 				continue
 			}
 			sessionName := m.sessionName
-			timedOut := m.timedOut
+			instanceID := m.id
 			m.mu.RUnlock()
 
 			// Skip processing if already timed out
+			timedOut, _ := m.timeoutHandler.TimedOut()
 			if timedOut {
 				continue
 			}
@@ -56,31 +55,27 @@ func (m *Manager) captureLoop() {
 				m.outputBuf.Reset()
 				_, _ = m.outputBuf.Write(output)
 
-				// Update activity tracking
-				m.mu.Lock()
-				m.lastActivityTime = time.Now()
-				m.lastOutputHash = lastOutput
-				m.repeatedOutputCount = 0
-				m.mu.Unlock()
+				// Update activity tracking via timeout handler
+				m.timeoutHandler.RecordActivity(lastOutput)
 
 				lastOutput = currentOutput
 
 				// Detect waiting state from the new output
 				m.detectAndNotifyState(output)
 			} else {
-				// Output hasn't changed - check for stale detection
-				m.mu.Lock()
-				if m.config.StaleDetection {
-					m.repeatedOutputCount++
-				}
-				m.mu.Unlock()
+				// Output hasn't changed - record for stale detection
+				m.timeoutHandler.RecordRepeatedOutput()
 			}
 
-			// Check for timeout conditions
-			m.checkTimeouts()
+			// Check for timeout conditions via timeout handler
+			m.mu.RLock()
+			running := m.running
+			paused := m.paused
+			m.mu.RUnlock()
+			m.timeoutHandler.CheckTimeouts(instanceID, running, paused)
 
 			// Check for terminal bells and forward them
-			m.checkAndForwardBell(sessionName)
+			m.bellHandler.CheckAndForward(sessionName, m.id)
 
 			// Check if the session is still running
 			checkCmd := exec.Command("tmux", "has-session", "-t", sessionName)
@@ -89,7 +84,6 @@ func (m *Manager) captureLoop() {
 				m.mu.Lock()
 				m.running = false
 				callback := m.stateCallback
-				instanceID := m.id
 				m.currentState = StateCompleted
 				m.mu.Unlock()
 
@@ -100,85 +94,6 @@ func (m *Manager) captureLoop() {
 				return
 			}
 		}
-	}
-}
-
-// checkTimeouts checks for various timeout conditions and triggers callbacks
-func (m *Manager) checkTimeouts() {
-	m.mu.Lock()
-	if m.timedOut || !m.running || m.paused {
-		m.mu.Unlock()
-		return
-	}
-
-	now := time.Now()
-	callback := m.timeoutCallback
-	instanceID := m.id
-	var triggeredTimeout *TimeoutType
-
-	// Check completion timeout (total runtime)
-	if m.config.CompletionTimeoutMinutes > 0 && m.startTime != nil {
-		completionTimeout := time.Duration(m.config.CompletionTimeoutMinutes) * time.Minute
-		if now.Sub(*m.startTime) > completionTimeout {
-			t := TimeoutCompletion
-			triggeredTimeout = &t
-			m.timedOut = true
-			m.timeoutType = TimeoutCompletion
-		}
-	}
-
-	// Check activity timeout (no output changes)
-	if triggeredTimeout == nil && m.config.ActivityTimeoutMinutes > 0 {
-		activityTimeout := time.Duration(m.config.ActivityTimeoutMinutes) * time.Minute
-		if now.Sub(m.lastActivityTime) > activityTimeout {
-			t := TimeoutActivity
-			triggeredTimeout = &t
-			m.timedOut = true
-			m.timeoutType = TimeoutActivity
-		}
-	}
-
-	// Check for stale detection (repeated identical output)
-	// Trigger if we've seen the same output 3000 times (5 minutes at 100ms interval)
-	// This catches stuck loops producing identical output while allowing time for
-	// legitimate long-running operations like planning and exploration
-	if triggeredTimeout == nil && m.config.StaleDetection && m.repeatedOutputCount > 3000 {
-		t := TimeoutStale
-		triggeredTimeout = &t
-		m.timedOut = true
-		m.timeoutType = TimeoutStale
-	}
-
-	m.mu.Unlock()
-
-	// Invoke callback outside of lock to prevent deadlocks
-	if triggeredTimeout != nil && callback != nil {
-		callback(instanceID, *triggeredTimeout)
-	}
-}
-
-// checkAndForwardBell checks for terminal bells and triggers the callback if detected
-func (m *Manager) checkAndForwardBell(sessionName string) {
-	// Query the window_bell_flag from tmux
-	bellCmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#{window_bell_flag}")
-	output, err := bellCmd.Output()
-	if err != nil {
-		return
-	}
-
-	bellActive := strings.TrimSpace(string(output)) == "1"
-
-	m.mu.Lock()
-	lastBellState := m.lastBellState
-	callback := m.bellCallback
-	instanceID := m.id
-	m.lastBellState = bellActive
-	m.mu.Unlock()
-
-	// Trigger callback on transition from no-bell to bell (edge detection)
-	// This ensures we only fire once per bell, not continuously while the flag is set
-	if bellActive && !lastBellState && callback != nil {
-		callback(instanceID)
 	}
 }
 

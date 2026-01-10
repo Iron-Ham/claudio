@@ -23,7 +23,7 @@ func (m Model) renderContent(width int) string {
 		return m.renderHelpPanel(width)
 	}
 
-	if m.showDiff {
+	if m.getDiffState().IsVisible() {
 		return m.renderDiffPanel(width)
 	}
 
@@ -106,7 +106,7 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	b.WriteString("\n")
 
 	// Output with scrolling support
-	output := m.outputs[inst.ID]
+	output := m.outputManager.GetOutput(inst.ID)
 	if output == "" {
 		output = "No output yet. Press [s] to start this instance."
 		outputBox := styles.OutputArea.
@@ -126,7 +126,7 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	maxLines := m.getOutputMaxLines()
 
 	// Get scroll position
-	scrollOffset := m.outputState.GetScroll(inst.ID)
+	scrollOffset := m.outputManager.GetScroll(inst.ID)
 	maxScroll := m.getOutputMaxScroll(inst.ID)
 
 	// Clamp scroll position
@@ -151,7 +151,7 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	}
 
 	// Apply search highlighting
-	if m.searchRegex != nil && m.searchPattern != "" {
+	if m.search.Regex() != nil && m.search.HasPattern() {
 		visibleLines = m.highlightSearchMatches(visibleLines, startLine)
 	}
 
@@ -197,7 +197,7 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	b.WriteString(outputBox)
 
 	// Show search bar if in search mode or has active search
-	if m.searchMode || m.searchPattern != "" {
+	if m.search.IsActive() || m.search.HasPattern() {
 		b.WriteString("\n")
 		b.WriteString(m.renderSearchBar())
 	}
@@ -207,7 +207,7 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 
 // highlightSearchMatches highlights search matches in visible lines.
 func (m Model) highlightSearchMatches(lines []string, startLine int) []string {
-	if m.searchRegex == nil {
+	if m.search.Regex() == nil {
 		return lines
 	}
 
@@ -217,14 +217,14 @@ func (m Model) highlightSearchMatches(lines []string, startLine int) []string {
 		isCurrentMatchLine := false
 
 		// Check if this line contains the current match
-		if len(m.searchMatches) > 0 && m.searchCurrent < len(m.searchMatches) {
-			if lineNum == m.searchMatches[m.searchCurrent] {
+		if m.search.HasMatches() && m.search.CurrentMatchIndex() < m.search.MatchCount() {
+			if lineNum == m.search.CurrentMatchLine() {
 				isCurrentMatchLine = true
 			}
 		}
 
 		// Find and highlight all matches in this line
-		matches := m.searchRegex.FindAllStringIndex(line, -1)
+		matches := m.search.Regex().FindAllStringIndex(line, -1)
 		if len(matches) == 0 {
 			result[i] = line
 			continue
@@ -263,9 +263,9 @@ func (m Model) renderAddTask(width int) string {
 	b.WriteString("Enter task description:\n\n")
 
 	// Render text with cursor at the correct position
-	runes := []rune(m.taskInput)
+	runes := []rune(m.taskInput.Buffer())
 	// Clamp cursor to valid bounds as a safety measure
-	cursor := m.taskInputCursor
+	cursor := m.taskInput.Cursor()
 	if cursor < 0 {
 		cursor = 0
 	}
@@ -295,13 +295,13 @@ func (m Model) renderAddTask(width int) string {
 	}
 
 	// Show template dropdown if active
-	if m.showTemplates {
+	if m.templateHandler.IsVisible() {
 		b.WriteString("\n")
 		b.WriteString(m.renderTemplateDropdown())
 	}
 
 	b.WriteString("\n\n")
-	if m.showTemplates {
+	if m.templateHandler.IsVisible() {
 		b.WriteString(styles.Muted.Render("↑/↓") + " navigate  " +
 			styles.Muted.Render("Enter/Tab") + " select  " +
 			styles.Muted.Render("Esc") + " close  " +
@@ -318,18 +318,19 @@ func (m Model) renderAddTask(width int) string {
 
 // renderTemplateDropdown renders the template selection dropdown.
 func (m Model) renderTemplateDropdown() string {
-	templates := FilterTemplates(m.templateFilter)
+	templates := m.templateHandler.FilteredTemplates()
 	if len(templates) == 0 {
 		return styles.Muted.Render("  No matching templates")
 	}
 
+	selectedIdx := m.templateHandler.SelectedIndex()
 	var items []string
 	for i, t := range templates {
 		cmd := "/" + t.Command
 		name := " - " + t.Name
 
 		var item string
-		if i == m.templateSelected {
+		if i == selectedIdx {
 			// Selected item - highlight the whole row
 			item = styles.DropdownItemSelected.Render(cmd + name)
 		} else {
@@ -366,7 +367,7 @@ func (m Model) renderHelp() string {
 		)
 	}
 
-	if m.showDiff {
+	if m.getDiffState().IsVisible() {
 		return styles.HelpBar.Render(
 			styles.Primary.Bold(true).Render("DIFF VIEW") + "  " +
 				styles.HelpKey.Render("[j/k]") + " scroll  " +
@@ -385,7 +386,7 @@ func (m Model) renderHelp() string {
 		)
 	}
 
-	if m.searchMode {
+	if m.search.IsActive() {
 		return styles.HelpBar.Render(
 			styles.Primary.Bold(true).Render("SEARCH") + "  " +
 				"Type pattern  " +
@@ -412,8 +413,8 @@ func (m Model) renderHelp() string {
 	}
 
 	// Add search status indicator if search is active
-	if m.searchPattern != "" && len(m.searchMatches) > 0 {
-		searchStatus := styles.Secondary.Render(fmt.Sprintf("[%d/%d]", m.searchCurrent+1, len(m.searchMatches)))
+	if m.search.HasPattern() && m.search.HasMatches() {
+		searchStatus := styles.Secondary.Render(fmt.Sprintf("[%d/%d]", m.search.CurrentMatchIndex()+1, m.search.MatchCount()))
 		keys = append(keys, searchStatus+" "+styles.HelpKey.Render("[n/N]")+" match")
 	}
 

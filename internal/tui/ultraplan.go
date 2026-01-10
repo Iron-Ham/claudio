@@ -359,7 +359,7 @@ func (m *Model) tryParsePlan(inst *orchestrator.Instance, session *orchestrator.
 	}
 
 	// Fall back to output parsing (for backwards compatibility)
-	output := m.outputs[inst.ID]
+	output := m.outputManager.GetOutput(inst.ID)
 	if output == "" {
 		return nil, fmt.Errorf("no plan file found and no output available")
 	}
@@ -567,7 +567,7 @@ func (m *Model) checkForPlanManagerPlanFile() bool {
 
 	// Try to parse the plan decision from the output (for display purposes)
 	// This is optional - the plan file is the ground truth
-	output := m.outputs[inst.ID]
+	output := m.outputManager.GetOutput(inst.ID)
 	decision, _ := orchestrator.ParsePlanDecisionFromOutput(output)
 	if decision != nil {
 		session.SelectedPlanIndex = decision.SelectedIndex

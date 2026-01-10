@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestTaskInputInsert(t *testing.T) {
+func TestInputHandlerInsert(t *testing.T) {
 	tests := []struct {
 		name           string
 		initialInput   string
@@ -49,22 +49,21 @@ func TestTaskInputInsert(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := Model{
-				taskInput:       tt.initialInput,
-				taskInputCursor: tt.initialCursor,
+			h := NewInputHandler()
+			h.SetBuffer(tt.initialInput)
+			h.SetCursor(tt.initialCursor)
+			h.Insert(tt.insertText)
+			if h.Buffer() != tt.expectedInput {
+				t.Errorf("Buffer() = %q, want %q", h.Buffer(), tt.expectedInput)
 			}
-			m.taskInputInsert(tt.insertText)
-			if m.taskInput != tt.expectedInput {
-				t.Errorf("taskInput = %q, want %q", m.taskInput, tt.expectedInput)
-			}
-			if m.taskInputCursor != tt.expectedCursor {
-				t.Errorf("taskInputCursor = %d, want %d", m.taskInputCursor, tt.expectedCursor)
+			if h.Cursor() != tt.expectedCursor {
+				t.Errorf("Cursor() = %d, want %d", h.Cursor(), tt.expectedCursor)
 			}
 		})
 	}
 }
 
-func TestTaskInputDeleteBack(t *testing.T) {
+func TestInputHandlerDeleteBack(t *testing.T) {
 	tests := []struct {
 		name           string
 		initialInput   string
@@ -117,22 +116,21 @@ func TestTaskInputDeleteBack(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := Model{
-				taskInput:       tt.initialInput,
-				taskInputCursor: tt.initialCursor,
+			h := NewInputHandler()
+			h.SetBuffer(tt.initialInput)
+			h.SetCursor(tt.initialCursor)
+			h.DeleteBack(tt.deleteCount)
+			if h.Buffer() != tt.expectedInput {
+				t.Errorf("Buffer() = %q, want %q", h.Buffer(), tt.expectedInput)
 			}
-			m.taskInputDeleteBack(tt.deleteCount)
-			if m.taskInput != tt.expectedInput {
-				t.Errorf("taskInput = %q, want %q", m.taskInput, tt.expectedInput)
-			}
-			if m.taskInputCursor != tt.expectedCursor {
-				t.Errorf("taskInputCursor = %d, want %d", m.taskInputCursor, tt.expectedCursor)
+			if h.Cursor() != tt.expectedCursor {
+				t.Errorf("Cursor() = %d, want %d", h.Cursor(), tt.expectedCursor)
 			}
 		})
 	}
 }
 
-func TestTaskInputDeleteForward(t *testing.T) {
+func TestInputHandlerDeleteForward(t *testing.T) {
 	tests := []struct {
 		name           string
 		initialInput   string
@@ -177,22 +175,21 @@ func TestTaskInputDeleteForward(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := Model{
-				taskInput:       tt.initialInput,
-				taskInputCursor: tt.initialCursor,
+			h := NewInputHandler()
+			h.SetBuffer(tt.initialInput)
+			h.SetCursor(tt.initialCursor)
+			h.DeleteForward(tt.deleteCount)
+			if h.Buffer() != tt.expectedInput {
+				t.Errorf("Buffer() = %q, want %q", h.Buffer(), tt.expectedInput)
 			}
-			m.taskInputDeleteForward(tt.deleteCount)
-			if m.taskInput != tt.expectedInput {
-				t.Errorf("taskInput = %q, want %q", m.taskInput, tt.expectedInput)
-			}
-			if m.taskInputCursor != tt.expectedCursor {
-				t.Errorf("taskInputCursor = %d, want %d", m.taskInputCursor, tt.expectedCursor)
+			if h.Cursor() != tt.expectedCursor {
+				t.Errorf("Cursor() = %d, want %d", h.Cursor(), tt.expectedCursor)
 			}
 		})
 	}
 }
 
-func TestTaskInputMoveCursor(t *testing.T) {
+func TestInputHandlerMoveCursor(t *testing.T) {
 	tests := []struct {
 		name           string
 		initialInput   string
@@ -232,19 +229,18 @@ func TestTaskInputMoveCursor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := Model{
-				taskInput:       tt.initialInput,
-				taskInputCursor: tt.initialCursor,
-			}
-			m.taskInputMoveCursor(tt.move)
-			if m.taskInputCursor != tt.expectedCursor {
-				t.Errorf("taskInputCursor = %d, want %d", m.taskInputCursor, tt.expectedCursor)
+			h := NewInputHandler()
+			h.SetBuffer(tt.initialInput)
+			h.SetCursor(tt.initialCursor)
+			h.MoveCursor(tt.move)
+			if h.Cursor() != tt.expectedCursor {
+				t.Errorf("Cursor() = %d, want %d", h.Cursor(), tt.expectedCursor)
 			}
 		})
 	}
 }
 
-func TestTaskInputFindPrevWordBoundary(t *testing.T) {
+func TestInputHandlerFindPrevWordBoundary(t *testing.T) {
 	tests := []struct {
 		name          string
 		input         string
@@ -291,19 +287,18 @@ func TestTaskInputFindPrevWordBoundary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := Model{
-				taskInput:       tt.input,
-				taskInputCursor: tt.cursor,
-			}
-			got := m.taskInputFindPrevWordBoundary()
+			h := NewInputHandler()
+			h.SetBuffer(tt.input)
+			h.SetCursor(tt.cursor)
+			got := h.FindPrevWordBoundary()
 			if got != tt.expectedBound {
-				t.Errorf("taskInputFindPrevWordBoundary() = %d, want %d", got, tt.expectedBound)
+				t.Errorf("FindPrevWordBoundary() = %d, want %d", got, tt.expectedBound)
 			}
 		})
 	}
 }
 
-func TestTaskInputFindNextWordBoundary(t *testing.T) {
+func TestInputHandlerFindNextWordBoundary(t *testing.T) {
 	tests := []struct {
 		name          string
 		input         string
@@ -344,19 +339,18 @@ func TestTaskInputFindNextWordBoundary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := Model{
-				taskInput:       tt.input,
-				taskInputCursor: tt.cursor,
-			}
-			got := m.taskInputFindNextWordBoundary()
+			h := NewInputHandler()
+			h.SetBuffer(tt.input)
+			h.SetCursor(tt.cursor)
+			got := h.FindNextWordBoundary()
 			if got != tt.expectedBound {
-				t.Errorf("taskInputFindNextWordBoundary() = %d, want %d", got, tt.expectedBound)
+				t.Errorf("FindNextWordBoundary() = %d, want %d", got, tt.expectedBound)
 			}
 		})
 	}
 }
 
-func TestTaskInputFindLineStart(t *testing.T) {
+func TestInputHandlerFindLineStart(t *testing.T) {
 	tests := []struct {
 		name          string
 		input         string
@@ -397,19 +391,18 @@ func TestTaskInputFindLineStart(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := Model{
-				taskInput:       tt.input,
-				taskInputCursor: tt.cursor,
-			}
-			got := m.taskInputFindLineStart()
+			h := NewInputHandler()
+			h.SetBuffer(tt.input)
+			h.SetCursor(tt.cursor)
+			got := h.FindLineStart()
 			if got != tt.expectedStart {
-				t.Errorf("taskInputFindLineStart() = %d, want %d", got, tt.expectedStart)
+				t.Errorf("FindLineStart() = %d, want %d", got, tt.expectedStart)
 			}
 		})
 	}
 }
 
-func TestTaskInputFindLineEnd(t *testing.T) {
+func TestInputHandlerFindLineEnd(t *testing.T) {
 	tests := []struct {
 		name        string
 		input       string
@@ -450,13 +443,12 @@ func TestTaskInputFindLineEnd(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			m := Model{
-				taskInput:       tt.input,
-				taskInputCursor: tt.cursor,
-			}
-			got := m.taskInputFindLineEnd()
+			h := NewInputHandler()
+			h.SetBuffer(tt.input)
+			h.SetCursor(tt.cursor)
+			got := h.FindLineEnd()
 			if got != tt.expectedEnd {
-				t.Errorf("taskInputFindLineEnd() = %d, want %d", got, tt.expectedEnd)
+				t.Errorf("FindLineEnd() = %d, want %d", got, tt.expectedEnd)
 			}
 		})
 	}
@@ -530,14 +522,188 @@ func TestRenderAddTaskCursorBounds(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := Model{
-				taskInput:       tt.input,
-				taskInputCursor: tt.cursor,
+				taskInput: NewInputHandler(),
 			}
+			m.taskInput.SetBuffer(tt.input)
+			m.taskInput.SetCursor(tt.cursor) // SetCursor clamps to valid bounds
 			// This should not panic
 			result := m.renderAddTask(80)
 			if result == "" {
 				t.Error("renderAddTask returned empty string")
 			}
 		})
+	}
+}
+
+func TestInputHandlerClear(t *testing.T) {
+	h := NewInputHandler()
+	h.SetBuffer("hello world")
+	h.SetCursor(5)
+
+	h.Clear()
+
+	if h.Buffer() != "" {
+		t.Errorf("Buffer() = %q, want empty", h.Buffer())
+	}
+	if h.Cursor() != 0 {
+		t.Errorf("Cursor() = %d, want 0", h.Cursor())
+	}
+}
+
+func TestInputHandlerIsEmpty(t *testing.T) {
+	h := NewInputHandler()
+
+	if !h.IsEmpty() {
+		t.Error("IsEmpty() = false, want true for new handler")
+	}
+
+	h.Insert("x")
+	if h.IsEmpty() {
+		t.Error("IsEmpty() = true, want false after insert")
+	}
+
+	h.Clear()
+	if !h.IsEmpty() {
+		t.Error("IsEmpty() = false, want true after clear")
+	}
+}
+
+func TestInputHandlerIsAtLineStart(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		cursor   int
+		expected bool
+	}{
+		{
+			name:     "at beginning of empty string",
+			input:    "",
+			cursor:   0,
+			expected: true,
+		},
+		{
+			name:     "at beginning of non-empty string",
+			input:    "hello",
+			cursor:   0,
+			expected: true,
+		},
+		{
+			name:     "after newline",
+			input:    "hello\nworld",
+			cursor:   6,
+			expected: true,
+		},
+		{
+			name:     "in middle of line",
+			input:    "hello",
+			cursor:   3,
+			expected: false,
+		},
+		{
+			name:     "at end of line before newline",
+			input:    "hello\nworld",
+			cursor:   5,
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewInputHandler()
+			h.SetBuffer(tt.input)
+			h.SetCursor(tt.cursor)
+			got := h.IsAtLineStart()
+			if got != tt.expected {
+				t.Errorf("IsAtLineStart() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestInputHandlerLen(t *testing.T) {
+	h := NewInputHandler()
+
+	if h.Len() != 0 {
+		t.Errorf("Len() = %d, want 0 for empty handler", h.Len())
+	}
+
+	h.Insert("hello")
+	if h.Len() != 5 {
+		t.Errorf("Len() = %d, want 5", h.Len())
+	}
+
+	h.Insert(" 世界") // adds 3 runes
+	if h.Len() != 8 {
+		t.Errorf("Len() = %d, want 8 (unicode aware)", h.Len())
+	}
+}
+
+func TestInputHandlerMoveToStart(t *testing.T) {
+	h := NewInputHandler()
+	h.SetBuffer("hello world")
+	h.SetCursor(7)
+
+	h.MoveToStart()
+
+	if h.Cursor() != 0 {
+		t.Errorf("Cursor() = %d, want 0", h.Cursor())
+	}
+}
+
+func TestInputHandlerMoveToEnd(t *testing.T) {
+	h := NewInputHandler()
+	h.SetBuffer("hello world")
+	h.SetCursor(3)
+
+	h.MoveToEnd()
+
+	if h.Cursor() != 11 {
+		t.Errorf("Cursor() = %d, want 11", h.Cursor())
+	}
+}
+
+func TestInputHandlerDeleteWord(t *testing.T) {
+	h := NewInputHandler()
+	h.SetBuffer("hello world")
+	h.SetCursor(11) // at end
+
+	h.DeleteWord()
+
+	if h.Buffer() != "hello " {
+		t.Errorf("Buffer() = %q, want %q", h.Buffer(), "hello ")
+	}
+	if h.Cursor() != 6 {
+		t.Errorf("Cursor() = %d, want 6", h.Cursor())
+	}
+}
+
+func TestInputHandlerDeleteToLineStart(t *testing.T) {
+	h := NewInputHandler()
+	h.SetBuffer("hello\nworld test")
+	h.SetCursor(12) // at 't' in "test" (index: h=0,e=1,l=2,l=3,o=4,\n=5,w=6,o=7,r=8,l=9,d=10, =11,t=12)
+
+	h.DeleteToLineStart()
+
+	// Deletes from cursor (12) to line start (6), removing "world "
+	if h.Buffer() != "hello\ntest" {
+		t.Errorf("Buffer() = %q, want %q", h.Buffer(), "hello\ntest")
+	}
+	if h.Cursor() != 6 {
+		t.Errorf("Cursor() = %d, want 6", h.Cursor())
+	}
+}
+
+func TestInputHandlerDeleteToLineEnd(t *testing.T) {
+	h := NewInputHandler()
+	h.SetBuffer("hello world\ntest")
+	h.SetCursor(6) // at "w" in "world"
+
+	h.DeleteToLineEnd()
+
+	if h.Buffer() != "hello \ntest" {
+		t.Errorf("Buffer() = %q, want %q", h.Buffer(), "hello \ntest")
+	}
+	if h.Cursor() != 6 {
+		t.Errorf("Cursor() = %d, want 6", h.Cursor())
 	}
 }

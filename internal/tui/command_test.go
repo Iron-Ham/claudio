@@ -117,9 +117,8 @@ func TestHandleCommandInput(t *testing.T) {
 func TestTaskInputEnter(t *testing.T) {
 	t.Run("enter key exits task input mode without task", func(t *testing.T) {
 		m := Model{
-			addingTask:      true,
-			taskInput:       "",
-			taskInputCursor: 0,
+			addingTask: true,
+			taskInput:  NewInputHandler(),
 		}
 
 		msg := tea.KeyMsg{Type: tea.KeyEnter}
@@ -129,19 +128,20 @@ func TestTaskInputEnter(t *testing.T) {
 		if model.addingTask {
 			t.Error("expected addingTask to be false after Enter")
 		}
-		if model.taskInput != "" {
-			t.Errorf("expected taskInput to be empty, got %q", model.taskInput)
+		if !model.taskInput.IsEmpty() {
+			t.Errorf("expected taskInput to be empty, got %q", model.taskInput.Buffer())
 		}
 	})
 
 	t.Run("enter key exits task input mode with task (no orchestrator)", func(t *testing.T) {
 		// Note: Without orchestrator, AddInstance will fail but addingTask should still be cleared
 		m := Model{
-			addingTask:      true,
-			taskInput:       "test task",
-			taskInputCursor: 9,
+			addingTask: true,
+			taskInput:  NewInputHandler(),
 			// orchestrator is nil - AddInstance will fail but mode should still exit
 		}
+		m.taskInput.SetBuffer("test task")
+		m.taskInput.SetCursor(9)
 
 		msg := tea.KeyMsg{Type: tea.KeyEnter}
 		// This will panic because orchestrator is nil, so we skip this test
@@ -153,8 +153,8 @@ func TestTaskInputEnter(t *testing.T) {
 		if model.addingTask {
 			t.Error("expected addingTask to be false after Enter")
 		}
-		if model.taskInput != "" {
-			t.Errorf("expected taskInput to be cleared, got %q", model.taskInput)
+		if !model.taskInput.IsEmpty() {
+			t.Errorf("expected taskInput to be cleared, got %q", model.taskInput.Buffer())
 		}
 	})
 
@@ -162,9 +162,8 @@ func TestTaskInputEnter(t *testing.T) {
 		// Test that msg.String() == "enter" would also be detected
 		// This is to check if the terminal might be sending Enter differently
 		m := Model{
-			addingTask:      true,
-			taskInput:       "",
-			taskInputCursor: 0,
+			addingTask: true,
+			taskInput:  NewInputHandler(),
 		}
 
 		// Simulate what some terminals might send
@@ -182,10 +181,11 @@ func TestTaskInputEnter(t *testing.T) {
 
 	t.Run("alt+enter inserts newline instead of submitting", func(t *testing.T) {
 		m := Model{
-			addingTask:      true,
-			taskInput:       "test",
-			taskInputCursor: 4,
+			addingTask: true,
+			taskInput:  NewInputHandler(),
 		}
+		m.taskInput.SetBuffer("test")
+		m.taskInput.SetCursor(4)
 
 		msg := tea.KeyMsg{Type: tea.KeyEnter, Alt: true}
 		result, _ := m.handleKeypress(msg)
@@ -194,17 +194,18 @@ func TestTaskInputEnter(t *testing.T) {
 		if !model.addingTask {
 			t.Error("expected addingTask to remain true after Alt+Enter")
 		}
-		if model.taskInput != "test\n" {
-			t.Errorf("expected taskInput to have newline, got %q", model.taskInput)
+		if model.taskInput.Buffer() != "test\n" {
+			t.Errorf("expected taskInput to have newline, got %q", model.taskInput.Buffer())
 		}
 	})
 
 	t.Run("ctrl+j inserts newline instead of submitting", func(t *testing.T) {
 		m := Model{
-			addingTask:      true,
-			taskInput:       "test",
-			taskInputCursor: 4,
+			addingTask: true,
+			taskInput:  NewInputHandler(),
 		}
+		m.taskInput.SetBuffer("test")
+		m.taskInput.SetCursor(4)
 
 		msg := tea.KeyMsg{Type: tea.KeyCtrlJ}
 		result, _ := m.handleKeypress(msg)
@@ -213,27 +214,28 @@ func TestTaskInputEnter(t *testing.T) {
 		if !model.addingTask {
 			t.Error("expected addingTask to remain true after Ctrl+J")
 		}
-		if model.taskInput != "test\n" {
-			t.Errorf("expected taskInput to have newline, got %q", model.taskInput)
+		if model.taskInput.Buffer() != "test\n" {
+			t.Errorf("expected taskInput to have newline, got %q", model.taskInput.Buffer())
 		}
 	})
 
 	t.Run("typing adds to task input", func(t *testing.T) {
 		m := Model{
-			addingTask:      true,
-			taskInput:       "te",
-			taskInputCursor: 2,
+			addingTask: true,
+			taskInput:  NewInputHandler(),
 		}
+		m.taskInput.SetBuffer("te")
+		m.taskInput.SetCursor(2)
 
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s', 't'}}
 		result, _ := m.handleKeypress(msg)
 		model := result.(Model)
 
-		if model.taskInput != "test" {
-			t.Errorf("expected taskInput to be %q, got %q", "test", model.taskInput)
+		if model.taskInput.Buffer() != "test" {
+			t.Errorf("expected taskInput to be %q, got %q", "test", model.taskInput.Buffer())
 		}
-		if model.taskInputCursor != 4 {
-			t.Errorf("expected cursor to be 4, got %d", model.taskInputCursor)
+		if model.taskInput.Cursor() != 4 {
+			t.Errorf("expected cursor to be 4, got %d", model.taskInput.Cursor())
 		}
 	})
 
@@ -241,9 +243,8 @@ func TestTaskInputEnter(t *testing.T) {
 		// Some terminals/input methods send Enter as KeyRunes with \n
 		// This should submit the task, not insert a newline
 		m := Model{
-			addingTask:      true,
-			taskInput:       "",
-			taskInputCursor: 0,
+			addingTask: true,
+			taskInput:  NewInputHandler(),
 		}
 
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\n'}}
@@ -253,8 +254,8 @@ func TestTaskInputEnter(t *testing.T) {
 		if model.addingTask {
 			t.Error("expected addingTask to be false after newline rune (should submit)")
 		}
-		if model.taskInput != "" {
-			t.Errorf("expected taskInput to be cleared, got %q", model.taskInput)
+		if !model.taskInput.IsEmpty() {
+			t.Errorf("expected taskInput to be cleared, got %q", model.taskInput.Buffer())
 		}
 	})
 
@@ -262,9 +263,8 @@ func TestTaskInputEnter(t *testing.T) {
 		// Some terminals send Enter as KeyRunes with \r
 		// This should submit the task, not insert a carriage return
 		m := Model{
-			addingTask:      true,
-			taskInput:       "",
-			taskInputCursor: 0,
+			addingTask: true,
+			taskInput:  NewInputHandler(),
 		}
 
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\r'}}
@@ -274,8 +274,8 @@ func TestTaskInputEnter(t *testing.T) {
 		if model.addingTask {
 			t.Error("expected addingTask to be false after CR rune (should submit)")
 		}
-		if model.taskInput != "" {
-			t.Errorf("expected taskInput to be cleared, got %q", model.taskInput)
+		if !model.taskInput.IsEmpty() {
+			t.Errorf("expected taskInput to be cleared, got %q", model.taskInput.Buffer())
 		}
 	})
 }
@@ -366,7 +366,7 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("add command starts task input", func(t *testing.T) {
-		m := Model{addingTask: false}
+		m := Model{addingTask: false, taskInput: NewInputHandler()}
 		result, _ := m.executeCommand("add")
 		model := result.(Model)
 
@@ -376,7 +376,7 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("a command is alias for add", func(t *testing.T) {
-		m := Model{addingTask: false}
+		m := Model{addingTask: false, taskInput: NewInputHandler()}
 		result, _ := m.executeCommand("a")
 		model := result.(Model)
 
@@ -446,25 +446,29 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("diff command toggles diff panel when no instance", func(t *testing.T) {
-		m := Model{showDiff: true, diffContent: "some diff"}
+		diffState := NewDiffState()
+		diffState.Show("some diff")
+		m := Model{diffState: diffState}
 		result, _ := m.executeCommand("diff")
 		model := result.(Model)
 
-		if model.showDiff {
-			t.Error("expected showDiff to be false when toggling off")
+		if model.diffState.IsVisible() {
+			t.Error("expected diff panel to be hidden when toggling off")
 		}
-		if model.diffContent != "" {
-			t.Errorf("expected diffContent to be empty, got %q", model.diffContent)
+		if model.diffState.HasContent() {
+			t.Errorf("expected diffContent to be empty, got %q", model.diffState.Content())
 		}
 	})
 
 	t.Run("d command is alias for diff", func(t *testing.T) {
-		m := Model{showDiff: true, diffContent: "some diff"}
+		diffState := NewDiffState()
+		diffState.Show("some diff")
+		m := Model{diffState: diffState}
 		result, _ := m.executeCommand("d")
 		model := result.(Model)
 
-		if model.showDiff {
-			t.Error("expected showDiff to be false")
+		if model.diffState.IsVisible() {
+			t.Error("expected diff panel to be hidden")
 		}
 	})
 }
@@ -486,7 +490,7 @@ func TestCommandAliases(t *testing.T) {
 
 	for _, cmd := range commands {
 		t.Run(cmd, func(t *testing.T) {
-			m := Model{}
+			m := Model{taskInput: NewInputHandler()}
 			result, _ := m.executeCommand(cmd)
 			model := result.(Model)
 
@@ -519,7 +523,8 @@ func TestCommandAliasesRequiringInstance(t *testing.T) {
 	for _, cmd := range commands {
 		t.Run(cmd, func(t *testing.T) {
 			m := Model{
-				session: nil, // No session means no instances
+				session:   nil, // No session means no instances
+				taskInput: NewInputHandler(),
 			}
 			result, _ := m.executeCommand(cmd)
 			model := result.(Model)

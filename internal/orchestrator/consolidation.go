@@ -73,31 +73,6 @@ type ConsolidationConfig struct {
 	PRLabels       []string
 }
 
-// ConsolidationEventType represents events during consolidation
-type ConsolidationEventType string
-
-const (
-	EventConsolidationStarted       ConsolidationEventType = "consolidation_started"
-	EventConsolidationGroupStarted  ConsolidationEventType = "consolidation_group_started"
-	EventConsolidationTaskMerging   ConsolidationEventType = "consolidation_task_merging"
-	EventConsolidationTaskMerged    ConsolidationEventType = "consolidation_task_merged"
-	EventConsolidationGroupComplete ConsolidationEventType = "consolidation_group_complete"
-	EventConsolidationPRCreating    ConsolidationEventType = "consolidation_pr_creating"
-	EventConsolidationPRCreated     ConsolidationEventType = "consolidation_pr_created"
-	EventConsolidationConflict      ConsolidationEventType = "consolidation_conflict"
-	EventConsolidationComplete      ConsolidationEventType = "consolidation_complete"
-	EventConsolidationFailed        ConsolidationEventType = "consolidation_failed"
-)
-
-// ConsolidationEvent represents an event during consolidation
-type ConsolidationEvent struct {
-	Type      ConsolidationEventType `json:"type"`
-	GroupIdx  int                    `json:"group_idx,omitempty"`
-	TaskID    string                 `json:"task_id,omitempty"`
-	Message   string                 `json:"message,omitempty"`
-	Timestamp time.Time              `json:"timestamp"`
-}
-
 // Consolidator handles the consolidation of task branches into group branches and PR creation
 type Consolidator struct {
 	orch        *Orchestrator

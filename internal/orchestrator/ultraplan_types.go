@@ -19,39 +19,6 @@ const (
 	PhaseFailed        UltraPlanPhase = "failed"
 )
 
-// TaskComplexity represents the estimated complexity of a planned task
-type TaskComplexity string
-
-const (
-	ComplexityLow    TaskComplexity = "low"
-	ComplexityMedium TaskComplexity = "medium"
-	ComplexityHigh   TaskComplexity = "high"
-)
-
-// PlannedTask represents a single decomposed task from the planning phase
-type PlannedTask struct {
-	ID            string         `json:"id"`
-	Title         string         `json:"title"`
-	Description   string         `json:"description"`     // Detailed task prompt for child session
-	Files         []string       `json:"files,omitempty"` // Expected files to be modified
-	DependsOn     []string       `json:"depends_on"`      // Task IDs this depends on
-	Priority      int            `json:"priority"`        // Execution priority (lower = earlier)
-	EstComplexity TaskComplexity `json:"est_complexity"`
-}
-
-// PlanSpec represents the output of the planning phase
-type PlanSpec struct {
-	ID              string              `json:"id"`
-	Objective       string              `json:"objective"`        // Original user request
-	Summary         string              `json:"summary"`          // Executive summary of the plan
-	Tasks           []PlannedTask       `json:"tasks"`
-	DependencyGraph map[string][]string `json:"dependency_graph"` // task_id -> depends_on[]
-	ExecutionOrder  [][]string          `json:"execution_order"`  // Groups of parallelizable tasks
-	Insights        []string            `json:"insights"`         // Key findings from exploration
-	Constraints     []string            `json:"constraints"`      // Identified constraints/risks
-	CreatedAt       time.Time           `json:"created_at"`
-}
-
 // UltraPlanConfig holds configuration for an ultra-plan session
 type UltraPlanConfig struct {
 	MaxParallel int  `json:"max_parallel"`  // Maximum concurrent child sessions
@@ -79,22 +46,6 @@ type RevisionIssue struct {
 	Files       []string `json:"files,omitempty"`       // Files affected by the issue
 	Severity    string   `json:"severity,omitempty"`    // "critical", "major", "minor"
 	Suggestion  string   `json:"suggestion,omitempty"`  // Suggested fix
-}
-
-// PlanScore represents the evaluation of a single candidate plan
-type PlanScore struct {
-	Strategy   string `json:"strategy"`
-	Score      int    `json:"score"`
-	Strengths  string `json:"strengths"`
-	Weaknesses string `json:"weaknesses"`
-}
-
-// PlanDecision captures the coordinator-manager's decision when evaluating multiple plans
-type PlanDecision struct {
-	Action        string      `json:"action"`         // "select" or "merge"
-	SelectedIndex int         `json:"selected_index"` // 0-2 or -1 for merge
-	Reasoning     string      `json:"reasoning"`
-	PlanScores    []PlanScore `json:"plan_scores"`
 }
 
 // RevisionState tracks the state of the revision phase
@@ -356,36 +307,4 @@ func (s *UltraPlanSession) Progress() float64 {
 		return 0
 	}
 	return float64(len(s.CompletedTasks)) / float64(len(s.Plan.Tasks)) * 100
-}
-
-// CoordinatorEventType represents the type of coordinator event
-type CoordinatorEventType string
-
-const (
-	EventTaskStarted   CoordinatorEventType = "task_started"
-	EventTaskComplete  CoordinatorEventType = "task_complete"
-	EventTaskFailed    CoordinatorEventType = "task_failed"
-	EventTaskBlocked   CoordinatorEventType = "task_blocked"
-	EventGroupComplete CoordinatorEventType = "group_complete"
-	EventPhaseChange   CoordinatorEventType = "phase_change"
-	EventConflict      CoordinatorEventType = "conflict"
-	EventPlanReady     CoordinatorEventType = "plan_ready"
-
-	// Multi-pass planning events
-	EventMultiPassPlanGenerated CoordinatorEventType = "multipass_plan_generated" // One coordinator finished planning
-	EventAllPlansGenerated      CoordinatorEventType = "all_plans_generated"      // All coordinators finished
-	EventPlanSelectionStarted   CoordinatorEventType = "plan_selection_started"   // Manager started evaluating
-	EventPlanSelected           CoordinatorEventType = "plan_selected"            // Final plan chosen
-)
-
-// CoordinatorEvent represents an event from the coordinator during execution
-type CoordinatorEvent struct {
-	Type       CoordinatorEventType `json:"type"`
-	TaskID     string               `json:"task_id,omitempty"`
-	InstanceID string               `json:"instance_id,omitempty"`
-	Message    string               `json:"message,omitempty"`
-	Timestamp  time.Time            `json:"timestamp"`
-	// Multi-pass planning fields
-	PlanIndex int    `json:"plan_index,omitempty"` // Which plan was generated/selected (0-indexed)
-	Strategy  string `json:"strategy,omitempty"`   // Planning strategy name (e.g., "maximize-parallelism", "minimize-complexity", "balanced-approach")
 }

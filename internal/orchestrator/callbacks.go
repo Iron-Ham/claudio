@@ -9,7 +9,7 @@ import (
 // SetPRCompleteCallback sets the callback for PR workflow completion.
 // This callback is invoked when a PR workflow finishes (success or failure),
 // allowing the TUI to update its state and remove completed instances.
-func (o *Orchestrator) SetPRCompleteCallback(cb func(instanceID string, success bool)) {
+func (o *Orchestrator) SetPRCompleteCallback(cb PRCompleteCallback) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.prCompleteCallback = cb
@@ -18,7 +18,7 @@ func (o *Orchestrator) SetPRCompleteCallback(cb func(instanceID string, success 
 // SetPROpenedCallback sets the callback for when a PR URL is detected in instance output.
 // This is used for inline PR creation detection, where Claude creates a PR directly
 // without going through the PR workflow.
-func (o *Orchestrator) SetPROpenedCallback(cb func(instanceID string)) {
+func (o *Orchestrator) SetPROpenedCallback(cb PROpenedCallback) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.prOpenedCallback = cb
@@ -27,7 +27,7 @@ func (o *Orchestrator) SetPROpenedCallback(cb func(instanceID string)) {
 // SetTimeoutCallback sets the callback for when an instance timeout is detected.
 // The callback receives the instance ID and the type of timeout that occurred
 // (activity timeout, completion timeout, or stale detection).
-func (o *Orchestrator) SetTimeoutCallback(cb func(instanceID string, timeoutType instance.TimeoutType)) {
+func (o *Orchestrator) SetTimeoutCallback(cb TimeoutCallback) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.timeoutCallback = cb
@@ -36,7 +36,7 @@ func (o *Orchestrator) SetTimeoutCallback(cb func(instanceID string, timeoutType
 // SetBellCallback sets the callback for when a terminal bell is detected in an instance.
 // Terminal bells are typically used by Claude to signal that it needs attention
 // (e.g., waiting for user input or permission).
-func (o *Orchestrator) SetBellCallback(cb func(instanceID string)) {
+func (o *Orchestrator) SetBellCallback(cb BellCallback) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.bellCallback = cb

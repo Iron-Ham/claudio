@@ -31,7 +31,7 @@ func (m *Model) handlePlanManagerCompletion(inst *orchestrator.Instance) bool {
 	}
 
 	// Parse the plan decision from the output
-	output := m.outputs[inst.ID]
+	output := m.outputManager.GetOutput(inst.ID)
 	decision, err := orchestrator.ParsePlanDecisionFromOutput(output)
 	if err != nil {
 		m.errorMessage = fmt.Sprintf("Plan selection completed but failed to parse decision: %v", err)

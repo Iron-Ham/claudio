@@ -724,66 +724,6 @@ func HasCircularDependency(plan *PlanSpec, taskID, newDepID string) bool {
 	return checkCycle(newDepID)
 }
 
-// ValidationSeverity represents the severity level of a validation message
-type ValidationSeverity string
-
-const (
-	SeverityError   ValidationSeverity = "error"
-	SeverityWarning ValidationSeverity = "warning"
-	SeverityInfo    ValidationSeverity = "info"
-)
-
-// ValidationMessage represents a single validation issue with structured information
-type ValidationMessage struct {
-	Severity    ValidationSeverity `json:"severity"`
-	Message     string             `json:"message"`
-	TaskID      string             `json:"task_id,omitempty"`      // The task this message relates to (empty for plan-level issues)
-	Field       string             `json:"field,omitempty"`        // The field causing the issue (e.g., "depends_on", "description")
-	Suggestion  string             `json:"suggestion,omitempty"`   // A suggested fix
-	RelatedIDs  []string           `json:"related_ids,omitempty"`  // Related task IDs (for cycles, conflicts, etc.)
-}
-
-// ValidationResult contains the complete validation results for a plan
-type ValidationResult struct {
-	IsValid   bool                `json:"is_valid"`   // True if there are no errors (warnings allowed)
-	Messages  []ValidationMessage `json:"messages"`
-	ErrorCount   int              `json:"error_count"`
-	WarningCount int              `json:"warning_count"`
-	InfoCount    int              `json:"info_count"`
-}
-
-// HasErrors returns true if there are any error-level messages
-func (v *ValidationResult) HasErrors() bool {
-	return v.ErrorCount > 0
-}
-
-// HasWarnings returns true if there are any warning-level messages
-func (v *ValidationResult) HasWarnings() bool {
-	return v.WarningCount > 0
-}
-
-// GetMessagesForTask returns all validation messages for a specific task
-func (v *ValidationResult) GetMessagesForTask(taskID string) []ValidationMessage {
-	var messages []ValidationMessage
-	for _, msg := range v.Messages {
-		if msg.TaskID == taskID {
-			messages = append(messages, msg)
-		}
-	}
-	return messages
-}
-
-// GetMessagesBySeverity returns all messages of a specific severity
-func (v *ValidationResult) GetMessagesBySeverity(severity ValidationSeverity) []ValidationMessage {
-	var messages []ValidationMessage
-	for _, msg := range v.Messages {
-		if msg.Severity == severity {
-			messages = append(messages, msg)
-		}
-	}
-	return messages
-}
-
 // ValidatePlanForEditor performs comprehensive validation of a plan for the editor UI.
 // It returns structured validation results including errors, warnings, and informational messages.
 // This is more comprehensive than ValidatePlan() which only returns basic validity.

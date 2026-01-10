@@ -12,21 +12,6 @@ import (
 // StateChangeCallback is called when the detected waiting state changes
 type StateChangeCallback func(instanceID string, state WaitingState)
 
-// TimeoutType represents the type of timeout that occurred
-type TimeoutType int
-
-const (
-	TimeoutActivity   TimeoutType = iota // No activity for configured period
-	TimeoutCompletion                    // Total runtime exceeded limit
-	TimeoutStale                         // Repeated output detected (stuck in loop)
-)
-
-// TimeoutCallback is called when a timeout condition is detected
-type TimeoutCallback func(instanceID string, timeoutType TimeoutType)
-
-// BellCallback is called when a terminal bell is detected in the tmux session
-type BellCallback func(instanceID string)
-
 // ManagerConfig holds configuration for instance management
 type ManagerConfig struct {
 	OutputBufferSize         int
@@ -80,17 +65,11 @@ type Manager struct {
 	metricsCallback MetricsChangeCallback
 	startTime       *time.Time
 
-	// Timeout tracking
-	lastActivityTime    time.Time      // Last time output changed
-	lastOutputHash      string         // Hash of last output for change detection
-	repeatedOutputCount int            // Count of consecutive identical outputs (for stale detection)
-	timeoutCallback     TimeoutCallback
-	timedOut            bool           // Whether a timeout has been triggered
-	timeoutType         TimeoutType    // Type of timeout that was triggered
+	// Timeout tracking (delegated to TimeoutHandler)
+	timeoutHandler *TimeoutHandler
 
-	// Bell tracking
-	bellCallback   BellCallback
-	lastBellState  bool // Track last bell flag state to detect transitions
+	// Bell handling (delegated to BellHandler)
+	bellHandler *BellHandler
 }
 
 // NewManager creates a new instance manager with default configuration
@@ -101,17 +80,24 @@ func NewManager(id, workdir, task string) *Manager {
 // NewManagerWithConfig creates a new instance manager with the given configuration.
 // Uses legacy tmux naming (claudio-{instanceID}) for backwards compatibility.
 func NewManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager {
+	timeoutCfg := TimeoutConfig{
+		ActivityTimeoutMinutes:   cfg.ActivityTimeoutMinutes,
+		CompletionTimeoutMinutes: cfg.CompletionTimeoutMinutes,
+		StaleDetection:           cfg.StaleDetection,
+	}
 	return &Manager{
-		id:            id,
-		workdir:       workdir,
-		task:          task,
-		sessionName:   fmt.Sprintf("claudio-%s", id),
-		outputBuf:     NewRingBuffer(cfg.OutputBufferSize),
-		doneChan:      make(chan struct{}),
-		config:        cfg,
-		detector:      NewDetector(),
-		currentState:  StateWorking,
-		metricsParser: NewMetricsParser(),
+		id:             id,
+		workdir:        workdir,
+		task:           task,
+		sessionName:    fmt.Sprintf("claudio-%s", id),
+		outputBuf:      NewRingBuffer(cfg.OutputBufferSize),
+		doneChan:       make(chan struct{}),
+		config:         cfg,
+		detector:       NewDetector(),
+		currentState:   StateWorking,
+		metricsParser:  NewMetricsParser(),
+		timeoutHandler: NewTimeoutHandler(timeoutCfg),
+		bellHandler:    NewBellHandler(),
 	}
 }
 
@@ -127,18 +113,26 @@ func NewManagerWithSession(sessionID, id, workdir, task string, cfg ManagerConfi
 		sessionName = fmt.Sprintf("claudio-%s", id)
 	}
 
+	timeoutCfg := TimeoutConfig{
+		ActivityTimeoutMinutes:   cfg.ActivityTimeoutMinutes,
+		CompletionTimeoutMinutes: cfg.CompletionTimeoutMinutes,
+		StaleDetection:           cfg.StaleDetection,
+	}
+
 	return &Manager{
-		id:            id,
-		sessionID:     sessionID,
-		workdir:       workdir,
-		task:          task,
-		sessionName:   sessionName,
-		outputBuf:     NewRingBuffer(cfg.OutputBufferSize),
-		doneChan:      make(chan struct{}),
-		config:        cfg,
-		detector:      NewDetector(),
-		currentState:  StateWorking,
-		metricsParser: NewMetricsParser(),
+		id:             id,
+		sessionID:      sessionID,
+		workdir:        workdir,
+		task:           task,
+		sessionName:    sessionName,
+		outputBuf:      NewRingBuffer(cfg.OutputBufferSize),
+		doneChan:       make(chan struct{}),
+		config:         cfg,
+		detector:       NewDetector(),
+		currentState:   StateWorking,
+		metricsParser:  NewMetricsParser(),
+		timeoutHandler: NewTimeoutHandler(timeoutCfg),
+		bellHandler:    NewBellHandler(),
 	}
 }
 
@@ -158,16 +152,12 @@ func (m *Manager) SetMetricsCallback(cb MetricsChangeCallback) {
 
 // SetTimeoutCallback sets a callback that will be invoked when a timeout is detected
 func (m *Manager) SetTimeoutCallback(cb TimeoutCallback) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.timeoutCallback = cb
+	m.timeoutHandler.SetCallback(cb)
 }
 
 // SetBellCallback sets a callback that will be invoked when a terminal bell is detected
 func (m *Manager) SetBellCallback(cb BellCallback) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.bellCallback = cb
+	m.bellHandler.SetCallback(cb)
 }
 
 // CurrentMetrics returns the currently parsed metrics
@@ -193,25 +183,17 @@ func (m *Manager) CurrentState() WaitingState {
 
 // TimedOut returns whether the instance has timed out and the type of timeout
 func (m *Manager) TimedOut() (bool, TimeoutType) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.timedOut, m.timeoutType
+	return m.timeoutHandler.TimedOut()
 }
 
 // LastActivityTime returns when the instance last had output activity
 func (m *Manager) LastActivityTime() time.Time {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.lastActivityTime
+	return m.timeoutHandler.LastActivityTime()
 }
 
 // ClearTimeout resets the timeout state (for recovery/restart scenarios)
 func (m *Manager) ClearTimeout() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.timedOut = false
-	m.repeatedOutputCount = 0
-	m.lastActivityTime = time.Now()
+	m.timeoutHandler.Reset()
 }
 
 // Start launches the Claude Code process in a tmux session
@@ -257,13 +239,14 @@ func (m *Manager) Start() error {
 
 	m.running = true
 	m.paused = false
-	m.timedOut = false
-	m.repeatedOutputCount = 0
 
 	// Record start time for duration tracking
 	now := time.Now()
 	m.startTime = &now
-	m.lastActivityTime = now
+
+	// Initialize timeout tracking with start time
+	m.timeoutHandler.Reset()
+	m.timeoutHandler.SetStartTime(m.startTime)
 
 	// Start background goroutine to capture output periodically
 	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)
@@ -483,11 +466,12 @@ func (m *Manager) Reconnect() error {
 
 	m.running = true
 	m.paused = false
-	m.timedOut = false
-	m.repeatedOutputCount = 0
-	m.lastActivityTime = time.Now()
-	m.lastBellState = false // Reset bell state on reconnect
+	m.bellHandler.Reset() // Reset bell state on reconnect
 	m.doneChan = make(chan struct{})
+
+	// Reset timeout tracking for reconnection
+	m.timeoutHandler.Reset()
+	m.timeoutHandler.SetStartTime(m.startTime)
 
 	// Start background goroutine to capture output periodically
 	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)

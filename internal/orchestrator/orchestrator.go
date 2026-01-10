@@ -38,16 +38,16 @@ type Orchestrator struct {
 	displayHeight int
 
 	// Callback for when PR workflow completes and instance should be removed
-	prCompleteCallback func(instanceID string, success bool)
+	prCompleteCallback PRCompleteCallback
 
 	// Callback for when a PR URL is detected in instance output (inline PR creation)
-	prOpenedCallback func(instanceID string)
+	prOpenedCallback PROpenedCallback
 
 	// Callback for when an instance timeout is detected
-	timeoutCallback func(instanceID string, timeoutType instance.TimeoutType)
+	timeoutCallback TimeoutCallback
 
 	// Callback for when a terminal bell is detected in an instance
-	bellCallback func(instanceID string)
+	bellCallback BellCallback
 
 	mu sync.RWMutex
 }

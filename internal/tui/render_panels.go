@@ -16,22 +16,22 @@ func (m Model) renderSearchBar() string {
 
 	// Search prompt
 	b.WriteString(styles.SearchPrompt.Render("/"))
-	b.WriteString(styles.SearchInput.Render(m.searchPattern))
+	b.WriteString(styles.SearchInput.Render(m.search.Pattern()))
 
-	if m.searchMode {
+	if m.search.IsActive() {
 		b.WriteString("█") // Cursor
 	}
 
 	// Match info
-	if m.searchPattern != "" {
-		if len(m.searchMatches) > 0 {
-			info := fmt.Sprintf(" [%d/%d]", m.searchCurrent+1, len(m.searchMatches))
+	if m.search.HasPattern() {
+		if m.search.HasMatches() {
+			info := fmt.Sprintf(" [%d/%d]", m.search.CurrentMatchIndex()+1, m.search.MatchCount())
 			b.WriteString(styles.SearchInfo.Render(info))
 			b.WriteString(styles.Muted.Render("  n/N next/prev"))
-		} else if !m.searchMode {
+		} else if !m.search.IsActive() {
 			b.WriteString(styles.SearchInfo.Render(" No matches"))
 		}
-		if !m.searchMode {
+		if !m.search.IsActive() {
 			b.WriteString(styles.Muted.Render("  Ctrl+/ clear"))
 		}
 	}
@@ -201,7 +201,7 @@ func (m Model) renderDiffPanel(width int) string {
 	}
 	b.WriteString("\n")
 
-	if m.diffContent == "" {
+	if !m.getDiffState().HasContent() {
 		b.WriteString(styles.Muted.Render("No changes to display"))
 		return styles.ContentBox.Width(width - 4).Render(b.String())
 	}
@@ -212,27 +212,9 @@ func (m Model) renderDiffPanel(width int) string {
 		maxLines = 5
 	}
 
-	// Split diff into lines and apply scroll
-	lines := strings.Split(m.diffContent, "\n")
-	totalLines := len(lines)
-
-	// Clamp scroll position
-	maxScroll := totalLines - maxLines
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if m.diffScroll > maxScroll {
-		m.diffScroll = maxScroll
-	}
-
-	// Get visible lines
-	startLine := m.diffScroll
-	endLine := startLine + maxLines
-	if endLine > totalLines {
-		endLine = totalLines
-	}
-
-	visibleLines := lines[startLine:endLine]
+	// Get visible lines (this also clamps the scroll position)
+	visibleLines, startLine, endLine := m.getDiffState().GetVisibleLines(maxLines)
+	totalLines := m.getDiffState().LineCount()
 
 	// Apply syntax highlighting to each visible line
 	var highlighted []string

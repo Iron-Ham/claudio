@@ -15,31 +15,31 @@ func (m Model) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
 		// Cancel search mode (keep existing pattern if any)
-		m.searchMode = false
+		m.search.SetActive(false)
 		return m, nil
 
 	case tea.KeyEnter:
 		// Execute search and exit search mode
 		m.executeSearch()
-		m.searchMode = false
+		m.search.SetActive(false)
 		return m, nil
 
 	case tea.KeyBackspace:
-		if len(m.searchPattern) > 0 {
-			m.searchPattern = m.searchPattern[:len(m.searchPattern)-1]
+		if m.search.Pattern() != "" {
+			m.search.TruncatePattern()
 			// Live search as user types
 			m.executeSearch()
 		}
 		return m, nil
 
 	case tea.KeyRunes:
-		m.searchPattern += string(msg.Runes)
+		m.search.AppendToPattern(string(msg.Runes))
 		// Live search as user types
 		m.executeSearch()
 		return m, nil
 
 	case tea.KeySpace:
-		m.searchPattern += " "
+		m.search.AppendToPattern(" ")
 		m.executeSearch()
 		return m, nil
 	}
@@ -124,79 +124,32 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // executeSearch compiles the search pattern and finds all matches
 func (m *Model) executeSearch() {
-	if m.searchPattern == "" {
-		m.searchMatches = nil
-		m.searchRegex = nil
-		return
-	}
-
 	inst := m.activeInstance()
 	if inst == nil {
 		return
 	}
 
-	output := m.outputs[inst.ID]
+	output := m.outputManager.GetOutput(inst.ID)
 	if output == "" {
 		return
 	}
+	viewportHeight := m.getOutputMaxLines()
 
-	// Try to compile as regex if it starts with r:
-	if strings.HasPrefix(m.searchPattern, "r:") {
-		pattern := m.searchPattern[2:]
-		re, err := regexp.Compile("(?i)" + pattern)
-		if err != nil {
-			m.searchRegex = nil
-			m.searchMatches = nil
-			return
-		}
-		m.searchRegex = re
-	} else {
-		// Literal search (case-insensitive)
-		m.searchRegex = regexp.MustCompile("(?i)" + regexp.QuoteMeta(m.searchPattern))
-	}
-
-	// Find all matching lines
-	lines := strings.Split(output, "\n")
-	m.searchMatches = nil
-	for i, line := range lines {
-		if m.searchRegex.MatchString(line) {
-			m.searchMatches = append(m.searchMatches, i)
-		}
-	}
-
-	// Set current match
-	if len(m.searchMatches) > 0 {
-		m.searchCurrent = 0
-		m.scrollToMatch()
-	}
+	// Delegate to SearchState which handles pattern compilation and matching
+	scroll := m.search.Execute(output, viewportHeight)
+	m.search.SetOutputScroll(scroll)
 }
 
 // clearSearch clears the current search
 func (m *Model) clearSearch() {
-	m.searchPattern = ""
-	m.searchRegex = nil
-	m.searchMatches = nil
-	m.searchCurrent = 0
-	m.outputScroll = 0
+	m.search.Clear()
 }
 
 // scrollToMatch adjusts output scroll to show the current match
 func (m *Model) scrollToMatch() {
-	if len(m.searchMatches) == 0 || m.searchCurrent >= len(m.searchMatches) {
-		return
-	}
-
-	matchLine := m.searchMatches[m.searchCurrent]
-	maxLines := m.height - 12
-	if maxLines < 5 {
-		maxLines = 5
-	}
-
-	// Center the match in the visible area
-	m.outputScroll = matchLine - maxLines/2
-	if m.outputScroll < 0 {
-		m.outputScroll = 0
-	}
+	viewportHeight := m.getOutputMaxLines()
+	scroll := m.search.ScrollToCurrentMatch(viewportHeight)
+	m.search.SetOutputScroll(scroll)
 }
 
 // compileFilterRegex compiles the custom filter pattern

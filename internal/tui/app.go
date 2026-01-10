@@ -3,12 +3,9 @@ package tui
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
-	"runtime"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/instance"
@@ -16,7 +13,6 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/spf13/viper"
 )
 
 // App wraps the Bubbletea program
@@ -110,95 +106,6 @@ func (a *App) Run() error {
 	return err
 }
 
-// Messages
-
-type tickMsg time.Time
-type outputMsg struct {
-	instanceID string
-	data       []byte
-}
-type errMsg struct {
-	err error
-}
-type prCompleteMsg struct {
-	instanceID string
-	success    bool
-}
-
-type prOpenedMsg struct {
-	instanceID string
-}
-
-type timeoutMsg struct {
-	instanceID  string
-	timeoutType instance.TimeoutType
-}
-
-type bellMsg struct {
-	instanceID string
-}
-
-// taskAddedMsg is sent when async task addition completes
-type taskAddedMsg struct {
-	instance *orchestrator.Instance
-	err      error
-}
-
-// Commands
-
-func tick() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
-		return tickMsg(t)
-	})
-}
-
-// ringBell returns a command that outputs a terminal bell character
-// This forwards bells from tmux sessions to the parent terminal
-func ringBell() tea.Cmd {
-	return func() tea.Msg {
-		// Write the bell character directly to stdout
-		// This works even when Bubbletea is in alt-screen mode
-		_, _ = os.Stdout.Write([]byte{'\a'})
-		return nil
-	}
-}
-
-// notifyUser returns a command that notifies the user via bell and optional sound
-// Used to alert the user when ultraplan needs input (e.g., plan ready, synthesis ready)
-func notifyUser() tea.Cmd {
-	return func() tea.Msg {
-		if !viper.GetBool("ultraplan.notifications.enabled") {
-			return nil
-		}
-
-		// Always ring terminal bell
-		_, _ = os.Stdout.Write([]byte{'\a'})
-
-		// Optionally play system sound on macOS
-		if runtime.GOOS == "darwin" && viper.GetBool("ultraplan.notifications.use_sound") {
-			soundPath := viper.GetString("ultraplan.notifications.sound_path")
-			if soundPath == "" {
-				soundPath = "/System/Library/Sounds/Glass.aiff"
-			}
-			// Start in background so it doesn't block
-			_ = exec.Command("afplay", soundPath).Start()
-		}
-		return nil
-	}
-}
-
-// addTaskAsync returns a command that adds a task asynchronously
-// This prevents the UI from blocking while git creates the worktree
-func addTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string) tea.Cmd {
-	return func() tea.Msg {
-		inst, err := o.AddInstance(session, task)
-		return taskAddedMsg{instance: inst, err: err}
-	}
-}
-
-// ultraPlanInitMsg signals that ultra-plan mode should initialize
-type ultraPlanInitMsg struct{}
-
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tick()}
@@ -291,10 +198,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case outputMsg:
-		if m.outputs == nil {
-			m.outputs = make(map[string]string)
-		}
-		m.outputs[msg.instanceID] += string(msg.data)
+		m.outputManager.AppendOutput(msg.instanceID, string(msg.data))
 		return m, nil
 
 	case errMsg:
@@ -367,7 +271,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleKeypress processes keyboard input
 func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle search mode - typing search pattern
-	if m.searchMode {
+	if m.search.IsActive() {
 		return m.handleSearchInput(msg)
 	}
 
@@ -405,7 +309,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle task input mode
 	if m.addingTask {
 		// Handle template dropdown if visible
-		if m.showTemplates {
+		if m.templateHandler.IsVisible() {
 			return m.handleTemplateDropdown(msg)
 		}
 
@@ -414,15 +318,15 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// protocols (Kitty, iTerm2, WezTerm, Ghostty). Alt+Enter and Ctrl+J work
 		// universally as fallbacks.
 		if msg.Type == tea.KeyEnter && msg.Alt {
-			m.taskInputInsert("\n")
+			m.taskInput.Insert("\n")
 			return m, nil
 		}
 		if msg.String() == "shift+enter" {
-			m.taskInputInsert("\n")
+			m.taskInput.Insert("\n")
 			return m, nil
 		}
 		if msg.Type == tea.KeyCtrlJ {
-			m.taskInputInsert("\n")
+			m.taskInput.Insert("\n")
 			return m, nil
 		}
 
@@ -434,118 +338,107 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch keyStr {
 		case "alt+left":
 			// Opt+Left: Move to previous word boundary
-			m.taskInputCursor = m.taskInputFindPrevWordBoundary()
+			m.taskInput.MoveToPrevWord()
 			return m, nil
 		case "alt+right":
 			// Opt+Right: Move to next word boundary
-			m.taskInputCursor = m.taskInputFindNextWordBoundary()
+			m.taskInput.MoveToNextWord()
 			return m, nil
 		case "alt+up", "ctrl+a": // Cmd+Up often reported as ctrl+a in some terminals
 			// Move to start of input
-			m.taskInputCursor = 0
+			m.taskInput.MoveToStart()
 			return m, nil
 		case "alt+down", "ctrl+e": // Cmd+Down often reported as ctrl+e in some terminals
 			// Move to end of input
-			m.taskInputCursor = len([]rune(m.taskInput))
+			m.taskInput.MoveToEnd()
 			return m, nil
 		case "alt+backspace", "ctrl+w":
 			// Opt+Backspace: Delete previous word
-			prevWord := m.taskInputFindPrevWordBoundary()
-			m.taskInputDeleteBack(m.taskInputCursor - prevWord)
+			m.taskInput.DeleteWord()
 			return m, nil
 		}
 
 		switch msg.Type {
 		case tea.KeyEsc:
 			m.addingTask = false
-			m.taskInput = ""
-			m.taskInputCursor = 0
+			m.taskInput.Clear()
 			return m, nil
 		case tea.KeyEnter:
-			if m.taskInput != "" {
+			if !m.taskInput.IsEmpty() {
 				// Capture task and clear input state first
-				task := m.taskInput
+				task := m.taskInput.Buffer()
 				m.addingTask = false
-				m.taskInput = ""
-				m.taskInputCursor = 0
+				m.taskInput.Clear()
 				m.infoMessage = "Adding task..."
 				// Add instance asynchronously to avoid blocking UI during git worktree creation
 				return m, addTaskAsync(m.orchestrator, m.session, task)
 			}
 			m.addingTask = false
-			m.taskInput = ""
-			m.taskInputCursor = 0
+			m.taskInput.Clear()
 			return m, nil
 		case tea.KeyBackspace:
-			m.taskInputDeleteBack(1)
+			m.taskInput.DeleteBack(1)
 			return m, nil
 		case tea.KeyDelete:
-			m.taskInputDeleteForward(1)
+			m.taskInput.DeleteForward(1)
 			return m, nil
 		case tea.KeyLeft:
-			m.taskInputMoveCursor(-1)
+			m.taskInput.MoveCursor(-1)
 			return m, nil
 		case tea.KeyRight:
-			m.taskInputMoveCursor(1)
+			m.taskInput.MoveCursor(1)
 			return m, nil
 		case tea.KeyHome:
 			// Move to start of current line
-			m.taskInputCursor = m.taskInputFindLineStart()
+			m.taskInput.MoveToLineStart()
 			return m, nil
 		case tea.KeyEnd:
 			// Move to end of current line
-			m.taskInputCursor = m.taskInputFindLineEnd()
+			m.taskInput.MoveToLineEnd()
 			return m, nil
 		case tea.KeyCtrlU:
 			// Cmd+Backspace equivalent: Delete from cursor to start of line
-			lineStart := m.taskInputFindLineStart()
-			m.taskInputDeleteBack(m.taskInputCursor - lineStart)
+			m.taskInput.DeleteToLineStart()
 			return m, nil
 		case tea.KeyCtrlK:
 			// Delete from cursor to end of line
-			lineEnd := m.taskInputFindLineEnd()
-			m.taskInputDeleteForward(lineEnd - m.taskInputCursor)
+			m.taskInput.DeleteToLineEnd()
 			return m, nil
 		case tea.KeySpace:
-			m.taskInputInsert(" ")
+			m.taskInput.Insert(" ")
 			return m, nil
 		case tea.KeyRunes:
 			char := string(msg.Runes)
 			// Handle Enter sent as rune (some terminals/input methods send \n or \r as runes)
 			if char == "\n" || char == "\r" {
-				if m.taskInput != "" {
+				if !m.taskInput.IsEmpty() {
 					// Capture task and clear input state first
-					task := m.taskInput
+					task := m.taskInput.Buffer()
 					m.addingTask = false
-					m.taskInput = ""
-					m.taskInputCursor = 0
+					m.taskInput.Clear()
 					m.infoMessage = "Adding task..."
 					// Add instance asynchronously to avoid blocking UI during git worktree creation
 					return m, addTaskAsync(m.orchestrator, m.session, task)
 				}
 				m.addingTask = false
-				m.taskInput = ""
-				m.taskInputCursor = 0
+				m.taskInput.Clear()
 				return m, nil
 			}
 			// Detect "/" at start of input or after newline to show templates
-			cursorAtLineStart := m.taskInputCursor == 0 ||
-				(m.taskInputCursor > 0 && []rune(m.taskInput)[m.taskInputCursor-1] == '\n')
-			if char == "/" && cursorAtLineStart {
-				m.showTemplates = true
-				m.templateFilter = ""
-				m.templateSelected = 0
-				m.taskInputInsert(char)
+			if char == "/" && m.taskInput.IsAtLineStart() {
+				m.templateHandler.Show()
+				m.taskInput.Insert(char)
 				return m, nil
 			}
-			m.taskInputInsert(char)
+			m.taskInput.Insert(char)
 			return m, nil
 		}
 		return m, nil
 	}
 
 	// Handle command mode (vim-style ex commands with ':' prefix)
-	if m.commandMode {
+	// Check both the handler (if available) and legacy field for backward compatibility
+	if (m.commandHandler != nil && m.commandHandler.IsActive()) || m.commandMode {
 		return m.handleCommandInput(msg)
 	}
 
@@ -571,6 +464,10 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case ":":
 		// Enter command mode (vim-style)
+		if m.commandHandler != nil {
+			m.commandHandler.Enter()
+		}
+		// Sync legacy fields for backward compatibility
 		m.commandMode = true
 		m.commandBuffer = ""
 		return m, nil
@@ -617,18 +514,20 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "esc":
 		// Close diff panel if open
-		if m.showDiff {
-			m.showDiff = false
-			m.diffContent = ""
-			m.diffScroll = 0
+		if m.getDiffState().IsVisible() {
+			m.getDiffState().Hide()
 			return m, nil
 		}
 		return m, nil
 
 	case "j", "down":
 		// Scroll down in diff view, output view, or navigate to next instance
-		if m.showDiff {
-			m.diffScroll++
+		if m.getDiffState().IsVisible() {
+			maxLines := m.height - 14
+			if maxLines < 5 {
+				maxLines = 5
+			}
+			m.getDiffState().ScrollDown(1, m.getDiffState().CalculateMaxScroll(maxLines))
 			return m, nil
 		}
 		if m.showHelp || m.showConflicts {
@@ -644,10 +543,8 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "k", "up":
 		// Scroll up in diff view, output view, or navigate to previous instance
-		if m.showDiff {
-			if m.diffScroll > 0 {
-				m.diffScroll--
-			}
+		if m.getDiffState().IsVisible() {
+			m.getDiffState().ScrollUp(1)
 			return m, nil
 		}
 		if m.showHelp || m.showConflicts {
@@ -663,7 +560,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+u":
 		// Scroll up half page in output view
-		if m.showDiff || m.showHelp || m.showConflicts {
+		if m.getDiffState().IsVisible() || m.showHelp || m.showConflicts {
 			return m, nil
 		}
 		if inst := m.activeInstance(); inst != nil {
@@ -674,7 +571,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+d":
 		// Scroll down half page in output view
-		if m.showDiff || m.showHelp || m.showConflicts {
+		if m.getDiffState().IsVisible() || m.showHelp || m.showConflicts {
 			return m, nil
 		}
 		if inst := m.activeInstance(); inst != nil {
@@ -685,7 +582,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+b":
 		// Scroll up full page in output view
-		if m.showDiff || m.showHelp || m.showConflicts {
+		if m.getDiffState().IsVisible() || m.showHelp || m.showConflicts {
 			return m, nil
 		}
 		if inst := m.activeInstance(); inst != nil {
@@ -696,7 +593,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+f":
 		// Scroll down full page in output view
-		if m.showDiff || m.showHelp || m.showConflicts {
+		if m.getDiffState().IsVisible() || m.showHelp || m.showConflicts {
 			return m, nil
 		}
 		if inst := m.activeInstance(); inst != nil {
@@ -758,8 +655,8 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "g":
 		// Go to top of diff or output
-		if m.showDiff {
-			m.diffScroll = 0
+		if m.getDiffState().IsVisible() {
+			m.getDiffState().ScrollToTop()
 			return m, nil
 		}
 		if m.showHelp || m.showConflicts {
@@ -772,17 +669,12 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "G":
 		// Go to bottom of diff or output (re-enables auto-scroll)
-		if m.showDiff {
-			lines := strings.Split(m.diffContent, "\n")
+		if m.getDiffState().IsVisible() {
 			maxLines := m.height - 14
 			if maxLines < 5 {
 				maxLines = 5
 			}
-			maxScroll := len(lines) - maxLines
-			if maxScroll < 0 {
-				maxScroll = 0
-			}
-			m.diffScroll = maxScroll
+			m.getDiffState().ScrollToBottom(m.getDiffState().CalculateMaxScroll(maxLines))
 			return m, nil
 		}
 		if m.showHelp || m.showConflicts {
@@ -795,24 +687,22 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "/":
 		// Enter search mode
-		m.searchMode = true
-		m.searchPattern = ""
-		m.searchMatches = nil
-		m.searchCurrent = 0
+		m.search.SetActive(true)
+		m.search.Clear()
 		return m, nil
 
 	case "n":
 		// Next search match
-		if m.searchPattern != "" && len(m.searchMatches) > 0 {
-			m.searchCurrent = (m.searchCurrent + 1) % len(m.searchMatches)
+		if m.search.HasPattern() && m.search.HasMatches() {
+			m.search.NextMatch()
 			m.scrollToMatch()
 		}
 		return m, nil
 
 	case "N":
 		// Previous search match
-		if m.searchPattern != "" && len(m.searchMatches) > 0 {
-			m.searchCurrent = (m.searchCurrent - 1 + len(m.searchMatches)) % len(m.searchMatches)
+		if m.search.HasPattern() && m.search.HasMatches() {
+			m.search.PrevMatch()
 			m.scrollToMatch()
 		}
 		return m, nil
@@ -826,393 +716,6 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleCommandInput handles keystrokes when in command mode (after pressing ':')
-func (m Model) handleCommandInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEsc:
-		// Exit command mode without executing
-		m.commandMode = false
-		m.commandBuffer = ""
-		return m, nil
-
-	case tea.KeyEnter:
-		// Execute the command and exit command mode
-		m.commandMode = false
-		cmd := m.commandBuffer
-		m.commandBuffer = ""
-		return m.executeCommand(cmd)
-
-	case tea.KeyBackspace, tea.KeyDelete:
-		// Delete last character from command buffer
-		if len(m.commandBuffer) > 0 {
-			m.commandBuffer = m.commandBuffer[:len(m.commandBuffer)-1]
-		}
-		// If buffer is empty after backspace, exit command mode
-		if len(m.commandBuffer) == 0 {
-			m.commandMode = false
-		}
-		return m, nil
-
-	case tea.KeySpace:
-		m.commandBuffer += " "
-		return m, nil
-
-	case tea.KeyRunes:
-		// Add typed characters to the command buffer
-		m.commandBuffer += string(msg.Runes)
-		return m, nil
-	}
-
-	return m, nil
-}
-
-// executeCommand parses and executes a vim-style command
-func (m Model) executeCommand(cmd string) (tea.Model, tea.Cmd) {
-	// Trim whitespace
-	cmd = strings.TrimSpace(cmd)
-	if cmd == "" {
-		return m, nil
-	}
-
-	// Clear messages before executing
-	m.infoMessage = ""
-	m.errorMessage = ""
-
-	// Parse command (support both short and long forms)
-	switch cmd {
-	// Instance control commands
-	case "s", "start":
-		return m.cmdStart()
-	case "x", "stop":
-		return m.cmdStop()
-	case "p", "pause":
-		return m.cmdPause()
-	case "R", "reconnect":
-		return m.cmdReconnect()
-	case "restart":
-		return m.cmdRestart()
-
-	// Instance management commands
-	case "a", "add":
-		return m.cmdAdd()
-	case "D", "remove":
-		return m.cmdRemove()
-	case "kill":
-		return m.cmdKill()
-	case "C", "clear":
-		return m.cmdClearCompleted()
-
-	// View toggle commands
-	case "d", "diff":
-		return m.cmdDiff()
-	case "m", "metrics", "stats":
-		return m.cmdStats()
-	case "c", "conflicts":
-		return m.cmdConflicts()
-	case "f", "F", "filter":
-		return m.cmdFilter()
-
-	// Utility commands
-	case "t", "tmux":
-		return m.cmdTmux()
-	case "r", "pr":
-		return m.cmdPR()
-
-	// Help commands
-	case "h", "help":
-		m.showHelp = !m.showHelp
-		return m, nil
-	case "q", "quit":
-		m.quitting = true
-		return m, tea.Quit
-
-	default:
-		m.errorMessage = fmt.Sprintf("Unknown command: %s (type :h for help)", cmd)
-		return m, nil
-	}
-}
-
-// Command implementations
-
-func (m Model) cmdStart() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	// Guard against starting already-running instances
-	if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
-		m.infoMessage = "Instance is already running. Use :p to pause/resume or :x to stop."
-		return m, nil
-	}
-	if inst.Status == orchestrator.StatusCreatingPR {
-		m.infoMessage = "Instance is creating PR. Wait for it to complete."
-		return m, nil
-	}
-
-	if err := m.orchestrator.StartInstance(inst); err != nil {
-		m.errorMessage = err.Error()
-	} else {
-		m.infoMessage = fmt.Sprintf("Started instance %s", inst.ID)
-	}
-	return m, nil
-}
-
-func (m Model) cmdStop() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	prStarted, err := m.orchestrator.StopInstanceWithAutoPR(inst)
-	if err != nil {
-		m.errorMessage = err.Error()
-	} else if prStarted {
-		m.infoMessage = fmt.Sprintf("Instance stopped. Creating PR for %s...", inst.ID)
-	} else {
-		m.infoMessage = fmt.Sprintf("Instance stopped. Create PR with: claudio pr %s", inst.ID)
-	}
-	return m, nil
-}
-
-func (m Model) cmdPause() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	mgr := m.orchestrator.GetInstanceManager(inst.ID)
-	if mgr == nil {
-		m.infoMessage = "Instance has no manager"
-		return m, nil
-	}
-
-	switch inst.Status {
-	case orchestrator.StatusPaused:
-		_ = mgr.Resume()
-		inst.Status = orchestrator.StatusWorking
-		m.infoMessage = fmt.Sprintf("Resumed instance %s", inst.ID)
-	case orchestrator.StatusWorking:
-		_ = mgr.Pause()
-		inst.Status = orchestrator.StatusPaused
-		m.infoMessage = fmt.Sprintf("Paused instance %s", inst.ID)
-	default:
-		m.infoMessage = "Instance is not in a pausable state"
-	}
-	return m, nil
-}
-
-func (m Model) cmdReconnect() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	// Only allow reconnecting to non-running instances
-	if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
-		m.infoMessage = "Instance is already running. Use :p to pause/resume or :x to stop."
-		return m, nil
-	}
-	if inst.Status == orchestrator.StatusCreatingPR {
-		m.infoMessage = "Instance is creating PR. Wait for it to complete."
-		return m, nil
-	}
-
-	if err := m.orchestrator.ReconnectInstance(inst); err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to reconnect: %v", err)
-	} else {
-		m.infoMessage = fmt.Sprintf("Reconnected to instance %s", inst.ID)
-	}
-	return m, nil
-}
-
-func (m Model) cmdRestart() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	// Only allow restarting non-running instances
-	switch inst.Status {
-	case orchestrator.StatusWorking, orchestrator.StatusWaitingInput:
-		m.infoMessage = "Instance is running. Use :x to stop it first, or :p to pause."
-		return m, nil
-	case orchestrator.StatusCreatingPR:
-		m.infoMessage = "Instance is creating PR. Wait for it to complete."
-		return m, nil
-	}
-
-	// Stop the instance if it's still running in tmux
-	mgr := m.orchestrator.GetInstanceManager(inst.ID)
-	if mgr != nil {
-		_ = mgr.Stop()
-		mgr.ClearTimeout() // Reset timeout state
-	}
-
-	// Restart with same task
-	if err := m.orchestrator.ReconnectInstance(inst); err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to restart instance: %v", err)
-	} else {
-		m.infoMessage = fmt.Sprintf("Instance %s restarted with same task", inst.ID)
-	}
-	return m, nil
-}
-
-func (m Model) cmdAdd() (tea.Model, tea.Cmd) {
-	m.addingTask = true
-	m.taskInput = ""
-	m.taskInputCursor = 0
-	return m, nil
-}
-
-func (m Model) cmdRemove() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	instanceID := inst.ID
-	if err := m.orchestrator.RemoveInstance(m.session, instanceID, true); err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to remove instance: %v", err)
-	} else {
-		m.infoMessage = fmt.Sprintf("Removed instance %s", instanceID)
-		// Adjust active tab if needed
-		if m.activeTab >= m.instanceCount() {
-			m.activeTab = m.instanceCount() - 1
-			if m.activeTab < 0 {
-				m.activeTab = 0
-			}
-		}
-		m.ensureActiveVisible()
-	}
-	return m, nil
-}
-
-func (m Model) cmdKill() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	// Stop the instance first
-	mgr := m.orchestrator.GetInstanceManager(inst.ID)
-	if mgr != nil {
-		_ = mgr.Stop()
-	}
-
-	// Remove the instance
-	if err := m.orchestrator.RemoveInstance(m.session, inst.ID, true); err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to remove instance: %v", err)
-	} else {
-		m.infoMessage = fmt.Sprintf("Instance %s killed and removed", inst.ID)
-		// Adjust active tab if needed
-		if m.activeTab >= len(m.session.Instances) && m.activeTab > 0 {
-			m.activeTab--
-		}
-	}
-	return m, nil
-}
-
-func (m Model) cmdClearCompleted() (tea.Model, tea.Cmd) {
-	removed, err := m.orchestrator.ClearCompletedInstances(m.session)
-	if err != nil {
-		m.errorMessage = err.Error()
-	} else if removed == 0 {
-		m.infoMessage = "No completed instances to clear"
-	} else {
-		m.infoMessage = fmt.Sprintf("Cleared %d completed instance(s)", removed)
-		// Adjust active tab if needed
-		if m.activeTab >= m.instanceCount() {
-			m.activeTab = m.instanceCount() - 1
-			if m.activeTab < 0 {
-				m.activeTab = 0
-			}
-		}
-		m.ensureActiveVisible()
-	}
-	return m, nil
-}
-
-func (m Model) cmdDiff() (tea.Model, tea.Cmd) {
-	if m.showDiff {
-		m.showDiff = false
-		m.diffContent = ""
-		m.diffScroll = 0
-		return m, nil
-	}
-
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	diff, err := m.orchestrator.GetInstanceDiff(inst.WorktreePath)
-	if err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to get diff: %v", err)
-	} else if diff == "" {
-		m.infoMessage = "No changes to show"
-	} else {
-		m.diffContent = diff
-		m.showDiff = true
-		m.diffScroll = 0
-	}
-	return m, nil
-}
-
-func (m Model) cmdStats() (tea.Model, tea.Cmd) {
-	m.showStats = !m.showStats
-	return m, nil
-}
-
-func (m Model) cmdConflicts() (tea.Model, tea.Cmd) {
-	if len(m.conflicts) > 0 {
-		m.showConflicts = !m.showConflicts
-	} else {
-		m.infoMessage = "No conflicts detected"
-	}
-	return m, nil
-}
-
-func (m Model) cmdFilter() (tea.Model, tea.Cmd) {
-	m.filterMode = true
-	return m, nil
-}
-
-func (m Model) cmdTmux() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	mgr := m.orchestrator.GetInstanceManager(inst.ID)
-	if mgr == nil {
-		m.infoMessage = "Instance has no manager"
-		return m, nil
-	}
-
-	m.infoMessage = "Attach with: " + mgr.AttachCommand()
-	return m, nil
-}
-
-func (m Model) cmdPR() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	m.infoMessage = fmt.Sprintf("Create PR: claudio pr %s  (add --draft for draft PR)", inst.ID)
-	return m, nil
-}
 
 // sendKeyToTmux sends a key event to the tmux session
 func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
@@ -1410,91 +913,38 @@ func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
 	}
 }
 
-// handleTemplateDropdown handles keyboard input when the template dropdown is visible
+// handleTemplateDropdown handles keyboard input when the template dropdown is visible.
+// It delegates to TemplateHandler and handles the result by updating task input accordingly.
 func (m Model) handleTemplateDropdown(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	templates := FilterTemplates(m.templateFilter)
+	result := m.templateHandler.HandleKey(msg, m.taskInput.Buffer())
 
-	switch msg.Type {
-	case tea.KeyEsc:
-		// Close dropdown but keep the "/" and filter in input
-		m.showTemplates = false
-		m.templateFilter = ""
-		m.templateSelected = 0
+	if !result.Handled {
 		return m, nil
+	}
 
-	case tea.KeyEnter, tea.KeyTab:
-		// Select the highlighted template
-		if len(templates) > 0 && m.templateSelected < len(templates) {
-			selected := templates[m.templateSelected]
-			// Replace the "/" and filter with the template description
-			// Find where the "/" starts (could be at beginning or after newline)
-			lastNewline := strings.LastIndex(m.taskInput, "\n")
-			if lastNewline == -1 {
-				// "/" is at the beginning
-				m.taskInput = selected.Description
-			} else {
-				// "/" is after a newline
-				m.taskInput = m.taskInput[:lastNewline+1] + selected.Description
-			}
-			m.taskInputCursor = len([]rune(m.taskInput))
-		}
-		m.showTemplates = false
-		m.templateFilter = ""
-		m.templateSelected = 0
+	// Handle template selection - replace "/" and filter with template description
+	if result.SelectedTemplate != nil && result.InputReplace {
+		newInput := m.templateHandler.ComputeReplacementInput(m.taskInput.Buffer(), result.SelectedTemplate)
+		m.taskInput.SetBuffer(newInput)
+		m.taskInput.MoveToEnd()
 		return m, nil
+	}
 
-	case tea.KeyUp:
-		if m.templateSelected > 0 {
-			m.templateSelected--
+	// Handle filter changes - sync taskInput with filter
+	if result.FilterChanged {
+		if msg.Type == tea.KeyBackspace {
+			// Remove character from taskInput
+			m.taskInput.DeleteBack(1)
+		} else if msg.Type == tea.KeyRunes {
+			// Add character to taskInput
+			m.taskInput.Insert(string(msg.Runes))
 		}
 		return m, nil
+	}
 
-	case tea.KeyDown:
-		if m.templateSelected < len(templates)-1 {
-			m.templateSelected++
-		}
-		return m, nil
-
-	case tea.KeyBackspace:
-		if len(m.templateFilter) > 0 {
-			// Remove from both filter and taskInput
-			m.templateFilter = m.templateFilter[:len(m.templateFilter)-1]
-			if len(m.taskInput) > 0 {
-				m.taskInput = m.taskInput[:len(m.taskInput)-1]
-				m.taskInputCursor = len([]rune(m.taskInput))
-			}
-			m.templateSelected = 0 // Reset selection on filter change
-		} else {
-			// Remove the "/" and close dropdown
-			if len(m.taskInput) > 0 {
-				m.taskInput = m.taskInput[:len(m.taskInput)-1]
-				m.taskInputCursor = len([]rune(m.taskInput))
-			}
-			m.showTemplates = false
-		}
-		return m, nil
-
-	case tea.KeyRunes:
-		char := string(msg.Runes)
-		// Space closes dropdown and keeps current input, adds space
-		if char == " " {
-			m.showTemplates = false
-			m.taskInput += " "
-			m.taskInputCursor = len([]rune(m.taskInput))
-			m.templateFilter = ""
-			m.templateSelected = 0
-			return m, nil
-		}
-		// Add to both filter and taskInput
-		m.templateFilter += char
-		m.taskInput += char
-		m.taskInputCursor = len([]rune(m.taskInput))
-		m.templateSelected = 0 // Reset selection on filter change
-		// If no templates match, close dropdown
-		if len(FilterTemplates(m.templateFilter)) == 0 {
-			m.showTemplates = false
-			m.templateFilter = ""
-		}
+	// Handle space - append space to input
+	if result.InputAppend != "" {
+		m.taskInput.Insert(result.InputAppend)
 		return m, nil
 	}
 
@@ -1514,7 +964,7 @@ func (m *Model) updateOutputs() {
 			if workflow != nil {
 				output := workflow.GetOutput()
 				if len(output) > 0 {
-					m.outputs[inst.ID] = string(output)
+					m.outputManager.SetOutput(inst.ID, string(output))
 				}
 			}
 			continue
@@ -1524,7 +974,7 @@ func (m *Model) updateOutputs() {
 		if mgr != nil {
 			output := mgr.GetOutput()
 			if len(output) > 0 {
-				m.outputs[inst.ID] = string(output)
+				m.outputManager.SetOutput(inst.ID, string(output))
 				// Update scroll position (auto-scroll if enabled)
 				m.updateOutputScroll(inst.ID)
 			}

@@ -1,40 +1,197 @@
-# Task: Extract ultraplan sidebar renderers
+# Group 1 Consolidation
 
-## Part of Ultra-Plan: 
+## Part of Ultra-Plan: Refactor Claudio codebase to achieve separation of concerns, single responsibility principle, and improved subpackage organization. Focus on splitting god objects (coordinator.go at 2542 LOC, app.go at 1679 LOC) into focused, testable components while maintaining backward compatibility.
 
-## Your Task
+## Objective
 
-Extract renderUltraPlanSidebar(), renderPlanningSidebar(), renderExecutionSidebar(), renderSynthesisSidebar(), renderConsolidationSidebar() from tui/ultraplan.go into tui/ultraplan_sidebar.go.
+Consolidate all completed task branches from this group into a single stable branch.
+You must resolve any merge conflicts, verify the consolidated code works, and pass context to the next group.
 
-## Expected Files
+## Tasks Completed in This Group
 
-You are expected to work with these files:
-- internal/tui/ultraplan_sidebar.go
+### task-2-event-types: Extract event types to dedicated file
+- Branch: `Iron-Ham/c1317109--task-extract-event-types-to-d`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/c1317109`
+- Summary: Created internal/orchestrator/event_types.go containing all event-related types and constants. Moved CoordinatorEvent, CoordinatorEventType (with 12 event constants) from ultraplan_types.go and ConsolidationEvent, ConsolidationEventType (with 10 event constants) from consolidation.go into the new centralized file.
 
-## Guidelines
+### task-1-plan-types: Extract plan types to dedicated file
+- Branch: `Iron-Ham/f80d6e29--task-extract-plan-types-to-de`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/f80d6e29`
+- Summary: Extracted plan-related type definitions into new plan_types.go file, separating data model types from orchestration and editor operation concerns
 
-- Focus only on this specific task
-- Do not modify files outside of your assigned scope unless necessary
-- Commit your changes before writing the completion file
+### task-11-tui-state-output: Extract TUI output state management
+- Branch: `Iron-Ham/529b6b1a--task-extract-tui-output-state`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/529b6b1a`
+- Summary: Created OutputManager to consolidate output-related state (outputs map and outputState) from Model struct. Updated all consumers to use the new API.
+
+### task-12-tui-input-handler: Extract TUI input state management
+- Branch: `Iron-Ham/e1f425b3--task-extract-tui-input-state`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/e1f425b3`
+- Summary: Extracted input state management into InputHandler struct with buffer, cursor, and all text manipulation methods. Updated Model to use InputHandler pointer and migrated all call sites in app.go, render_content.go, and test files.
+
+### task-23-tui-app-messages: Extract TUI message types to dedicated file
+- Branch: `Iron-Ham/2da7a2f1--task-extract-tui-message-type`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/2da7a2f1`
+- Summary: Extracted all Bubbletea message types and command functions from app.go to a new messages.go file
+
+### task-18-instance-timeout-handler: Extract instance timeout handling
+- Branch: `Iron-Ham/a4968ab7--task-extract-instance-timeout`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/a4968ab7`
+- Summary: Extracted timeout detection logic from Manager into a new TimeoutHandler struct. Created internal/instance/timeout.go containing TimeoutType, TimeoutCallback, TimeoutConfig, and TimeoutHandler. Updated Manager to delegate timeout handling through composition, and updated the capture loop in output.go to use the new handler.
+
+### task-13-tui-search-state: Extract TUI search state to dedicated type
+- Branch: `Iron-Ham/1b0a3dad--task-extract-tui-search-state`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/1b0a3dad`
+- Summary: Extracted TUI search state into dedicated SearchState type with nil-safe methods, improving separation of concerns and testability
+
+### task-15-tui-command-handler: Extract TUI command mode handler
+- Branch: `Iron-Ham/8c1e512d--task-extract-tui-command-mode`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/8c1e512d`
+- Summary: Created CommandHandler struct in internal/tui/command_handler.go that encapsulates command mode state and execution. Moved handleCommandInput, executeCommand, and all cmd* methods from app.go. Updated Model to use CommandHandler while maintaining backward compatibility with existing tests.
+
+### task-16-tui-template-handler: Extract TUI template dropdown handler
+- Branch: `Iron-Ham/d0ce8cca--task-extract-tui-template-dro`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/d0ce8cca`
+- Summary: Extracted template dropdown handler into TemplateHandler struct, moving showTemplates, templateFilter, and templateSelected fields along with handleTemplateDropdown logic from app.go into a dedicated component
+
+### task-19-instance-bell-handler: Extract instance bell handling
+- Branch: `Iron-Ham/70696f65--task-extract-instance-bell-ha`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/70696f65`
+- Summary: Extracted terminal bell detection logic from Manager into dedicated BellHandler struct in internal/instance/bell.go
+
+### task-20-instance-state-handler: Extract instance state handling
+- Branch: `Iron-Ham/baa71ff2--task-extract-instance-state-h`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/baa71ff2`
+- Summary: Reviewed detector.go and manager.go interaction - confirmed the separation is already clean with no changes needed
+
+### task-17-tui-diff-state: Extract TUI diff preview state
+- Branch: `Iron-Ham/a6db4b95--task-extract-tui-diff-preview`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/a6db4b95`
+- Summary: Created DiffState struct in internal/tui/diff_state.go to encapsulate diff preview functionality. Moved showDiff, diffContent, diffScroll fields from Model into DiffState with methods for visibility control (Show, Hide, IsVisible), content management (HasContent, Content, LineCount), and scroll position handling (ScrollUp, ScrollDown, ScrollToTop, ScrollToBottom, GetVisibleLines). Added getDiffState() helper for nil-safe access in tests.
+
+### task-21-orchestrator-callback-types: Extract orchestrator callback types
+- Branch: `Iron-Ham/9b4b9d84--task-extract-orchestrator-cal`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/9b4b9d84`
+- Summary: Created callback_types.go with named callback type definitions (PRCompleteCallback, PROpenedCallback, TimeoutCallback, BellCallback) and updated orchestrator.go and callbacks.go to use these named types instead of inline function signatures
+
+### task-22-ultraplan-sidebar-split: Split ultraplan_sidebar.go by phase
+- Branch: `Iron-Ham/9b01d0d2--task-split-ultraplansidebargo`
+- Worktree: `/Users/zer0/Developer/oss/claudio/.claudio/worktrees/9b01d0d2`
+- Summary: Split ultraplan_sidebar.go (1171 LOC) into 4 focused files by phase: main dispatcher (467 LOC), planning phase (346 LOC), execution phase (133 LOC), and consolidation/synthesis phase (260 LOC). Each file now has single responsibility for its ultraplan phase.
+
+## Implementation Notes from Tasks
+
+- **task-2-event-types**: The event_types.go file provides clear organization with section comments separating Coordinator Events and Consolidation Events. All existing usages continue to work since they're in the same package. The time package import was retained in ultraplan_types.go as it's still used for other types like PlanSpec.CreatedAt and UltraPlanSession timestamps.
+- **task-1-plan-types**: The new plan_types.go contains: PlanSpec, PlannedTask, TaskComplexity (with constants), PlanScore, PlanDecision, ValidationSeverity (with constants), ValidationMessage, and ValidationResult (with methods). Note: TaskStatus type mentioned in the task description does not exist in this codebase.
+- **task-11-tui-state-output**: OutputManager wraps both the outputs map (instance ID -> output string) and OutputState (scroll positions, auto-scroll flags, line counts). The Model struct now has a single outputManager field instead of separate outputs and outputState fields. Model's output helper methods (getOutputLineCount, getOutputMaxScroll, scrollOutputUp, etc.) are retained as they provide Model-aware calculations that delegate to OutputManager.
+- **task-12-tui-input-handler**: InputHandler encapsulates text input buffer and cursor state with methods for insertion, deletion, cursor movement, word/line boundary detection, and convenience operations. Model now holds a pointer to InputHandler (*InputHandler) which is initialized in NewModel(). Tests were updated to use the new InputHandler API, and one test expectation was corrected (DeleteToLineStart test had incorrect expected output).
+- **task-23-tui-app-messages**: Created messages.go containing 9 message types (tickMsg, outputMsg, errMsg, prCompleteMsg, prOpenedMsg, timeoutMsg, bellMsg, taskAddedMsg, ultraPlanInitMsg) and 4 command functions (tick, ringBell, notifyUser, addTaskAsync). Removed corresponding definitions and unused imports from app.go.
+- **task-18-instance-timeout-handler**: The TimeoutHandler uses composition pattern - Manager holds a *TimeoutHandler and delegates all timeout-related operations. The handler manages its own mutex for thread safety. TimeoutConfig is separate from ManagerConfig to allow independent configuration of timeout behavior.
+- **task-13-tui-search-state**: SearchState includes nil-safety checks on all methods to handle cases where tests create Model{} without using NewModel(). The Execute() method encapsulates pattern compilation and match finding. All existing tests pass.
+- **task-15-tui-command-handler**: The extraction maintains backward compatibility by keeping legacy commandMode and commandBuffer fields synchronized with the handler. Tests that create Models directly without NewModel() continue to work because the handleCommandInput method checks for nil handler and falls back to legacy field handling.
+- **task-16-tui-template-handler**: Used result struct pattern (TemplateHandlerResult) to communicate handler state changes back to caller. All handler methods are nil-safe to maintain backward compatibility with tests that construct Model directly. The handler manages dropdown visibility, filter state, and selection index while the Model retains responsibility for taskInput synchronization since it's used by multiple features.
+- **task-19-instance-bell-handler**: BellHandler uses edge detection (false→true transition) to ensure callbacks fire once per bell, not continuously. The EnableBellMonitoring() helper was added for tmux session setup but the existing setTmuxWindowOption calls in tmux.go and manager.go remain unchanged to avoid breaking existing behavior. Manager now uses composition with bellHandler field instead of inline bell state.
+- **task-20-instance-state-handler**: The current architecture follows proper separation of concerns: Detector is a stateless component containing only regex patterns and a pure Detect() method. Manager uses composition to delegate detection to Detector while maintaining necessary state (currentState) for change detection and callback notification. The Manager's state fields (detector, currentState, stateCallback) are correctly placed - they are about managing state transitions and notifications, not state detection logic. All 31 detector-related tests pass.
+- **task-17-tui-diff-state**: Follows the same encapsulation pattern as OutputState. The getDiffState() method provides lazy initialization for tests that create bare Model{} structs without using NewModel(). All existing TUI tests pass.
+- **task-21-orchestrator-callback-types**: The named callback types improve code clarity by providing explicit documentation for each callback's purpose and parameters. This is a non-breaking change since Go's structural typing means any function with the matching signature will still work.
+- **task-22-ultraplan-sidebar-split**: The main ultraplan_sidebar.go retains renderUltraPlanSidebar (main dispatcher) and getPhaseSectionStatus (shared utility). Phase-specific rendering functions are now in dedicated files. Build and tests pass.
+
+## Integration Suggestions from Tasks
+
+- [task-2-event-types] Consider adding a unified Event interface in the future that both CoordinatorEvent and ConsolidationEvent implement for more flexible event handling
+- [task-2-event-types] The event system could potentially be enhanced with event priorities or filtering capabilities
+- [task-1-plan-types] Consider adding a doc.go file in the orchestrator package to document the new file organization
+- [task-1-plan-types] Future tasks could further split ultraplan_types.go into session types vs event types
+- [task-11-tui-state-output] Consider moving filterOutput and search-related output processing into OutputManager in a future refactoring
+- [task-11-tui-state-output] The outputScroll field in Model (used for search navigation) is separate from the per-instance scroll in OutputManager - this could be consolidated if search/filter state is extracted to its own manager
+- [task-12-tui-input-handler] Consider extracting CommandBuffer into a similar InputHandler pattern for consistency
+- [task-12-tui-input-handler] PlanEditorState has editBuffer and editCursor which could potentially reuse InputHandler
+- [task-12-tui-input-handler] Consider adding InputHandler unit tests to a separate input_handler_test.go file for better organization
+- [task-23-tui-app-messages] Consider adding a messages_test.go file in the future to test command functions independently
+- [task-23-tui-app-messages] The outputMsg type appears unused in the current codebase - it may be legacy code worth investigating during cleanup
+- [task-18-instance-timeout-handler] Consider adding timeout_test.go with unit tests for TimeoutHandler in isolation
+- [task-18-instance-timeout-handler] The TimeoutHandler could be extended to support custom stale detection thresholds
+- [task-18-instance-timeout-handler] BellCallback and bell tracking could similarly be extracted into a BellHandler for consistency
+- [task-13-tui-search-state] Consider similar extraction for FilterState (filterMode, filterCategories, filterCustom, filterRegex) which is closely related
+- [task-13-tui-search-state] OutputState already exists as a dedicated type - this follows the same pattern
+- [task-13-tui-search-state] The outputScroll field in SearchState may overlap with the per-instance output scroll in OutputState - consolidation may be needed
+- [task-15-tui-command-handler] Consider adding CommandHandler unit tests that test the handler directly (not through Model)
+- [task-15-tui-command-handler] Future refactoring could make the legacy commandMode/commandBuffer fields private or remove them entirely once all tests use NewModel()
+- [task-16-tui-template-handler] Consider adding unit tests specifically for TemplateHandler to verify filter, selection, and key handling behavior
+- [task-16-tui-template-handler] The handleTemplateDropdown method in app.go could potentially be moved entirely to the handler if taskInput management is also delegated
+- [task-19-instance-bell-handler] Consider using EnableBellMonitoring() in tmux.go createTmuxSession for consistency
+- [task-19-instance-bell-handler] BellHandler could be extended with testing utilities (e.g., mock bell triggers) for unit testing bell-dependent behavior
+- [task-20-instance-state-handler] The WaitingState type could potentially be extracted to its own file (e.g., state.go) if the types grow, but current organization is appropriate
+- [task-20-instance-state-handler] Consider adding an interface (e.g., StateDetector) if multiple detection strategies are needed in the future
+- [task-17-tui-diff-state] Consider extracting similar state patterns for other UI panels (help, conflicts, stats, filter) to further reduce Model complexity
+- [task-17-tui-diff-state] The getDiffState() lazy initialization pattern could be documented as a project convention for state structs
+- [task-21-orchestrator-callback-types] Consider adding similar named types for other callback patterns in the codebase (e.g., instance.Manager callbacks)
+- [task-21-orchestrator-callback-types] The TimeoutCallback type demonstrates the pattern of including package-external types in callback signatures
+- [task-22-ultraplan-sidebar-split] Consider similar phase-based splits for other ultraplan files if they grow large
+- [task-22-ultraplan-sidebar-split] The getPhaseSectionStatus function could potentially be moved to a shared utilities file if other ultraplan files need it
+
+## Branch Configuration
+
+- **Base branch**: `main`
+- **Target consolidated branch**: `Iron-Ham/ultraplan-77f82521-group-1`
+- **Task branches to consolidate**: 14
+
+## Your Tasks
+
+1. **Create the consolidated branch** from the base branch:
+   ```bash
+   git checkout -b Iron-Ham/ultraplan-77f82521-group-1 main
+   ```
+
+2. **Cherry-pick commits** from each task branch in order. For each branch:
+   - Review the commits on the branch
+   - Cherry-pick them onto the consolidated branch
+   - Resolve any conflicts intelligently using your understanding of the code
+
+3. **Run verification** to ensure the consolidated code is stable:
+   - Detect the project type (Go, Node, Python, iOS, etc.)
+   - Run appropriate build/compile commands
+   - Run linting if available
+   - Run tests if available
+   - Fix any issues that arise
+
+4. **Push the consolidated branch** to the remote
+
+5. **Write the completion file** to signal success
+
+## Conflict Resolution Guidelines
+
+- Prefer changes that preserve functionality from all tasks
+- If there are conflicting approaches, choose the more robust one
+- Document your resolution reasoning in the completion file
+- If you cannot resolve a conflict, document it as an issue
 
 ## Completion Protocol
 
-When your task is complete, you MUST write a completion file to signal the orchestrator:
+When consolidation is complete, write `.claudio-group-consolidation-complete.json` in your worktree root:
 
-1. Use Write tool to create `.claudio-task-complete.json` in your worktree root
-2. Include this JSON structure:
 ```json
 {
-  "task_id": "task-26-tui-ultraplan-sidebar",
+  "group_index": 0,
   "status": "complete",
-  "summary": "Brief description of what you accomplished",
-  "files_modified": ["list", "of", "files", "you", "changed"],
-  "notes": "Any implementation notes for the consolidation phase",
-  "issues": ["Any concerns or blocking issues found"],
-  "suggestions": ["Suggestions for integration with other tasks"],
-  "dependencies": ["Any new runtime dependencies added"]
+  "branch_name": "Iron-Ham/ultraplan-77f82521-group-1",
+  "tasks_consolidated": ["task-id-1", "task-id-2"],
+  "conflicts_resolved": [
+    {"file": "path/to/file.go", "resolution": "Kept both changes, merged logic"}
+  ],
+  "verification": {
+    "project_type": "go",
+    "commands_run": [
+      {"name": "build", "command": "go build ./...", "success": true},
+      {"name": "lint", "command": "golangci-lint run", "success": true},
+      {"name": "test", "command": "go test ./...", "success": true}
+    ],
+    "overall_success": true,
+    "summary": "All checks passed"
+  },
+  "notes": "Any observations about the consolidated code",
+  "issues_for_next_group": ["Any warnings or concerns for the next group"]
 }
 ```
 
-3. Use status "blocked" if you cannot complete (explain in issues), or "failed" if something broke
-4. This file signals that your work is done and provides context for consolidation
+Use status "failed" if consolidation cannot be completed.

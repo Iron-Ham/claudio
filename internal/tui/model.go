@@ -61,35 +61,28 @@ type Model struct {
 	quitting       bool
 	showHelp       bool
 	showConflicts  bool // When true, show detailed conflict view
-	addingTask      bool
-	taskInput       string
-	taskInputCursor int // Cursor position within taskInput (0 = before first char)
-	errorMessage string
+	addingTask     bool
+	taskInput      *InputHandler // Text input handler for task description
+	errorMessage   string
 	infoMessage  string // Non-error status message
 	inputMode    bool   // When true, all keys are forwarded to the active instance's tmux session
 
 	// Command mode state (vim-style ex commands with ':' prefix)
-	commandMode   bool   // When true, we're typing a command after ':'
-	commandBuffer string // The command being typed (without the ':' prefix)
+	commandHandler *CommandHandler // Encapsulates command mode logic
+	commandMode    bool            // When true, we're typing a command after ':' (legacy, synced from handler)
+	commandBuffer  string          // The command being typed (without the ':' prefix) (legacy, synced from handler)
 
-	// Template dropdown state
-	showTemplates    bool   // Whether the template dropdown is visible
-	templateFilter   string // Current filter text (after the "/")
-	templateSelected int    // Currently highlighted template index
+	// Template dropdown handler
+	templateHandler *TemplateHandler
 
 	// File conflict tracking
 	conflicts []conflict.FileConflict
 
-	// Instance outputs (instance ID -> output string)
-	outputs map[string]string
+	// Output management (consolidates outputs map and scroll state)
+	outputManager *OutputManager
 
 	// Diff preview state
-	showDiff    bool   // Whether the diff panel is visible
-	diffContent string // Cached diff content for the active instance
-	diffScroll  int    // Scroll offset for navigating the diff
-
-	// Output scroll state (per instance)
-	outputState *OutputState
+	diffState *DiffState
 
 	// Sidebar pagination
 	sidebarScrollOffset int // Index of the first visible instance in sidebar
@@ -97,12 +90,8 @@ type Model struct {
 	// Resource metrics display
 	showStats bool // When true, show the stats panel
 
-	// Search state
-	searchMode    bool           // Whether search mode is active (typing pattern)
-	searchPattern string         // Current search pattern
-	searchRegex   *regexp.Regexp // Compiled regex (nil for literal search)
-	searchMatches []int          // Line numbers containing matches
-	searchCurrent int            // Current match index (for n/N navigation)
+	// Search state (encapsulates search mode, pattern, matches, navigation)
+	search *SearchState
 
 	// Filter state
 	filterMode       bool            // Whether filter mode is active
@@ -196,13 +185,26 @@ func (m *Model) exitPlanEditor() {
 	m.planEditor = nil
 }
 
+// getDiffState returns the diff state, initializing it if nil.
+// This provides safe access to diff state even for test models created without NewModel.
+func (m *Model) getDiffState() *DiffState {
+	if m.diffState == nil {
+		m.diffState = NewDiffState()
+	}
+	return m.diffState
+}
+
 // NewModel creates a new TUI model
 func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session) Model {
 	return Model{
 		orchestrator:     orch,
 		session:          session,
-		outputs:          make(map[string]string),
-		outputState:      NewOutputState(),
+		outputManager:    NewOutputManager(),
+		taskInput:        NewInputHandler(),
+		search:           NewSearchState(),
+		commandHandler:   NewCommandHandler(),
+		templateHandler:  NewTemplateHandler(),
+		diffState:        NewDiffState(),
 		filterCategories: map[string]bool{
 			"errors":   true,
 			"warnings": true,
@@ -268,6 +270,8 @@ func (m *Model) ensureActiveVisible() {
 }
 
 // Output scroll helper methods
+// These methods delegate to OutputManager but provide Model-aware calculations
+// (e.g., applying filters, calculating available height based on UI dimensions)
 
 // getOutputMaxLines returns the maximum number of lines visible in the output area
 func (m Model) getOutputMaxLines() int {
@@ -281,7 +285,7 @@ func (m Model) getOutputMaxLines() int {
 // getOutputLineCount returns the total number of lines in the output for an instance
 // This counts lines after filtering is applied to match what the user sees
 func (m *Model) getOutputLineCount(instanceID string) int {
-	output := m.outputs[instanceID]
+	output := m.outputManager.GetOutput(instanceID)
 	if output == "" {
 		return 0
 	}
@@ -313,152 +317,41 @@ func (m *Model) getOutputMaxScroll(instanceID string) int {
 
 // isOutputAutoScroll returns whether auto-scroll is enabled for an instance (defaults to true)
 func (m Model) isOutputAutoScroll(instanceID string) bool {
-	return m.outputState.IsAutoScroll(instanceID)
+	return m.outputManager.IsAutoScroll(instanceID)
 }
 
 // scrollOutputUp scrolls the output up by n lines and disables auto-scroll
 func (m *Model) scrollOutputUp(instanceID string, n int) {
-	m.outputState.ScrollUp(instanceID, n)
+	m.outputManager.ScrollUp(instanceID, n)
 }
 
 // scrollOutputDown scrolls the output down by n lines
 func (m *Model) scrollOutputDown(instanceID string, n int) {
 	maxScroll := m.getOutputMaxScroll(instanceID)
-	m.outputState.ScrollDown(instanceID, n, maxScroll)
+	m.outputManager.ScrollDown(instanceID, n, maxScroll)
 }
 
 // scrollOutputToTop scrolls to the top of the output and disables auto-scroll
 func (m *Model) scrollOutputToTop(instanceID string) {
-	m.outputState.ScrollToTop(instanceID)
+	m.outputManager.ScrollToTop(instanceID)
 }
 
 // scrollOutputToBottom scrolls to the bottom and re-enables auto-scroll
 func (m *Model) scrollOutputToBottom(instanceID string) {
 	maxScroll := m.getOutputMaxScroll(instanceID)
-	m.outputState.ScrollToBottom(instanceID, maxScroll)
+	m.outputManager.ScrollToBottom(instanceID, maxScroll)
 }
 
 // updateOutputScroll updates scroll position based on new output (if auto-scroll is enabled)
 func (m *Model) updateOutputScroll(instanceID string) {
 	maxScroll := m.getOutputMaxScroll(instanceID)
 	lineCount := m.getOutputLineCount(instanceID)
-	m.outputState.UpdateForNewOutput(instanceID, maxScroll, lineCount)
+	m.outputManager.UpdateForNewOutput(instanceID, maxScroll, lineCount)
 }
 
 // hasNewOutput returns true if there's new output since last update
 func (m Model) hasNewOutput(instanceID string) bool {
 	currentLines := m.getOutputLineCount(instanceID)
-	return m.outputState.HasNewOutput(instanceID, currentLines)
+	return m.outputManager.HasNewOutput(instanceID, currentLines)
 }
 
-// Task input cursor helper methods
-
-// taskInputInsert inserts text at the current cursor position
-func (m *Model) taskInputInsert(text string) {
-	runes := []rune(m.taskInput)
-	m.taskInput = string(runes[:m.taskInputCursor]) + text + string(runes[m.taskInputCursor:])
-	m.taskInputCursor += len([]rune(text))
-}
-
-// taskInputDeleteBack deletes n runes before the cursor
-func (m *Model) taskInputDeleteBack(n int) {
-	if m.taskInputCursor == 0 {
-		return
-	}
-	runes := []rune(m.taskInput)
-	deleteCount := n
-	if deleteCount > m.taskInputCursor {
-		deleteCount = m.taskInputCursor
-	}
-	m.taskInput = string(runes[:m.taskInputCursor-deleteCount]) + string(runes[m.taskInputCursor:])
-	m.taskInputCursor -= deleteCount
-}
-
-// taskInputDeleteForward deletes n runes after the cursor
-func (m *Model) taskInputDeleteForward(n int) {
-	runes := []rune(m.taskInput)
-	if m.taskInputCursor >= len(runes) {
-		return
-	}
-	deleteCount := n
-	if m.taskInputCursor+deleteCount > len(runes) {
-		deleteCount = len(runes) - m.taskInputCursor
-	}
-	m.taskInput = string(runes[:m.taskInputCursor]) + string(runes[m.taskInputCursor+deleteCount:])
-}
-
-// taskInputMoveCursor moves cursor by n runes (negative = left, positive = right)
-func (m *Model) taskInputMoveCursor(n int) {
-	runes := []rune(m.taskInput)
-	newPos := m.taskInputCursor + n
-	if newPos < 0 {
-		newPos = 0
-	}
-	if newPos > len(runes) {
-		newPos = len(runes)
-	}
-	m.taskInputCursor = newPos
-}
-
-// taskInputFindPrevWordBoundary finds the position of the previous word boundary
-func (m *Model) taskInputFindPrevWordBoundary() int {
-	if m.taskInputCursor == 0 {
-		return 0
-	}
-	runes := []rune(m.taskInput)
-	pos := m.taskInputCursor - 1
-
-	// Skip any whitespace/punctuation immediately before cursor
-	for pos > 0 && !isWordChar(runes[pos]) {
-		pos--
-	}
-	// Move back through the word
-	for pos > 0 && isWordChar(runes[pos-1]) {
-		pos--
-	}
-	return pos
-}
-
-// taskInputFindNextWordBoundary finds the position of the next word boundary
-func (m *Model) taskInputFindNextWordBoundary() int {
-	runes := []rune(m.taskInput)
-	if m.taskInputCursor >= len(runes) {
-		return len(runes)
-	}
-	pos := m.taskInputCursor
-
-	// Skip current word
-	for pos < len(runes) && isWordChar(runes[pos]) {
-		pos++
-	}
-	// Skip whitespace/punctuation to reach next word
-	for pos < len(runes) && !isWordChar(runes[pos]) {
-		pos++
-	}
-	return pos
-}
-
-// taskInputFindLineStart finds the start of the current line
-func (m *Model) taskInputFindLineStart() int {
-	runes := []rune(m.taskInput)
-	pos := m.taskInputCursor
-	for pos > 0 && runes[pos-1] != '\n' {
-		pos--
-	}
-	return pos
-}
-
-// taskInputFindLineEnd finds the end of the current line
-func (m *Model) taskInputFindLineEnd() int {
-	runes := []rune(m.taskInput)
-	pos := m.taskInputCursor
-	for pos < len(runes) && runes[pos] != '\n' {
-		pos++
-	}
-	return pos
-}
-
-// isWordChar returns true if the rune is considered part of a word
-func isWordChar(r rune) bool {
-	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
-}
