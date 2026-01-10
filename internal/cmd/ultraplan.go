@@ -188,7 +188,9 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	session.UltraPlan = ultraSession
 
 	// Create coordinator
-	coordinator := orchestrator.NewCoordinator(orch, session, ultraSession)
+	// Note: logger is nil here - integration with config.Get().Logging settings will be done
+	// in a future task that wires up logger initialization
+	coordinator := orchestrator.NewCoordinator(orch, session, ultraSession, nil)
 
 	// Get terminal dimensions
 	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
