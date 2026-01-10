@@ -2004,6 +2004,93 @@ func (m *Model) checkForPlanFile() bool {
 	return true
 }
 
+// checkForMultiPassPlanFiles checks for plan files from all multi-pass coordinators (called during tick updates).
+// This is the most reliable method for detecting plan completion in multi-pass mode,
+// as it polls for the actual plan files rather than relying on instance state transitions.
+// Returns true if all plans were found and the plan manager was triggered.
+func (m *Model) checkForMultiPassPlanFiles() bool {
+	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return false
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil {
+		return false
+	}
+
+	// Only check during planning phase in multi-pass mode
+	if session.Phase != orchestrator.PhasePlanning || !session.Config.MultiPass {
+		return false
+	}
+
+	// Skip if we don't have coordinator IDs yet
+	numCoordinators := len(session.PlanCoordinatorIDs)
+	if numCoordinators == 0 {
+		return false
+	}
+
+	// Skip if plan manager is already running
+	if session.PlanManagerID != "" {
+		return false
+	}
+
+	strategyNames := orchestrator.GetMultiPassStrategyNames()
+	newPlansFound := false
+
+	// Check each coordinator for a plan file
+	for i, coordID := range session.PlanCoordinatorIDs {
+		// Skip if we already have a plan for this coordinator
+		if i < len(session.CandidatePlans) && session.CandidatePlans[i] != nil {
+			continue
+		}
+
+		// Get the coordinator instance
+		inst := m.orchestrator.GetInstance(coordID)
+		if inst == nil {
+			continue
+		}
+
+		// Check if plan file exists
+		planPath := orchestrator.PlanFilePath(inst.WorktreePath)
+		if _, err := os.Stat(planPath); err != nil {
+			continue
+		}
+
+		// Parse the plan
+		plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
+		if err != nil {
+			// File might be partially written, skip for now
+			continue
+		}
+
+		// Store the plan
+		collectedCount := m.ultraPlan.coordinator.StoreCandidatePlan(i, plan)
+		newPlansFound = true
+
+		strategyName := "unknown"
+		if i < len(strategyNames) {
+			strategyName = strategyNames[i]
+		}
+		m.infoMessage = fmt.Sprintf("Plan file detected %d/%d (%s): %d tasks",
+			collectedCount, numCoordinators, strategyName, len(plan.Tasks))
+	}
+
+	// Check if all plans are now collected
+	validCount := m.ultraPlan.coordinator.CountCandidatePlans()
+	if validCount >= numCoordinators {
+		// All plans collected - start plan manager
+		m.infoMessage = "All candidate plans collected via file detection. Starting plan evaluation..."
+		if err := m.ultraPlan.coordinator.RunPlanManager(); err != nil {
+			m.errorMessage = fmt.Sprintf("Failed to start plan manager: %v", err)
+			return false
+		}
+		m.infoMessage = "Plan manager started - comparing strategies to select the best plan..."
+		return true
+	}
+
+	return newPlansFound
+}
+
 // renderPlanningSidebar renders a planning-specific sidebar during the planning phase
 func (m Model) renderPlanningSidebar(width int, height int, session *orchestrator.UltraPlanSession) string {
 	var b strings.Builder
