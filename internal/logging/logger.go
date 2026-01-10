@@ -25,10 +25,11 @@ const (
 // Logger provides structured logging with context propagation.
 // It is safe for concurrent use.
 type Logger struct {
-	logger *slog.Logger
-	file   *os.File
-	mu     sync.Mutex // Protects file operations
-	attrs  []slog.Attr // Persistent attributes (session, instance, phase)
+	logger   *slog.Logger
+	file     *os.File           // For backward compatibility when not using rotation
+	rotation *RotatingWriter    // Used when rotation is enabled
+	mu       sync.Mutex         // Protects file operations
+	attrs    []slog.Attr        // Persistent attributes (session, instance, phase)
 }
 
 // NewLogger creates a new Logger that writes JSON-formatted logs to a file
@@ -42,6 +43,9 @@ type Logger struct {
 //   - ERROR: Only Error messages
 //
 // If sessionDir is empty, logs will be written to stderr.
+//
+// This function creates a logger without rotation. Use NewLoggerWithRotation
+// for log rotation support.
 func NewLogger(sessionDir string, level string) (*Logger, error) {
 	var writer io.Writer
 	var file *os.File
@@ -75,6 +79,57 @@ func NewLogger(sessionDir string, level string) (*Logger, error) {
 		logger: slog.New(handler),
 		file:   file,
 		attrs:  make([]slog.Attr, 0),
+	}, nil
+}
+
+// NewLoggerWithRotation creates a new Logger with log rotation support.
+// The log file will be created at {sessionDir}/debug.log and will be
+// rotated according to the provided RotationConfig.
+//
+// The level parameter controls which messages are logged:
+//   - DEBUG: All messages
+//   - INFO: Info, Warn, and Error messages
+//   - WARN: Warn and Error messages
+//   - ERROR: Only Error messages
+//
+// If sessionDir is empty, logs will be written to stderr (no rotation).
+//
+// Rotation is thread-safe and will not block logging during rotation.
+// Old log files are named: debug.log.1, debug.log.2, etc., where .1 is
+// the most recent backup.
+func NewLoggerWithRotation(sessionDir string, level string, rotationConfig RotationConfig) (*Logger, error) {
+	var writer io.Writer
+	var rotation *RotatingWriter
+
+	if sessionDir != "" {
+		// Ensure the session directory exists
+		if err := os.MkdirAll(sessionDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create session directory: %w", err)
+		}
+
+		logPath := filepath.Join(sessionDir, "debug.log")
+		var err error
+		rotation, err = NewRotatingWriter(logPath, rotationConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create rotating writer: %w", err)
+		}
+		writer = rotation
+	} else {
+		writer = os.Stderr
+	}
+
+	slogLevel := parseLevel(level)
+
+	opts := &slog.HandlerOptions{
+		Level: slogLevel,
+	}
+
+	handler := slog.NewJSONHandler(writer, opts)
+
+	return &Logger{
+		logger:   slog.New(handler),
+		rotation: rotation,
+		attrs:    make([]slog.Attr, 0),
 	}, nil
 }
 
@@ -135,9 +190,10 @@ func (l *Logger) With(args ...any) *Logger {
 	}
 
 	return &Logger{
-		logger: l.logger,
-		file:   l.file,
-		attrs:  newAttrs,
+		logger:   l.logger,
+		file:     l.file,
+		rotation: l.rotation,
+		attrs:    newAttrs,
 	}
 }
 
@@ -148,9 +204,10 @@ func (l *Logger) withAttr(attr slog.Attr) *Logger {
 	newAttrs[len(l.attrs)] = attr
 
 	return &Logger{
-		logger: l.logger,
-		file:   l.file,
-		attrs:  newAttrs,
+		logger:   l.logger,
+		file:     l.file,
+		rotation: l.rotation,
+		attrs:    newAttrs,
 	}
 }
 
@@ -198,6 +255,16 @@ func (l *Logger) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	// Handle rotation-based logger
+	if l.rotation != nil {
+		if err := l.rotation.Close(); err != nil {
+			return err
+		}
+		l.rotation = nil
+		return nil
+	}
+
+	// Handle legacy file-based logger
 	if l.file != nil {
 		if err := l.file.Sync(); err != nil {
 			return fmt.Errorf("failed to sync log file: %w", err)
