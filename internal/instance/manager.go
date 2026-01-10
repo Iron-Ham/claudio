@@ -3,7 +3,6 @@ package instance
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -224,49 +223,34 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("instance already running")
 	}
 
-	// Kill any existing session with this name (cleanup from previous run)
-	_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
-
-	// Create a new detached tmux session with color support
-	createCmd := exec.Command("tmux",
-		"new-session",
-		"-d",                                      // detached
-		"-s", m.sessionName,                       // session name
-		"-x", fmt.Sprintf("%d", m.config.TmuxWidth),  // width
-		"-y", fmt.Sprintf("%d", m.config.TmuxHeight), // height
-	)
-	createCmd.Dir = m.workdir
-	// Inherit full environment (required for Claude credentials) and ensure TERM supports colors
-	createCmd.Env = append(os.Environ(), "TERM=xterm-256color")
-	if err := createCmd.Run(); err != nil {
-		return fmt.Errorf("failed to create tmux session: %w", err)
+	// Create a new detached tmux session
+	tmuxCfg := TmuxConfig{
+		Width:  m.config.TmuxWidth,
+		Height: m.config.TmuxHeight,
 	}
-
-	// Set up the tmux session for color support and large history
-	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "history-limit", "10000").Run()
-	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run()
-	// Enable bell monitoring so we can detect and forward terminal bells
-	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
+	if err := createTmuxSession(m.sessionName, m.workdir, tmuxCfg); err != nil {
+		return err
+	}
 
 	// Write the task/prompt to a temporary file to avoid shell escaping issues
 	// (prompts with <, >, |, etc. would otherwise be interpreted by the shell)
 	promptFile := filepath.Join(m.workdir, ".claude-prompt")
 	if err := os.WriteFile(promptFile, []byte(m.task), 0600); err != nil {
-		_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+		_ = killTmuxSession(m.sessionName)
 		return fmt.Errorf("failed to write prompt file: %w", err)
 	}
 
 	// Send the claude command to the tmux session, reading prompt from file
 	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q", promptFile, promptFile)
-	sendCmd := exec.Command("tmux",
-		"send-keys",
-		"-t", m.sessionName,
-		claudeCmd,
-		"Enter",
-	)
-	if err := sendCmd.Run(); err != nil {
+	if err := sendTmuxKeys(m.sessionName, claudeCmd, false); err != nil {
 		// Clean up the session if we failed to start claude
-		_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+		_ = killTmuxSession(m.sessionName)
+		_ = os.Remove(promptFile)
+		return fmt.Errorf("failed to start claude in tmux session: %w", err)
+	}
+	// Send Enter to execute the command
+	if err := sendTmuxSpecialKey(m.sessionName, "Enter"); err != nil {
+		_ = killTmuxSession(m.sessionName)
 		_ = os.Remove(promptFile)
 		return fmt.Errorf("failed to start claude in tmux session: %w", err)
 	}
@@ -288,229 +272,6 @@ func (m *Manager) Start() error {
 	return nil
 }
 
-// captureLoop periodically captures output from the tmux session
-func (m *Manager) captureLoop() {
-	// Track last output hash to detect changes
-	var lastOutput string
-
-	for {
-		select {
-		case <-m.doneChan:
-			return
-		case <-m.captureTick.C:
-			m.mu.RLock()
-			if !m.running || m.paused {
-				m.mu.RUnlock()
-				continue
-			}
-			sessionName := m.sessionName
-			timedOut := m.timedOut
-			m.mu.RUnlock()
-
-			// Skip processing if already timed out
-			if timedOut {
-				continue
-			}
-
-			// Capture the entire visible pane plus scrollback
-			// -p prints to stdout, -S - starts from beginning of history
-			// -e preserves ANSI escape sequences (colors)
-			captureCmd := exec.Command("tmux",
-				"capture-pane",
-				"-t", sessionName,
-				"-p",      // print to stdout
-				"-e",      // preserve escape sequences (colors)
-				"-S", "-", // start from beginning of scrollback
-				"-E", "-", // end at bottom of scrollback
-			)
-			output, err := captureCmd.Output()
-			if err != nil {
-				continue
-			}
-
-			// Always update if content changed
-			currentOutput := string(output)
-			if currentOutput != lastOutput {
-				m.outputBuf.Reset()
-				_, _ = m.outputBuf.Write(output)
-
-				// Update activity tracking
-				m.mu.Lock()
-				m.lastActivityTime = time.Now()
-				m.lastOutputHash = lastOutput
-				m.repeatedOutputCount = 0
-				m.mu.Unlock()
-
-				lastOutput = currentOutput
-
-				// Detect waiting state from the new output
-				m.detectAndNotifyState(output)
-			} else {
-				// Output hasn't changed - check for stale detection
-				m.mu.Lock()
-				if m.config.StaleDetection {
-					m.repeatedOutputCount++
-				}
-				m.mu.Unlock()
-			}
-
-			// Check for timeout conditions
-			m.checkTimeouts()
-
-			// Check for terminal bells and forward them
-			m.checkAndForwardBell(sessionName)
-
-			// Check if the session is still running
-			checkCmd := exec.Command("tmux", "has-session", "-t", sessionName)
-			if checkCmd.Run() != nil {
-				// Session ended - notify completion and stop
-				m.mu.Lock()
-				m.running = false
-				callback := m.stateCallback
-				instanceID := m.id
-				m.currentState = StateCompleted
-				m.mu.Unlock()
-
-				// Fire the completion callback so coordinator knows task is done
-				if callback != nil {
-					callback(instanceID, StateCompleted)
-				}
-				return
-			}
-		}
-	}
-}
-
-// checkTimeouts checks for various timeout conditions and triggers callbacks
-func (m *Manager) checkTimeouts() {
-	m.mu.Lock()
-	if m.timedOut || !m.running || m.paused {
-		m.mu.Unlock()
-		return
-	}
-
-	now := time.Now()
-	callback := m.timeoutCallback
-	instanceID := m.id
-	var triggeredTimeout *TimeoutType
-
-	// Check completion timeout (total runtime)
-	if m.config.CompletionTimeoutMinutes > 0 && m.startTime != nil {
-		completionTimeout := time.Duration(m.config.CompletionTimeoutMinutes) * time.Minute
-		if now.Sub(*m.startTime) > completionTimeout {
-			t := TimeoutCompletion
-			triggeredTimeout = &t
-			m.timedOut = true
-			m.timeoutType = TimeoutCompletion
-		}
-	}
-
-	// Check activity timeout (no output changes)
-	if triggeredTimeout == nil && m.config.ActivityTimeoutMinutes > 0 {
-		activityTimeout := time.Duration(m.config.ActivityTimeoutMinutes) * time.Minute
-		if now.Sub(m.lastActivityTime) > activityTimeout {
-			t := TimeoutActivity
-			triggeredTimeout = &t
-			m.timedOut = true
-			m.timeoutType = TimeoutActivity
-		}
-	}
-
-	// Check for stale detection (repeated identical output)
-	// Trigger if we've seen the same output 3000 times (5 minutes at 100ms interval)
-	// This catches stuck loops producing identical output while allowing time for
-	// legitimate long-running operations like planning and exploration
-	if triggeredTimeout == nil && m.config.StaleDetection && m.repeatedOutputCount > 3000 {
-		t := TimeoutStale
-		triggeredTimeout = &t
-		m.timedOut = true
-		m.timeoutType = TimeoutStale
-	}
-
-	m.mu.Unlock()
-
-	// Invoke callback outside of lock to prevent deadlocks
-	if triggeredTimeout != nil && callback != nil {
-		callback(instanceID, *triggeredTimeout)
-	}
-}
-
-// checkAndForwardBell checks for terminal bells and triggers the callback if detected
-func (m *Manager) checkAndForwardBell(sessionName string) {
-	// Query the window_bell_flag from tmux
-	bellCmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#{window_bell_flag}")
-	output, err := bellCmd.Output()
-	if err != nil {
-		return
-	}
-
-	bellActive := strings.TrimSpace(string(output)) == "1"
-
-	m.mu.Lock()
-	lastBellState := m.lastBellState
-	callback := m.bellCallback
-	instanceID := m.id
-	m.lastBellState = bellActive
-	m.mu.Unlock()
-
-	// Trigger callback on transition from no-bell to bell (edge detection)
-	// This ensures we only fire once per bell, not continuously while the flag is set
-	if bellActive && !lastBellState && callback != nil {
-		callback(instanceID)
-	}
-}
-
-// detectAndNotifyState analyzes output and notifies if state changed
-func (m *Manager) detectAndNotifyState(output []byte) {
-	newState := m.detector.Detect(output)
-
-	m.mu.Lock()
-	oldState := m.currentState
-	callback := m.stateCallback
-	instanceID := m.id
-
-	if newState != oldState {
-		m.currentState = newState
-	}
-	m.mu.Unlock()
-
-	// Invoke callback outside of lock to prevent deadlocks
-	if newState != oldState && callback != nil {
-		callback(instanceID, newState)
-	}
-
-	// Parse and notify about metrics changes
-	m.parseAndNotifyMetrics(output)
-}
-
-// parseAndNotifyMetrics parses metrics from output and notifies if changed
-func (m *Manager) parseAndNotifyMetrics(output []byte) {
-	newMetrics := m.metricsParser.Parse(output)
-	if newMetrics == nil {
-		return
-	}
-
-	m.mu.Lock()
-	oldMetrics := m.currentMetrics
-	callback := m.metricsCallback
-	instanceID := m.id
-
-	// Check if metrics changed (simple comparison)
-	metricsChanged := oldMetrics == nil ||
-		newMetrics.InputTokens != oldMetrics.InputTokens ||
-		newMetrics.OutputTokens != oldMetrics.OutputTokens ||
-		newMetrics.Cost != oldMetrics.Cost
-
-	if metricsChanged {
-		m.currentMetrics = newMetrics
-	}
-	m.mu.Unlock()
-
-	// Invoke callback outside of lock to prevent deadlocks
-	if metricsChanged && callback != nil {
-		callback(instanceID, newMetrics)
-	}
-}
 
 // Stop terminates the tmux session
 func (m *Manager) Stop() error {
@@ -534,11 +295,11 @@ func (m *Manager) Stop() error {
 	}
 
 	// Send Ctrl+C to gracefully stop Claude first
-	_ = exec.Command("tmux", "send-keys", "-t", m.sessionName, "C-c").Run()
+	_ = sendTmuxSpecialKey(m.sessionName, "C-c")
 	time.Sleep(500 * time.Millisecond)
 
 	// Kill the tmux session
-	_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+	_ = killTmuxSession(m.sessionName)
 
 	m.running = false
 	return nil
@@ -586,29 +347,8 @@ func (m *Manager) SendInput(data []byte) {
 	// tmux send-keys interprets certain prefixes specially
 	// We need to handle newlines, control characters, etc.
 	for _, r := range input {
-		var key string
-		switch r {
-		case '\r', '\n':
-			key = "Enter"
-		case '\t':
-			key = "Tab"
-		case '\x7f', '\b': // backspace
-			key = "BSpace"
-		case '\x1b': // escape
-			key = "Escape"
-		case ' ':
-			key = "Space"
-		default:
-			if r < 32 {
-				// Control character: Ctrl+letter
-				key = fmt.Sprintf("C-%c", r+'a'-1)
-			} else {
-				// Regular character - send literally
-				key = string(r)
-			}
-		}
-
-		_ = exec.Command("tmux", "send-keys", "-t", m.sessionName, "-l", key).Run()
+		key := mapRuneToTmuxKey(r)
+		_ = sendTmuxKeys(m.sessionName, key, true)
 	}
 }
 
@@ -625,7 +365,7 @@ func (m *Manager) SendKey(key string) {
 
 	// Run async to avoid blocking the UI thread
 	go func() {
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, key).Run()
+		_ = sendTmuxSpecialKey(sessionName, key)
 	}()
 }
 
@@ -643,7 +383,7 @@ func (m *Manager) SendLiteral(text string) {
 	// Run async to avoid blocking the UI thread
 	// -l flag sends keys literally without interpretation
 	go func() {
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
+		_ = sendTmuxKeys(sessionName, text, true)
 	}()
 }
 
@@ -662,18 +402,7 @@ func (m *Manager) SendPaste(text string) {
 	// Run async to avoid blocking the UI thread
 	// Commands run sequentially within the goroutine to maintain paste order
 	go func() {
-		// Bracketed paste mode escape sequences
-		// Start: ESC[200~ End: ESC[201~
-		// This tells the receiving application that the following text is pasted
-		pasteStart := "\x1b[200~"
-		pasteEnd := "\x1b[201~"
-
-		// Send bracketed paste start
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteStart).Run()
-		// Send the pasted content
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
-		// Send bracketed paste end
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteEnd).Run()
+		_ = sendBracketedPaste(sessionName, text)
 	}()
 }
 
@@ -716,14 +445,10 @@ func (m *Manager) PID() int {
 	}
 
 	// Get the PID from tmux
-	cmd := exec.Command("tmux", "display-message", "-t", m.sessionName, "-p", "#{pane_pid}")
-	output, err := cmd.Output()
+	pid, err := tmuxGetPanePID(m.sessionName)
 	if err != nil {
 		return 0
 	}
-
-	var pid int
-	_, _ = fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &pid)
 	return pid
 }
 
@@ -735,8 +460,7 @@ func (m *Manager) AttachCommand() string {
 
 // TmuxSessionExists checks if the tmux session for this instance exists
 func (m *Manager) TmuxSessionExists() bool {
-	cmd := exec.Command("tmux", "has-session", "-t", m.sessionName)
-	return cmd.Run() == nil
+	return tmuxSessionExists(m.sessionName)
 }
 
 // Reconnect attempts to reconnect to an existing tmux session
@@ -750,12 +474,12 @@ func (m *Manager) Reconnect() error {
 	}
 
 	// Check if the tmux session exists
-	if !m.TmuxSessionExists() {
+	if !tmuxSessionExists(m.sessionName) {
 		return fmt.Errorf("tmux session %s does not exist", m.sessionName)
 	}
 
 	// Ensure monitor-bell is enabled for bell detection (may not be set if session was created before this feature)
-	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
+	_ = setTmuxWindowOption(m.sessionName, "monitor-bell", "on")
 
 	m.running = true
 	m.paused = false
@@ -774,20 +498,7 @@ func (m *Manager) Reconnect() error {
 
 // ListClaudioTmuxSessions returns a list of all tmux sessions with the claudio- prefix
 func ListClaudioTmuxSessions() ([]string, error) {
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
-	output, err := cmd.Output()
-	if err != nil {
-		// No sessions or tmux not running
-		return nil, nil
-	}
-
-	var sessions []string
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		if strings.HasPrefix(line, "claudio-") {
-			sessions = append(sessions, line)
-		}
-	}
-	return sessions, nil
+	return listClaudioTmuxSessions()
 }
 
 // ExtractInstanceIDFromSession extracts the instance ID from a claudio tmux session name.
@@ -879,15 +590,5 @@ func (m *Manager) Resize(width, height int) error {
 
 	// Resize the tmux window
 	// Note: We resize the window (not pane) since each session has one window
-	resizeCmd := exec.Command("tmux",
-		"resize-window",
-		"-t", m.sessionName,
-		"-x", fmt.Sprintf("%d", width),
-		"-y", fmt.Sprintf("%d", height),
-	)
-	if err := resizeCmd.Run(); err != nil {
-		return fmt.Errorf("failed to resize tmux session: %w", err)
-	}
-
-	return nil
+	return resizeTmuxWindow(m.sessionName, width, height)
 }

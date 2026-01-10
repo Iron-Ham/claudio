@@ -1,0 +1,40 @@
+# Task: Extract ultraplan sidebar renderers
+
+## Part of Ultra-Plan: 
+
+## Your Task
+
+Extract renderUltraPlanSidebar(), renderPlanningSidebar(), renderExecutionSidebar(), renderSynthesisSidebar(), renderConsolidationSidebar() from tui/ultraplan.go into tui/ultraplan_sidebar.go.
+
+## Expected Files
+
+You are expected to work with these files:
+- internal/tui/ultraplan_sidebar.go
+
+## Guidelines
+
+- Focus only on this specific task
+- Do not modify files outside of your assigned scope unless necessary
+- Commit your changes before writing the completion file
+
+## Completion Protocol
+
+When your task is complete, you MUST write a completion file to signal the orchestrator:
+
+1. Use Write tool to create `.claudio-task-complete.json` in your worktree root
+2. Include this JSON structure:
+```json
+{
+  "task_id": "task-26-tui-ultraplan-sidebar",
+  "status": "complete",
+  "summary": "Brief description of what you accomplished",
+  "files_modified": ["list", "of", "files", "you", "changed"],
+  "notes": "Any implementation notes for the consolidation phase",
+  "issues": ["Any concerns or blocking issues found"],
+  "suggestions": ["Suggestions for integration with other tasks"],
+  "dependencies": ["Any new runtime dependencies added"]
+}
+```
+
+3. Use status "blocked" if you cannot complete (explain in issues), or "failed" if something broke
+4. This file signals that your work is done and provides context for consolidation

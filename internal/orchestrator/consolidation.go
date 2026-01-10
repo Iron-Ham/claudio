@@ -905,55 +905,6 @@ func (c *Consolidator) gatherTaskCompletionContext(taskIDs []string) *Aggregated
 	return context
 }
 
-// AggregatedTaskContext holds the aggregated context from all task completion files
-type AggregatedTaskContext struct {
-	TaskSummaries  map[string]string // taskID -> summary
-	AllIssues      []string          // All issues from all tasks
-	AllSuggestions []string          // All suggestions from all tasks
-	Dependencies   []string          // Deduplicated list of new dependencies
-	Notes          []string          // Implementation notes from all tasks
-}
-
-// HasContent returns true if there is any aggregated context worth displaying
-func (a *AggregatedTaskContext) HasContent() bool {
-	return len(a.AllIssues) > 0 || len(a.AllSuggestions) > 0 || len(a.Dependencies) > 0 || len(a.Notes) > 0
-}
-
-// FormatForPR formats the aggregated context for inclusion in a PR description
-func (a *AggregatedTaskContext) FormatForPR() string {
-	var sb strings.Builder
-
-	if len(a.Notes) > 0 {
-		sb.WriteString("\n## Implementation Notes\n\n")
-		for _, note := range a.Notes {
-			sb.WriteString(fmt.Sprintf("- %s\n", note))
-		}
-	}
-
-	if len(a.AllIssues) > 0 {
-		sb.WriteString("\n## Issues/Concerns Flagged\n\n")
-		for _, issue := range a.AllIssues {
-			sb.WriteString(fmt.Sprintf("- %s\n", issue))
-		}
-	}
-
-	if len(a.AllSuggestions) > 0 {
-		sb.WriteString("\n## Integration Suggestions\n\n")
-		for _, suggestion := range a.AllSuggestions {
-			sb.WriteString(fmt.Sprintf("- %s\n", suggestion))
-		}
-	}
-
-	if len(a.Dependencies) > 0 {
-		sb.WriteString("\n## New Dependencies\n\n")
-		for _, dep := range a.Dependencies {
-			sb.WriteString(fmt.Sprintf("- `%s`\n", dep))
-		}
-	}
-
-	return sb.String()
-}
-
 // Helper functions
 
 func truncateString(s string, maxLen int) string {

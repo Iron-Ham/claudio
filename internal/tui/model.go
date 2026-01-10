@@ -89,9 +89,7 @@ type Model struct {
 	diffScroll  int    // Scroll offset for navigating the diff
 
 	// Output scroll state (per instance)
-	outputScrolls    map[string]int  // Instance ID -> scroll offset
-	outputAutoScroll map[string]bool // Instance ID -> auto-scroll enabled (follows new output)
-	outputLineCount  map[string]int  // Instance ID -> previous line count (to detect new output)
+	outputState *OutputState
 
 	// Sidebar pagination
 	sidebarScrollOffset int // Index of the first visible instance in sidebar
@@ -204,9 +202,7 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session) Mo
 		orchestrator:     orch,
 		session:          session,
 		outputs:          make(map[string]string),
-		outputScrolls:    make(map[string]int),
-		outputAutoScroll: make(map[string]bool),
-		outputLineCount:  make(map[string]int),
+		outputState:      NewOutputState(),
 		filterCategories: map[string]bool{
 			"errors":   true,
 			"warnings": true,
@@ -317,69 +313,42 @@ func (m *Model) getOutputMaxScroll(instanceID string) int {
 
 // isOutputAutoScroll returns whether auto-scroll is enabled for an instance (defaults to true)
 func (m Model) isOutputAutoScroll(instanceID string) bool {
-	if autoScroll, exists := m.outputAutoScroll[instanceID]; exists {
-		return autoScroll
-	}
-	return true // Default to auto-scroll enabled
+	return m.outputState.IsAutoScroll(instanceID)
 }
 
 // scrollOutputUp scrolls the output up by n lines and disables auto-scroll
 func (m *Model) scrollOutputUp(instanceID string, n int) {
-	currentScroll := m.outputScrolls[instanceID]
-	newScroll := currentScroll - n
-	if newScroll < 0 {
-		newScroll = 0
-	}
-	m.outputScrolls[instanceID] = newScroll
-	// Disable auto-scroll when user scrolls up
-	m.outputAutoScroll[instanceID] = false
+	m.outputState.ScrollUp(instanceID, n)
 }
 
 // scrollOutputDown scrolls the output down by n lines
 func (m *Model) scrollOutputDown(instanceID string, n int) {
-	currentScroll := m.outputScrolls[instanceID]
 	maxScroll := m.getOutputMaxScroll(instanceID)
-	newScroll := currentScroll + n
-	if newScroll > maxScroll {
-		newScroll = maxScroll
-	}
-	m.outputScrolls[instanceID] = newScroll
-	// If at bottom, re-enable auto-scroll
-	if newScroll >= maxScroll {
-		m.outputAutoScroll[instanceID] = true
-	}
+	m.outputState.ScrollDown(instanceID, n, maxScroll)
 }
 
 // scrollOutputToTop scrolls to the top of the output and disables auto-scroll
 func (m *Model) scrollOutputToTop(instanceID string) {
-	m.outputScrolls[instanceID] = 0
-	m.outputAutoScroll[instanceID] = false
+	m.outputState.ScrollToTop(instanceID)
 }
 
 // scrollOutputToBottom scrolls to the bottom and re-enables auto-scroll
 func (m *Model) scrollOutputToBottom(instanceID string) {
-	m.outputScrolls[instanceID] = m.getOutputMaxScroll(instanceID)
-	m.outputAutoScroll[instanceID] = true
+	maxScroll := m.getOutputMaxScroll(instanceID)
+	m.outputState.ScrollToBottom(instanceID, maxScroll)
 }
 
 // updateOutputScroll updates scroll position based on new output (if auto-scroll is enabled)
 func (m *Model) updateOutputScroll(instanceID string) {
-	if m.isOutputAutoScroll(instanceID) {
-		// Auto-scroll to bottom
-		m.outputScrolls[instanceID] = m.getOutputMaxScroll(instanceID)
-	}
-	// Update line count for detecting new output
-	m.outputLineCount[instanceID] = m.getOutputLineCount(instanceID)
+	maxScroll := m.getOutputMaxScroll(instanceID)
+	lineCount := m.getOutputLineCount(instanceID)
+	m.outputState.UpdateForNewOutput(instanceID, maxScroll, lineCount)
 }
 
 // hasNewOutput returns true if there's new output since last update
 func (m Model) hasNewOutput(instanceID string) bool {
 	currentLines := m.getOutputLineCount(instanceID)
-	previousLines, exists := m.outputLineCount[instanceID]
-	if !exists {
-		return false
-	}
-	return currentLines > previousLines
+	return m.outputState.HasNewOutput(instanceID, currentLines)
 }
 
 // Task input cursor helper methods
