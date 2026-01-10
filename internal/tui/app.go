@@ -488,14 +488,17 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.addingTask = false
 			m.taskInput = ""
 			m.taskInputCursor = 0
+			m.templateSuffix = "" // Clear suffix on cancel
 			return m, nil
 		case tea.KeyEnter:
 			if m.taskInput != "" {
 				// Capture task and clear input state first
-				task := m.taskInput
+				// Append template suffix if one was set (e.g., /plan instructions)
+				task := m.taskInput + m.templateSuffix
 				m.addingTask = false
 				m.taskInput = ""
 				m.taskInputCursor = 0
+				m.templateSuffix = "" // Clear suffix after use
 				m.infoMessage = "Adding task..."
 				// Add instance asynchronously to avoid blocking UI during git worktree creation
 				return m, addTaskAsync(m.orchestrator, m.session, task)
@@ -503,6 +506,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.addingTask = false
 			m.taskInput = ""
 			m.taskInputCursor = 0
+			m.templateSuffix = "" // Clear suffix on cancel
 			return m, nil
 		case tea.KeyBackspace:
 			m.taskInputDeleteBack(1)
@@ -1498,6 +1502,8 @@ func (m Model) handleTemplateDropdown(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.taskInput = m.taskInput[:lastNewline+1] + selected.Description
 			}
 			m.taskInputCursor = len([]rune(m.taskInput))
+			// Store the suffix to append on submission
+			m.templateSuffix = selected.Suffix
 		}
 		m.showTemplates = false
 		m.templateFilter = ""

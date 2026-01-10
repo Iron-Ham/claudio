@@ -80,6 +80,7 @@ type Model struct {
 	showTemplates    bool   // Whether the template dropdown is visible
 	templateFilter   string // Current filter text (after the "/")
 	templateSelected int    // Currently highlighted template index
+	templateSuffix   string // Suffix to append on submission (from selected template)
 
 	// File conflict tracking
 	conflicts []conflict.FileConflict
