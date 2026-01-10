@@ -9,6 +9,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	sessutil "github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
 	"github.com/spf13/cobra"
@@ -122,7 +123,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	}
 
 	// Generate a new session ID for this ultraplan
-	sessionID := orchestrator.GenerateID()
+	sessionID := orchsession.GenerateID()
 	cfg := config.Get()
 
 	// Create ultra-plan configuration from defaults, then override with config file, then flags

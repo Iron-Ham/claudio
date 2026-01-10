@@ -11,6 +11,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
 	"github.com/spf13/cobra"
@@ -168,7 +169,7 @@ func attachToSession(cwd, sessionID string, cfg *config.Config) error {
 // startNewSession creates and starts a new session
 func startNewSession(cwd, sessionName string, cfg *config.Config) error {
 	// Generate a new session ID
-	sessionID := orchestrator.GenerateID()
+	sessionID := orchsession.GenerateID()
 
 	// Create logger if enabled - we need session dir which requires session ID
 	sessionDir := session.GetSessionDir(cwd, sessionID)
@@ -214,7 +215,7 @@ func migrateAndStartLegacySession(cwd, sessionName string, cfg *config.Config) e
 	// Use the existing session ID or generate a new one
 	sessionID := legacySession.ID
 	if sessionID == "" {
-		sessionID = orchestrator.GenerateID()
+		sessionID = orchsession.GenerateID()
 	}
 
 	// Create the new session directory
