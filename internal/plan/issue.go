@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -78,6 +79,60 @@ func UpdateIssueBody(issueNumber int, newBody string) error {
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("failed to update issue: %w\n%s", err, string(output))
+	}
+
+	return nil
+}
+
+// GetIssueNodeID retrieves the GraphQL node ID for a GitHub issue
+// This is required for the addSubIssue GraphQL mutation
+func GetIssueNodeID(issueNumber int) (string, error) {
+	cmd := exec.Command("gh", "issue", "view", strconv.Itoa(issueNumber), "--json", "id")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to get issue node ID: %w\n%s", err, string(output))
+	}
+
+	var response struct {
+		ID string `json:"id"`
+	}
+
+	if err := json.Unmarshal(output, &response); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if response.ID == "" {
+		return "", fmt.Errorf("no node ID found for issue #%d", issueNumber)
+	}
+
+	return response.ID, nil
+}
+
+// AddSubIssue links a sub-issue to a parent issue using GitHub's GraphQL API
+// This creates a proper parent-child relationship visible in the GitHub UI
+func AddSubIssue(parentNodeID, subIssueNodeID string) error {
+	query := fmt.Sprintf(`mutation {
+		addSubIssue(input: {issueId: "%s", subIssueId: "%s"}) {
+			issue { number }
+			subIssue { number }
+		}
+	}`, parentNodeID, subIssueNodeID)
+
+	cmd := exec.Command("gh", "api", "graphql", "-f", "query="+query)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to add sub-issue: %w\n%s", err, string(output))
+	}
+
+	// Verify the mutation succeeded by checking for errors in response
+	var response struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
+	if err := json.Unmarshal(output, &response); err == nil && len(response.Errors) > 0 {
+		return fmt.Errorf("GraphQL error: %s", response.Errors[0].Message)
 	}
 
 	return nil
