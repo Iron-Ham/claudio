@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/issue"
 	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
@@ -47,6 +49,7 @@ type PlannedTask struct {
 	DependsOn     []string       `json:"depends_on"`      // Task IDs this depends on
 	Priority      int            `json:"priority"`        // Execution priority (lower = earlier)
 	EstComplexity TaskComplexity `json:"est_complexity"`
+	IssueURL      string         `json:"issue_url,omitempty"` // External issue tracker URL (GitHub, Linear, Notion, etc.)
 }
 
 // PlanSpec represents the output of the planning phase
@@ -540,13 +543,14 @@ const (
 
 // UltraPlanManager manages the execution of an ultra-plan session
 type UltraPlanManager struct {
-	session    *UltraPlanSession
-	orch       *Orchestrator
-	baseSession *Session // The underlying Claudio session
-	logger     *logging.Logger
+	session      *UltraPlanSession
+	orch         *Orchestrator
+	baseSession  *Session // The underlying Claudio session
+	logger       *logging.Logger
+	issueService *issue.Service
 
 	// Event handling
-	eventChan chan CoordinatorEvent
+	eventChan     chan CoordinatorEvent
 	eventCallback func(CoordinatorEvent)
 
 	// Synchronization
@@ -565,13 +569,15 @@ func NewUltraPlanManager(orch *Orchestrator, baseSession *Session, ultraSession 
 	if logger == nil {
 		logger = logging.NopLogger()
 	}
+	planLogger := logger.WithPhase("ultraplan")
 	return &UltraPlanManager{
-		session:     ultraSession,
-		orch:        orch,
-		baseSession: baseSession,
-		logger:      logger.WithPhase("ultraplan"),
-		eventChan:   make(chan CoordinatorEvent, 100),
-		stopChan:    make(chan struct{}),
+		session:      ultraSession,
+		orch:         orch,
+		baseSession:  baseSession,
+		logger:       planLogger,
+		issueService: issue.NewService(planLogger),
+		eventChan:    make(chan CoordinatorEvent, 100),
+		stopChan:     make(chan struct{}),
 	}
 }
 
@@ -852,12 +858,28 @@ func (m *UltraPlanManager) CountCoordinatorsCompleted() int {
 	return len(m.session.ProcessedCoordinators)
 }
 
-// MarkTaskComplete marks a task as completed
+// MarkTaskComplete marks a task as completed and closes any linked external issue
 func (m *UltraPlanManager) MarkTaskComplete(taskID string) {
 	m.mu.Lock()
 	m.session.CompletedTasks = append(m.session.CompletedTasks, taskID)
 	delete(m.session.TaskToInstance, taskID)
+	task := m.session.GetTask(taskID)
 	m.mu.Unlock()
+
+	// Close linked external issue if present
+	if task != nil && task.IssueURL != "" {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := m.issueService.Close(ctx, task.IssueURL); err != nil {
+				m.logger.Warn("failed to close linked issue",
+					"task_id", taskID,
+					"issue_url", task.IssueURL,
+					"error", err,
+				)
+			}
+		}()
+	}
 
 	m.emitEvent(CoordinatorEvent{
 		Type:   EventTaskComplete,
