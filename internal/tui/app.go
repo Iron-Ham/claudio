@@ -278,6 +278,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.checkForPlanFile()
 		// Check for multi-pass plan files (most reliable detection for multi-pass mode)
 		m.checkForMultiPassPlanFiles()
+		// Check for plan manager plan file during plan selection phase (most reliable detection)
+		m.checkForPlanManagerPlanFile()
 		// Check for phase changes that need notification (synthesis, consolidation pause)
 		m.checkForPhaseNotification()
 

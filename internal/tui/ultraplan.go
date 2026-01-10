@@ -2091,6 +2091,108 @@ func (m *Model) checkForMultiPassPlanFiles() bool {
 	return newPlansFound
 }
 
+// checkForPlanManagerPlanFile checks for the plan manager's output file during plan selection phase.
+// This is the most reliable method for detecting plan manager completion, as it polls for the actual
+// plan file rather than relying on instance state transitions (which can fail when the instance
+// is in StatusWaitingInput state).
+// Returns true if the plan was found and successfully processed.
+func (m *Model) checkForPlanManagerPlanFile() bool {
+	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+		return false
+	}
+
+	session := m.ultraPlan.coordinator.Session()
+	if session == nil {
+		return false
+	}
+
+	// Only check during plan selection phase in multi-pass mode
+	if session.Phase != orchestrator.PhasePlanSelection || !session.Config.MultiPass {
+		return false
+	}
+
+	// Need a plan manager ID to check
+	if session.PlanManagerID == "" {
+		return false
+	}
+
+	// Skip if we already have a plan set
+	if session.Plan != nil {
+		return false
+	}
+
+	// Get the plan manager instance
+	inst := m.orchestrator.GetInstance(session.PlanManagerID)
+	if inst == nil {
+		return false
+	}
+
+	// Check if plan file exists
+	planPath := orchestrator.PlanFilePath(inst.WorktreePath)
+	if _, err := os.Stat(planPath); err != nil {
+		return false
+	}
+
+	// Parse the plan from the file
+	plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
+	if err != nil {
+		// File might be partially written, skip for now
+		return false
+	}
+
+	// Try to parse the plan decision from the output (for display purposes)
+	// This is optional - the plan file is the ground truth
+	output := m.outputs[inst.ID]
+	decision, _ := orchestrator.ParsePlanDecisionFromOutput(output)
+	if decision != nil {
+		session.SelectedPlanIndex = decision.SelectedIndex
+	}
+
+	// Set the plan using the coordinator (validates and transitions to PhaseRefresh)
+	if err := m.ultraPlan.coordinator.SetPlan(plan); err != nil {
+		m.errorMessage = fmt.Sprintf("Plan manager plan file found but invalid: %v", err)
+		return false
+	}
+
+	// Build info message based on decision type
+	var decisionDesc string
+	if decision != nil {
+		if decision.Action == "select" {
+			strategyNames := orchestrator.GetMultiPassStrategyNames()
+			if decision.SelectedIndex >= 0 && decision.SelectedIndex < len(strategyNames) {
+				decisionDesc = fmt.Sprintf("Selected '%s' plan", strategyNames[decision.SelectedIndex])
+			} else {
+				decisionDesc = fmt.Sprintf("Selected plan %d", decision.SelectedIndex)
+			}
+		} else {
+			decisionDesc = "Merged best elements from multiple plans"
+		}
+	} else {
+		decisionDesc = "Plan manager completed"
+	}
+
+	// Determine whether to open plan editor or auto-start execution
+	if session.Config.Review || !session.Config.AutoApprove {
+		// Enter plan editor for interactive review
+		m.enterPlanEditor()
+		m.infoMessage = fmt.Sprintf("%s: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
+			decisionDesc, len(plan.Tasks), len(plan.ExecutionOrder))
+		// Notify user that input is needed
+		m.ultraPlan.needsNotification = true
+		m.ultraPlan.lastNotifiedPhase = orchestrator.PhaseRefresh
+	} else {
+		// Auto-start execution (AutoApprove is true and Review is false)
+		if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
+			m.errorMessage = fmt.Sprintf("%s but failed to auto-start: %v", decisionDesc, err)
+		} else {
+			m.infoMessage = fmt.Sprintf("%s: %d tasks in %d groups. Auto-starting execution...",
+				decisionDesc, len(plan.Tasks), len(plan.ExecutionOrder))
+		}
+	}
+
+	return true
+}
+
 // renderPlanningSidebar renders a planning-specific sidebar during the planning phase
 func (m Model) renderPlanningSidebar(width int, height int, session *orchestrator.UltraPlanSession) string {
 	var b strings.Builder
