@@ -539,6 +539,10 @@ func (c *Coordinator) executionLoop() {
 			c.notifyProgress()
 
 		default:
+			// Fallback: poll for task completions that monitoring goroutines may have missed
+			// This catches cases where goroutines exit early (context cancellation) or fail to send
+			c.pollTaskCompletions(completionChan)
+
 			// Check if we're done
 			c.mu.RLock()
 			completedCount := len(session.CompletedTasks)
@@ -841,6 +845,58 @@ func (c *Coordinator) checkForTaskCompletionFile(inst *Instance) bool {
 	}
 
 	return false
+}
+
+// pollTaskCompletions scans all started tasks for completion files.
+// This is a fallback mechanism to detect completions when monitoring goroutines
+// exit early (e.g., due to context cancellation) or fail to send to the channel.
+func (c *Coordinator) pollTaskCompletions(completionChan chan<- taskCompletion) {
+	session := c.Session()
+	if session == nil {
+		return
+	}
+
+	c.mu.RLock()
+	taskToInstance := session.TaskToInstance
+	completedTasks := session.CompletedTasks
+	failedTasks := session.FailedTasks
+	c.mu.RUnlock()
+
+	// Build set of already-finished tasks
+	finished := make(map[string]bool)
+	for _, t := range completedTasks {
+		finished[t] = true
+	}
+	for _, t := range failedTasks {
+		finished[t] = true
+	}
+
+	// Check each started task for completion
+	for taskID, instanceID := range taskToInstance {
+		if finished[taskID] {
+			continue
+		}
+
+		inst := c.orch.GetInstance(instanceID)
+		if inst == nil {
+			continue
+		}
+
+		// Check for completion file
+		if c.checkForTaskCompletionFile(inst) {
+			// Stop instance to free resources
+			_ = c.orch.StopInstance(inst)
+
+			// Verify and report
+			result := c.verifyTaskWork(taskID, inst)
+
+			// Non-blocking send (skip if channel full, will retry next iteration)
+			select {
+			case completionChan <- result:
+			default:
+			}
+		}
+	}
 }
 
 // verifyTaskWork checks if a task produced actual commits and determines success/retry
