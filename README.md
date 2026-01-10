@@ -279,6 +279,136 @@ claudio/
 └── go.mod
 ```
 
+## Logging
+
+Claudio includes a built-in debug logging system for troubleshooting and post-hoc analysis of sessions.
+
+### Enabling/Disabling Logging
+
+Logging is enabled by default. Configure it via config file or environment variables:
+
+```yaml
+# ~/.config/claudio/config.yaml
+logging:
+  enabled: true        # Enable/disable logging (default: true)
+  level: info          # Log level (default: info)
+  max_size_mb: 10      # Max file size before rotation (default: 10)
+  max_backups: 3       # Number of backup files to keep (default: 3)
+```
+
+Or via environment variables:
+
+```bash
+export CLAUDIO_LOGGING_ENABLED=true
+export CLAUDIO_LOGGING_LEVEL=debug
+```
+
+### Log Levels
+
+| Level | Description |
+|-------|-------------|
+| `debug` | Verbose output for detailed troubleshooting (all messages) |
+| `info` | General operational messages (default) |
+| `warn` | Warning conditions that may need attention |
+| `error` | Error conditions that affect functionality |
+
+Each level includes all messages at and above its severity. For example, `info` includes `info`, `warn`, and `error` messages.
+
+### Log File Location
+
+Logs are stored in the session directory:
+
+```
+.claudio/sessions/<session-id>/debug.log
+```
+
+Rotated backup files (if enabled):
+- `debug.log.1` - Most recent backup
+- `debug.log.2` - Second most recent
+- `debug.log.3` - Third most recent (oldest)
+
+### Viewing Logs
+
+Use the `claudio logs` command to view and filter logs:
+
+```bash
+# Show last 50 lines from most recent session
+claudio logs
+
+# Show all logs (no line limit)
+claudio logs -n 0
+
+# View logs from a specific session
+claudio logs -s abc123
+
+# Follow logs in real-time (like tail -f)
+claudio logs -f
+
+# Filter by minimum log level
+claudio logs --level warn
+
+# Show logs from the last hour
+claudio logs --since 1h
+
+# Search for patterns using regex
+claudio logs --grep "error|failed"
+
+# Combine filters
+claudio logs --level error --since 30m --grep "instance"
+```
+
+### Command Options
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--session` | `-s` | Session ID (default: most recent) |
+| `--tail` | `-n` | Number of lines to show, 0 for all (default: 50) |
+| `--follow` | `-f` | Follow log output in real-time |
+| `--level` | | Minimum level to show (debug/info/warn/error) |
+| `--since` | | Show logs since duration (e.g., 1h, 30m, 2h30m) |
+| `--grep` | | Filter by regex pattern |
+
+### Example Log Output
+
+Logs are stored in JSON format for machine parsing:
+
+```json
+{"time":"2024-01-15T10:30:45.123Z","level":"INFO","msg":"session started","session_id":"abc123"}
+{"time":"2024-01-15T10:30:46.456Z","level":"DEBUG","msg":"instance created","session_id":"abc123","instance_id":"def456","task":"implement auth"}
+{"time":"2024-01-15T10:31:00.789Z","level":"WARN","msg":"conflict detected","session_id":"abc123","files":["src/auth.go"]}
+```
+
+The `claudio logs` command renders these with colors and formatting:
+
+```
+[10:30:45.123] [INFO] session started session_id=abc123
+[10:30:46.456] [DEBUG] instance created session_id=abc123 instance_id=def456 task=implement auth
+[10:31:00.789] [WARN] conflict detected session_id=abc123 files=["src/auth.go"]
+```
+
+### Log Aggregation and Export
+
+For advanced analysis, use the logging package's export utilities:
+
+```go
+import "github.com/Iron-Ham/claudio/internal/logging"
+
+// Aggregate all logs from a session
+entries, err := logging.AggregateLogs(sessionDir)
+
+// Filter logs
+filtered := logging.FilterLogs(entries, logging.LogFilter{
+    Level:      "WARN",
+    InstanceID: "abc123",
+    Phase:      "execution",
+})
+
+// Export to various formats
+logging.ExportLogEntries(filtered, "output.json", "json")
+logging.ExportLogEntries(filtered, "output.txt", "text")
+logging.ExportLogEntries(filtered, "output.csv", "csv")
+```
+
 ## Troubleshooting
 
 ### "not a git repository"

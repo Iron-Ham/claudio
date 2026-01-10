@@ -126,28 +126,6 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	sessionID := orchestrator.GenerateID()
 	cfg := config.Get()
 
-	// Create orchestrator with multi-session support
-	orch, err := orchestrator.NewWithSession(cwd, sessionID, cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create orchestrator: %w", err)
-	}
-
-	// Start a new session for the ultra-plan
-	sessionName := "ultraplan"
-	if objective != "" {
-		// Use first few words of objective as session name
-		words := strings.Fields(objective)
-		if len(words) > 3 {
-			words = words[:3]
-		}
-		sessionName = "ultraplan-" + slugifyWords(words)
-	}
-
-	session, err := orch.StartSession(sessionName)
-	if err != nil {
-		return fmt.Errorf("failed to start session: %w", err)
-	}
-
 	// Create ultra-plan configuration from defaults, then override with config file, then flags
 	ultraConfig := orchestrator.DefaultUltraPlanConfig()
 
@@ -169,6 +147,46 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	ultraConfig.AutoApprove = ultraplanAutoApprove
 	ultraConfig.Review = ultraplanReview
 
+	// Create logger if enabled - we need session dir which requires session ID
+	sessionDir := sessutil.GetSessionDir(cwd, sessionID)
+	logger := createUltraplanLogger(sessionDir, cfg)
+	defer logger.Close()
+
+	// Create orchestrator with multi-session support
+	orch, err := orchestrator.NewWithSession(cwd, sessionID, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to create orchestrator: %w", err)
+	}
+
+	// Set the logger on the orchestrator
+	orch.SetLogger(logger)
+
+	// Start a new session for the ultra-plan
+	sessionName := "ultraplan"
+	if objective != "" {
+		// Use first few words of objective as session name
+		words := strings.Fields(objective)
+		if len(words) > 3 {
+			words = words[:3]
+		}
+		sessionName = "ultraplan-" + slugifyWords(words)
+	}
+
+	session, err := orch.StartSession(sessionName)
+	if err != nil {
+		return fmt.Errorf("failed to start session: %w", err)
+	}
+
+	// Log startup with objective (truncated) and config summary
+	logger.Info("ultraplan started",
+		"session_id", sessionID,
+		"objective", truncateString(objective, 100),
+		"max_parallel", ultraConfig.MaxParallel,
+		"multi_pass", ultraConfig.MultiPass,
+		"dry_run", ultraConfig.DryRun,
+		"auto_approve", ultraConfig.AutoApprove,
+	)
+
 	// Create or load the plan
 	var plan *orchestrator.PlanSpec
 	if ultraplanPlanFile != "" {
@@ -189,10 +207,8 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	// Link ultra-plan session to main session for persistence
 	session.UltraPlan = ultraSession
 
-	// Create coordinator
-	// Note: logger is nil here - integration with config.Get().Logging settings will be done
-	// in a future task that wires up logger initialization
-	coordinator := orchestrator.NewCoordinator(orch, session, ultraSession, nil)
+	// Create coordinator with logger
+	coordinator := orchestrator.NewCoordinator(orch, session, ultraSession, logger)
 
 	// Get terminal dimensions
 	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
@@ -201,16 +217,6 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 			orch.SetDisplayDimensions(contentWidth, contentHeight)
 		}
 	}
-
-	// Create logger for the TUI session
-	sessionDir := sessutil.GetSessionDir(cwd, session.ID)
-	logger, err := logging.NewLogger(sessionDir, cfg.Logging.Level)
-	if err != nil {
-		// Log creation failure shouldn't prevent TUI from starting
-		fmt.Fprintf(os.Stderr, "Warning: failed to create logger: %v\n", err)
-		logger = logging.NopLogger()
-	}
-	defer logger.Close()
 
 	// Launch TUI with ultra-plan mode
 	app := tui.NewWithUltraPlan(orch, session, coordinator, logger.WithSession(session.ID))
@@ -277,4 +283,23 @@ func slugifyWords(words []string) string {
 		slug = slug[:20]
 	}
 	return strings.TrimSuffix(slug, "-")
+}
+
+// createUltraplanLogger creates a logger if logging is enabled in config.
+// Returns a NopLogger if logging is disabled or if creation fails.
+func createUltraplanLogger(sessionDir string, cfg *config.Config) *logging.Logger {
+	// Check if logging is enabled
+	if !cfg.Logging.Enabled {
+		return logging.NopLogger()
+	}
+
+	// Create the logger
+	logger, err := logging.NewLogger(sessionDir, cfg.Logging.Level)
+	if err != nil {
+		// Log creation failure shouldn't prevent the application from starting
+		fmt.Fprintf(os.Stderr, "Warning: failed to create logger: %v\n", err)
+		return logging.NopLogger()
+	}
+
+	return logger
 }
