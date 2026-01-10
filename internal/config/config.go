@@ -314,12 +314,18 @@ func SetDefaults() {
 	viper.SetDefault("logging.max_backups", defaults.Logging.MaxBackups)
 }
 
-// Load reads the configuration from viper into a Config struct
+// Load reads the configuration from viper into a Config struct and validates it
 func Load() (*Config, error) {
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, err
 	}
+
+	// Validate the configuration
+	if errs := cfg.Validate(); len(errs) > 0 {
+		return nil, ValidationErrors(errs)
+	}
+
 	return &cfg, nil
 }
 

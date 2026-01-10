@@ -1,0 +1,399 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"regexp"
+	"slices"
+	"strings"
+)
+
+// ValidationError represents a single validation failure
+type ValidationError struct {
+	Field   string // The config field path (e.g., "instance.output_buffer_size")
+	Value   any    // The invalid value
+	Message string // Human-readable error description
+}
+
+// Error implements the error interface for ValidationError
+func (e ValidationError) Error() string {
+	return fmt.Sprintf("%s: %s (got: %v)", e.Field, e.Message, e.Value)
+}
+
+// ValidationErrors is a collection of validation errors
+type ValidationErrors []ValidationError
+
+// Error implements the error interface for ValidationErrors
+func (e ValidationErrors) Error() string {
+	if len(e) == 0 {
+		return ""
+	}
+	if len(e) == 1 {
+		return e[0].Error()
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%d validation errors:\n", len(e)))
+	for i, err := range e {
+		sb.WriteString(fmt.Sprintf("  %d. %s\n", i+1, err.Error()))
+	}
+	return sb.String()
+}
+
+// branchPrefixRegex validates branch prefix characters
+// Branch names should start with alphanumeric and can contain alphanumeric, hyphen, underscore
+var branchPrefixRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
+
+// ValidLogLevels returns the list of valid log levels
+func ValidLogLevels() []string {
+	return []string{"debug", "info", "warn", "error"}
+}
+
+// ValidOutputFormats returns the list of valid plan output formats
+func ValidOutputFormats() []string {
+	return []string{"json", "issues", "both"}
+}
+
+// Validate checks the Config for invalid values and returns all validation errors found
+func (c *Config) Validate() []ValidationError {
+	var errors []ValidationError
+
+	// Validate Completion config
+	errors = append(errors, c.validateCompletion()...)
+
+	// Validate TUI config
+	errors = append(errors, c.validateTUI()...)
+
+	// Validate Instance config
+	errors = append(errors, c.validateInstance()...)
+
+	// Validate Branch config
+	errors = append(errors, c.validateBranch()...)
+
+	// Validate Resources config
+	errors = append(errors, c.validateResources()...)
+
+	// Validate Ultraplan config
+	errors = append(errors, c.validateUltraplan()...)
+
+	// Validate Plan config
+	errors = append(errors, c.validatePlan()...)
+
+	// Validate Logging config
+	errors = append(errors, c.validateLogging()...)
+
+	return errors
+}
+
+// validateCompletion validates the CompletionConfig
+func (c *Config) validateCompletion() []ValidationError {
+	var errors []ValidationError
+
+	if c.Completion.DefaultAction != "" && !IsValidCompletionAction(c.Completion.DefaultAction) {
+		errors = append(errors, ValidationError{
+			Field:   "completion.default_action",
+			Value:   c.Completion.DefaultAction,
+			Message: fmt.Sprintf("must be one of: %s", strings.Join(ValidCompletionActions(), ", ")),
+		})
+	}
+
+	return errors
+}
+
+// validateTUI validates the TUIConfig
+func (c *Config) validateTUI() []ValidationError {
+	var errors []ValidationError
+
+	if c.TUI.MaxOutputLines < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "tui.max_output_lines",
+			Value:   c.TUI.MaxOutputLines,
+			Message: "must be non-negative",
+		})
+	}
+
+	// Reasonable upper bound to prevent memory issues
+	const maxOutputLinesLimit = 100000
+	if c.TUI.MaxOutputLines > maxOutputLinesLimit {
+		errors = append(errors, ValidationError{
+			Field:   "tui.max_output_lines",
+			Value:   c.TUI.MaxOutputLines,
+			Message: fmt.Sprintf("exceeds maximum of %d", maxOutputLinesLimit),
+		})
+	}
+
+	return errors
+}
+
+// validateInstance validates the InstanceConfig
+func (c *Config) validateInstance() []ValidationError {
+	var errors []ValidationError
+
+	// Buffer size validation
+	const minBufferSize = 1024        // 1KB minimum
+	const maxBufferSize = 100_000_000 // 100MB maximum
+
+	if c.Instance.OutputBufferSize < minBufferSize {
+		errors = append(errors, ValidationError{
+			Field:   "instance.output_buffer_size",
+			Value:   c.Instance.OutputBufferSize,
+			Message: fmt.Sprintf("must be at least %d bytes (1KB)", minBufferSize),
+		})
+	}
+	if c.Instance.OutputBufferSize > maxBufferSize {
+		errors = append(errors, ValidationError{
+			Field:   "instance.output_buffer_size",
+			Value:   c.Instance.OutputBufferSize,
+			Message: fmt.Sprintf("exceeds maximum of %d bytes (100MB)", maxBufferSize),
+		})
+	}
+
+	// Capture interval validation
+	const minCaptureInterval = 10   // 10ms minimum
+	const maxCaptureInterval = 5000 // 5 seconds maximum
+
+	if c.Instance.CaptureIntervalMs < minCaptureInterval {
+		errors = append(errors, ValidationError{
+			Field:   "instance.capture_interval_ms",
+			Value:   c.Instance.CaptureIntervalMs,
+			Message: fmt.Sprintf("must be at least %dms", minCaptureInterval),
+		})
+	}
+	if c.Instance.CaptureIntervalMs > maxCaptureInterval {
+		errors = append(errors, ValidationError{
+			Field:   "instance.capture_interval_ms",
+			Value:   c.Instance.CaptureIntervalMs,
+			Message: fmt.Sprintf("exceeds maximum of %dms", maxCaptureInterval),
+		})
+	}
+
+	// Tmux dimensions validation
+	const minTmuxWidth = 80
+	const maxTmuxWidth = 500
+	const minTmuxHeight = 24
+	const maxTmuxHeight = 200
+
+	if c.Instance.TmuxWidth < minTmuxWidth {
+		errors = append(errors, ValidationError{
+			Field:   "instance.tmux_width",
+			Value:   c.Instance.TmuxWidth,
+			Message: fmt.Sprintf("must be at least %d columns", minTmuxWidth),
+		})
+	}
+	if c.Instance.TmuxWidth > maxTmuxWidth {
+		errors = append(errors, ValidationError{
+			Field:   "instance.tmux_width",
+			Value:   c.Instance.TmuxWidth,
+			Message: fmt.Sprintf("exceeds maximum of %d columns", maxTmuxWidth),
+		})
+	}
+	if c.Instance.TmuxHeight < minTmuxHeight {
+		errors = append(errors, ValidationError{
+			Field:   "instance.tmux_height",
+			Value:   c.Instance.TmuxHeight,
+			Message: fmt.Sprintf("must be at least %d rows", minTmuxHeight),
+		})
+	}
+	if c.Instance.TmuxHeight > maxTmuxHeight {
+		errors = append(errors, ValidationError{
+			Field:   "instance.tmux_height",
+			Value:   c.Instance.TmuxHeight,
+			Message: fmt.Sprintf("exceeds maximum of %d rows", maxTmuxHeight),
+		})
+	}
+
+	// Timeout validation (0 means disabled, which is valid; negative is invalid)
+	if c.Instance.ActivityTimeoutMinutes < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "instance.activity_timeout_minutes",
+			Value:   c.Instance.ActivityTimeoutMinutes,
+			Message: "must be non-negative (0 disables timeout)",
+		})
+	}
+	if c.Instance.CompletionTimeoutMinutes < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "instance.completion_timeout_minutes",
+			Value:   c.Instance.CompletionTimeoutMinutes,
+			Message: "must be non-negative (0 disables timeout)",
+		})
+	}
+
+	return errors
+}
+
+// validateBranch validates the BranchConfig
+func (c *Config) validateBranch() []ValidationError {
+	var errors []ValidationError
+
+	if c.Branch.Prefix == "" {
+		errors = append(errors, ValidationError{
+			Field:   "branch.prefix",
+			Value:   c.Branch.Prefix,
+			Message: "cannot be empty",
+		})
+	} else if !branchPrefixRegex.MatchString(c.Branch.Prefix) {
+		errors = append(errors, ValidationError{
+			Field:   "branch.prefix",
+			Value:   c.Branch.Prefix,
+			Message: "must start with a letter and contain only alphanumeric characters, hyphens, or underscores",
+		})
+	}
+
+	// Git branch names have length limits
+	const maxBranchPrefixLength = 50
+	if len(c.Branch.Prefix) > maxBranchPrefixLength {
+		errors = append(errors, ValidationError{
+			Field:   "branch.prefix",
+			Value:   c.Branch.Prefix,
+			Message: fmt.Sprintf("exceeds maximum length of %d characters", maxBranchPrefixLength),
+		})
+	}
+
+	return errors
+}
+
+// validateResources validates the ResourceConfig
+func (c *Config) validateResources() []ValidationError {
+	var errors []ValidationError
+
+	// Cost values must be non-negative
+	if c.Resources.CostWarningThreshold < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "resources.cost_warning_threshold",
+			Value:   c.Resources.CostWarningThreshold,
+			Message: "must be non-negative",
+		})
+	}
+	if c.Resources.CostLimit < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "resources.cost_limit",
+			Value:   c.Resources.CostLimit,
+			Message: "must be non-negative (0 disables limit)",
+		})
+	}
+
+	// If both are set, warning threshold should be less than limit
+	if c.Resources.CostLimit > 0 && c.Resources.CostWarningThreshold > c.Resources.CostLimit {
+		errors = append(errors, ValidationError{
+			Field:   "resources.cost_warning_threshold",
+			Value:   c.Resources.CostWarningThreshold,
+			Message: fmt.Sprintf("should be less than cost_limit (%v)", c.Resources.CostLimit),
+		})
+	}
+
+	// Token limit must be non-negative
+	if c.Resources.TokenLimitPerInstance < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "resources.token_limit_per_instance",
+			Value:   c.Resources.TokenLimitPerInstance,
+			Message: "must be non-negative (0 disables limit)",
+		})
+	}
+
+	return errors
+}
+
+// validateUltraplan validates the UltraplanConfig
+func (c *Config) validateUltraplan() []ValidationError {
+	var errors []ValidationError
+
+	const minMaxParallel = 1
+	const maxMaxParallel = 20
+
+	if c.Ultraplan.MaxParallel < minMaxParallel {
+		errors = append(errors, ValidationError{
+			Field:   "ultraplan.max_parallel",
+			Value:   c.Ultraplan.MaxParallel,
+			Message: fmt.Sprintf("must be at least %d", minMaxParallel),
+		})
+	}
+	if c.Ultraplan.MaxParallel > maxMaxParallel {
+		errors = append(errors, ValidationError{
+			Field:   "ultraplan.max_parallel",
+			Value:   c.Ultraplan.MaxParallel,
+			Message: fmt.Sprintf("exceeds maximum of %d", maxMaxParallel),
+		})
+	}
+
+	// Validate sound path if specified
+	if c.Ultraplan.Notifications.SoundPath != "" {
+		if _, err := os.Stat(c.Ultraplan.Notifications.SoundPath); err != nil {
+			errors = append(errors, ValidationError{
+				Field:   "ultraplan.notifications.sound_path",
+				Value:   c.Ultraplan.Notifications.SoundPath,
+				Message: "file does not exist",
+			})
+		}
+	}
+
+	return errors
+}
+
+// validatePlan validates the PlanConfig
+func (c *Config) validatePlan() []ValidationError {
+	var errors []ValidationError
+
+	// Validate output format
+	if c.Plan.OutputFormat != "" && !slices.Contains(ValidOutputFormats(), c.Plan.OutputFormat) {
+		errors = append(errors, ValidationError{
+			Field:   "plan.output_format",
+			Value:   c.Plan.OutputFormat,
+			Message: fmt.Sprintf("must be one of: %s", strings.Join(ValidOutputFormats(), ", ")),
+		})
+	}
+
+	// Output file must not be empty if format is json or both
+	if (c.Plan.OutputFormat == "json" || c.Plan.OutputFormat == "both") && c.Plan.OutputFile == "" {
+		errors = append(errors, ValidationError{
+			Field:   "plan.output_file",
+			Value:   c.Plan.OutputFile,
+			Message: "cannot be empty when output_format is 'json' or 'both'",
+		})
+	}
+
+	return errors
+}
+
+// validateLogging validates the LoggingConfig
+func (c *Config) validateLogging() []ValidationError {
+	var errors []ValidationError
+
+	// Validate log level
+	if c.Logging.Level != "" && !slices.Contains(ValidLogLevels(), c.Logging.Level) {
+		errors = append(errors, ValidationError{
+			Field:   "logging.level",
+			Value:   c.Logging.Level,
+			Message: fmt.Sprintf("must be one of: %s", strings.Join(ValidLogLevels(), ", ")),
+		})
+	}
+
+	// Max size must be positive
+	if c.Logging.MaxSizeMB <= 0 {
+		errors = append(errors, ValidationError{
+			Field:   "logging.max_size_mb",
+			Value:   c.Logging.MaxSizeMB,
+			Message: "must be positive",
+		})
+	}
+
+	// Reasonable upper bound for log file size
+	const maxLogSizeMB = 1000 // 1GB
+	if c.Logging.MaxSizeMB > maxLogSizeMB {
+		errors = append(errors, ValidationError{
+			Field:   "logging.max_size_mb",
+			Value:   c.Logging.MaxSizeMB,
+			Message: fmt.Sprintf("exceeds maximum of %dMB", maxLogSizeMB),
+		})
+	}
+
+	// Max backups must be non-negative
+	if c.Logging.MaxBackups < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "logging.max_backups",
+			Value:   c.Logging.MaxBackups,
+			Message: "must be non-negative",
+		})
+	}
+
+	return errors
+}
