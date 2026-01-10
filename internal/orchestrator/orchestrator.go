@@ -831,7 +831,10 @@ func (o *Orchestrator) handlePRWorkflowComplete(instanceID string, success bool,
 	callback := o.prCompleteCallback
 	o.mu.Unlock()
 
-	// Notify via callback if set
+	// Publish event to event bus
+	o.eventBus.Publish(event.NewPRCompleteEvent(instanceID, success, "", ""))
+
+	// Notify via callback if set (for backwards compatibility)
 	if callback != nil {
 		callback(instanceID, success)
 	}
@@ -1467,7 +1470,10 @@ func (o *Orchestrator) handleInstancePROpened(id string) {
 	callback := o.prOpenedCallback
 	o.mu.RUnlock()
 
-	// Notify via callback if set (TUI will handle the removal)
+	// Publish event to event bus
+	o.eventBus.Publish(event.NewPROpenedEvent(id, ""))
+
+	// Notify via callback if set (for backwards compatibility)
 	if callback != nil {
 		callback(id)
 	}
@@ -1504,7 +1510,27 @@ func (o *Orchestrator) handleInstanceTimeout(id string, timeoutType instance.Tim
 
 	_ = o.saveSession()
 
-	// Notify via callback if set (TUI will handle the display)
+	// Publish event to event bus (convert instance.TimeoutType to event.TimeoutType)
+	eventTimeoutType := event.TimeoutActivity
+	switch timeoutType {
+	case instance.TimeoutActivity:
+		eventTimeoutType = event.TimeoutActivity
+	case instance.TimeoutCompletion:
+		eventTimeoutType = event.TimeoutCompletion
+	case instance.TimeoutStale:
+		eventTimeoutType = event.TimeoutStale
+	default:
+		// Unknown timeout type - log warning and default to activity
+		if o.logger != nil {
+			o.logger.Warn("unknown timeout type during event conversion",
+				"instance_id", id,
+				"timeout_type", int(timeoutType),
+			)
+		}
+	}
+	o.eventBus.Publish(event.NewTimeoutEvent(id, eventTimeoutType, ""))
+
+	// Notify via callback if set (for backwards compatibility)
 	o.mu.RLock()
 	callback := o.timeoutCallback
 	o.mu.RUnlock()
@@ -1520,6 +1546,10 @@ func (o *Orchestrator) handleInstanceBell(id string) {
 	callback := o.bellCallback
 	o.mu.RUnlock()
 
+	// Publish event to event bus
+	o.eventBus.Publish(event.NewBellEvent(id))
+
+	// Notify via callback if set (for backwards compatibility)
 	if callback != nil {
 		callback(id)
 	}

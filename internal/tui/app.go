@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/config"
+	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
@@ -79,38 +80,81 @@ func (a *App) Run() error {
 		}
 	}()
 
-	// Set up PR workflow completion callback to send message to program
-	a.orchestrator.SetPRCompleteCallback(func(instanceID string, success bool) {
+	// Subscribe to events from the event bus
+	eventBus := a.orchestrator.EventBus()
+	var subscriptionIDs []string
+
+	// Subscribe to PR complete events
+	subID := eventBus.Subscribe("pr.completed", func(e event.Event) {
+		prEvent, ok := e.(event.PRCompleteEvent)
+		if !ok {
+			// Log unexpected event type for debugging
+			return
+		}
 		a.program.Send(prCompleteMsg{
-			instanceID: instanceID,
-			success:    success,
+			instanceID: prEvent.InstanceID,
+			success:    prEvent.Success,
 		})
 	})
+	subscriptionIDs = append(subscriptionIDs, subID)
 
-	// Set up PR opened callback (for inline PR creation detected in instance output)
-	a.orchestrator.SetPROpenedCallback(func(instanceID string) {
+	// Subscribe to PR opened events (inline PR creation detected in instance output)
+	subID = eventBus.Subscribe("pr.opened", func(e event.Event) {
+		prEvent, ok := e.(event.PROpenedEvent)
+		if !ok {
+			return
+		}
 		a.program.Send(prOpenedMsg{
-			instanceID: instanceID,
+			instanceID: prEvent.InstanceID,
 		})
 	})
+	subscriptionIDs = append(subscriptionIDs, subID)
 
-	// Set up timeout callback for stuck/timeout detection
-	a.orchestrator.SetTimeoutCallback(func(instanceID string, timeoutType instance.TimeoutType) {
+	// Subscribe to timeout events
+	subID = eventBus.Subscribe("instance.timeout", func(e event.Event) {
+		timeoutEvent, ok := e.(event.TimeoutEvent)
+		if !ok {
+			return
+		}
+		// Convert event.TimeoutType to instance.TimeoutType
+		var timeoutType instance.TimeoutType
+		switch timeoutEvent.TimeoutType {
+		case event.TimeoutActivity:
+			timeoutType = instance.TimeoutActivity
+		case event.TimeoutCompletion:
+			timeoutType = instance.TimeoutCompletion
+		case event.TimeoutStale:
+			timeoutType = instance.TimeoutStale
+		default:
+			// Unknown timeout type - default to activity timeout
+			timeoutType = instance.TimeoutActivity
+		}
 		a.program.Send(timeoutMsg{
-			instanceID:  instanceID,
+			instanceID:  timeoutEvent.InstanceID,
 			timeoutType: timeoutType,
 		})
 	})
+	subscriptionIDs = append(subscriptionIDs, subID)
 
-	// Set up bell callback to forward terminal bells to the parent terminal
-	a.orchestrator.SetBellCallback(func(instanceID string) {
-		a.program.Send(bellMsg{instanceID: instanceID})
+	// Subscribe to bell events
+	subID = eventBus.Subscribe("instance.bell", func(e event.Event) {
+		bellEvent, ok := e.(event.BellEvent)
+		if !ok {
+			return
+		}
+		a.program.Send(bellMsg{instanceID: bellEvent.InstanceID})
 	})
+	subscriptionIDs = append(subscriptionIDs, subID)
 
 	_, err := a.program.Run()
 
 	// Clean up signal handler
 	signal.Stop(sigChan)
+
+	// Unsubscribe only this component's event handlers
+	for _, id := range subscriptionIDs {
+		eventBus.Unsubscribe(id)
+	}
 
 	return err
 }
