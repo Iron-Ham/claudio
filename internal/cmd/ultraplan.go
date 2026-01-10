@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/config"
-	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	sessutil "github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
@@ -149,7 +148,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 
 	// Create logger if enabled - we need session dir which requires session ID
 	sessionDir := sessutil.GetSessionDir(cwd, sessionID)
-	logger := createUltraplanLogger(sessionDir, cfg)
+	logger := CreateLogger(sessionDir, cfg)
 	defer logger.Close()
 
 	// Create orchestrator with multi-session support
@@ -283,23 +282,4 @@ func slugifyWords(words []string) string {
 		slug = slug[:20]
 	}
 	return strings.TrimSuffix(slug, "-")
-}
-
-// createUltraplanLogger creates a logger if logging is enabled in config.
-// Returns a NopLogger if logging is disabled or if creation fails.
-func createUltraplanLogger(sessionDir string, cfg *config.Config) *logging.Logger {
-	// Check if logging is enabled
-	if !cfg.Logging.Enabled {
-		return logging.NopLogger()
-	}
-
-	// Create the logger
-	logger, err := logging.NewLogger(sessionDir, cfg.Logging.Level)
-	if err != nil {
-		// Log creation failure shouldn't prevent the application from starting
-		fmt.Fprintf(os.Stderr, "Warning: failed to create logger: %v\n", err)
-		return logging.NopLogger()
-	}
-
-	return logger
 }

@@ -121,7 +121,7 @@ func attachToSession(cwd, sessionID string, cfg *config.Config) error {
 
 	// Create logger if enabled
 	sessionDir := session.GetSessionDir(cwd, sessionID)
-	logger := createLogger(sessionDir, cfg)
+	logger := CreateLogger(sessionDir, cfg)
 	defer logger.Close()
 
 	// Create orchestrator with the session ID
@@ -172,7 +172,7 @@ func startNewSession(cwd, sessionName string, cfg *config.Config) error {
 
 	// Create logger if enabled - we need session dir which requires session ID
 	sessionDir := session.GetSessionDir(cwd, sessionID)
-	logger := createLogger(sessionDir, cfg)
+	logger := CreateLogger(sessionDir, cfg)
 	defer logger.Close()
 
 	// Create orchestrator with the new session ID
@@ -264,16 +264,24 @@ func launchTUI(cwd string, orch *orchestrator.Orchestrator, sess *orchestrator.S
 	return nil
 }
 
-// createLogger creates a logger if logging is enabled in config.
+// CreateLogger creates a logger if logging is enabled in config.
 // Returns a NopLogger if logging is disabled or if creation fails.
-func createLogger(sessionDir string, cfg *config.Config) *logging.Logger {
+// This function uses NewLoggerWithRotation to respect MaxSizeMB and MaxBackups config.
+func CreateLogger(sessionDir string, cfg *config.Config) *logging.Logger {
 	// Check if logging is enabled
 	if !cfg.Logging.Enabled {
 		return logging.NopLogger()
 	}
 
-	// Create the logger
-	logger, err := logging.NewLogger(sessionDir, cfg.Logging.Level)
+	// Build rotation config from logging config
+	rotationConfig := logging.RotationConfig{
+		MaxSizeMB:  cfg.Logging.MaxSizeMB,
+		MaxBackups: cfg.Logging.MaxBackups,
+		Compress:   false, // Not exposed in config yet
+	}
+
+	// Create the logger with rotation support
+	logger, err := logging.NewLoggerWithRotation(sessionDir, cfg.Logging.Level, rotationConfig)
 	if err != nil {
 		// Log creation failure shouldn't prevent the application from starting
 		fmt.Fprintf(os.Stderr, "Warning: failed to create logger: %v\n", err)

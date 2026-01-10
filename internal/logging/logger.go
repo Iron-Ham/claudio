@@ -134,7 +134,7 @@ func NewLoggerWithRotation(sessionDir string, level string, rotationConfig Rotat
 }
 
 // parseLevel converts a string log level to slog.Level.
-// Defaults to INFO if the level string is not recognized.
+// Defaults to INFO if the level string is not recognized, printing a warning to stderr.
 func parseLevel(level string) slog.Level {
 	switch strings.ToUpper(level) {
 	case LevelDebug:
@@ -146,6 +146,9 @@ func parseLevel(level string) slog.Level {
 	case LevelError:
 		return slog.LevelError
 	default:
+		if level != "" {
+			fmt.Fprintf(os.Stderr, "Warning: unrecognized log level %q, defaulting to INFO. Valid levels: %v\n", level, ValidLevels())
+		}
 		return slog.LevelInfo
 	}
 }

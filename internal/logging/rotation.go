@@ -4,7 +4,6 @@ package logging
 import (
 	"compress/gzip"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -107,8 +106,9 @@ func (rw *RotatingWriter) Write(p []byte) (n int, err error) {
 	if rw.maxSizeB > 0 && rw.currentSize+int64(len(p)) > rw.maxSizeB {
 		if err := rw.rotate(); err != nil {
 			// Log rotation failed, but we should still try to write
-			// to the current file to avoid losing log data
-			_ = err // Continue with write
+			// to the current file to avoid losing log data.
+			// Write to stderr so operators are aware rotation is failing.
+			fmt.Fprintf(os.Stderr, "Warning: log rotation failed: %v\n", err)
 		}
 	}
 
@@ -191,17 +191,21 @@ func (rw *RotatingWriter) backupPath(n int) string {
 }
 
 // compressFile compresses a file using gzip and removes the original.
+// Errors are logged to stderr since this runs asynchronously.
 func (rw *RotatingWriter) compressFile(path string) {
 	// Read the original file
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return // Silently fail, the uncompressed backup is still there
+		// Log but continue - the uncompressed backup is still there
+		fmt.Fprintf(os.Stderr, "Warning: failed to read log file for compression %s: %v\n", path, err)
+		return
 	}
 
 	// Create the compressed file
 	gzPath := path + ".gz"
 	gzFile, err := os.Create(gzPath)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to create compressed log file %s: %v\n", gzPath, err)
 		return
 	}
 	defer gzFile.Close()
@@ -209,11 +213,13 @@ func (rw *RotatingWriter) compressFile(path string) {
 	gzWriter := gzip.NewWriter(gzFile)
 	if _, err := gzWriter.Write(data); err != nil {
 		os.Remove(gzPath) // Clean up partial file
+		fmt.Fprintf(os.Stderr, "Warning: failed to write compressed log data to %s: %v\n", gzPath, err)
 		return
 	}
 
 	if err := gzWriter.Close(); err != nil {
 		os.Remove(gzPath) // Clean up partial file
+		fmt.Fprintf(os.Stderr, "Warning: failed to finalize compressed log file %s: %v\n", gzPath, err)
 		return
 	}
 
@@ -272,14 +278,4 @@ func (rw *RotatingWriter) File() *os.File {
 	rw.mu.Lock()
 	defer rw.mu.Unlock()
 	return rw.file
-}
-
-// wrappedWriter wraps an io.Writer to also track writes for rotation.
-// This is used when the writer is not a file (e.g., stderr).
-type wrappedWriter struct {
-	w io.Writer
-}
-
-func (ww *wrappedWriter) Write(p []byte) (n int, err error) {
-	return ww.w.Write(p)
 }
