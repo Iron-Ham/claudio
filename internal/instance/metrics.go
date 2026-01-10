@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/Iron-Ham/claudio/internal/instance/detect"
 )
 
 // ParsedMetrics holds metrics extracted from Claude Code output
@@ -53,7 +55,7 @@ func (p *MetricsParser) Parse(output []byte) *ParsedMetrics {
 	}
 
 	// Strip ANSI escape codes for cleaner pattern matching
-	text = stripAnsi(text)
+	text = detect.StripAnsi(text)
 
 	metrics := &ParsedMetrics{}
 	found := false

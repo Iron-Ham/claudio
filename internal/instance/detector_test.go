@@ -3,6 +3,8 @@ package instance
 import (
 	"strings"
 	"testing"
+
+	"github.com/Iron-Ham/claudio/internal/instance/detect"
 )
 
 func TestWaitingState_String(t *testing.T) {
@@ -438,9 +440,9 @@ func TestStripAnsi(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := stripAnsi(tt.input)
+		got := detect.StripAnsi(tt.input)
 		if got != tt.expected {
-			t.Errorf("stripAnsi(%q) = %q, want %q", tt.input, got, tt.expected)
+			t.Errorf("StripAnsi(%q) = %q, want %q", tt.input, got, tt.expected)
 		}
 	}
 }
@@ -486,14 +488,14 @@ func TestGetLastNonEmptyLines(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := getLastNonEmptyLines(tt.lines, tt.n)
+			got := detect.GetLastNonEmptyLines(tt.lines, tt.n)
 			if len(got) != len(tt.expected) {
-				t.Errorf("getLastNonEmptyLines() length = %d, want %d", len(got), len(tt.expected))
+				t.Errorf("GetLastNonEmptyLines() length = %d, want %d", len(got), len(tt.expected))
 				return
 			}
 			for i := range got {
 				if got[i] != tt.expected[i] {
-					t.Errorf("getLastNonEmptyLines()[%d] = %q, want %q", i, got[i], tt.expected[i])
+					t.Errorf("GetLastNonEmptyLines()[%d] = %q, want %q", i, got[i], tt.expected[i])
 				}
 			}
 		})
@@ -525,6 +527,6 @@ func BenchmarkStripAnsi(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		stripAnsi(text)
+		detect.StripAnsi(text)
 	}
 }
