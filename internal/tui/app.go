@@ -16,6 +16,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
+	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/viper"
@@ -1975,7 +1976,9 @@ func (m Model) View() string {
 		sidebar = m.renderUltraPlanSidebar(effectiveSidebarWidth, mainAreaHeight)
 		content = m.renderUltraPlanContent(mainContentWidth)
 	} else {
-		sidebar = m.renderSidebar(effectiveSidebarWidth, mainAreaHeight)
+		// Use view component for sidebar rendering
+		dashboardView := view.NewDashboardView()
+		sidebar = dashboardView.RenderSidebar(m, effectiveSidebarWidth, mainAreaHeight)
 		content = m.renderContent(mainContentWidth)
 	}
 
@@ -2034,128 +2037,6 @@ func (m Model) renderHeader() string {
 	return styles.Header.Width(m.width).Render(title)
 }
 
-// renderSidebar renders the instance sidebar with pagination support
-func (m Model) renderSidebar(width int, height int) string {
-	var b strings.Builder
-
-	// Sidebar title
-	b.WriteString(styles.SidebarTitle.Render("Instances"))
-	b.WriteString("\n")
-
-	if m.instanceCount() == 0 {
-		b.WriteString(styles.Muted.Render("No instances"))
-		b.WriteString("\n")
-		b.WriteString(styles.Muted.Render("Press [a] to add"))
-	} else {
-		// Calculate available slots for instances
-		// Reserve: 1 for title, 1 for blank line, 1 for add hint, 2 for scroll indicators, plus border padding
-		reservedLines := 6
-		availableSlots := height - reservedLines
-		if availableSlots < 3 {
-			availableSlots = 3 // Minimum to show at least a few instances
-		}
-
-		totalInstances := m.instanceCount()
-		hasMoreAbove := m.sidebarScrollOffset > 0
-		hasMoreBelow := m.sidebarScrollOffset+availableSlots < totalInstances
-
-		// Show scroll up indicator if there are instances above
-		if hasMoreAbove {
-			scrollUp := styles.Muted.Render(fmt.Sprintf("▲ %d more above", m.sidebarScrollOffset))
-			b.WriteString(scrollUp)
-			b.WriteString("\n")
-		}
-
-		// Build a set of instance IDs that have conflicts
-		conflictingInstances := make(map[string]bool)
-		for _, c := range m.conflicts {
-			for _, instID := range c.Instances {
-				conflictingInstances[instID] = true
-			}
-		}
-
-		// Calculate the visible range
-		startIdx := m.sidebarScrollOffset
-		endIdx := m.sidebarScrollOffset + availableSlots
-		if endIdx > totalInstances {
-			endIdx = totalInstances
-		}
-
-		// Render visible instances using helper
-		for i := startIdx; i < endIdx; i++ {
-			inst := m.session.Instances[i]
-			b.WriteString(m.renderSidebarInstance(i, inst, conflictingInstances, width))
-			b.WriteString("\n")
-		}
-
-		// Show scroll down indicator if there are instances below
-		if hasMoreBelow {
-			remaining := totalInstances - endIdx
-			scrollDown := styles.Muted.Render(fmt.Sprintf("▼ %d more below", remaining))
-			b.WriteString(scrollDown)
-			b.WriteString("\n")
-		}
-	}
-
-	b.WriteString("\n")
-	// Add instance hint with navigation help when paginated
-	if m.instanceCount() > 0 {
-		addHint := styles.Muted.Render("[a]") + " " + styles.Muted.Render("add") + "  " +
-			styles.Muted.Render("[↑↓]") + " " + styles.Muted.Render("nav")
-		b.WriteString(addHint)
-	} else {
-		addHint := styles.Muted.Render("[a]") + " " + styles.Muted.Render("Add new")
-		b.WriteString(addHint)
-	}
-
-	// Wrap in sidebar box
-	return styles.Sidebar.Width(width - 2).Render(b.String())
-}
-
-// renderSidebarInstance renders a single instance item in the sidebar
-func (m Model) renderSidebarInstance(i int, inst *orchestrator.Instance, conflictingInstances map[string]bool, width int) string {
-	// Status indicator (colored dot)
-	statusColor := styles.StatusColor(string(inst.Status))
-	dot := lipgloss.NewStyle().Foreground(statusColor).Render("●")
-
-	// Instance number and truncated task
-	maxTaskLen := width - 8 // Account for number, dot, padding
-	if maxTaskLen < 10 {
-		maxTaskLen = 10
-	}
-	label := fmt.Sprintf("%d %s", i+1, truncate(inst.Task, maxTaskLen))
-	// Add conflict indicator if instance has conflicts
-	if conflictingInstances[inst.ID] {
-		label = fmt.Sprintf("%d ⚠ %s", i+1, truncate(inst.Task, maxTaskLen-2))
-	}
-
-	// Choose style based on active state and status
-	var itemStyle lipgloss.Style
-	if i == m.activeTab {
-		if conflictingInstances[inst.ID] {
-			// Active item with conflict - use warning background
-			itemStyle = styles.SidebarItemInputNeeded
-		} else if inst.Status == orchestrator.StatusWaitingInput {
-			itemStyle = styles.SidebarItemInputNeeded
-		} else {
-			itemStyle = styles.SidebarItemActive
-		}
-	} else {
-		itemStyle = styles.SidebarItem
-		if conflictingInstances[inst.ID] {
-			// Inactive but has conflict - use warning color
-			itemStyle = itemStyle.Foreground(styles.WarningColor)
-		} else if inst.Status == orchestrator.StatusWaitingInput {
-			itemStyle = itemStyle.Foreground(styles.WarningColor)
-		} else {
-			itemStyle = itemStyle.Foreground(styles.MutedColor)
-		}
-	}
-
-	// Combine dot and label
-	return dot + " " + itemStyle.Render(label)
-}
-
 // renderContent renders the main content area
 func (m Model) renderContent(width int) string {
 	if m.addingTask {
@@ -2194,236 +2075,32 @@ func (m Model) renderContent(width int) string {
 
 // renderInstance renders the active instance view
 func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
-	var b strings.Builder
-
-	// Instance info
-	statusColor := styles.StatusColor(string(inst.Status))
-	statusBadge := styles.StatusBadge.Background(statusColor).Render(string(inst.Status))
-
-	info := fmt.Sprintf("%s  Branch: %s", statusBadge, inst.Branch)
-	b.WriteString(styles.InstanceInfo.Render(info))
-	b.WriteString("\n")
-
-	// Task (limit to 5 lines to prevent dominating the view)
-	const maxTaskLines = 5
-	taskDisplay := truncateLines(inst.Task, maxTaskLines)
-	b.WriteString(styles.Subtitle.Render("Task: " + taskDisplay))
-	b.WriteString("\n")
-
-	// Resource metrics (if available and config enabled)
-	cfg := config.Get()
-	if cfg.Resources.ShowMetricsInSidebar && inst.Metrics != nil {
-		metricsLine := m.formatInstanceMetrics(inst.Metrics)
-		b.WriteString(styles.Muted.Render(metricsLine))
-		b.WriteString("\n")
-	}
-
-	// Show running/input mode status
+	// Build render state for the view component
 	mgr := m.orchestrator.GetInstanceManager(inst.ID)
-	if mgr != nil && mgr.Running() {
-		if m.inputMode {
-			// Show active input mode indicator
-			inputBanner := lipgloss.NewStyle().
-				Bold(true).
-				Foreground(styles.TextColor).
-				Background(styles.WarningColor).
-				Padding(0, 1).
-				Render("INPUT MODE")
-			hint := inputBanner + "  " + styles.Muted.Render("Press ") +
-				styles.HelpKey.Render("Ctrl+]") + styles.Muted.Render(" to exit")
-			b.WriteString(hint)
-		} else {
-			// Show hint to enter input mode
-			runningBanner := lipgloss.NewStyle().
-				Bold(true).
-				Foreground(styles.TextColor).
-				Background(styles.SecondaryColor).
-				Padding(0, 1).
-				Render("RUNNING")
-			hint := runningBanner + "  " + styles.Muted.Render("Press ") +
-				styles.HelpKey.Render("[i]") + styles.Muted.Render(" to interact  ") +
-				styles.HelpKey.Render("[t]") + styles.Muted.Render(" for tmux attach cmd")
-			b.WriteString(hint)
-		}
-	}
-	b.WriteString("\n")
+	isRunning := mgr != nil && mgr.Running()
 
-	// Output with scrolling support
+	// Apply filters to output
 	output := m.outputs[inst.ID]
-	if output == "" {
-		output = "No output yet. Press [s] to start this instance."
-		outputBox := styles.OutputArea.
-			Width(width - 4).
-			Height(m.getOutputMaxLines()).
-			Render(output)
-		b.WriteString(outputBox)
-		return b.String()
+	if output != "" {
+		output = m.filterOutput(output)
 	}
 
-	// Apply filters
-	output = m.filterOutput(output)
-
-	// Split output into lines and apply scroll
-	lines := strings.Split(output, "\n")
-	totalLines := len(lines)
-	maxLines := m.getOutputMaxLines()
-
-	// Get scroll position
-	scrollOffset := m.outputScrolls[inst.ID]
-	maxScroll := m.getOutputMaxScroll(inst.ID)
-
-	// Clamp scroll position
-	if scrollOffset > maxScroll {
-		scrollOffset = maxScroll
+	renderState := view.RenderState{
+		Output:            output,
+		IsRunning:         isRunning,
+		InputMode:         m.inputMode,
+		ScrollOffset:      m.outputScrolls[inst.ID],
+		AutoScrollEnabled: m.isOutputAutoScroll(inst.ID),
+		HasNewOutput:      m.hasNewOutput(inst.ID),
+		SearchPattern:     m.searchPattern,
+		SearchRegex:       m.searchRegex,
+		SearchMatches:     m.searchMatches,
+		SearchCurrent:     m.searchCurrent,
+		SearchMode:        m.searchMode,
 	}
 
-	// Calculate visible range
-	startLine := scrollOffset
-	endLine := startLine + maxLines
-	if endLine > totalLines {
-		endLine = totalLines
-	}
-
-	// Get visible lines
-	var visibleLines []string
-	if totalLines <= maxLines {
-		// No scrolling needed, show all
-		visibleLines = lines
-	} else {
-		visibleLines = lines[startLine:endLine]
-	}
-
-	// Apply search highlighting
-	if m.searchRegex != nil && m.searchPattern != "" {
-		visibleLines = m.highlightSearchMatches(visibleLines, startLine)
-	}
-
-	visibleOutput := strings.Join(visibleLines, "\n")
-
-	// Build scroll indicator
-	var scrollIndicator string
-	if totalLines > maxLines {
-		// Show scroll position
-		autoScrollEnabled := m.isOutputAutoScroll(inst.ID)
-		hasNew := m.hasNewOutput(inst.ID) && !autoScrollEnabled
-
-		if hasNew {
-			// New output arrived while scrolled up
-			scrollIndicator = styles.Warning.Render(fmt.Sprintf("▲ NEW OUTPUT - Line %d/%d", startLine+1, totalLines)) +
-				"  " + styles.Muted.Render("[G] jump to latest")
-		} else if scrollOffset == 0 && !autoScrollEnabled {
-			// At top
-			scrollIndicator = styles.Muted.Render(fmt.Sprintf("▲ TOP - Line 1/%d", totalLines)) +
-				"  " + styles.Muted.Render("[j/↓] down  [G] bottom")
-		} else if autoScrollEnabled {
-			// Auto-scrolling (at bottom)
-			scrollIndicator = styles.Secondary.Render(fmt.Sprintf("▼ FOLLOWING - Line %d/%d", endLine, totalLines)) +
-				"  " + styles.Muted.Render("[k/↑] scroll up")
-		} else {
-			// Scrolled somewhere in the middle
-			percent := 0
-			if maxScroll > 0 {
-				percent = scrollOffset * 100 / maxScroll
-			}
-			scrollIndicator = styles.Muted.Render(fmt.Sprintf("Line %d-%d/%d (%d%%)", startLine+1, endLine, totalLines, percent)) +
-				"  " + styles.Muted.Render("[j/k] scroll  [g/G] top/bottom")
-		}
-		b.WriteString(scrollIndicator)
-		b.WriteString("\n")
-	}
-
-	outputBox := styles.OutputArea.
-		Width(width - 4).
-		Height(maxLines).
-		Render(visibleOutput)
-
-	b.WriteString(outputBox)
-
-	// Show search bar if in search mode or has active search
-	if m.searchMode || m.searchPattern != "" {
-		b.WriteString("\n")
-		b.WriteString(m.renderSearchBar())
-	}
-
-	return b.String()
-}
-
-// highlightSearchMatches highlights search matches in visible lines
-func (m Model) highlightSearchMatches(lines []string, startLine int) []string {
-	if m.searchRegex == nil {
-		return lines
-	}
-
-	result := make([]string, len(lines))
-	for i, line := range lines {
-		lineNum := startLine + i
-		isCurrentMatchLine := false
-
-		// Check if this line contains the current match
-		if len(m.searchMatches) > 0 && m.searchCurrent < len(m.searchMatches) {
-			if lineNum == m.searchMatches[m.searchCurrent] {
-				isCurrentMatchLine = true
-			}
-		}
-
-		// Find and highlight all matches in this line
-		matches := m.searchRegex.FindAllStringIndex(line, -1)
-		if len(matches) == 0 {
-			result[i] = line
-			continue
-		}
-
-		var highlighted strings.Builder
-		lastEnd := 0
-		for j, match := range matches {
-			// Add text before match
-			highlighted.WriteString(line[lastEnd:match[0]])
-
-			// Highlight the match
-			matchText := line[match[0]:match[1]]
-			if isCurrentMatchLine && j == 0 {
-				// Current match gets special highlighting
-				highlighted.WriteString(styles.SearchCurrentMatch.Render(matchText))
-			} else {
-				highlighted.WriteString(styles.SearchMatch.Render(matchText))
-			}
-			lastEnd = match[1]
-		}
-		// Add remaining text after last match
-		highlighted.WriteString(line[lastEnd:])
-		result[i] = highlighted.String()
-	}
-
-	return result
-}
-
-// renderSearchBar renders the search input bar
-func (m Model) renderSearchBar() string {
-	var b strings.Builder
-
-	// Search prompt
-	b.WriteString(styles.SearchPrompt.Render("/"))
-	b.WriteString(styles.SearchInput.Render(m.searchPattern))
-
-	if m.searchMode {
-		b.WriteString("█") // Cursor
-	}
-
-	// Match info
-	if m.searchPattern != "" {
-		if len(m.searchMatches) > 0 {
-			info := fmt.Sprintf(" [%d/%d]", m.searchCurrent+1, len(m.searchMatches))
-			b.WriteString(styles.SearchInfo.Render(info))
-			b.WriteString(styles.Muted.Render("  n/N next/prev"))
-		} else if !m.searchMode {
-			b.WriteString(styles.SearchInfo.Render(" No matches"))
-		}
-		if !m.searchMode {
-			b.WriteString(styles.Muted.Render("  Ctrl+/ clear"))
-		}
-	}
-
-	return styles.SearchBar.Render(b.String())
+	instanceView := view.NewInstanceView(width, m.getOutputMaxLines())
+	return instanceView.Render(inst, renderState)
 }
 
 // renderFilterPanel renders the filter configuration panel
@@ -2502,94 +2179,28 @@ func (m Model) renderFilterPanel(width int) string {
 
 // renderAddTask renders the add task input
 func (m Model) renderAddTask(width int) string {
-	var b strings.Builder
-
-	b.WriteString(styles.Title.Render("Add New Instance"))
-	b.WriteString("\n\n")
-	b.WriteString("Enter task description:\n\n")
-
-	// Render text with cursor at the correct position
-	runes := []rune(m.taskInput)
-	// Clamp cursor to valid bounds as a safety measure
-	cursor := m.taskInputCursor
-	if cursor < 0 {
-		cursor = 0
+	inputState := &view.InputState{
+		Text:             m.taskInput,
+		Cursor:           m.taskInputCursor,
+		ShowTemplates:    m.showTemplates,
+		Templates:        m.buildTemplateItems(),
+		TemplateSelected: m.templateSelected,
 	}
-	if cursor > len(runes) {
-		cursor = len(runes)
-	}
-	beforeCursor := string(runes[:cursor])
-	afterCursor := string(runes[cursor:])
-
-	// Build the display with cursor indicator
-	// The cursor line gets a ">" prefix, other lines get "  " prefix
-	fullText := beforeCursor + "█" + afterCursor
-	lines := strings.Split(fullText, "\n")
-
-	// Find which line contains the cursor
-	cursorLineIdx := strings.Count(beforeCursor, "\n")
-
-	for i, line := range lines {
-		if i == cursorLineIdx {
-			b.WriteString("> " + line)
-		} else {
-			b.WriteString("  " + line)
-		}
-		if i < len(lines)-1 {
-			b.WriteString("\n")
-		}
-	}
-
-	// Show template dropdown if active
-	if m.showTemplates {
-		b.WriteString("\n")
-		b.WriteString(m.renderTemplateDropdown())
-	}
-
-	b.WriteString("\n\n")
-	if m.showTemplates {
-		b.WriteString(styles.Muted.Render("↑/↓") + " navigate  " +
-			styles.Muted.Render("Enter/Tab") + " select  " +
-			styles.Muted.Render("Esc") + " close  " +
-			styles.Muted.Render("Type") + " filter")
-	} else {
-		b.WriteString(styles.Muted.Render("Enter") + " submit  " +
-			styles.Muted.Render("Shift+Enter") + " newline  " +
-			styles.Muted.Render("/") + " templates  " +
-			styles.Muted.Render("Esc") + " cancel")
-	}
-
-	return styles.ContentBox.Width(width - 4).Render(b.String())
+	inputView := view.NewInputView()
+	return inputView.Render(inputState, width)
 }
 
-// renderTemplateDropdown renders the template selection dropdown
-func (m Model) renderTemplateDropdown() string {
+// buildTemplateItems converts filtered templates to view template items
+func (m Model) buildTemplateItems() []view.TemplateItem {
 	templates := FilterTemplates(m.templateFilter)
-	if len(templates) == 0 {
-		return styles.Muted.Render("  No matching templates")
-	}
-
-	var items []string
+	items := make([]view.TemplateItem, len(templates))
 	for i, t := range templates {
-		cmd := "/" + t.Command
-		name := " - " + t.Name
-
-		var item string
-		if i == m.templateSelected {
-			// Selected item - highlight the whole row
-			item = styles.DropdownItemSelected.Render(cmd + name)
-		} else {
-			// Normal item - color command and name differently
-			item = styles.DropdownItem.Render(
-				styles.DropdownCommand.Render(cmd) +
-					styles.DropdownName.Render(name),
-			)
+		items[i] = view.TemplateItem{
+			Command: t.Command,
+			Name:    t.Name,
 		}
-		items = append(items, item)
 	}
-
-	content := strings.Join(items, "\n")
-	return styles.DropdownContainer.Render(content)
+	return items
 }
 
 // renderHelpPanel renders the help overlay
@@ -2762,102 +2373,29 @@ func (m Model) highlightDiffLine(line string) string {
 
 // renderConflictWarning renders the file conflict warning banner
 func (m Model) renderConflictWarning() string {
-	if len(m.conflicts) == 0 {
-		return ""
-	}
-
-	var b strings.Builder
-
-	// Banner header with hint that it's interactive
-	banner := styles.ConflictBanner.Render("⚠ FILE CONFLICT DETECTED")
-	b.WriteString(banner)
-	b.WriteString("  ")
-	b.WriteString(styles.Muted.Render("(press [c] for details)"))
-	b.WriteString("  ")
-
-	// Build conflict details
-	var conflictDetails []string
-	for _, c := range m.conflicts {
-		// Find instance names/numbers for the conflicting instances
-		var instanceLabels []string
-		for _, instID := range c.Instances {
-			// Find the instance index
-			for i, inst := range m.session.Instances {
-				if inst.ID == instID {
-					instanceLabels = append(instanceLabels, fmt.Sprintf("[%d]", i+1))
-					break
-				}
-			}
-		}
-		detail := fmt.Sprintf("%s (instances %s)", c.RelativePath, strings.Join(instanceLabels, ", "))
-		conflictDetails = append(conflictDetails, detail)
-	}
-
-	// Show conflict files
-	if len(conflictDetails) <= 2 {
-		b.WriteString(styles.Warning.Render(strings.Join(conflictDetails, "; ")))
-	} else {
-		// Show count and first file
-		b.WriteString(styles.Warning.Render(fmt.Sprintf("%d files: %s, ...", len(conflictDetails), conflictDetails[0])))
-	}
-
-	return b.String()
+	conflictsView := view.NewConflictsView(m.conflicts, m.buildInstanceInfoList())
+	return conflictsView.RenderWarningBanner()
 }
 
 // renderConflictPanel renders a detailed conflict view showing all files and instances
 func (m Model) renderConflictPanel(width int) string {
-	var b strings.Builder
+	conflictsView := view.NewConflictsView(m.conflicts, m.buildInstanceInfoList())
+	return conflictsView.Render(width)
+}
 
-	b.WriteString(styles.Title.Render("⚠ File Conflicts"))
-	b.WriteString("\n\n")
-
-	b.WriteString(styles.Muted.Render("The following files have been modified by multiple instances:"))
-	b.WriteString("\n\n")
-
-	// Build instance ID to number mapping
-	instanceNum := make(map[string]int)
-	instanceTask := make(map[string]string)
+// buildInstanceInfoList builds a list of instance info for view components
+func (m Model) buildInstanceInfoList() []view.InstanceInfo {
+	if m.session == nil {
+		return nil
+	}
+	instances := make([]view.InstanceInfo, len(m.session.Instances))
 	for i, inst := range m.session.Instances {
-		instanceNum[inst.ID] = i + 1
-		instanceTask[inst.ID] = inst.Task
-	}
-
-	// Render each conflict
-	for i, c := range m.conflicts {
-		// File path in warning color
-		fileLine := styles.Warning.Bold(true).Render(c.RelativePath)
-		b.WriteString(fileLine)
-		b.WriteString("\n")
-
-		// List the instances that modified this file
-		b.WriteString(styles.Muted.Render("  Modified by:"))
-		b.WriteString("\n")
-		for _, instID := range c.Instances {
-			num := instanceNum[instID]
-			task := instanceTask[instID]
-			// Truncate task if too long
-			maxTaskLen := width - 15
-			if maxTaskLen < 20 {
-				maxTaskLen = 20
-			}
-			if len(task) > maxTaskLen {
-				task = task[:maxTaskLen-3] + "..."
-			}
-			instanceLine := fmt.Sprintf("    [%d] %s", num, task)
-			b.WriteString(styles.Text.Render(instanceLine))
-			b.WriteString("\n")
-		}
-
-		// Add spacing between conflicts except for the last one
-		if i < len(m.conflicts)-1 {
-			b.WriteString("\n")
+		instances[i] = view.InstanceInfo{
+			ID:   inst.ID,
+			Task: inst.Task,
 		}
 	}
-
-	b.WriteString("\n")
-	b.WriteString(styles.Muted.Render("Press [c] to close this view"))
-
-	return styles.ContentBox.Width(width - 4).Render(b.String())
+	return instances
 }
 
 // renderHelp renders the help bar
@@ -2941,58 +2479,6 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-3] + "..."
-}
-
-// truncateLines limits text to maxLines, adding ellipsis if truncated
-func truncateLines(s string, maxLines int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) <= maxLines {
-		return s
-	}
-	return strings.Join(lines[:maxLines], "\n") + "\n..."
-}
-
-// formatInstanceMetrics formats metrics for a single instance
-func (m Model) formatInstanceMetrics(metrics *orchestrator.Metrics) string {
-	if metrics == nil {
-		return ""
-	}
-
-	parts := []string{}
-
-	// Token usage
-	if metrics.InputTokens > 0 || metrics.OutputTokens > 0 {
-		parts = append(parts, fmt.Sprintf("Tokens: %s in / %s out",
-			instance.FormatTokens(metrics.InputTokens),
-			instance.FormatTokens(metrics.OutputTokens)))
-	}
-
-	// Cost
-	if metrics.Cost > 0 {
-		parts = append(parts, instance.FormatCost(metrics.Cost))
-	}
-
-	// Duration
-	if duration := metrics.Duration(); duration > 0 {
-		parts = append(parts, formatDuration(duration))
-	}
-
-	if len(parts) == 0 {
-		return ""
-	}
-
-	return strings.Join(parts, "  │  ")
-}
-
-// formatDuration formats a duration for display
-func formatDuration(d time.Duration) string {
-	if d < time.Minute {
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
-	}
-	return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
 // renderStatsPanel renders the session statistics/metrics panel
