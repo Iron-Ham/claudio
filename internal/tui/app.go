@@ -341,14 +341,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case prOpenedMsg:
-		// PR URL detected in instance output - remove the instance
+		// PR URL detected in instance output - notify user but keep instance for potential review tools
 		inst := m.session.GetInstance(msg.instanceID)
 		if inst != nil {
-			if err := m.orchestrator.RemoveInstance(m.session, msg.instanceID, true); err != nil {
-				m.errorMessage = fmt.Sprintf("Failed to remove instance after PR opened: %v", err)
-			} else {
-				m.infoMessage = fmt.Sprintf("PR opened - instance %s removed", msg.instanceID)
-			}
+			m.infoMessage = fmt.Sprintf("PR opened for instance %s - use :D to remove or run review tools", inst.ID)
 		}
 		return m, nil
 
@@ -941,6 +937,8 @@ func (m Model) executeCommand(cmd string) (tea.Model, tea.Cmd) {
 		return m.cmdStart()
 	case "x", "stop":
 		return m.cmdStop()
+	case "e", "exit":
+		return m.cmdExit()
 	case "p", "pause":
 		return m.cmdPause()
 	case "R", "reconnect":
@@ -1039,6 +1037,27 @@ func (m Model) cmdStop() (tea.Model, tea.Cmd) {
 		m.infoMessage = fmt.Sprintf("Instance stopped. Creating PR for %s...", inst.ID)
 	} else {
 		m.infoMessage = fmt.Sprintf("Instance stopped. Create PR with: claudio pr %s", inst.ID)
+	}
+	return m, nil
+}
+
+func (m Model) cmdExit() (tea.Model, tea.Cmd) {
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	// Log user exiting instance
+	if m.logger != nil {
+		m.logger.Info("user exited instance (no auto-PR)", "instance_id", inst.ID)
+	}
+
+	// Stop without auto-PR workflow
+	if err := m.orchestrator.StopInstance(inst); err != nil {
+		m.errorMessage = err.Error()
+	} else {
+		m.infoMessage = fmt.Sprintf("Instance %s stopped (no PR workflow). Create PR manually with: claudio pr %s", inst.ID, inst.ID)
 	}
 	return m, nil
 }
@@ -2218,26 +2237,29 @@ Navigation (always available):
   Ctrl+F/B     Scroll full page down/up
   g / G        Jump to top / bottom
 
-Commands (press : first, then type command):
-  :s :start      Start selected instance
-  :x :stop       Stop instance
-  :p :pause      Pause/resume instance
-  :a :add        Add new instance
-  :R :reconnect  Reconnect to stopped instance
-  :restart       Restart stuck/timed out instance
-  :D :remove     Close/remove instance
-  :kill          Kill and remove instance
-  :C :clear      Clear completed instances
+Instance Commands (press : first, then type command):
+  :s :start      Start a stopped/new instance (runs Claude)
+  :x :stop       Stop instance and trigger auto-PR workflow (if enabled)
+  :e :exit       Stop instance without auto-PR (for manual PR later)
+  :p :pause      Pause/resume a running instance (SIGSTOP/SIGCONT)
+  :R :reconnect  Reattach to a stopped instance's tmux session
+  :restart       Restart a stuck or timed-out instance
+  :a :add        Create and add a new instance to the session
+  :D :remove     Remove instance from session (keeps branch)
+  :kill          Force kill instance process and remove from session
+  :C :clear      Remove all completed instances from the list
 
-  :d :diff       Toggle diff preview
-  :m :stats      Toggle metrics panel
-  :c :conflicts  Toggle conflict view
-  :f :filter     Open filter panel
-  :t :tmux       Show tmux attach command
-  :r :pr         Show PR creation command
+View Commands:
+  :d :diff       Toggle diff preview panel (show git changes)
+  :m :stats      Toggle metrics panel (tokens, cost, timing)
+  :c :conflicts  Toggle conflict view (show merge conflicts)
+  :f :filter     Open filter panel (filter output by category)
+  :t :tmux       Show tmux attach command for direct access
+  :r :pr         Show PR creation command for the instance
 
-  :h :help       Toggle this help
-  :q :quit       Quit Claudio
+Session Commands:
+  :h :help       Toggle this help panel
+  :q :quit       Quit Claudio (instances continue in tmux)
 
 Input Mode:
   i / Enter      Enter input mode (interact with Claude)
