@@ -506,3 +506,39 @@ func (m *Model) taskInputFindLineEnd() int {
 func isWordChar(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_'
 }
+
+// -----------------------------------------------------------------------------
+// DashboardState interface implementation
+// These methods implement the view.DashboardState interface, allowing the Model
+// to be passed to view components for rendering.
+// -----------------------------------------------------------------------------
+
+// Session returns the current orchestrator session.
+func (m Model) Session() *orchestrator.Session {
+	return m.session
+}
+
+// ActiveTab returns the index of the currently selected instance.
+func (m Model) ActiveTab() int {
+	return m.activeTab
+}
+
+// SidebarScrollOffset returns the scroll offset for the sidebar.
+func (m Model) SidebarScrollOffset() int {
+	return m.sidebarScrollOffset
+}
+
+// Conflicts returns the current file conflicts.
+func (m Model) Conflicts() []conflict.FileConflict {
+	return m.conflicts
+}
+
+// TerminalWidth returns the terminal width.
+func (m Model) TerminalWidth() int {
+	return m.width
+}
+
+// TerminalHeight returns the terminal height.
+func (m Model) TerminalHeight() int {
+	return m.height
+}

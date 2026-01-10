@@ -109,12 +109,14 @@ func (m Model) renderUltraPlanHeader() string {
 // renderUltraPlanSidebar renders a unified sidebar showing all phases with their instances
 func (m Model) renderUltraPlanSidebar(width int, height int) string {
 	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
-		return m.renderSidebar(width, height)
+		dashboardView := view.NewDashboardView()
+		return dashboardView.RenderSidebar(m, width, height)
 	}
 
 	session := m.ultraPlan.Coordinator.Session()
 	if session == nil {
-		return m.renderSidebar(width, height)
+		dashboardView := view.NewDashboardView()
+		return dashboardView.RenderSidebar(m, width, height)
 	}
 
 	v := m.createUltraplanView()
