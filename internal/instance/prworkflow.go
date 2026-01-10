@@ -3,8 +3,11 @@ package instance
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
 // PRWorkflowConfig holds configuration for the PR workflow
@@ -29,6 +32,8 @@ type PRWorkflow struct {
 	sessionName string // tmux session name
 	config      PRWorkflowConfig
 	outputBuf   *RingBuffer
+	logger      *logging.Logger
+	startTime   time.Time // for tracking workflow duration
 
 	mu          sync.RWMutex
 	running     bool
@@ -84,6 +89,35 @@ func (p *PRWorkflow) SetCallback(cb PRWorkflowCallback) {
 	p.callback = cb
 }
 
+// SetLogger sets the logger for the PR workflow.
+// If set, the workflow will log events at appropriate levels.
+func (p *PRWorkflow) SetLogger(logger *logging.Logger) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.logger = logger
+}
+
+// logInfo logs an info message if logger is configured
+func (p *PRWorkflow) logInfo(msg string, args ...any) {
+	if p.logger != nil {
+		p.logger.Info(msg, args...)
+	}
+}
+
+// logDebug logs a debug message if logger is configured
+func (p *PRWorkflow) logDebug(msg string, args ...any) {
+	if p.logger != nil {
+		p.logger.Debug(msg, args...)
+	}
+}
+
+// logError logs an error message if logger is configured
+func (p *PRWorkflow) logError(msg string, args ...any) {
+	if p.logger != nil {
+		p.logger.Error(msg, args...)
+	}
+}
+
 // Start launches the PR workflow in a tmux session
 func (p *PRWorkflow) Start() error {
 	p.mu.Lock()
@@ -93,10 +127,25 @@ func (p *PRWorkflow) Start() error {
 		return fmt.Errorf("PR workflow already running")
 	}
 
+	// Record start time for duration tracking
+	p.startTime = time.Now()
+
+	// Log workflow start
+	p.logInfo("PR workflow started",
+		"instance_id", p.instanceID,
+		"branch", p.branch,
+	)
+
 	// Kill any existing session with this name (cleanup from previous run)
+	p.logDebug("cleaning up existing tmux session", "session_name", p.sessionName)
 	_ = exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
 
 	// Create a new detached tmux session
+	p.logDebug("creating tmux session",
+		"session_name", p.sessionName,
+		"width", p.config.TmuxWidth,
+		"height", p.config.TmuxHeight,
+	)
 	createCmd := exec.Command("tmux",
 		"new-session",
 		"-d",
@@ -107,10 +156,15 @@ func (p *PRWorkflow) Start() error {
 	createCmd.Dir = p.workdir
 	createCmd.Env = append(createCmd.Env, "TERM=xterm-256color")
 	if err := createCmd.Run(); err != nil {
+		p.logError("failed to create tmux session",
+			"error", err.Error(),
+			"session_name", p.sessionName,
+		)
 		return fmt.Errorf("failed to create tmux session for PR workflow: %w", err)
 	}
 
 	// Set up tmux for color support
+	p.logDebug("configuring tmux session options", "session_name", p.sessionName)
 	_ = exec.Command("tmux", "set-option", "-t", p.sessionName, "history-limit", "10000").Run()
 	_ = exec.Command("tmux", "set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run()
 
@@ -119,10 +173,14 @@ func (p *PRWorkflow) Start() error {
 	if p.config.UseAI {
 		// Use Claude to run the /commit-push-pr skill
 		cmd = p.buildClaudeCommand()
+		p.logDebug("using AI-assisted PR workflow", "use_ai", true)
 	} else {
 		// Use direct shell commands
 		cmd = p.buildShellCommand()
+		p.logDebug("using shell-based PR workflow", "use_ai", false)
 	}
+
+	p.logDebug("sending workflow command to tmux session")
 
 	sendCmd := exec.Command("tmux",
 		"send-keys",
@@ -131,6 +189,10 @@ func (p *PRWorkflow) Start() error {
 		"Enter",
 	)
 	if err := sendCmd.Run(); err != nil {
+		p.logError("failed to send command to tmux session",
+			"error", err.Error(),
+			"session_name", p.sessionName,
+		)
 		_ = exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
 		return fmt.Errorf("failed to start PR workflow command: %w", err)
 	}
@@ -233,6 +295,7 @@ func (p *PRWorkflow) monitorLoop() {
 			sessionName := p.sessionName
 			callback := p.callback
 			instanceID := p.instanceID
+			startTime := p.startTime
 			p.mu.RUnlock()
 
 			// Capture output
@@ -261,6 +324,26 @@ func (p *PRWorkflow) monitorLoop() {
 				// Get final output
 				finalOutput := string(p.outputBuf.Bytes())
 				success := p.checkSuccess(finalOutput)
+
+				// Calculate duration
+				durationMs := time.Since(startTime).Milliseconds()
+
+				// Log completion with PR URL if found
+				prURL := extractPRURL(finalOutput)
+				if success {
+					if prURL != "" {
+						p.logInfo("PR created", "pr_url", prURL)
+					}
+					p.logInfo("PR workflow completed",
+						"success", true,
+						"duration_ms", durationMs,
+					)
+				} else {
+					p.logError("PR workflow failed",
+						"success", false,
+						"duration_ms", durationMs,
+					)
+				}
 
 				// Invoke callback
 				if callback != nil {
@@ -296,6 +379,29 @@ func containsAny(s string, substrings []string) bool {
 		}
 	}
 	return false
+}
+
+// extractPRURL extracts a GitHub PR URL from the output text.
+// Returns empty string if no PR URL is found.
+func extractPRURL(output string) string {
+	// Look for github.com URLs with /pull/ in them
+	// gh pr create outputs the PR URL on a line by itself
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "github.com") && strings.Contains(line, "/pull/") {
+			// Extract the URL portion (handles lines like "https://github.com/org/repo/pull/123")
+			if idx := strings.Index(line, "https://github.com"); idx != -1 {
+				url := line[idx:]
+				// Trim any trailing whitespace or characters after the URL
+				if spaceIdx := strings.IndexAny(url, " \t\n\r"); spaceIdx != -1 {
+					url = url[:spaceIdx]
+				}
+				return url
+			}
+		}
+	}
+	return ""
 }
 
 // Stop terminates the PR workflow tmux session
