@@ -506,6 +506,7 @@ func TestCommandAliasesRequiringInstance(t *testing.T) {
 		// Instance control
 		"s", "start",
 		"x", "stop",
+		"e", "exit",
 		"p", "pause",
 		"R", "reconnect",
 		"restart",
