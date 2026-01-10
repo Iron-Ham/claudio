@@ -349,6 +349,7 @@ func SavePlanToFile(plan *orchestrator.PlanSpec, filePath string) error {
 }
 
 // CreateIssuesFromPlan creates GitHub issues from a plan
+// It creates a parent issue and links all task issues as sub-issues using GitHub's native hierarchy
 func CreateIssuesFromPlan(plan *orchestrator.PlanSpec, labels []string) (*IssueCreationResult, error) {
 	result := &IssueCreationResult{
 		SubIssueNumbers: make(map[string]int),
@@ -368,6 +369,12 @@ func CreateIssuesFromPlan(plan *orchestrator.PlanSpec, labels []string) (*IssueC
 	result.ParentIssueURL = parentURL
 
 	fmt.Printf("Created parent issue: #%d\n", parentNum)
+
+	// Get parent issue node ID for linking sub-issues
+	parentNodeID, err := GetIssueNodeID(parentNum)
+	if err != nil {
+		fmt.Printf("Warning: could not get parent node ID, sub-issues won't be linked: %v\n", err)
+	}
 
 	// Create sub-issues in dependency order
 	// We need to track created issues to resolve dependency references
@@ -410,6 +417,21 @@ func CreateIssuesFromPlan(plan *orchestrator.PlanSpec, labels []string) (*IssueC
 			}
 
 			fmt.Printf("  Created sub-issue #%d: %s\n", subNum, task.Title)
+
+			// Link as sub-issue to parent using GitHub's native sub-issues feature
+			if parentNodeID != "" {
+				subNodeID, err := GetIssueNodeID(subNum)
+				if err != nil {
+					fmt.Printf("  Warning: could not get node ID for #%d: %v\n", subNum, err)
+					continue
+				}
+
+				if err := AddSubIssue(parentNodeID, subNodeID); err != nil {
+					fmt.Printf("  Warning: could not link #%d as sub-issue: %v\n", subNum, err)
+				} else {
+					fmt.Printf("  Linked #%d as sub-issue of #%d\n", subNum, parentNum)
+				}
+			}
 		}
 	}
 
