@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/config"
-	"github.com/Iron-Ham/claudio/internal/instance"
+	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/charmbracelet/lipgloss"
@@ -125,13 +125,13 @@ func (v *InstanceView) FormatMetrics(metrics *orchestrator.Metrics) string {
 	// Token usage
 	if metrics.InputTokens > 0 || metrics.OutputTokens > 0 {
 		parts = append(parts, fmt.Sprintf("Tokens: %s in / %s out",
-			instance.FormatTokens(metrics.InputTokens),
-			instance.FormatTokens(metrics.OutputTokens)))
+			instmetrics.FormatTokens(metrics.InputTokens),
+			instmetrics.FormatTokens(metrics.OutputTokens)))
 	}
 
 	// Cost
 	if metrics.Cost > 0 {
-		parts = append(parts, instance.FormatCost(metrics.Cost))
+		parts = append(parts, instmetrics.FormatCost(metrics.Cost))
 	}
 
 	// Duration

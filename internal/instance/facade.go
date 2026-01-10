@@ -241,6 +241,13 @@ func (f *Facade) stopMonitoring() {
 
 // monitorLoop is the background loop that checks for output and state changes.
 func (f *Facade) monitorLoop() {
+	// Capture ticker and stop channel at start to avoid data races
+	// when Reconnect() calls stopMonitoring() then startMonitoring()
+	f.mu.RLock()
+	ticker := f.monitorTicker
+	stop := f.monitorStop
+	f.mu.RUnlock()
+
 	defer func() {
 		if r := recover(); r != nil {
 			f.logger.Error("panic in monitor loop",
@@ -251,9 +258,9 @@ func (f *Facade) monitorLoop() {
 
 	for {
 		select {
-		case <-f.monitorStop:
+		case <-stop:
 			return
-		case <-f.monitorTicker.C:
+		case <-ticker.C:
 			f.captureAndAnalyze()
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/instance"
+	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/worktree"
@@ -286,13 +287,13 @@ func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
 		// Try to reconnect if the tmux session still exists
 		if mgr.TmuxSessionExists() {
 			// Configure state change callback
-			mgr.SetStateCallback(func(id string, state instance.WaitingState) {
+			mgr.SetStateCallback(func(id string, state detect.WaitingState) {
 				switch state {
-				case instance.StateCompleted:
+				case detect.StateCompleted:
 					o.handleInstanceExit(id)
-				case instance.StateWaitingInput, instance.StateWaitingQuestion, instance.StateWaitingPermission:
+				case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
 					o.handleInstanceWaitingInput(id)
-				case instance.StatePROpened:
+				case detect.StatePROpened:
 					o.handleInstancePROpened(id)
 				}
 			})
@@ -605,13 +606,13 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 	}
 
 	// Configure state change callback for notifications
-	mgr.SetStateCallback(func(id string, state instance.WaitingState) {
+	mgr.SetStateCallback(func(id string, state detect.WaitingState) {
 		switch state {
-		case instance.StateCompleted:
+		case detect.StateCompleted:
 			o.handleInstanceExit(id)
-		case instance.StateWaitingInput, instance.StateWaitingQuestion, instance.StateWaitingPermission:
+		case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
 			o.handleInstanceWaitingInput(id)
-		case instance.StatePROpened:
+		case detect.StatePROpened:
 			o.handleInstancePROpened(id)
 		}
 	})
@@ -1507,11 +1508,11 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 	}
 
 	// Configure state change callback
-	mgr.SetStateCallback(func(id string, state instance.WaitingState) {
+	mgr.SetStateCallback(func(id string, state detect.WaitingState) {
 		switch state {
-		case instance.StateCompleted:
+		case detect.StateCompleted:
 			o.handleInstanceExit(id)
-		case instance.StateWaitingInput, instance.StateWaitingQuestion, instance.StateWaitingPermission:
+		case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
 			o.handleInstanceWaitingInput(id)
 		}
 	})

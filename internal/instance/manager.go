@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/instance/capture"
+	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
 // StateChangeCallback is called when the detected waiting state changes
-type StateChangeCallback func(instanceID string, state WaitingState)
+type StateChangeCallback func(instanceID string, state detect.WaitingState)
 
 // TimeoutType represents the type of timeout that occurred
 type TimeoutType int
@@ -88,8 +89,8 @@ type Manager struct {
 	config      ManagerConfig
 
 	// State detection
-	detector      *Detector
-	currentState  WaitingState
+	detector      *detect.Detector
+	currentState  detect.WaitingState
 	stateCallback StateChangeCallback
 
 	// Metrics tracking
@@ -130,8 +131,8 @@ func NewManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager 
 		outputBuf:     capture.NewRingBuffer(cfg.OutputBufferSize),
 		doneChan:      make(chan struct{}),
 		config:        cfg,
-		detector:      NewDetector(),
-		currentState:  StateWorking,
+		detector:      detect.NewDetector(),
+		currentState:  detect.StateWorking,
 		metricsParser: NewMetricsParser(),
 	}
 }
@@ -157,8 +158,8 @@ func NewManagerWithSession(sessionID, id, workdir, task string, cfg ManagerConfi
 		outputBuf:     capture.NewRingBuffer(cfg.OutputBufferSize),
 		doneChan:      make(chan struct{}),
 		config:        cfg,
-		detector:      NewDetector(),
-		currentState:  StateWorking,
+		detector:      detect.NewDetector(),
+		currentState:  detect.StateWorking,
 		metricsParser: NewMetricsParser(),
 	}
 }
@@ -214,7 +215,7 @@ func (m *Manager) StartTime() *time.Time {
 }
 
 // CurrentState returns the currently detected waiting state
-func (m *Manager) CurrentState() WaitingState {
+func (m *Manager) CurrentState() detect.WaitingState {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.currentState
@@ -420,12 +421,12 @@ func (m *Manager) captureLoop() {
 				m.running = false
 				callback := m.stateCallback
 				instanceID := m.id
-				m.currentState = StateCompleted
+				m.currentState = detect.StateCompleted
 				m.mu.Unlock()
 
 				// Fire the completion callback so coordinator knows task is done
 				if callback != nil {
-					callback(instanceID, StateCompleted)
+					callback(instanceID, detect.StateCompleted)
 				}
 				return
 			}
