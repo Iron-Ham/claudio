@@ -194,9 +194,14 @@ func CalculateMainAreaHeight(termHeight int) int {
 }
 
 // truncate truncates a string to max length, adding ellipsis if needed.
+// Uses runes to properly handle Unicode characters.
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	if max <= 3 {
 		return s
 	}
-	return s[:max-3] + "..."
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max-3]) + "..."
 }

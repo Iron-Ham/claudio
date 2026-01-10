@@ -437,17 +437,6 @@ func (v *PlanEditorView) renderTaskValidationIndicator(taskID string, state *Pla
 
 // Helper functions
 
-// truncate truncates a string to max length, adding ellipsis if needed.
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	if max <= 3 {
-		return s[:max]
-	}
-	return s[:max-3] + "..."
-}
-
 // complexityIndicator returns a visual indicator for task complexity.
 func complexityIndicator(complexity orchestrator.TaskComplexity) string {
 	switch complexity {

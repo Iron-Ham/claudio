@@ -1373,14 +1373,3 @@ func OpenURL(url string) error {
 	return cmd.Start()
 }
 
-// truncate truncates a string to the given length, adding "..." if truncated
-func truncate(s string, maxLen int) string {
-	if maxLen <= 3 {
-		return s
-	}
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	return string(runes[:maxLen-3]) + "..."
-}
