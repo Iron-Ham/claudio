@@ -61,14 +61,13 @@ type Coordinator struct {
 // NewCoordinator creates a new coordinator for an ultra-plan session.
 // The logger parameter is optional; if nil, a no-op logger will be used.
 func NewCoordinator(orch *Orchestrator, baseSession *Session, ultraSession *UltraPlanSession, logger *logging.Logger) *Coordinator {
-	manager := NewUltraPlanManager(orch, baseSession, ultraSession)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Use NopLogger if no logger provided
+	// Use NopLogger if no logger provided (needed before we create sessionLogger below)
 	if logger == nil {
 		logger = logging.NopLogger()
 	}
+	manager := NewUltraPlanManager(orch, baseSession, ultraSession, logger)
+
+	ctx, cancel := context.WithCancel(context.Background())
 
 	// Add session context to logger
 	sessionLogger := logger.WithSession(ultraSession.ID).WithPhase("coordinator")
