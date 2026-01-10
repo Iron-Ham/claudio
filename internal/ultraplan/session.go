@@ -4,6 +4,7 @@ package ultraplan
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"time"
 )
 
@@ -341,9 +342,14 @@ func (s *Session) Progress() float64 {
 }
 
 // generateID creates a short random hex ID.
+// Falls back to timestamp-based ID if crypto/rand fails.
 func generateID() string {
 	bytes := make([]byte, 4)
-	_, _ = rand.Read(bytes)
+	if _, err := rand.Read(bytes); err != nil {
+		// Fallback to timestamp-based ID if crypto/rand fails
+		// This is better than returning "00000000" which could cause collisions
+		return fmt.Sprintf("%08x", time.Now().UnixNano()&0xFFFFFFFF)
+	}
 	return hex.EncodeToString(bytes)
 }
 

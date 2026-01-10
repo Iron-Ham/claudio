@@ -240,8 +240,10 @@ func ParsePlanDecisionFromOutput(output string) (*PlanDecision, error) {
 		return nil, fmt.Errorf("invalid plan decision action: %q (expected \"select\" or \"merge\")", decision.Action)
 	}
 
-	if decision.Action == "select" && (decision.SelectedIndex < 0 || decision.SelectedIndex > 2) {
-		return nil, fmt.Errorf("invalid selected_index for select action: %d (expected 0-2)", decision.SelectedIndex)
+	// Validate selected_index against the number of planning strategies
+	maxIndex := len(PlanningStrategies) - 1
+	if decision.Action == "select" && (decision.SelectedIndex < 0 || decision.SelectedIndex > maxIndex) {
+		return nil, fmt.Errorf("invalid selected_index for select action: %d (expected 0-%d)", decision.SelectedIndex, maxIndex)
 	}
 
 	if decision.Action == "merge" && decision.SelectedIndex != -1 {

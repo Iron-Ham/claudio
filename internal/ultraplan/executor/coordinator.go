@@ -189,6 +189,23 @@ func (c *Coordinator) Wait() error {
 // executionLoop is the main execution loop that schedules and monitors tasks.
 func (c *Coordinator) executionLoop() {
 	defer c.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			c.mu.Lock()
+			c.progress.EndTime = time.Now()
+			// Mark all pending tasks as cancelled due to panic
+			for taskID, status := range c.progress.TaskStatuses {
+				if status.Status == StatusPending {
+					status.Status = StatusCancelled
+					status.Error = fmt.Sprintf("cancelled due to coordinator panic: %v", r)
+					c.progress.TaskStatuses[taskID] = status
+					c.progress.CancelledTasks++
+					c.progress.PendingTasks--
+				}
+			}
+			c.mu.Unlock()
+		}
+	}()
 
 	for {
 		select {
@@ -297,6 +314,8 @@ func (c *Coordinator) areDependenciesSatisfied(taskID string) bool {
 func (c *Coordinator) startTask(taskID string) {
 	task := c.plan.GetTask(taskID)
 	if task == nil {
+		// This indicates a data inconsistency - task in execution order but not in plan
+		c.markTaskFailed(taskID, fmt.Errorf("task %s not found in plan (data inconsistency)", taskID))
 		return
 	}
 
@@ -349,12 +368,23 @@ func (c *Coordinator) startTask(taskID string) {
 // executeTask runs a task and handles its completion.
 func (c *Coordinator) executeTask(ctx context.Context, taskID string, executor TaskExecutor) {
 	defer c.wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			c.mu.Lock()
+			// Clean up runningTasks on panic
+			delete(c.runningTasks, taskID)
+			c.markTaskFailed(taskID, fmt.Errorf("panic during task execution: %v", r))
+			c.mu.Unlock()
+		}
+	}()
 
 	// Get the task
 	task := c.plan.GetTask(taskID)
 	if task == nil {
 		c.mu.Lock()
-		c.markTaskFailed(taskID, fmt.Errorf("task not found"))
+		// Clean up runningTasks map entry to prevent memory leak
+		delete(c.runningTasks, taskID)
+		c.markTaskFailed(taskID, fmt.Errorf("task %s not found in plan (data inconsistency)", taskID))
 		c.mu.Unlock()
 		return
 	}

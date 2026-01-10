@@ -308,13 +308,32 @@ func (m *Manager) Stop() {
 	}
 	m.stopped = true
 	close(m.stopChan)
-	m.mu.Unlock()
 
-	// Stop all running instances
+	// Collect IDs to stop while holding lock to avoid race condition
+	var toStop []string
 	for id, inst := range m.instances {
 		if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
-			_ = m.StopInstance(id)
+			toStop = append(toStop, id)
 		}
+	}
+	m.mu.Unlock()
+
+	// Stop all running instances (without holding lock)
+	var stopErrors []error
+	for _, id := range toStop {
+		if err := m.StopInstance(id); err != nil {
+			m.logger.Error("failed to stop instance during shutdown",
+				"instance_id", id,
+				"error", err.Error(),
+			)
+			stopErrors = append(stopErrors, err)
+		}
+	}
+
+	if len(stopErrors) > 0 {
+		m.logger.Warn("shutdown completed with errors",
+			"failed_instances", len(stopErrors),
+		)
 	}
 
 	m.wg.Wait()

@@ -82,7 +82,11 @@ func (m *Manager) emitEvent(event CoordinatorEvent) {
 	select {
 	case m.eventChan <- event:
 	default:
-		// Channel full, skip
+		// Channel full - log the dropped event for debugging
+		m.logger.Warn("event channel full, event dropped",
+			"event_type", string(event.Type),
+			"event_message", event.Message,
+		)
 	}
 
 	// Call callback if set
@@ -375,33 +379,39 @@ func (m *Manager) MarkTaskComplete(taskID string) {
 	// Remove from TaskToInstance (task is done)
 	delete(m.session.TaskToInstance, taskID)
 
-	// Get task for issue auto-close
+	// Get task data for issue auto-close while holding lock
+	// Copy the IssueURL to avoid data race after unlock
 	task := m.session.GetTask(taskID)
+	var issueURL string
+	if task != nil {
+		issueURL = task.IssueURL
+	}
 	m.mu.Unlock()
 
 	// Auto-close linked issue if configured
-	if task != nil && task.IssueURL != "" {
-		m.autoCloseIssue(task)
+	if issueURL != "" {
+		m.autoCloseIssueByURL(taskID, issueURL)
 	}
 }
 
-// autoCloseIssue attempts to close the linked issue for a completed task.
-func (m *Manager) autoCloseIssue(task *PlannedTask) {
-	if task.IssueURL == "" || m.issueService == nil {
+// autoCloseIssueByURL attempts to close the linked issue for a completed task.
+// This variant takes the issue URL directly to avoid holding locks during the API call.
+func (m *Manager) autoCloseIssueByURL(taskID, issueURL string) {
+	if issueURL == "" || m.issueService == nil {
 		return
 	}
 
 	ctx := context.Background()
-	if err := m.issueService.Close(ctx, task.IssueURL); err != nil {
+	if err := m.issueService.Close(ctx, issueURL); err != nil {
 		m.logger.Warn("failed to auto-close issue",
-			"task_id", task.ID,
-			"issue_url", task.IssueURL,
+			"task_id", taskID,
+			"issue_url", issueURL,
 			"error", err.Error(),
 		)
 	} else {
 		m.logger.Info("auto-closed linked issue",
-			"task_id", task.ID,
-			"issue_url", task.IssueURL,
+			"task_id", taskID,
+			"issue_url", issueURL,
 		)
 	}
 }

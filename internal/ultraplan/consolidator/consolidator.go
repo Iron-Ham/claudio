@@ -381,8 +381,13 @@ func (c *Consolidator) runSingleMode(baseDir string) error {
 		return c.fail(fmt.Errorf("failed to push branch: %w", err))
 	}
 
-	// Clean up
-	_ = c.wt.Remove(worktreePath)
+	// Clean up worktree
+	if err := c.wt.Remove(worktreePath); err != nil {
+		c.logger.Warn("failed to remove worktree, may need manual cleanup",
+			"worktree_path", worktreePath,
+			"error", err.Error(),
+		)
+	}
 
 	return nil
 }
@@ -492,7 +497,13 @@ func (c *Consolidator) consolidateGroups(baseDir string) error {
 		}
 
 		// Clean up worktree
-		_ = c.wt.Remove(worktreePath)
+		if err := c.wt.Remove(worktreePath); err != nil {
+			c.logger.Warn("failed to remove worktree, may need manual cleanup",
+				"worktree_path", worktreePath,
+				"group_index", groupIdx,
+				"error", err.Error(),
+			)
+		}
 
 		c.emitEvent(Event{
 			Type:     EventGroupComplete,
@@ -527,7 +538,15 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, worktree
 	}
 
 	// Track initial commit count
-	initialCommits, _ := c.wt.CountCommitsBetween(worktreePath, baseBranch, "HEAD")
+	initialCommits, err := c.wt.CountCommitsBetween(worktreePath, baseBranch, "HEAD")
+	if err != nil {
+		c.logger.Warn("failed to count initial commits, proceeding with zero baseline",
+			"worktree_path", worktreePath,
+			"base_branch", baseBranch,
+			"error", err.Error(),
+		)
+		initialCommits = 0
+	}
 
 	// Cherry-pick each task's commits
 	for _, taskID := range activeTasks {
@@ -544,20 +563,26 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, worktree
 			Message:  fmt.Sprintf("Cherry-picking from %s", branch),
 		})
 
-		err := c.wt.CherryPickBranch(worktreePath, branch)
-		if err != nil {
+		cherryErr := c.wt.CherryPickBranch(worktreePath, branch)
+		if cherryErr != nil {
 			// Check for conflict
-			files, _ := c.wt.GetConflictingFiles(worktreePath)
+			files, conflictErr := c.wt.GetConflictingFiles(worktreePath)
+			if conflictErr != nil {
+				c.logger.Warn("failed to get conflicting files",
+					"worktree_path", worktreePath,
+					"error", conflictErr.Error(),
+				)
+			}
 			if len(files) > 0 {
 				return result, &ConflictError{
 					TaskID:       taskID,
 					Branch:       branch,
 					Files:        files,
 					WorktreePath: worktreePath,
-					Underlying:   err,
+					Underlying:   cherryErr,
 				}
 			}
-			return result, fmt.Errorf("failed to cherry-pick task %s: %w", taskID, err)
+			return result, fmt.Errorf("failed to cherry-pick task %s: %w", taskID, cherryErr)
 		}
 
 		c.emitEvent(Event{
@@ -569,7 +594,16 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, worktree
 	}
 
 	// Verify commits were added
-	finalCommits, _ := c.wt.CountCommitsBetween(worktreePath, baseBranch, "HEAD")
+	finalCommits, err := c.wt.CountCommitsBetween(worktreePath, baseBranch, "HEAD")
+	if err != nil {
+		c.logger.Warn("failed to count final commits",
+			"worktree_path", worktreePath,
+			"base_branch", baseBranch,
+			"error", err.Error(),
+		)
+		// Continue anyway - we'll use what we have
+		finalCommits = initialCommits
+	}
 	addedCommits := finalCommits - initialCommits
 
 	if addedCommits == 0 && len(activeTasks) > 0 {
@@ -577,7 +611,15 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, worktree
 	}
 
 	// Get changed files
-	files, _ := c.wt.GetChangedFiles(worktreePath)
+	files, err := c.wt.GetChangedFiles(worktreePath)
+	if err != nil {
+		c.logger.Warn("failed to get changed files",
+			"worktree_path", worktreePath,
+			"error", err.Error(),
+		)
+		// Continue without file list
+		files = nil
+	}
 	result.FilesChanged = files
 	result.CommitCount = addedCommits
 	result.Success = true

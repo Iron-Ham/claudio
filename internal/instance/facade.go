@@ -3,12 +3,14 @@ package instance
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/instance/capture"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	"github.com/Iron-Ham/claudio/internal/instance/process"
+	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
 // Facade provides a high-level interface for managing a Claude Code instance.
@@ -21,6 +23,7 @@ type Facade struct {
 	proc     process.Process
 	buffer   *capture.RingBuffer
 	detector *detect.Detector
+	logger   *logging.Logger
 
 	mu           sync.RWMutex
 	config       FacadeConfig
@@ -28,10 +31,10 @@ type Facade struct {
 	lastOutput   []byte
 
 	// Callbacks
-	onStateChange  func(state detect.WaitingState)
-	onMetrics      func(metrics *ParsedMetrics)
-	onTimeout      func(timeoutType string)
-	onBell         func()
+	onStateChange func(state detect.WaitingState)
+	onMetrics     func(metrics *ParsedMetrics)
+	onTimeout     func(timeoutType string)
+	onBell        func()
 
 	// Monitoring
 	monitorTicker  *time.Ticker
@@ -72,7 +75,12 @@ func DefaultFacadeConfig() FacadeConfig {
 
 // NewFacade creates a new Facade with the given configuration.
 // It initializes the underlying process, buffer, and detector components.
-func NewFacade(config FacadeConfig) *Facade {
+func NewFacade(config FacadeConfig, logger *logging.Logger) *Facade {
+	if logger == nil {
+		logger = logging.NopLogger()
+	}
+	logger = logger.WithPhase("instance")
+
 	// Create the underlying process
 	proc := process.NewTmuxProcess(config.ProcessConfig)
 
@@ -90,6 +98,7 @@ func NewFacade(config FacadeConfig) *Facade {
 		proc:        proc,
 		buffer:      buffer,
 		detector:    detector,
+		logger:      logger,
 		config:      config,
 		monitorStop: make(chan struct{}),
 	}
@@ -159,12 +168,16 @@ func (f *Facade) Wait() error {
 	return f.proc.Wait()
 }
 
+// ErrResizeNotSupported is returned when the process doesn't support terminal resizing.
+var ErrResizeNotSupported = fmt.Errorf("process does not support resize")
+
 // Resize changes the terminal dimensions if the process supports it.
+// Returns ErrResizeNotSupported if the process doesn't implement Resizable.
 func (f *Facade) Resize(width, height int) error {
 	if resizable, ok := f.proc.(process.Resizable); ok {
 		return resizable.Resize(width, height)
 	}
-	return nil
+	return ErrResizeNotSupported
 }
 
 // Reconnect attempts to reconnect to an existing session.
@@ -174,6 +187,8 @@ func (f *Facade) Reconnect() error {
 		if err != nil {
 			return err
 		}
+		// Stop existing monitoring before restarting to prevent goroutine leak
+		f.stopMonitoring()
 		// Restart monitoring after reconnect
 		f.startMonitoring()
 		return nil
@@ -226,6 +241,14 @@ func (f *Facade) stopMonitoring() {
 
 // monitorLoop is the background loop that checks for output and state changes.
 func (f *Facade) monitorLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			f.logger.Error("panic in monitor loop",
+				"panic", fmt.Sprintf("%v", r),
+			)
+		}
+	}()
+
 	for {
 		select {
 		case <-f.monitorStop:
@@ -243,7 +266,12 @@ func (f *Facade) captureAndAnalyze() {
 		output := provider.GetOutput()
 		if len(output) > 0 {
 			// Write to ring buffer
-			_, _ = f.buffer.Write(output)
+			if _, err := f.buffer.Write(output); err != nil {
+				f.logger.Warn("failed to write to capture buffer",
+					"error", err.Error(),
+					"output_len", len(output),
+				)
+			}
 
 			// Analyze for state
 			state := f.detector.Detect(output)
