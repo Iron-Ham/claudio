@@ -149,7 +149,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	// Create logger if enabled - we need session dir which requires session ID
 	sessionDir := sessutil.GetSessionDir(cwd, sessionID)
 	logger := CreateLogger(sessionDir, cfg)
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 
 	// Create orchestrator with multi-session support
 	orch, err := orchestrator.NewWithSession(cwd, sessionID, cfg)

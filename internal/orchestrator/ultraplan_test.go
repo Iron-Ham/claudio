@@ -443,7 +443,7 @@ func TestUltraPlanSession_AdvanceGroupIfComplete(t *testing.T) {
 
 	// Complete task-2 - should advance past last group
 	session.CompletedTasks = []string{"task-1", "task-2"}
-	advanced, prevGroup = session.AdvanceGroupIfComplete()
+	advanced, _ = session.AdvanceGroupIfComplete()
 	if !advanced {
 		t.Error("AdvanceGroupIfComplete() did not advance when final group complete")
 	}

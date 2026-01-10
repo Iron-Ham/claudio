@@ -125,7 +125,7 @@ func TestTmuxCapture_DoubleStart(t *testing.T) {
 	if err := capture.Start(); err != nil {
 		t.Fatalf("First Start failed: %v", err)
 	}
-	defer capture.Stop()
+	defer func() { _ = capture.Stop() }()
 
 	// Second start should be idempotent
 	if err := capture.Start(); err != nil {

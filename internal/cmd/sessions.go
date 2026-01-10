@@ -342,11 +342,3 @@ func runCommand(cmd string) (string, error) {
 	out, err := exec.Command(parts[0], parts[1:]...).Output()
 	return string(out), err
 }
-
-func truncateTask(task string, maxLen int) string {
-	task = strings.ReplaceAll(task, "\n", " ")
-	if len(task) > maxLen {
-		return task[:maxLen-3] + "..."
-	}
-	return task
-}

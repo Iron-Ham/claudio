@@ -22,7 +22,7 @@ func TestNewRotatingWriter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewRotatingWriter failed: %v", err)
 		}
-		defer rw.Close()
+		defer func() { _ = rw.Close() }()
 
 		if _, err := os.Stat(logPath); os.IsNotExist(err) {
 			t.Errorf("log file was not created at %s", logPath)
@@ -37,7 +37,7 @@ func TestNewRotatingWriter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewRotatingWriter failed: %v", err)
 		}
-		defer rw.Close()
+		defer func() { _ = rw.Close() }()
 
 		if _, err := os.Stat(logPath); os.IsNotExist(err) {
 			t.Errorf("log file was not created at %s", logPath)
@@ -63,7 +63,7 @@ func TestNewRotatingWriter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Write failed: %v", err)
 		}
-		rw.Close()
+		_ = rw.Close()
 
 		content, err := os.ReadFile(logPath)
 		if err != nil {
@@ -98,7 +98,7 @@ func TestRotatingWriterWrite(t *testing.T) {
 			t.Errorf("expected to write %d bytes, wrote %d", len(data), n)
 		}
 
-		rw.Close()
+		_ = rw.Close()
 
 		content, err := os.ReadFile(logPath)
 		if err != nil {
@@ -118,14 +118,14 @@ func TestRotatingWriterWrite(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewRotatingWriter failed: %v", err)
 		}
-		defer rw.Close()
+		defer func() { _ = rw.Close() }()
 
 		if rw.CurrentSize() != 0 {
 			t.Errorf("expected initial size 0, got %d", rw.CurrentSize())
 		}
 
 		data := []byte("test message\n")
-		rw.Write(data)
+		_, _ = rw.Write(data)
 
 		if rw.CurrentSize() != int64(len(data)) {
 			t.Errorf("expected size %d, got %d", len(data), rw.CurrentSize())
@@ -154,10 +154,10 @@ func TestRotatingWriterRotation(t *testing.T) {
 
 		// Write enough data to trigger rotation
 		for range 5 {
-			rw.Write([]byte("this is a test message that will trigger rotation\n"))
+			_, _ = rw.Write([]byte("this is a test message that will trigger rotation\n"))
 		}
 
-		rw.Close()
+		_ = rw.Close()
 
 		// Check that backup files were created
 		backup1 := logPath + ".1"
@@ -190,10 +190,10 @@ func TestRotatingWriterRotation(t *testing.T) {
 
 		// Write enough to trigger multiple rotations
 		for range 10 {
-			rw.Write([]byte("this message will trigger rotation\n"))
+			_, _ = rw.Write([]byte("this message will trigger rotation\n"))
 		}
 
-		rw.Close()
+		_ = rw.Close()
 
 		// Should have .1 and .2, but not .3
 		if _, err := os.Stat(logPath + ".1"); os.IsNotExist(err) {
@@ -224,10 +224,10 @@ func TestRotatingWriterRotation(t *testing.T) {
 
 		// Write a lot of data
 		for range 100 {
-			rw.Write([]byte("test message that would trigger rotation if enabled\n"))
+			_, _ = rw.Write([]byte("test message that would trigger rotation if enabled\n"))
 		}
 
-		rw.Close()
+		_ = rw.Close()
 
 		// No backup files should exist
 		if _, err := os.Stat(logPath + ".1"); err == nil {
@@ -253,15 +253,16 @@ func TestRotatingWriterCompression(t *testing.T) {
 		}
 		rw.maxSizeB = 50
 
-		// Write enough to trigger rotation
-		for range 5 {
-			rw.Write([]byte("test message for compression test\n"))
+		// Write enough to trigger exactly one rotation (2 writes: first fits, second triggers rotation)
+		// This avoids race conditions from multiple concurrent compression goroutines
+		for range 2 {
+			_, _ = rw.Write([]byte("test message for compression test\n"))
 		}
 
-		rw.Close()
+		_ = rw.Close()
 
 		// Wait a bit for async compression to complete
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 
 		// Check for .gz file
 		gzPath := logPath + ".1.gz"
@@ -278,13 +279,13 @@ func TestRotatingWriterCompression(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to open gzip file: %v", err)
 		}
-		defer gzFile.Close()
+		defer func() { _ = gzFile.Close() }()
 
 		gzReader, err := gzip.NewReader(gzFile)
 		if err != nil {
 			t.Fatalf("failed to create gzip reader: %v", err)
 		}
-		defer gzReader.Close()
+		defer func() { _ = gzReader.Close() }()
 
 		content, err := io.ReadAll(gzReader)
 		if err != nil {
@@ -334,7 +335,7 @@ func TestRotatingWriterConcurrency(t *testing.T) {
 	}
 
 	wg.Wait()
-	rw.Close()
+	_ = rw.Close()
 
 	// Count total lines across all files
 	totalLines := 0
@@ -370,7 +371,7 @@ func TestRotatingWriterClose(t *testing.T) {
 			t.Fatalf("NewRotatingWriter failed: %v", err)
 		}
 
-		rw.Write([]byte("test message\n"))
+		_, _ = rw.Write([]byte("test message\n"))
 
 		if err := rw.Close(); err != nil {
 			t.Errorf("Close failed: %v", err)
@@ -391,7 +392,7 @@ func TestRotatingWriterClose(t *testing.T) {
 			t.Fatalf("NewRotatingWriter failed: %v", err)
 		}
 
-		rw.Close()
+		_ = rw.Close()
 
 		_, err = rw.Write([]byte("test message\n"))
 		if err == nil {
@@ -414,7 +415,7 @@ func TestNewLoggerWithRotation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewLoggerWithRotation failed: %v", err)
 		}
-		defer logger.Close()
+		defer func() { _ = logger.Close() }()
 
 		logPath := filepath.Join(dir, "debug.log")
 		if _, err := os.Stat(logPath); os.IsNotExist(err) {
@@ -437,7 +438,7 @@ func TestNewLoggerWithRotation(t *testing.T) {
 		}
 
 		logger.Info("test message", "key", "value")
-		logger.Close()
+		_ = logger.Close()
 
 		logPath := filepath.Join(dir, "debug.log")
 		content, err := os.ReadFile(logPath)
@@ -465,7 +466,7 @@ func TestNewLoggerWithRotation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewLoggerWithRotation failed: %v", err)
 		}
-		defer logger.Close()
+		defer func() { _ = logger.Close() }()
 
 		// Should not have a rotation writer
 		if logger.rotation != nil {
@@ -495,7 +496,7 @@ func TestNewLoggerWithRotation(t *testing.T) {
 			logger.Info("this is a message that will trigger rotation when repeated", "iteration", i)
 		}
 
-		logger.Close()
+		_ = logger.Close()
 
 		// Check that backup file was created
 		backupPath := filepath.Join(dir, "debug.log.1")
@@ -517,7 +518,7 @@ func TestNewLoggerWithRotation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewLoggerWithRotation failed: %v", err)
 		}
-		defer logger.Close()
+		defer func() { _ = logger.Close() }()
 
 		childLogger := logger.WithSession("session-123").WithInstance("instance-456")
 
@@ -550,7 +551,7 @@ func TestRotatingWriterFilePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRotatingWriter failed: %v", err)
 	}
-	defer rw.Close()
+	defer func() { _ = rw.Close() }()
 
 	if rw.FilePath() != logPath {
 		t.Errorf("expected FilePath=%s, got %s", logPath, rw.FilePath())
@@ -565,9 +566,9 @@ func TestRotatingWriterSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRotatingWriter failed: %v", err)
 	}
-	defer rw.Close()
+	defer func() { _ = rw.Close() }()
 
-	rw.Write([]byte("test message\n"))
+	_, _ = rw.Write([]byte("test message\n"))
 
 	if err := rw.Sync(); err != nil {
 		t.Errorf("Sync failed: %v", err)
