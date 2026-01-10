@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/config"
+	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
@@ -150,7 +151,7 @@ func attachToSession(cwd, sessionID string, cfg *config.Config) error {
 		fmt.Printf("Reconnected to %d running instance(s)\n", len(reconnected))
 	}
 
-	return launchTUI(orch, sess)
+	return launchTUI(cwd, orch, sess)
 }
 
 // startNewSession creates and starts a new session
@@ -172,7 +173,7 @@ func startNewSession(cwd, sessionName string, cfg *config.Config) error {
 
 	fmt.Printf("Started new session: %s\n", sessionID)
 
-	return launchTUI(orch, sess)
+	return launchTUI(cwd, orch, sess)
 }
 
 // migrateAndStartLegacySession migrates a legacy session to the new format and starts it
@@ -223,7 +224,7 @@ func migrateAndStartLegacySession(cwd, sessionName string, cfg *config.Config) e
 }
 
 // launchTUI sets up terminal dimensions and launches the TUI
-func launchTUI(orch *orchestrator.Orchestrator, sess *orchestrator.Session) error {
+func launchTUI(cwd string, orch *orchestrator.Orchestrator, sess *orchestrator.Session) error {
 	// Get terminal dimensions and set them on the orchestrator before launching TUI
 	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
 		contentWidth, contentHeight := tui.CalculateContentDimensions(termWidth, termHeight)
@@ -232,8 +233,19 @@ func launchTUI(orch *orchestrator.Orchestrator, sess *orchestrator.Session) erro
 		}
 	}
 
+	// Create logger for the TUI session
+	cfg := config.Get()
+	sessionDir := session.GetSessionDir(cwd, sess.ID)
+	logger, err := logging.NewLogger(sessionDir, cfg.Logging.Level)
+	if err != nil {
+		// Log creation failure shouldn't prevent TUI from starting
+		fmt.Fprintf(os.Stderr, "Warning: failed to create logger: %v\n", err)
+		logger = logging.NopLogger()
+	}
+	defer logger.Close()
+
 	// Launch TUI
-	app := tui.New(orch, sess)
+	app := tui.New(orch, sess, logger.WithSession(sess.ID))
 	if err := app.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}

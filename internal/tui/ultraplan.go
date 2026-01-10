@@ -1444,6 +1444,12 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 				m.errorMessage = fmt.Sprintf("Failed to continue: %v", err)
 			} else {
 				m.infoMessage = "Continuing with successful tasks..."
+				// Log user decision
+				if m.logger != nil {
+					m.logger.Info("user decision",
+						"decision_type", "group_partial_failure",
+						"choice", "continue_partial")
+				}
 			}
 			return true, m, nil
 
@@ -1453,6 +1459,12 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 				m.errorMessage = fmt.Sprintf("Failed to retry: %v", err)
 			} else {
 				m.infoMessage = "Retrying failed tasks..."
+				// Log user decision
+				if m.logger != nil {
+					m.logger.Info("user decision",
+						"decision_type", "group_partial_failure",
+						"choice", "retry_failed")
+				}
 			}
 			return true, m, nil
 
@@ -1460,6 +1472,12 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 			// Cancel the ultraplan
 			m.ultraPlan.coordinator.Cancel()
 			m.infoMessage = "Ultraplan cancelled"
+			// Log user decision
+			if m.logger != nil {
+				m.logger.Info("user decision",
+					"decision_type", "group_partial_failure",
+					"choice", "cancel")
+			}
 			return true, m, nil
 		}
 	}
@@ -1585,6 +1603,10 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 				m.errorMessage = fmt.Sprintf("Failed to proceed: %v", err)
 			} else {
 				m.infoMessage = "Proceeding to consolidation..."
+				// Log synthesis approval
+				if m.logger != nil {
+					m.logger.Info("user approved synthesis")
+				}
 			}
 		}
 		return true, m, nil

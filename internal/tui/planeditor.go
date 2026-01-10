@@ -530,6 +530,10 @@ func (m Model) handlePlanEditorNavigationMode(msg tea.KeyMsg, plan *orchestrator
 					m.errorMessage = fmt.Sprintf("Failed to start execution: %v", err)
 				} else {
 					m.infoMessage = "Plan confirmed. Execution started."
+					// Log plan approval
+					if m.logger != nil {
+						m.logger.Info("user approved plan", "task_count", len(plan.Tasks))
+					}
 				}
 			}
 			return true, m, nil
@@ -784,9 +788,10 @@ func (m *Model) confirmFieldEdit(plan *orchestrator.PlanSpec) error {
 
 	taskID := plan.Tasks[m.planEditor.selectedTaskIdx].ID
 	value := m.planEditor.editBuffer
+	editedField := m.planEditor.editingField
 
 	var err error
-	switch m.planEditor.editingField {
+	switch editedField {
 	case "title":
 		err = orchestrator.UpdateTaskTitle(plan, taskID, value)
 
@@ -808,6 +813,11 @@ func (m *Model) confirmFieldEdit(plan *orchestrator.PlanSpec) error {
 	case "depends_on":
 		deps := parseCommaSeparatedList(value)
 		err = orchestrator.UpdateTaskDependencies(plan, taskID, deps)
+	}
+
+	// Log the edit if successful
+	if err == nil && m.logger != nil {
+		m.logger.Info("user edited plan", "changes_made", editedField)
 	}
 
 	m.cancelFieldEdit()
@@ -835,6 +845,11 @@ func (m *Model) cycleTaskComplexity(plan *orchestrator.PlanSpec) {
 	}
 
 	_ = orchestrator.UpdateTaskComplexity(plan, task.ID, nextComplexity)
+
+	// Log complexity change
+	if m.logger != nil {
+		m.logger.Info("user edited plan", "changes_made", "complexity")
+	}
 }
 
 // deleteSelectedTask removes the currently selected task
@@ -847,6 +862,11 @@ func (m *Model) deleteSelectedTask(plan *orchestrator.PlanSpec) error {
 	err := orchestrator.DeleteTask(plan, taskID)
 	if err != nil {
 		return err
+	}
+
+	// Log the deletion
+	if m.logger != nil {
+		m.logger.Info("user edited plan", "changes_made", "task_deleted")
 	}
 
 	// Adjust selection if needed
@@ -888,6 +908,11 @@ func (m *Model) addNewTaskAfterCurrent(plan *orchestrator.PlanSpec) error {
 	err := orchestrator.AddTask(plan, afterTaskID, newTask)
 	if err != nil {
 		return err
+	}
+
+	// Log the task addition
+	if m.logger != nil {
+		m.logger.Info("user edited plan", "changes_made", "task_added")
 	}
 
 	// Move selection to new task

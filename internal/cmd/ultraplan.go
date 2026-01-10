@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/config"
+	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	sessutil "github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -200,8 +202,18 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Create logger for the TUI session
+	sessionDir := sessutil.GetSessionDir(cwd, session.ID)
+	logger, err := logging.NewLogger(sessionDir, cfg.Logging.Level)
+	if err != nil {
+		// Log creation failure shouldn't prevent TUI from starting
+		fmt.Fprintf(os.Stderr, "Warning: failed to create logger: %v\n", err)
+		logger = logging.NopLogger()
+	}
+	defer logger.Close()
+
 	// Launch TUI with ultra-plan mode
-	app := tui.NewWithUltraPlan(orch, session, coordinator)
+	app := tui.NewWithUltraPlan(orch, session, coordinator, logger.WithSession(session.ID))
 	if err := app.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
