@@ -43,8 +43,8 @@ func New(orch *orchestrator.Orchestrator, session *orchestrator.Session, logger 
 func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.Coordinator, logger *logging.Logger) *App {
 	model := NewModel(orch, session, logger)
 	model.ultraPlan = &UltraPlanState{
-		coordinator:  coordinator,
-		showPlanView: false,
+		Coordinator:  coordinator,
+		ShowPlanView: false,
 	}
 	return &App{
 		model:        model,
@@ -228,8 +228,8 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tick()}
 
 	// Schedule ultra-plan initialization if needed
-	if m.ultraPlan != nil && m.ultraPlan.coordinator != nil {
-		session := m.ultraPlan.coordinator.Session()
+	if m.ultraPlan != nil && m.ultraPlan.Coordinator != nil {
+		session := m.ultraPlan.Coordinator.Session()
 		if session != nil && session.Phase == orchestrator.PhasePlanning && session.CoordinatorID == "" {
 			cmds = append(cmds, func() tea.Msg { return ultraPlanInitMsg{} })
 		}
@@ -261,8 +261,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// On first ready (TUI just started), check if we should open plan editor
 		// This handles the case when --plan FILE --review is provided
-		if !wasReady && m.ultraPlan != nil && m.ultraPlan.coordinator != nil {
-			session := m.ultraPlan.coordinator.Session()
+		if !wasReady && m.ultraPlan != nil && m.ultraPlan.Coordinator != nil {
+			session := m.ultraPlan.Coordinator.Session()
 			if session != nil && session.Phase == orchestrator.PhaseRefresh && session.Plan != nil && session.Config.Review {
 				m.enterPlanEditor()
 				m.infoMessage = fmt.Sprintf("Plan loaded: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
@@ -287,18 +287,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check if ultraplan needs user notification
 		var cmds []tea.Cmd
 		cmds = append(cmds, tick())
-		if m.ultraPlan != nil && m.ultraPlan.needsNotification {
-			m.ultraPlan.needsNotification = false
+		if m.ultraPlan != nil && m.ultraPlan.NeedsNotification {
+			m.ultraPlan.NeedsNotification = false
 			cmds = append(cmds, notifyUser())
 		}
 		return m, tea.Batch(cmds...)
 
 	case ultraPlanInitMsg:
 		// Initialize ultra-plan mode by starting the planning phase
-		if m.ultraPlan != nil && m.ultraPlan.coordinator != nil {
-			session := m.ultraPlan.coordinator.Session()
+		if m.ultraPlan != nil && m.ultraPlan.Coordinator != nil {
+			session := m.ultraPlan.Coordinator.Session()
 			if session != nil && session.Phase == orchestrator.PhasePlanning && session.CoordinatorID == "" {
-				if err := m.ultraPlan.coordinator.RunPlanning(); err != nil {
+				if err := m.ultraPlan.Coordinator.RunPlanning(); err != nil {
 					m.errorMessage = fmt.Sprintf("Failed to start planning: %v", err)
 				} else {
 					m.infoMessage = "Planning started. Claude is analyzing the codebase..."

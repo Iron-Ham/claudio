@@ -1,24 +1,23 @@
-package instance
+// Package metrics provides parsing and formatting utilities for Claude Code output metrics.
+package metrics
 
 import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/Iron-Ham/claudio/internal/instance/detect"
 )
 
-// ParsedMetrics holds metrics extracted from Claude Code output
+// ParsedMetrics holds metrics extracted from Claude Code output.
 type ParsedMetrics struct {
-	InputTokens  int64
-	OutputTokens int64
-	CacheRead    int64
-	CacheWrite   int64
-	Cost         float64
-	APICalls     int
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+	Cost             float64
+	APICalls         int
 }
 
-// MetricsParser extracts resource metrics from Claude Code output
+// MetricsParser extracts resource metrics from Claude Code output.
 type MetricsParser struct {
 	// Compiled regex patterns
 	tokenPattern *regexp.Regexp
@@ -27,7 +26,7 @@ type MetricsParser struct {
 	cachePattern *regexp.Regexp
 }
 
-// NewMetricsParser creates a new metrics parser
+// NewMetricsParser creates a new metrics parser with pre-compiled regex patterns.
 func NewMetricsParser() *MetricsParser {
 	return &MetricsParser{
 		// Match patterns like "45.2K input" or "12,800 output" or "45200 input"
@@ -42,10 +41,11 @@ func NewMetricsParser() *MetricsParser {
 	}
 }
 
-// Parse extracts metrics from Claude Code output text
-func (p *MetricsParser) Parse(output []byte) *ParsedMetrics {
+// Parse extracts metrics from Claude Code output text.
+// Returns nil and no error if no metrics are found in the output.
+func (p *MetricsParser) Parse(output []byte) (*ParsedMetrics, error) {
 	if len(output) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Focus on the last portion of output where status line appears
@@ -55,7 +55,7 @@ func (p *MetricsParser) Parse(output []byte) *ParsedMetrics {
 	}
 
 	// Strip ANSI escape codes for cleaner pattern matching
-	text = detect.StripAnsi(text)
+	text = stripAnsi(text)
 
 	metrics := &ParsedMetrics{}
 	found := false
@@ -91,21 +91,21 @@ func (p *MetricsParser) Parse(output []byte) *ParsedMetrics {
 
 	// Parse cache metrics
 	if matches := p.cachePattern.FindStringSubmatch(text); matches != nil {
-		metrics.CacheRead = parseTokenValue(matches[1], matches[2])
-		metrics.CacheWrite = parseTokenValue(matches[3], matches[4])
-		if metrics.CacheRead > 0 || metrics.CacheWrite > 0 {
+		metrics.CacheReadTokens = parseTokenValue(matches[1], matches[2])
+		metrics.CacheWriteTokens = parseTokenValue(matches[3], matches[4])
+		if metrics.CacheReadTokens > 0 || metrics.CacheWriteTokens > 0 {
 			found = true
 		}
 	}
 
 	if !found {
-		return nil
+		return nil, nil
 	}
 
-	return metrics
+	return metrics, nil
 }
 
-// parseTokenValue parses a token count value with optional K/M suffix
+// parseTokenValue parses a token count value with optional K/M suffix.
 func parseTokenValue(numStr, suffix string) int64 {
 	if numStr == "" {
 		return 0
@@ -132,7 +132,14 @@ func parseTokenValue(numStr, suffix string) int64 {
 	return int64(val)
 }
 
-// CalculateCost estimates the cost based on token counts using Claude API pricing
+// stripAnsi removes ANSI escape codes from text for cleaner pattern matching.
+func stripAnsi(text string) string {
+	// Match ANSI escape sequences: ESC[ followed by params and a letter
+	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07`)
+	return ansiRegex.ReplaceAllString(text, "")
+}
+
+// CalculateCost estimates the cost based on token counts using Claude API pricing.
 // Pricing as of 2024 for Claude 3.5 Sonnet (the model used by Claude Code):
 // - Input: $3.00 per 1M tokens
 // - Output: $15.00 per 1M tokens
@@ -154,7 +161,7 @@ func CalculateCost(inputTokens, outputTokens, cacheRead, cacheWrite int64) float
 	return inputCost + outputCost + cacheReadCost + cacheWriteCost
 }
 
-// FormatTokens formats a token count for display (e.g., "45.2K")
+// FormatTokens formats a token count for display (e.g., "45.2K").
 func FormatTokens(tokens int64) string {
 	if tokens >= 1000000 {
 		return strconv.FormatFloat(float64(tokens)/1000000.0, 'f', 1, 64) + "M"
@@ -165,7 +172,7 @@ func FormatTokens(tokens int64) string {
 	return strconv.FormatInt(tokens, 10)
 }
 
-// FormatCost formats a cost value for display (e.g., "$0.42")
+// FormatCost formats a cost value for display (e.g., "$0.42").
 func FormatCost(cost float64) string {
 	if cost < 0.01 {
 		return "$0.00"

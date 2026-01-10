@@ -147,11 +147,11 @@ func (m *Model) enterPlanEditor() {
 
 // updatePlanValidation runs validation on the current plan and updates the editor state
 func (m *Model) updatePlanValidation() {
-	if m.planEditor == nil || m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+	if m.planEditor == nil || m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
 		return
 	}
 
-	session := m.ultraPlan.coordinator.Session()
+	session := m.ultraPlan.Coordinator.Session()
 	if session == nil || session.Plan == nil {
 		return
 	}
@@ -189,7 +189,7 @@ func (m *Model) getValidationMessagesForSelectedTask() []orchestrator.Validation
 		return nil
 	}
 
-	session := m.ultraPlan.coordinator.Session()
+	session := m.ultraPlan.Coordinator.Session()
 	if session == nil || session.Plan == nil || m.planEditor.selectedTaskIdx >= len(session.Plan.Tasks) {
 		return nil
 	}
