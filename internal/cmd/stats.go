@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/config"
-	"github.com/Iron-Ham/claudio/internal/instance"
+	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -77,43 +77,43 @@ func printStatsText(session *orchestrator.Session, metrics *orchestrator.Session
 	// Token usage
 	fmt.Println("TOKEN USAGE")
 	fmt.Println(strings.Repeat("─", 50))
-	fmt.Printf("Input:  %s tokens\n", instance.FormatTokens(metrics.TotalInputTokens))
-	fmt.Printf("Output: %s tokens\n", instance.FormatTokens(metrics.TotalOutputTokens))
+	fmt.Printf("Input:  %s tokens\n", instmetrics.FormatTokens(metrics.TotalInputTokens))
+	fmt.Printf("Output: %s tokens\n", instmetrics.FormatTokens(metrics.TotalOutputTokens))
 	totalTokens := metrics.TotalInputTokens + metrics.TotalOutputTokens
-	fmt.Printf("Total:  %s tokens\n", instance.FormatTokens(totalTokens))
+	fmt.Printf("Total:  %s tokens\n", instmetrics.FormatTokens(totalTokens))
 	if metrics.TotalCacheRead > 0 || metrics.TotalCacheWrite > 0 {
 		fmt.Printf("Cache:  %s read / %s write\n",
-			instance.FormatTokens(metrics.TotalCacheRead),
-			instance.FormatTokens(metrics.TotalCacheWrite))
+			instmetrics.FormatTokens(metrics.TotalCacheRead),
+			instmetrics.FormatTokens(metrics.TotalCacheWrite))
 	}
 	fmt.Println()
 
 	// Cost summary
 	fmt.Println("ESTIMATED COST")
 	fmt.Println(strings.Repeat("─", 50))
-	fmt.Printf("Total: %s\n", instance.FormatCost(metrics.TotalCost))
+	fmt.Printf("Total: %s\n", instmetrics.FormatCost(metrics.TotalCost))
 
 	// Budget status
 	if cfg.Resources.CostWarningThreshold > 0 {
 		if metrics.TotalCost >= cfg.Resources.CostWarningThreshold {
 			fmt.Printf("⚠ WARNING: Cost exceeds warning threshold (%s)\n",
-				instance.FormatCost(cfg.Resources.CostWarningThreshold))
+				instmetrics.FormatCost(cfg.Resources.CostWarningThreshold))
 		} else {
 			remaining := cfg.Resources.CostWarningThreshold - metrics.TotalCost
 			fmt.Printf("Warning threshold: %s (remaining: %s)\n",
-				instance.FormatCost(cfg.Resources.CostWarningThreshold),
-				instance.FormatCost(remaining))
+				instmetrics.FormatCost(cfg.Resources.CostWarningThreshold),
+				instmetrics.FormatCost(remaining))
 		}
 	}
 	if cfg.Resources.CostLimit > 0 {
 		if metrics.TotalCost >= cfg.Resources.CostLimit {
 			fmt.Printf("🛑 LIMIT REACHED: Cost limit (%s) exceeded - instances paused\n",
-				instance.FormatCost(cfg.Resources.CostLimit))
+				instmetrics.FormatCost(cfg.Resources.CostLimit))
 		} else {
 			remaining := cfg.Resources.CostLimit - metrics.TotalCost
 			fmt.Printf("Cost limit: %s (remaining: %s)\n",
-				instance.FormatCost(cfg.Resources.CostLimit),
-				instance.FormatCost(remaining))
+				instmetrics.FormatCost(cfg.Resources.CostLimit),
+				instmetrics.FormatCost(remaining))
 		}
 	}
 	fmt.Println()
@@ -162,8 +162,8 @@ func printStatsText(session *orchestrator.Session, metrics *orchestrator.Session
 			}
 			fmt.Printf("%d. [%d] %s (%s): %s (%s tokens)\n",
 				shown, inst.num, task, inst.status,
-				instance.FormatCost(inst.cost),
-				instance.FormatTokens(inst.tokens))
+				instmetrics.FormatCost(inst.cost),
+				instmetrics.FormatTokens(inst.tokens))
 		}
 	}
 

@@ -13,6 +13,8 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/instance"
+	"github.com/Iron-Ham/claudio/internal/instance/detect"
+	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
@@ -1916,17 +1918,17 @@ func (m *Model) updateInstanceStatus(inst *orchestrator.Instance, mgr *instance.
 	previousStatus := inst.Status
 
 	switch state {
-	case instance.StateWaitingPermission, instance.StateWaitingQuestion, instance.StateWaitingInput:
+	case detect.StateWaitingPermission, detect.StateWaitingQuestion, detect.StateWaitingInput:
 		inst.Status = orchestrator.StatusWaitingInput
-	case instance.StateCompleted:
+	case detect.StateCompleted:
 		inst.Status = orchestrator.StatusCompleted
 		// If just completed (status changed), check completion action
 		if previousStatus != orchestrator.StatusCompleted {
 			m.handleInstanceCompleted(inst)
 		}
-	case instance.StateError:
+	case detect.StateError:
 		inst.Status = orchestrator.StatusError
-	case instance.StateWorking:
+	case detect.StateWorking:
 		// If currently marked as waiting but now working, go back to working
 		if inst.Status == orchestrator.StatusWaitingInput {
 			inst.Status = orchestrator.StatusWorking
@@ -2530,21 +2532,21 @@ func (m Model) renderStatsPanel(width int) string {
 	// Token usage
 	b.WriteString(styles.Subtitle.Render("Token Usage"))
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("  Input:  %s\n", instance.FormatTokens(sessionMetrics.TotalInputTokens)))
-	b.WriteString(fmt.Sprintf("  Output: %s\n", instance.FormatTokens(sessionMetrics.TotalOutputTokens)))
+	b.WriteString(fmt.Sprintf("  Input:  %s\n", instmetrics.FormatTokens(sessionMetrics.TotalInputTokens)))
+	b.WriteString(fmt.Sprintf("  Output: %s\n", instmetrics.FormatTokens(sessionMetrics.TotalOutputTokens)))
 	totalTokens := sessionMetrics.TotalInputTokens + sessionMetrics.TotalOutputTokens
-	b.WriteString(fmt.Sprintf("  Total:  %s\n", instance.FormatTokens(totalTokens)))
+	b.WriteString(fmt.Sprintf("  Total:  %s\n", instmetrics.FormatTokens(totalTokens)))
 	if sessionMetrics.TotalCacheRead > 0 || sessionMetrics.TotalCacheWrite > 0 {
 		b.WriteString(fmt.Sprintf("  Cache:  %s read / %s write\n",
-			instance.FormatTokens(sessionMetrics.TotalCacheRead),
-			instance.FormatTokens(sessionMetrics.TotalCacheWrite)))
+			instmetrics.FormatTokens(sessionMetrics.TotalCacheRead),
+			instmetrics.FormatTokens(sessionMetrics.TotalCacheWrite)))
 	}
 	b.WriteString("\n")
 
 	// Cost summary
 	b.WriteString(styles.Subtitle.Render("Estimated Cost"))
 	b.WriteString("\n")
-	costStr := instance.FormatCost(sessionMetrics.TotalCost)
+	costStr := instmetrics.FormatCost(sessionMetrics.TotalCost)
 	cfg := config.Get()
 	if cfg.Resources.CostWarningThreshold > 0 && sessionMetrics.TotalCost >= cfg.Resources.CostWarningThreshold {
 		b.WriteString(styles.Warning.Render(fmt.Sprintf("  Total: %s (⚠ exceeds warning threshold)", costStr)))
@@ -2552,7 +2554,7 @@ func (m Model) renderStatsPanel(width int) string {
 		b.WriteString(fmt.Sprintf("  Total: %s\n", costStr))
 	}
 	if cfg.Resources.CostLimit > 0 {
-		b.WriteString(fmt.Sprintf("  Limit: %s\n", instance.FormatCost(cfg.Resources.CostLimit)))
+		b.WriteString(fmt.Sprintf("  Limit: %s\n", instmetrics.FormatCost(cfg.Resources.CostLimit)))
 	}
 	b.WriteString("\n")
 
@@ -2598,7 +2600,7 @@ func (m Model) renderStatsPanel(width int) string {
 		if ic.cost > 0 {
 			taskTrunc := truncate(ic.task, width-25)
 			b.WriteString(fmt.Sprintf("  %d. [%d] %s: %s\n",
-				shown+1, ic.num, taskTrunc, instance.FormatCost(ic.cost)))
+				shown+1, ic.num, taskTrunc, instmetrics.FormatCost(ic.cost)))
 			shown++
 		}
 	}

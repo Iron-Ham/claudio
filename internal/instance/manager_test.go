@@ -3,6 +3,8 @@ package instance
 import (
 	"strings"
 	"testing"
+
+	"github.com/Iron-Ham/claudio/internal/instance/detect"
 )
 
 func TestExtractInstanceIDFromSession(t *testing.T) {
@@ -163,8 +165,8 @@ func TestManager_GetOutput_Empty(t *testing.T) {
 func TestManager_CurrentState_Initial(t *testing.T) {
 	mgr := NewManager("test", "/tmp", "task")
 
-	if mgr.CurrentState() != StateWorking {
-		t.Errorf("CurrentState() should be StateWorking initially, got %v", mgr.CurrentState())
+	if mgr.CurrentState() != detect.StateWorking {
+		t.Errorf("CurrentState() should be detect.StateWorking initially, got %v", mgr.CurrentState())
 	}
 }
 

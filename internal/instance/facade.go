@@ -9,6 +9,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/instance/capture"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
+	"github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/instance/process"
 	"github.com/Iron-Ham/claudio/internal/logging"
 )
@@ -32,7 +33,7 @@ type Facade struct {
 
 	// Callbacks
 	onStateChange func(state detect.WaitingState)
-	onMetrics     func(metrics *ParsedMetrics)
+	onMetrics     func(metrics *metrics.ParsedMetrics)
 	onTimeout     func(timeoutType string)
 	onBell        func()
 
@@ -71,7 +72,7 @@ func DefaultFacadeConfig() FacadeConfig {
 	}
 }
 
-// Note: ParsedMetrics is defined in metrics.go - we reuse that type here.
+// Note: ParsedMetrics is defined in the metrics subpackage.
 
 // NewFacade creates a new Facade with the given configuration.
 // It initializes the underlying process, buffer, and detector components.
@@ -107,7 +108,7 @@ func NewFacade(config FacadeConfig, logger *logging.Logger) *Facade {
 // SetCallbacks sets the callback functions for various events.
 func (f *Facade) SetCallbacks(
 	onStateChange func(detect.WaitingState),
-	onMetrics func(*ParsedMetrics),
+	onMetrics func(*metrics.ParsedMetrics),
 	onTimeout func(string),
 	onBell func(),
 ) {
@@ -241,6 +242,13 @@ func (f *Facade) stopMonitoring() {
 
 // monitorLoop is the background loop that checks for output and state changes.
 func (f *Facade) monitorLoop() {
+	// Capture ticker and stop channel at start to avoid data races
+	// when Reconnect() calls stopMonitoring() then startMonitoring()
+	f.mu.RLock()
+	ticker := f.monitorTicker
+	stop := f.monitorStop
+	f.mu.RUnlock()
+
 	defer func() {
 		if r := recover(); r != nil {
 			f.logger.Error("panic in monitor loop",
@@ -251,9 +259,9 @@ func (f *Facade) monitorLoop() {
 
 	for {
 		select {
-		case <-f.monitorStop:
+		case <-stop:
 			return
-		case <-f.monitorTicker.C:
+		case <-ticker.C:
 			f.captureAndAnalyze()
 		}
 	}

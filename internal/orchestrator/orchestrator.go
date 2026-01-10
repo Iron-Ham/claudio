@@ -12,14 +12,27 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/conflict"
+	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/instance"
+	"github.com/Iron-Ham/claudio/internal/instance/detect"
+	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/lifecycle"
+	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 	"github.com/spf13/viper"
 )
 
-// Orchestrator manages the Claudio session and coordinates instances
+// Orchestrator manages the Claudio session and coordinates instances.
+//
+// The Orchestrator acts as a facade that composes several specialized managers:
+//   - sessionMgr: Handles session persistence (load, save, create, delete)
+//   - lifecycleMgr: Manages instance lifecycle (start, stop, status tracking)
+//   - eventBus: Enables decoupled communication between components
+//
+// For backwards compatibility, the Orchestrator maintains its existing public API
+// while progressively delegating to the composed managers internally.
 type Orchestrator struct {
 	baseDir     string
 	claudioDir  string
@@ -28,6 +41,11 @@ type Orchestrator struct {
 	sessionDir  string // Session-specific directory (.claudio/sessions/{sessionID})
 	lock        *session.Lock
 	logger      *logging.Logger // Structured logger for debugging (nil = no logging)
+
+	// Composed managers (delegation targets for refactored operations)
+	sessionMgr   *orchsession.Manager // Session lifecycle management
+	lifecycleMgr *lifecycle.Manager   // Instance lifecycle management
+	eventBus     *event.Bus           // Inter-component event communication
 
 	session          *Session
 	instances        map[string]*instance.Manager
@@ -78,10 +96,28 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		return nil, fmt.Errorf("failed to create conflict detector: %w", err)
 	}
 
+	// Create event bus for inter-component communication
+	eventBus := event.NewBus()
+
+	// Create session manager (legacy single-session mode)
+	sessionMgr := orchsession.NewManager(orchsession.Config{
+		BaseDir: baseDir,
+	})
+
+	// Create lifecycle manager with default config
+	lifecycleMgr := lifecycle.NewManager(
+		lifecycle.DefaultConfig(),
+		lifecycle.Callbacks{},
+		nil, // logger set later via SetLogger
+	)
+
 	return &Orchestrator{
 		baseDir:          baseDir,
 		claudioDir:       claudioDir,
 		worktreeDir:      worktreeDir,
+		sessionMgr:       sessionMgr,
+		lifecycleMgr:     lifecycleMgr,
+		eventBus:         eventBus,
 		instances:        make(map[string]*instance.Manager),
 		prWorkflows:      make(map[string]*instance.PRWorkflow),
 		wt:               wt,
@@ -109,12 +145,36 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		return nil, fmt.Errorf("failed to create conflict detector: %w", err)
 	}
 
+	// Create event bus for inter-component communication
+	eventBus := event.NewBus()
+
+	// Create session manager (multi-session mode with sessionID)
+	sessionMgr := orchsession.NewManager(orchsession.Config{
+		BaseDir:   baseDir,
+		SessionID: sessionID,
+	})
+
+	// Create lifecycle manager with config derived from orchestrator config
+	lifecycleCfg := lifecycle.Config{
+		TmuxSessionPrefix: "claudio",
+		DefaultTermWidth:  cfg.Instance.TmuxWidth,
+		DefaultTermHeight: cfg.Instance.TmuxHeight,
+	}
+	lifecycleMgr := lifecycle.NewManager(
+		lifecycleCfg,
+		lifecycle.Callbacks{},
+		nil, // logger set later via SetLogger
+	)
+
 	return &Orchestrator{
 		baseDir:          baseDir,
 		claudioDir:       claudioDir,
 		worktreeDir:      worktreeDir,
 		sessionID:        sessionID,
 		sessionDir:       sessionDir,
+		sessionMgr:       sessionMgr,
+		lifecycleMgr:     lifecycleMgr,
+		eventBus:         eventBus,
 		instances:        make(map[string]*instance.Manager),
 		prWorkflows:      make(map[string]*instance.PRWorkflow),
 		wt:               wt,
@@ -286,13 +346,13 @@ func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
 		// Try to reconnect if the tmux session still exists
 		if mgr.TmuxSessionExists() {
 			// Configure state change callback
-			mgr.SetStateCallback(func(id string, state instance.WaitingState) {
+			mgr.SetStateCallback(func(id string, state detect.WaitingState) {
 				switch state {
-				case instance.StateCompleted:
+				case detect.StateCompleted:
 					o.handleInstanceExit(id)
-				case instance.StateWaitingInput, instance.StateWaitingQuestion, instance.StateWaitingPermission:
+				case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
 					o.handleInstanceWaitingInput(id)
-				case instance.StatePROpened:
+				case detect.StatePROpened:
 					o.handleInstancePROpened(id)
 				}
 			})
@@ -605,20 +665,20 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 	}
 
 	// Configure state change callback for notifications
-	mgr.SetStateCallback(func(id string, state instance.WaitingState) {
+	mgr.SetStateCallback(func(id string, state detect.WaitingState) {
 		switch state {
-		case instance.StateCompleted:
+		case detect.StateCompleted:
 			o.handleInstanceExit(id)
-		case instance.StateWaitingInput, instance.StateWaitingQuestion, instance.StateWaitingPermission:
+		case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
 			o.handleInstanceWaitingInput(id)
-		case instance.StatePROpened:
+		case detect.StatePROpened:
 			o.handleInstancePROpened(id)
 		}
 	})
 
 	// Configure metrics callback for resource tracking
-	mgr.SetMetricsCallback(func(id string, metrics *instance.ParsedMetrics) {
-		o.handleInstanceMetrics(id, metrics)
+	mgr.SetMetricsCallback(func(id string, m *instmetrics.ParsedMetrics) {
+		o.handleInstanceMetrics(id, m)
 	})
 
 	// Configure timeout callback
@@ -818,6 +878,22 @@ func (o *Orchestrator) Logger() *logging.Logger {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 	return o.logger
+}
+
+// EventBus returns the event bus for inter-component communication.
+// Components can use this to subscribe to or publish events.
+func (o *Orchestrator) EventBus() *event.Bus {
+	return o.eventBus
+}
+
+// SessionManager returns the session manager for advanced session operations.
+func (o *Orchestrator) SessionManager() *orchsession.Manager {
+	return o.sessionMgr
+}
+
+// LifecycleManager returns the lifecycle manager for advanced instance operations.
+func (o *Orchestrator) LifecycleManager() *lifecycle.Manager {
+	return o.lifecycleMgr
 }
 
 // GetPRWorkflow returns the PR workflow for an instance, if any
@@ -1223,9 +1299,9 @@ func (o *Orchestrator) handleInstanceExit(id string) {
 }
 
 // handleInstanceMetrics updates instance metrics when they change
-func (o *Orchestrator) handleInstanceMetrics(id string, metrics *instance.ParsedMetrics) {
+func (o *Orchestrator) handleInstanceMetrics(id string, m *instmetrics.ParsedMetrics) {
 	inst := o.GetInstance(id)
-	if inst == nil || metrics == nil {
+	if inst == nil || m == nil {
 		return
 	}
 
@@ -1234,21 +1310,21 @@ func (o *Orchestrator) handleInstanceMetrics(id string, metrics *instance.Parsed
 		inst.Metrics = &Metrics{}
 	}
 
-	inst.Metrics.InputTokens = metrics.InputTokens
-	inst.Metrics.OutputTokens = metrics.OutputTokens
-	inst.Metrics.CacheRead = metrics.CacheRead
-	inst.Metrics.CacheWrite = metrics.CacheWrite
-	inst.Metrics.APICalls = metrics.APICalls
+	inst.Metrics.InputTokens = m.InputTokens
+	inst.Metrics.OutputTokens = m.OutputTokens
+	inst.Metrics.CacheRead = m.CacheReadTokens
+	inst.Metrics.CacheWrite = m.CacheWriteTokens
+	inst.Metrics.APICalls = m.APICalls
 
 	// Use parsed cost if available, otherwise calculate from tokens
-	if metrics.Cost > 0 {
-		inst.Metrics.Cost = metrics.Cost
+	if m.Cost > 0 {
+		inst.Metrics.Cost = m.Cost
 	} else {
-		inst.Metrics.Cost = instance.CalculateCost(
-			metrics.InputTokens,
-			metrics.OutputTokens,
-			metrics.CacheRead,
-			metrics.CacheWrite,
+		inst.Metrics.Cost = instmetrics.CalculateCost(
+			m.InputTokens,
+			m.OutputTokens,
+			m.CacheReadTokens,
+			m.CacheWriteTokens,
 		)
 	}
 
@@ -1507,18 +1583,18 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 	}
 
 	// Configure state change callback
-	mgr.SetStateCallback(func(id string, state instance.WaitingState) {
+	mgr.SetStateCallback(func(id string, state detect.WaitingState) {
 		switch state {
-		case instance.StateCompleted:
+		case detect.StateCompleted:
 			o.handleInstanceExit(id)
-		case instance.StateWaitingInput, instance.StateWaitingQuestion, instance.StateWaitingPermission:
+		case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
 			o.handleInstanceWaitingInput(id)
 		}
 	})
 
 	// Configure metrics callback
-	mgr.SetMetricsCallback(func(id string, metrics *instance.ParsedMetrics) {
-		o.handleInstanceMetrics(id, metrics)
+	mgr.SetMetricsCallback(func(id string, m *instmetrics.ParsedMetrics) {
+		o.handleInstanceMetrics(id, m)
 	})
 
 	// Configure timeout callback
