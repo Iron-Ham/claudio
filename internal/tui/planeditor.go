@@ -7,6 +7,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
+	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -210,11 +211,11 @@ func (m Model) renderTaskValidationIndicator(taskID string) string {
 
 // renderPlanEditorView renders the plan editor view with validation
 func (m Model) renderPlanEditorView(width int) string {
-	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
 		return "No plan available"
 	}
 
-	session := m.ultraPlan.coordinator.Session()
+	session := m.ultraPlan.Coordinator.Session()
 	if session == nil || session.Plan == nil {
 		return "No plan available"
 	}
@@ -290,7 +291,7 @@ func (m Model) renderPlanEditorView(width int) string {
 		if m.planEditor != nil && m.planEditor.tasksInCycle[task.ID] {
 			statusIcon = cyclicTaskStyle.Render("⟳")
 		} else {
-			statusIcon = complexityIndicator(task.EstComplexity)
+			statusIcon = view.ComplexityIndicator(task.EstComplexity)
 		}
 
 		// Build task line
@@ -524,9 +525,9 @@ func (m Model) handlePlanEditorNavigationMode(msg tea.KeyMsg, plan *orchestrator
 			m.exitPlanEditor()
 			m.infoMessage = "Plan confirmed"
 			// Trigger execution if in refresh phase
-			session := m.ultraPlan.coordinator.Session()
+			session := m.ultraPlan.Coordinator.Session()
 			if session != nil && session.Phase == orchestrator.PhaseRefresh {
-				if err := m.ultraPlan.coordinator.StartExecution(); err != nil {
+				if err := m.ultraPlan.Coordinator.StartExecution(); err != nil {
 					m.errorMessage = fmt.Sprintf("Failed to start execution: %v", err)
 				} else {
 					m.infoMessage = "Plan confirmed. Execution started."
@@ -702,10 +703,10 @@ func (m Model) handlePlanEditorEditMode(msg tea.KeyMsg, plan *orchestrator.PlanS
 
 // getPlanForEditor returns the current plan from the ultra-plan session
 func (m Model) getPlanForEditor() *orchestrator.PlanSpec {
-	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
 		return nil
 	}
-	session := m.ultraPlan.coordinator.Session()
+	session := m.ultraPlan.Coordinator.Session()
 	if session == nil {
 		return nil
 	}
@@ -1010,11 +1011,11 @@ func (m *Model) planEditorDeleteWord() {
 
 // savePlanToFile saves the current plan to the plan file
 func (m *Model) savePlanToFile(plan *orchestrator.PlanSpec) error {
-	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
 		return fmt.Errorf("no ultra-plan session")
 	}
 
-	session := m.ultraPlan.coordinator.Session()
+	session := m.ultraPlan.Coordinator.Session()
 	if session == nil {
 		return fmt.Errorf("no session")
 	}
@@ -1031,10 +1032,10 @@ func (m *Model) savePlanToFile(plan *orchestrator.PlanSpec) error {
 
 // canStartExecution returns true if we can start plan execution
 func (m *Model) canStartExecution() bool {
-	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
 		return false
 	}
-	session := m.ultraPlan.coordinator.Session()
+	session := m.ultraPlan.Coordinator.Session()
 	if session == nil || session.Plan == nil {
 		return false
 	}
@@ -1044,10 +1045,10 @@ func (m *Model) canStartExecution() bool {
 
 // startPlanExecution triggers execution of the plan
 func (m *Model) startPlanExecution() error {
-	if m.ultraPlan == nil || m.ultraPlan.coordinator == nil {
+	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
 		return fmt.Errorf("no ultra-plan session")
 	}
-	return m.ultraPlan.coordinator.StartExecution()
+	return m.ultraPlan.Coordinator.StartExecution()
 }
 
 // scrollValidationPanel scrolls the validation panel by delta lines
