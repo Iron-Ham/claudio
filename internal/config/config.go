@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -21,6 +22,7 @@ type Config struct {
 	Ultraplan  UltraplanConfig  `mapstructure:"ultraplan"`
 	Plan       PlanConfig       `mapstructure:"plan"`
 	Logging    LoggingConfig    `mapstructure:"logging"`
+	Paths      PathsConfig      `mapstructure:"paths"`
 }
 
 // CompletionConfig controls what happens when an instance completes
@@ -163,6 +165,48 @@ type LoggingConfig struct {
 	MaxBackups int `mapstructure:"max_backups"`
 }
 
+// PathsConfig controls where Claudio stores data
+type PathsConfig struct {
+	// WorktreeDir is the directory where git worktrees are created.
+	// If empty, defaults to ".claudio/worktrees" relative to the repository root.
+	// Can be an absolute path to store worktrees outside the repository
+	// (e.g., on a faster drive or to avoid cluttering the project).
+	// Supports ~ for home directory expansion.
+	WorktreeDir string `mapstructure:"worktree_dir"`
+}
+
+// ResolveWorktreeDir returns the resolved worktree directory path.
+// If WorktreeDir is empty, it returns the default path relative to baseDir.
+// If WorktreeDir starts with ~, it expands to the user's home directory.
+// If WorktreeDir is a relative path, it's resolved relative to baseDir.
+func (p *PathsConfig) ResolveWorktreeDir(baseDir string) string {
+	if p.WorktreeDir == "" {
+		return filepath.Join(baseDir, ".claudio", "worktrees")
+	}
+
+	path := p.WorktreeDir
+
+	// Expand ~ to home directory
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	} else if path == "~" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			path = home
+		}
+	}
+
+	// If relative path, resolve relative to baseDir
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(baseDir, path)
+	}
+
+	return path
+}
+
 // Default returns a Config with sensible default values
 func Default() *Config {
 	return &Config{
@@ -229,6 +273,9 @@ func Default() *Config {
 			Level:      "info",
 			MaxSizeMB:  10,
 			MaxBackups: 3,
+		},
+		Paths: PathsConfig{
+			WorktreeDir: "", // Empty means use default: .claudio/worktrees
 		},
 	}
 }
@@ -312,6 +359,9 @@ func SetDefaults() {
 	viper.SetDefault("logging.level", defaults.Logging.Level)
 	viper.SetDefault("logging.max_size_mb", defaults.Logging.MaxSizeMB)
 	viper.SetDefault("logging.max_backups", defaults.Logging.MaxBackups)
+
+	// Paths defaults
+	viper.SetDefault("paths.worktree_dir", defaults.Paths.WorktreeDir)
 }
 
 // Load reads the configuration from viper into a Config struct and validates it

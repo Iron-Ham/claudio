@@ -83,7 +83,7 @@ func New(baseDir string) (*Orchestrator, error) {
 // This is a legacy constructor that doesn't support multi-session - use NewWithSession instead.
 func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 	claudioDir := filepath.Join(baseDir, ".claudio")
-	worktreeDir := filepath.Join(claudioDir, "worktrees")
+	worktreeDir := cfg.Paths.ResolveWorktreeDir(baseDir)
 
 	wt, err := worktree.New(baseDir)
 	if err != nil {
@@ -131,7 +131,7 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 // The sessionID determines the storage location and lock file.
 func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrator, error) {
 	claudioDir := filepath.Join(baseDir, ".claudio")
-	worktreeDir := filepath.Join(claudioDir, "worktrees")
+	worktreeDir := cfg.Paths.ResolveWorktreeDir(baseDir)
 	sessionDir := session.GetSessionDir(baseDir, sessionID)
 
 	wt, err := worktree.New(baseDir)

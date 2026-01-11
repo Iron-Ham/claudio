@@ -82,6 +82,9 @@ func (c *Config) Validate() []ValidationError {
 	// Validate Logging config
 	errors = append(errors, c.validateLogging()...)
 
+	// Validate Paths config
+	errors = append(errors, c.validatePaths()...)
+
 	return errors
 }
 
@@ -393,6 +396,37 @@ func (c *Config) validateLogging() []ValidationError {
 			Value:   c.Logging.MaxBackups,
 			Message: "must be non-negative",
 		})
+	}
+
+	return errors
+}
+
+// validatePaths validates the PathsConfig
+func (c *Config) validatePaths() []ValidationError {
+	var errors []ValidationError
+
+	// WorktreeDir validation - if set, check for invalid characters
+	if c.Paths.WorktreeDir != "" {
+		path := c.Paths.WorktreeDir
+
+		// Check for null bytes which are invalid in paths
+		if strings.ContainsRune(path, '\x00') {
+			errors = append(errors, ValidationError{
+				Field:   "paths.worktree_dir",
+				Value:   path,
+				Message: "path contains invalid null character",
+			})
+		}
+
+		// Reasonable path length limit (most filesystems have limits around 4096)
+		const maxPathLength = 4096
+		if len(path) > maxPathLength {
+			errors = append(errors, ValidationError{
+				Field:   "paths.worktree_dir",
+				Value:   path,
+				Message: fmt.Sprintf("path exceeds maximum length of %d characters", maxPathLength),
+			})
+		}
 	}
 
 	return errors
