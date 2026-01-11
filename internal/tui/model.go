@@ -541,10 +541,12 @@ func isWordChar(r rune) bool {
 // -----------------------------------------------------------------------------
 
 // DefaultTerminalHeight is the default height of the terminal pane in lines.
-const DefaultTerminalHeight = 8
+// Set to 15 to provide a more useful terminal display showing adequate
+// command output and shell history.
+const DefaultTerminalHeight = 15
 
 // MinTerminalHeight is the minimum height of the terminal pane.
-const MinTerminalHeight = 3
+const MinTerminalHeight = 5
 
 // MaxTerminalHeightRatio is the maximum ratio of terminal height to total height.
 const MaxTerminalHeightRatio = 0.5
@@ -591,9 +593,18 @@ func (m *Model) toggleTerminalVisibility(sessionID string) {
 	if m.terminalVisible {
 		// Initialize terminal process if needed (lazy initialization)
 		if m.terminalProcess == nil {
-			width := m.width
-			height := m.TerminalPaneHeight()
-			m.terminalProcess = terminal.NewProcess(sessionID, m.invocationDir, width, height)
+			// Account for border (2 lines) and header (1 line) when setting tmux dimensions
+			paneHeight := m.TerminalPaneHeight()
+			contentHeight := paneHeight - 3
+			if contentHeight < 3 {
+				contentHeight = 3
+			}
+			// Width accounts for border (2 chars) and padding (2 chars)
+			contentWidth := m.width - 4
+			if contentWidth < 20 {
+				contentWidth = 20
+			}
+			m.terminalProcess = terminal.NewProcess(sessionID, m.invocationDir, contentWidth, contentHeight)
 		}
 
 		// Start the process if not running
@@ -612,6 +623,7 @@ func (m *Model) toggleTerminalVisibility(sessionID string) {
 				if m.logger != nil {
 					m.logger.Warn("failed to set initial terminal directory", "target", targetDir, "error", err)
 				}
+				m.infoMessage = "Terminal opened but could not change to target directory"
 			}
 		}
 
@@ -667,7 +679,7 @@ func (m *Model) updateTerminalOutput() {
 	output, err := m.terminalProcess.CaptureOutput()
 	if err != nil {
 		if m.logger != nil {
-			m.logger.Debug("failed to capture terminal output", "error", err)
+			m.logger.Warn("failed to capture terminal output", "error", err)
 		}
 		return
 	}
@@ -680,11 +692,24 @@ func (m *Model) resizeTerminal() {
 		return
 	}
 
-	width := m.width
-	height := m.TerminalPaneHeight()
-	if err := m.terminalProcess.Resize(width, height); err != nil {
+	// Account for the border (2 lines: top and bottom) and header (1 line)
+	// when calculating the tmux pane dimensions. The terminal pane height is
+	// the total visible height, but tmux needs the content area dimensions.
+	paneHeight := m.TerminalPaneHeight()
+	contentHeight := paneHeight - 3 // 2 for border, 1 for header
+	if contentHeight < 3 {
+		contentHeight = 3
+	}
+
+	// Width also needs adjustment for border (2 chars) and padding (2 chars)
+	contentWidth := m.width - 4
+	if contentWidth < 20 {
+		contentWidth = 20
+	}
+
+	if err := m.terminalProcess.Resize(contentWidth, contentHeight); err != nil {
 		if m.logger != nil {
-			m.logger.Warn("failed to resize terminal", "width", width, "height", height, "error", err)
+			m.logger.Warn("failed to resize terminal", "width", contentWidth, "height", contentHeight, "error", err)
 		}
 	}
 }

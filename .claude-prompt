@@ -1,0 +1,2 @@
+The terminal doesn't clearly display user input, nor does it clearly display command output. 
+We should have a fully functional terminal there. It should also be taller; it's currently too short to be useful. 
