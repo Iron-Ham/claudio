@@ -174,3 +174,43 @@ func CleanupStaleLocks(baseDir string) ([]string, error) {
 
 	return cleaned, nil
 }
+
+// TruncateID safely truncates a session ID to maxLen characters.
+// If the ID is shorter than maxLen, returns the full ID.
+func TruncateID(id string, maxLen int) string {
+	if len(id) <= maxLen {
+		return id
+	}
+	return id[:maxLen]
+}
+
+// FindEmptySessions returns all unlocked sessions with 0 instances.
+func FindEmptySessions(baseDir string) ([]*Info, error) {
+	sessions, err := ListSessions(baseDir)
+	if err != nil {
+		return nil, err
+	}
+
+	var empty []*Info
+	for _, s := range sessions {
+		if !s.IsLocked && s.InstanceCount == 0 {
+			empty = append(empty, s)
+		}
+	}
+
+	return empty, nil
+}
+
+// RemoveSession removes a session directory entirely.
+// Returns an error if the session is locked.
+func RemoveSession(baseDir, sessionID string) error {
+	sessionDir := GetSessionDir(baseDir, sessionID)
+
+	// Check if session is locked before removing
+	_, isLocked := IsLocked(sessionDir)
+	if isLocked {
+		return os.ErrPermission
+	}
+
+	return os.RemoveAll(sessionDir)
+}
