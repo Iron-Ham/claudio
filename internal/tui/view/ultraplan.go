@@ -1066,7 +1066,7 @@ func (v *UltraplanView) RenderHelp() string {
 	}
 
 	// Common keys
-	keys = append(keys, "[q] quit")
+	keys = append(keys, "[:q] quit")
 	keys = append(keys, "[↑↓] nav")
 
 	// Phase-specific keys
