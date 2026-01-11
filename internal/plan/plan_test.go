@@ -176,3 +176,134 @@ func TestTruncateTitle(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateGroupTitle(t *testing.T) {
+	tests := []struct {
+		name     string
+		groupNum int
+		taskIDs  []string
+		plan     *orchestrator.PlanSpec
+		want     string
+	}{
+		{
+			name:     "empty tasks",
+			groupNum: 1,
+			taskIDs:  []string{},
+			plan:     &orchestrator.PlanSpec{Tasks: []orchestrator.PlannedTask{}},
+			want:     "Tasks",
+		},
+		{
+			name:     "majority extract prefix",
+			groupNum: 1,
+			taskIDs:  []string{"task-1", "task-2", "task-3"},
+			plan: &orchestrator.PlanSpec{
+				Tasks: []orchestrator.PlannedTask{
+					{ID: "task-1", Title: "Extract component A"},
+					{ID: "task-2", Title: "Extract component B"},
+					{ID: "task-3", Title: "Extract component C"},
+				},
+			},
+			want: "Extract Components",
+		},
+		{
+			name:     "majority implement prefix",
+			groupNum: 2,
+			taskIDs:  []string{"task-1", "task-2"},
+			plan: &orchestrator.PlanSpec{
+				Tasks: []orchestrator.PlannedTask{
+					{ID: "task-1", Title: "Implement feature X"},
+					{ID: "task-2", Title: "Implement feature Y"},
+				},
+			},
+			want: "Implement Components",
+		},
+		{
+			name:     "no common prefix - group 1 fallback",
+			groupNum: 1,
+			taskIDs:  []string{"task-1", "task-2"},
+			plan: &orchestrator.PlanSpec{
+				Tasks: []orchestrator.PlannedTask{
+					{ID: "task-1", Title: "Setup environment"},
+					{ID: "task-2", Title: "Configure database"},
+				},
+			},
+			want: "Foundation",
+		},
+		{
+			name:     "no common prefix - group 2 fallback",
+			groupNum: 2,
+			taskIDs:  []string{"task-1", "task-2"},
+			plan: &orchestrator.PlanSpec{
+				Tasks: []orchestrator.PlannedTask{
+					{ID: "task-1", Title: "Add tests"},
+					{ID: "task-2", Title: "Update docs"},
+				},
+			},
+			want: "Core Implementation",
+		},
+		{
+			name:     "no common prefix - group 3 fallback",
+			groupNum: 3,
+			taskIDs:  []string{"task-1", "task-2"},
+			plan: &orchestrator.PlanSpec{
+				Tasks: []orchestrator.PlannedTask{
+					{ID: "task-1", Title: "Final review"},
+					{ID: "task-2", Title: "Integration check"},
+				},
+			},
+			want: "Integration",
+		},
+		{
+			name:     "no common prefix - group 4+ fallback",
+			groupNum: 4,
+			taskIDs:  []string{"task-1", "task-2"},
+			plan: &orchestrator.PlanSpec{
+				Tasks: []orchestrator.PlannedTask{
+					{ID: "task-1", Title: "Cleanup code"},
+					{ID: "task-2", Title: "Deploy changes"},
+				},
+			},
+			want: "Phase 4",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := generateGroupTitle(tt.groupNum, tt.taskIDs, tt.plan)
+			if got != tt.want {
+				t.Errorf("generateGroupTitle() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGenerateGroupSummary(t *testing.T) {
+	tests := []struct {
+		name      string
+		groupIdx  int
+		taskCount int
+		wantStart string // check that it starts with expected text
+	}{
+		{
+			name:      "first group - no dependencies",
+			groupIdx:  0,
+			taskCount: 5,
+			wantStart: "This group contains 5 tasks that can start immediately",
+		},
+		{
+			name:      "later group - has dependencies",
+			groupIdx:  1,
+			taskCount: 3,
+			wantStart: "This group contains 3 tasks that depend on",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := generateGroupSummary(tt.groupIdx, tt.taskCount)
+			if !containsString(got, tt.wantStart) {
+				t.Errorf("generateGroupSummary() = %q, want to contain %q", got, tt.wantStart)
+			}
+		})
+	}
+}
