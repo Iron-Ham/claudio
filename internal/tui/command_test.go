@@ -514,7 +514,7 @@ func TestCommandAliasesRequiringInstance(t *testing.T) {
 		"D", "remove",
 		"kill",
 		// Utilities
-		"tmux", // Note: :t is now a normal mode key for terminal, not a command
+		"tmux", // Note: :t is now terminal focus, not an alias for tmux
 		"r", "pr",
 	}
 
@@ -561,6 +561,72 @@ func TestConflictsCommandRequiresConflicts(t *testing.T) {
 
 		if model.infoMessage == "" {
 			t.Error("expected info message when no conflicts exist")
+		}
+	})
+}
+
+func TestTerminalFocusCommand(t *testing.T) {
+	t.Run("t command attempts focus when terminal visible", func(t *testing.T) {
+		// Note: enterTerminalMode() requires a running terminal process to actually
+		// set terminalMode=true. This test verifies the command path is correct.
+		m := Model{
+			terminalVisible: true,
+			terminalMode:    false,
+		}
+		result, _ := m.executeCommand("t")
+		model := result.(Model)
+
+		// Should show info message (even without running process)
+		if model.infoMessage == "" {
+			t.Error("expected info message about terminal focus")
+		}
+		if model.errorMessage != "" {
+			t.Errorf("unexpected error message: %q", model.errorMessage)
+		}
+	})
+
+	t.Run("t command shows error when terminal not visible", func(t *testing.T) {
+		m := Model{
+			terminalVisible: false,
+			terminalMode:    false,
+		}
+		result, _ := m.executeCommand("t")
+		model := result.(Model)
+
+		if model.terminalMode {
+			t.Error("expected terminalMode to remain false when terminal not visible")
+		}
+		if model.errorMessage == "" {
+			t.Error("expected error message when terminal not visible")
+		}
+	})
+
+	t.Run("t key in normal mode does NOT enter terminal mode", func(t *testing.T) {
+		// This is a regression test to ensure 't' key doesn't trigger terminal mode
+		// directly - it should only work via command mode (:t)
+		m := Model{
+			terminalVisible: true,
+			terminalMode:    false,
+			commandMode:     false,
+		}
+
+		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}}
+		result, _ := m.handleKeypress(msg)
+		model := result.(Model)
+
+		if model.terminalMode {
+			t.Error("expected terminalMode to remain false - 't' key should not trigger terminal mode in normal mode")
+		}
+	})
+
+	t.Run("t command is recognized as valid command", func(t *testing.T) {
+		m := Model{}
+		result, _ := m.executeCommand("t")
+		model := result.(Model)
+
+		// Should NOT be an unknown command error
+		if model.errorMessage != "" && len(model.errorMessage) >= 7 && model.errorMessage[:7] == "Unknown" {
+			t.Error("command 't' was not recognized")
 		}
 	})
 }

@@ -749,13 +749,6 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toggleTerminalVisibility(sessionID)
 		return m, nil
 
-	case "t":
-		// Enter terminal mode (if terminal is visible)
-		if m.terminalVisible {
-			m.enterTerminalMode()
-		}
-		return m, nil
-
 	case "ctrl+shift+t":
 		// Switch terminal directory mode (worktree <-> invocation)
 		if m.terminalVisible {
@@ -1069,6 +1062,15 @@ func (m Model) executeCommand(cmd string) (tea.Model, tea.Cmd) {
 		return m.cmdPR()
 
 	// Terminal pane commands
+	case "t":
+		// Enter terminal mode (focus terminal for typing)
+		if m.terminalVisible {
+			m.enterTerminalMode()
+			m.infoMessage = "Terminal focused. Press Ctrl+] to exit."
+		} else {
+			m.errorMessage = "Terminal not visible. Use :term to open it first."
+		}
+		return m, nil
 	case "term", "terminal":
 		return m.cmdTerminal()
 	case "termdir worktree", "termdir wt":
@@ -1384,7 +1386,7 @@ func (m Model) cmdTerminal() (tea.Model, tea.Cmd) {
 	}
 	m.toggleTerminalVisibility(sessionID)
 	if m.terminalVisible {
-		m.infoMessage = "Terminal pane opened. Press [t] to focus, [`] to hide."
+		m.infoMessage = "Terminal pane opened. Press [:t] to focus, [`] to hide."
 	} else {
 		m.infoMessage = "Terminal pane closed."
 	}
@@ -2656,12 +2658,19 @@ View Commands:
   :m :stats      Toggle metrics panel (tokens, cost, timing)
   :c :conflicts  Toggle conflict view (show merge conflicts)
   :f :filter     Open filter panel (filter output by category)
-  :t :tmux       Show tmux attach command for direct access
+  :tmux          Show tmux attach command for direct access
   :r :pr         Show PR creation command for the instance
 
 Session Commands:
   :h :help       Toggle this help panel
   :q :quit       Quit Claudio (instances continue in tmux)
+
+Terminal Pane:
+  Backtick       Toggle terminal pane visibility
+  :term          Toggle terminal pane (same as backtick)
+  :t             Focus terminal pane for typing
+  Ctrl+]         Exit terminal typing mode
+  Ctrl+Shift+T   Switch terminal directory (worktree/invocation)
 
 Input Mode:
   i / Enter      Enter input mode (interact with Claude)
@@ -2897,7 +2906,7 @@ func (m Model) renderHelp() string {
 
 	// Add terminal key based on visibility
 	if m.terminalVisible {
-		keys = append(keys, styles.HelpKey.Render("[t]")+" term "+styles.HelpKey.Render("[`]")+" hide")
+		keys = append(keys, styles.HelpKey.Render("[:t]")+" term "+styles.HelpKey.Render("[`]")+" hide")
 	} else {
 		keys = append(keys, styles.HelpKey.Render("[`]")+" term")
 	}
