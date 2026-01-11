@@ -2165,7 +2165,7 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	}
 
 	instanceView := view.NewInstanceView(width, m.getOutputMaxLines())
-	return instanceView.Render(inst, renderState)
+	return instanceView.RenderWithSession(inst, renderState, m.session)
 }
 
 // renderFilterPanel renders the filter configuration panel

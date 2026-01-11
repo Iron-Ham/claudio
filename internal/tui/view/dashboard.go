@@ -150,13 +150,25 @@ func (dv *DashboardView) renderSidebarInstance(
 	statusColor := styles.StatusColor(string(inst.Status))
 	dot := lipgloss.NewStyle().Foreground(statusColor).Render("●")
 
-	// Instance number and truncated task
-	maxTaskLen := max(width-8, 10) // Account for number, dot, padding
-	label := fmt.Sprintf("%d %s", i+1, truncate(inst.Task, maxTaskLen))
+	// Build prefix icons
+	prefix := ""
+	prefixLen := 0
+
 	// Add conflict indicator if instance has conflicts
 	if conflictingInstances[inst.ID] {
-		label = fmt.Sprintf("%d ⚠ %s", i+1, truncate(inst.Task, maxTaskLen-2))
+		prefix += "⚠ "
+		prefixLen += 2
 	}
+
+	// Add chain indicator if instance has dependencies (waiting for others)
+	if len(inst.DependsOn) > 0 && inst.Status == orchestrator.StatusPending {
+		prefix += "⛓ " // Chain icon to indicate waiting for dependencies
+		prefixLen += 2
+	}
+
+	// Instance number and truncated task
+	maxTaskLen := max(width-8-prefixLen, 10) // Account for number, dot, prefix, padding
+	label := fmt.Sprintf("%d %s%s", i+1, prefix, truncate(inst.Task, maxTaskLen))
 
 	// Choose style based on active state and status
 	var itemStyle lipgloss.Style

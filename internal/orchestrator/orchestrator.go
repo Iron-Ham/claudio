@@ -549,6 +549,141 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 	return inst, nil
 }
 
+// AddInstanceWithDependencies adds a new Claude instance with dependencies on other instances.
+// The instance will be created in pending state. If autoStart is true, the orchestrator
+// will automatically start the instance when all dependencies complete.
+// Dependencies can be specified by instance ID or task name (partial match).
+func (o *Orchestrator) AddInstanceWithDependencies(session *Session, task string, dependsOn []string, autoStart bool) (*Instance, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Resolve dependency references to instance IDs
+	resolvedDeps := make([]string, 0, len(dependsOn))
+	for _, depRef := range dependsOn {
+		depInst, err := o.resolveInstanceReference(session, depRef)
+		if err != nil {
+			return nil, fmt.Errorf("invalid dependency %q: %w", depRef, err)
+		}
+		resolvedDeps = append(resolvedDeps, depInst.ID)
+	}
+
+	// Create instance
+	inst := NewInstance(task)
+	inst.DependsOn = resolvedDeps
+	inst.AutoStart = autoStart
+
+	// Generate branch name from task using configured naming convention
+	branchSlug := slugify(task)
+	inst.Branch = o.generateBranchName(inst.ID, branchSlug)
+
+	// Create worktree
+	wtPath := filepath.Join(o.worktreeDir, inst.ID)
+	if err := o.wt.Create(wtPath, inst.Branch); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to create worktree",
+				"instance_id", inst.ID,
+				"worktree_path", wtPath,
+				"error", err,
+			)
+		}
+		return nil, fmt.Errorf("failed to create worktree: %w", err)
+	}
+	inst.WorktreePath = wtPath
+
+	// Update dependents lists on parent instances
+	for _, depID := range resolvedDeps {
+		for _, existing := range session.Instances {
+			if existing.ID == depID {
+				existing.Dependents = append(existing.Dependents, inst.ID)
+				break
+			}
+		}
+	}
+
+	// Add to session
+	session.Instances = append(session.Instances, inst)
+
+	// Create instance manager with config
+	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, task)
+	o.instances[inst.ID] = mgr
+
+	// Register with conflict detector
+	if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
+		if o.logger != nil {
+			o.logger.Debug("failed to watch instance for conflicts",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
+		fmt.Fprintf(os.Stderr, "Warning: failed to watch instance for conflicts: %v\n", err)
+	}
+
+	// Update shared context
+	if err := o.updateContext(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update context: %v\n", err)
+	}
+
+	// Save session
+	if err := o.saveSession(); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to save session after adding instance with dependencies",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
+		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
+	// Log instance added
+	if o.logger != nil {
+		o.logger.Info("instance added with dependencies",
+			"instance_id", inst.ID,
+			"task", truncateString(task, 100),
+			"branch", inst.Branch,
+			"depends_on", resolvedDeps,
+			"auto_start", autoStart,
+		)
+	}
+
+	return inst, nil
+}
+
+// resolveInstanceReference finds an instance by ID or task name substring.
+// Returns an error if no match is found or if multiple instances match a task substring.
+func (o *Orchestrator) resolveInstanceReference(session *Session, ref string) (*Instance, error) {
+	// First try exact ID match (unambiguous)
+	for _, inst := range session.Instances {
+		if inst.ID == ref {
+			return inst, nil
+		}
+	}
+
+	// Try task name substring match (case insensitive)
+	// Collect all matches to detect ambiguity
+	refLower := strings.ToLower(ref)
+	var matches []*Instance
+	for _, inst := range session.Instances {
+		if strings.Contains(strings.ToLower(inst.Task), refLower) {
+			matches = append(matches, inst)
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no instance found matching %q", ref)
+	}
+	if len(matches) > 1 {
+		// Build list of matching instances for error message
+		var matchDescs []string
+		for _, m := range matches {
+			matchDescs = append(matchDescs, fmt.Sprintf("%s (%s)", m.ID, truncateString(m.Task, 30)))
+		}
+		return nil, fmt.Errorf("ambiguous reference %q matches %d instances: %s (use instance ID for exact match)",
+			ref, len(matches), strings.Join(matchDescs, ", "))
+	}
+
+	return matches[0], nil
+}
+
 // AddInstanceToWorktree adds a new instance that uses an existing worktree
 // This is used for revision tasks that need to work in the same worktree as the original task
 func (o *Orchestrator) AddInstanceToWorktree(session *Session, task string, worktreePath string, branch string) (*Instance, error) {
@@ -1296,8 +1431,77 @@ func (o *Orchestrator) handleInstanceExit(id string) {
 			now := time.Now()
 			inst.Metrics.EndTime = &now
 		}
-		_ = o.saveSession()
+		if err := o.saveSession(); err != nil {
+			if o.logger != nil {
+				o.logger.Error("failed to save session after instance exit",
+					"instance_id", id,
+					"error", err,
+				)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: failed to save session: %v\n", err)
+		}
 		o.executeNotification("notifications.on_completion", inst)
+
+		// Check for and start any dependent instances that are now ready
+		o.startReadyDependents(id)
+	}
+}
+
+// startReadyDependents checks all instances that depend on the completed instance
+// and starts any that now have all dependencies met and are marked for auto-start.
+func (o *Orchestrator) startReadyDependents(completedID string) {
+	o.mu.RLock()
+	session := o.session
+	o.mu.RUnlock()
+
+	if session == nil {
+		if o.logger != nil {
+			o.logger.Debug("skipping startReadyDependents: session is nil",
+				"completed_id", completedID,
+			)
+		}
+		return
+	}
+
+	// Get instances that depend on the completed instance
+	dependents := session.GetDependentInstances(completedID)
+	if len(dependents) == 0 {
+		return
+	}
+
+	// Check each dependent to see if it's ready to start
+	for _, dep := range dependents {
+		// Only consider instances that are pending and have auto-start enabled
+		if dep.Status != StatusPending || !dep.AutoStart {
+			continue
+		}
+
+		// Check if all dependencies are now met
+		if !session.AreDependenciesMet(dep) {
+			continue
+		}
+
+		// Start the instance
+		if o.logger != nil {
+			o.logger.Info("auto-starting dependent instance",
+				"instance_id", dep.ID,
+				"completed_dependency", completedID,
+			)
+		}
+
+		// Start asynchronously to avoid blocking
+		go func(inst *Instance) {
+			if err := o.StartInstance(inst); err != nil {
+				if o.logger != nil {
+					o.logger.Error("failed to auto-start dependent instance",
+						"instance_id", inst.ID,
+						"error", err,
+					)
+				}
+				// Notify user via stderr so they know auto-start failed
+				fmt.Fprintf(os.Stderr, "Error: failed to auto-start dependent instance %s: %v\n", inst.ID, err)
+			}
+		}(dep)
 	}
 }
 

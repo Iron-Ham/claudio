@@ -62,6 +62,12 @@ type Instance struct {
 	TmuxSession   string         `json:"tmux_session,omitempty"` // Tmux session name for recovery
 	Metrics       *Metrics       `json:"metrics,omitempty"`
 	Output        []byte         `json:"-"` // Not persisted, runtime only
+
+	// Task chaining support - instances can declare dependencies on other instances
+	// An instance with DependsOn will only auto-start when all dependencies complete
+	DependsOn  []string `json:"depends_on,omitempty"` // Instance IDs this instance depends on
+	Dependents []string `json:"dependents,omitempty"` // Instance IDs that depend on this instance
+	AutoStart  bool     `json:"auto_start,omitempty"` // If true, auto-start when dependencies complete
 }
 
 // Session represents a Claudio work session
@@ -109,6 +115,51 @@ func (s *Session) GetInstance(id string) *Instance {
 		}
 	}
 	return nil
+}
+
+// AreDependenciesMet checks if all dependencies of an instance have completed successfully
+func (s *Session) AreDependenciesMet(inst *Instance) bool {
+	if len(inst.DependsOn) == 0 {
+		return true
+	}
+
+	for _, depID := range inst.DependsOn {
+		dep := s.GetInstance(depID)
+		if dep == nil {
+			// Dependency doesn't exist - treat as not met
+			return false
+		}
+		if dep.Status != StatusCompleted {
+			return false
+		}
+	}
+	return true
+}
+
+// GetDependentInstances returns all instances that depend on the given instance
+func (s *Session) GetDependentInstances(id string) []*Instance {
+	var dependents []*Instance
+	for _, inst := range s.Instances {
+		for _, depID := range inst.DependsOn {
+			if depID == id {
+				dependents = append(dependents, inst)
+				break
+			}
+		}
+	}
+	return dependents
+}
+
+// GetReadyInstances returns all instances that have AutoStart=true,
+// are in pending state, and have all dependencies met
+func (s *Session) GetReadyInstances() []*Instance {
+	var ready []*Instance
+	for _, inst := range s.Instances {
+		if inst.AutoStart && inst.Status == StatusPending && s.AreDependenciesMet(inst) {
+			ready = append(ready, inst)
+		}
+	}
+	return ready
 }
 
 // generateID creates a short random hex ID
