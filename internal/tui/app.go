@@ -2482,7 +2482,7 @@ func (m Model) renderHelp() string {
 				styles.Muted.Render("█") + "  " +
 				styles.HelpKey.Render("[Enter]") + " execute  " +
 				styles.HelpKey.Render("[Esc]") + " cancel  " +
-				styles.Muted.Render("Type command (e.g., :s :a :d :h)"),
+				styles.Muted.Render("Commands: s/x/e/p/R a/D/C d/m/c/f t/r h/q (or :help)"),
 		)
 	}
 
