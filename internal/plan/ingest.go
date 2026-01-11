@@ -1,11 +1,141 @@
 package plan
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 )
+
+// GitHubIssue represents a GitHub issue with the fields needed for plan ingestion.
+type GitHubIssue struct {
+	Number int      `json:"number"`
+	Title  string   `json:"title"`
+	Body   string   `json:"body"`
+	Labels []string `json:"labels"`
+}
+
+// labelJSON is used to unmarshal the nested label objects from gh CLI JSON output.
+type labelJSON struct {
+	Name string `json:"name"`
+}
+
+// ghIssueResponse is the raw JSON structure returned by gh issue view --json.
+type ghIssueResponse struct {
+	Number int         `json:"number"`
+	Title  string      `json:"title"`
+	Body   string      `json:"body"`
+	Labels []labelJSON `json:"labels"`
+}
+
+// CommandExecutor is a function type that executes a command and returns its output.
+// This allows for dependency injection in tests.
+type CommandExecutor func(name string, args ...string) ([]byte, error)
+
+// defaultExecutor runs commands using os/exec.
+var defaultExecutor CommandExecutor = func(name string, args ...string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
+	return cmd.CombinedOutput()
+}
+
+// ErrGHNotInstalled indicates that the gh CLI tool is not installed or not in PATH.
+var ErrGHNotInstalled = errors.New("gh CLI is not installed or not in PATH")
+
+// ErrGHAuthRequired indicates that gh CLI requires authentication.
+var ErrGHAuthRequired = errors.New("gh CLI requires authentication (run 'gh auth login')")
+
+// ErrIssueNotFound indicates that the requested issue does not exist.
+var ErrIssueNotFound = errors.New("issue not found")
+
+// FetchIssue fetches a GitHub issue by owner, repo, and issue number using the gh CLI.
+// It returns a GitHubIssue struct containing the issue data, or an error if the fetch fails.
+//
+// Common errors:
+//   - ErrGHNotInstalled: gh CLI is not installed or not in PATH
+//   - ErrGHAuthRequired: gh CLI requires authentication
+//   - ErrIssueNotFound: the specified issue does not exist
+func FetchIssue(owner, repo string, issueNum int) (*GitHubIssue, error) {
+	return fetchIssueWithExecutor(owner, repo, issueNum, defaultExecutor)
+}
+
+// fetchIssueWithExecutor is the internal implementation that accepts a command executor
+// for testability.
+func fetchIssueWithExecutor(owner, repo string, issueNum int, executor CommandExecutor) (*GitHubIssue, error) {
+	if owner == "" {
+		return nil, fmt.Errorf("owner cannot be empty")
+	}
+	if repo == "" {
+		return nil, fmt.Errorf("repo cannot be empty")
+	}
+	if issueNum <= 0 {
+		return nil, fmt.Errorf("issue number must be positive")
+	}
+
+	repoArg := fmt.Sprintf("%s/%s", owner, repo)
+	args := []string{
+		"issue", "view",
+		strconv.Itoa(issueNum),
+		"--repo", repoArg,
+		"--json", "number,title,body,labels",
+	}
+
+	output, err := executor("gh", args...)
+	if err != nil {
+		return nil, classifyGHError(err, output, issueNum)
+	}
+
+	var response ghIssueResponse
+	if err := json.Unmarshal(output, &response); err != nil {
+		return nil, fmt.Errorf("failed to parse gh output: %w", err)
+	}
+
+	// Convert labels from nested JSON structure to simple string slice
+	labels := make([]string, len(response.Labels))
+	for i, label := range response.Labels {
+		labels[i] = label.Name
+	}
+
+	return &GitHubIssue{
+		Number: response.Number,
+		Title:  response.Title,
+		Body:   response.Body,
+		Labels: labels,
+	}, nil
+}
+
+// classifyGHError analyzes the error and output from a gh command
+// and returns a more specific error type when possible.
+func classifyGHError(err error, output []byte, issueNum int) error {
+	outStr := strings.ToLower(string(output))
+
+	// Check for "executable file not found" which indicates gh is not installed
+	var execErr *exec.Error
+	if errors.As(err, &execErr) {
+		return ErrGHNotInstalled
+	}
+
+	// Check for common error patterns in output
+	switch {
+	case strings.Contains(outStr, "not logged in") ||
+		strings.Contains(outStr, "authentication required") ||
+		strings.Contains(outStr, "gh auth login"):
+		return ErrGHAuthRequired
+
+	case strings.Contains(outStr, "could not find issue") ||
+		strings.Contains(outStr, "issue not found") ||
+		strings.Contains(outStr, "not found"):
+		return fmt.Errorf("%w: #%d", ErrIssueNotFound, issueNum)
+
+	case strings.Contains(outStr, "could not resolve to a repository"):
+		return fmt.Errorf("repository not found or not accessible")
+	}
+
+	// Return the original error with output for debugging
+	return fmt.Errorf("gh command failed: %w\n%s", err, string(output))
+}
 
 // GitHub issue URL patterns
 var (

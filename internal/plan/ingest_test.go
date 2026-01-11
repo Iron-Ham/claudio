@@ -1,12 +1,396 @@
 package plan
 
 import (
+	"errors"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 )
+
+// =============================================================================
+// GitHub Issue Fetcher Tests (task-2-fetch-issue)
+// =============================================================================
+
+// mockExecutor creates a CommandExecutor that returns predefined output or error.
+func mockExecutor(output []byte, err error) CommandExecutor {
+	return func(name string, args ...string) ([]byte, error) {
+		return output, err
+	}
+}
+
+// mockExecutorWithValidation creates a CommandExecutor that validates the arguments
+// and returns predefined output.
+func mockExecutorWithValidation(
+	t *testing.T,
+	expectedArgs []string,
+	output []byte,
+	err error,
+) CommandExecutor {
+	return func(name string, args ...string) ([]byte, error) {
+		if name != "gh" {
+			t.Errorf("expected command 'gh', got %q", name)
+		}
+		if !reflect.DeepEqual(args, expectedArgs) {
+			t.Errorf("args mismatch:\ngot:  %v\nwant: %v", args, expectedArgs)
+		}
+		return output, err
+	}
+}
+
+func TestFetchIssue_Success(t *testing.T) {
+	// Simulate successful gh CLI response
+	jsonResponse := `{
+		"number": 42,
+		"title": "Test Issue Title",
+		"body": "This is the issue body with **markdown**.",
+		"labels": [
+			{"name": "bug"},
+			{"name": "priority-high"}
+		]
+	}`
+
+	executor := mockExecutorWithValidation(t,
+		[]string{"issue", "view", "42", "--repo", "owner/repo", "--json", "number,title,body,labels"},
+		[]byte(jsonResponse),
+		nil,
+	)
+
+	issue, err := fetchIssueWithExecutor("owner", "repo", 42, executor)
+	if err != nil {
+		t.Fatalf("FetchIssue() unexpected error: %v", err)
+	}
+
+	if issue.Number != 42 {
+		t.Errorf("Number = %d, want 42", issue.Number)
+	}
+	if issue.Title != "Test Issue Title" {
+		t.Errorf("Title = %q, want %q", issue.Title, "Test Issue Title")
+	}
+	if issue.Body != "This is the issue body with **markdown**." {
+		t.Errorf("Body = %q, want %q", issue.Body, "This is the issue body with **markdown**.")
+	}
+	expectedLabels := []string{"bug", "priority-high"}
+	if !reflect.DeepEqual(issue.Labels, expectedLabels) {
+		t.Errorf("Labels = %v, want %v", issue.Labels, expectedLabels)
+	}
+}
+
+func TestFetchIssue_NoLabels(t *testing.T) {
+	jsonResponse := `{
+		"number": 1,
+		"title": "Simple Issue",
+		"body": "Body text",
+		"labels": []
+	}`
+
+	executor := mockExecutor([]byte(jsonResponse), nil)
+	issue, err := fetchIssueWithExecutor("owner", "repo", 1, executor)
+	if err != nil {
+		t.Fatalf("FetchIssue() unexpected error: %v", err)
+	}
+
+	if len(issue.Labels) != 0 {
+		t.Errorf("Labels should be empty, got %v", issue.Labels)
+	}
+}
+
+func TestFetchIssue_EmptyBody(t *testing.T) {
+	jsonResponse := `{
+		"number": 5,
+		"title": "Issue with empty body",
+		"body": "",
+		"labels": []
+	}`
+
+	executor := mockExecutor([]byte(jsonResponse), nil)
+	issue, err := fetchIssueWithExecutor("owner", "repo", 5, executor)
+	if err != nil {
+		t.Fatalf("FetchIssue() unexpected error: %v", err)
+	}
+
+	if issue.Body != "" {
+		t.Errorf("Body should be empty, got %q", issue.Body)
+	}
+}
+
+func TestFetchIssue_ValidationErrors(t *testing.T) {
+	executor := mockExecutor(nil, nil)
+
+	tests := []struct {
+		name      string
+		owner     string
+		repo      string
+		issueNum  int
+		wantError string
+	}{
+		{
+			name:      "empty owner",
+			owner:     "",
+			repo:      "repo",
+			issueNum:  1,
+			wantError: "owner cannot be empty",
+		},
+		{
+			name:      "empty repo",
+			owner:     "owner",
+			repo:      "",
+			issueNum:  1,
+			wantError: "repo cannot be empty",
+		},
+		{
+			name:      "zero issue number",
+			owner:     "owner",
+			repo:      "repo",
+			issueNum:  0,
+			wantError: "issue number must be positive",
+		},
+		{
+			name:      "negative issue number",
+			owner:     "owner",
+			repo:      "repo",
+			issueNum:  -1,
+			wantError: "issue number must be positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := fetchIssueWithExecutor(tt.owner, tt.repo, tt.issueNum, executor)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantError) {
+				t.Errorf("error = %q, want to contain %q", err.Error(), tt.wantError)
+			}
+		})
+	}
+}
+
+func TestFetchIssue_GHNotInstalled(t *testing.T) {
+	// Simulate exec.Error which occurs when the executable is not found
+	execErr := &exec.Error{
+		Name: "gh",
+		Err:  errors.New("executable file not found in $PATH"),
+	}
+	executor := mockExecutor(nil, execErr)
+
+	_, err := fetchIssueWithExecutor("owner", "repo", 1, executor)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrGHNotInstalled) {
+		t.Errorf("error = %v, want ErrGHNotInstalled", err)
+	}
+}
+
+func TestFetchIssue_AuthRequired(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{
+			name:   "not logged in message",
+			output: "error: not logged in to any GitHub hosts",
+		},
+		{
+			name:   "gh auth login prompt",
+			output: "To authenticate, please run `gh auth login`",
+		},
+		{
+			name:   "authentication required",
+			output: "error: authentication required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			executor := mockExecutor([]byte(tt.output), errors.New("exit status 1"))
+
+			_, err := fetchIssueWithExecutor("owner", "repo", 1, executor)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, ErrGHAuthRequired) {
+				t.Errorf("error = %v, want ErrGHAuthRequired", err)
+			}
+		})
+	}
+}
+
+func TestFetchIssue_IssueNotFound(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{
+			name:   "could not find issue",
+			output: "GraphQL: Could not find issue #9999",
+		},
+		{
+			name:   "issue not found",
+			output: "issue not found",
+		},
+		{
+			name:   "generic not found",
+			output: "not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			executor := mockExecutor([]byte(tt.output), errors.New("exit status 1"))
+
+			_, err := fetchIssueWithExecutor("owner", "repo", 9999, executor)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !errors.Is(err, ErrIssueNotFound) {
+				t.Errorf("error = %v, want ErrIssueNotFound", err)
+			}
+		})
+	}
+}
+
+func TestFetchIssue_RepoNotFound(t *testing.T) {
+	output := "GraphQL: Could not resolve to a Repository"
+	executor := mockExecutor([]byte(output), errors.New("exit status 1"))
+
+	_, err := fetchIssueWithExecutor("nonexistent", "repo", 1, executor)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "repository not found") {
+		t.Errorf("error = %q, want to contain 'repository not found'", err.Error())
+	}
+}
+
+func TestFetchIssue_InvalidJSON(t *testing.T) {
+	executor := mockExecutor([]byte("not valid json"), nil)
+
+	_, err := fetchIssueWithExecutor("owner", "repo", 1, executor)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to parse gh output") {
+		t.Errorf("error = %q, want to contain 'failed to parse gh output'", err.Error())
+	}
+}
+
+func TestFetchIssue_GenericError(t *testing.T) {
+	// Test that unrecognized errors are wrapped with output
+	output := "some unexpected error message"
+	executor := mockExecutor([]byte(output), errors.New("exit status 1"))
+
+	_, err := fetchIssueWithExecutor("owner", "repo", 1, executor)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "gh command failed") {
+		t.Errorf("error = %q, want to contain 'gh command failed'", err.Error())
+	}
+	if !strings.Contains(err.Error(), output) {
+		t.Errorf("error = %q, want to contain output %q", err.Error(), output)
+	}
+}
+
+func TestFetchIssue_LargeIssueNumber(t *testing.T) {
+	jsonResponse := `{
+		"number": 99999,
+		"title": "Large number issue",
+		"body": "Body",
+		"labels": []
+	}`
+
+	executor := mockExecutorWithValidation(t,
+		[]string{"issue", "view", "99999", "--repo", "org/project", "--json", "number,title,body,labels"},
+		[]byte(jsonResponse),
+		nil,
+	)
+
+	issue, err := fetchIssueWithExecutor("org", "project", 99999, executor)
+	if err != nil {
+		t.Fatalf("FetchIssue() unexpected error: %v", err)
+	}
+	if issue.Number != 99999 {
+		t.Errorf("Number = %d, want 99999", issue.Number)
+	}
+}
+
+func TestFetchIssue_SpecialCharactersInOwnerRepo(t *testing.T) {
+	jsonResponse := `{
+		"number": 1,
+		"title": "Test",
+		"body": "Body",
+		"labels": []
+	}`
+
+	// Test with hyphens, underscores, and dots which are valid in GitHub owner/repo names
+	executor := mockExecutorWithValidation(t,
+		[]string{"issue", "view", "1", "--repo", "Iron-Ham/my_repo.js", "--json", "number,title,body,labels"},
+		[]byte(jsonResponse),
+		nil,
+	)
+
+	issue, err := fetchIssueWithExecutor("Iron-Ham", "my_repo.js", 1, executor)
+	if err != nil {
+		t.Fatalf("FetchIssue() unexpected error: %v", err)
+	}
+	if issue.Number != 1 {
+		t.Errorf("Number = %d, want 1", issue.Number)
+	}
+}
+
+func TestFetchIssue_ManyLabels(t *testing.T) {
+	jsonResponse := `{
+		"number": 10,
+		"title": "Multi-label issue",
+		"body": "Body",
+		"labels": [
+			{"name": "bug"},
+			{"name": "enhancement"},
+			{"name": "documentation"},
+			{"name": "good first issue"},
+			{"name": "help wanted"}
+		]
+	}`
+
+	executor := mockExecutor([]byte(jsonResponse), nil)
+	issue, err := fetchIssueWithExecutor("owner", "repo", 10, executor)
+	if err != nil {
+		t.Fatalf("FetchIssue() unexpected error: %v", err)
+	}
+
+	expectedLabels := []string{"bug", "enhancement", "documentation", "good first issue", "help wanted"}
+	if !reflect.DeepEqual(issue.Labels, expectedLabels) {
+		t.Errorf("Labels = %v, want %v", issue.Labels, expectedLabels)
+	}
+}
+
+func TestFetchIssue_BodyWithSpecialCharacters(t *testing.T) {
+	// Test that markdown and special characters in body are preserved
+	jsonResponse := `{
+		"number": 7,
+		"title": "Special chars",
+		"body": "## Summary\n\n- Item 1\n- Item 2\n\n**Bold** and *italic*\n\n` + "`code`" + `\n\n> quote",
+		"labels": []
+	}`
+
+	executor := mockExecutor([]byte(jsonResponse), nil)
+	issue, err := fetchIssueWithExecutor("owner", "repo", 7, executor)
+	if err != nil {
+		t.Fatalf("FetchIssue() unexpected error: %v", err)
+	}
+
+	if !strings.Contains(issue.Body, "## Summary") {
+		t.Error("Body should contain markdown headers")
+	}
+	if !strings.Contains(issue.Body, "**Bold**") {
+		t.Error("Body should contain bold markdown")
+	}
+}
 
 // =============================================================================
 // GitHub Issue URL Parser Tests (task-1-url-parser)
