@@ -335,7 +335,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "esc":
 			if m.configModified {
 				m.infoMsg = "Changes saved!"
 			}
@@ -612,7 +612,7 @@ func (m Model) renderHelp() string {
 			keyStyle.Render("tab") + " next category  " +
 			keyStyle.Render("enter/space") + " edit  " +
 			keyStyle.Render("r") + " reset  " +
-			keyStyle.Render("q") + " quit",
+			keyStyle.Render("esc") + " quit",
 	)
 }
 

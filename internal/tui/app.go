@@ -683,17 +683,6 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.commandBuffer = ""
 		return m, nil
 
-	case "q", "ctrl+c":
-		m.quitting = true
-		// Cleanup terminal pane if running
-		m.cleanupTerminal()
-		// Log session end with duration
-		if m.logger != nil {
-			duration := time.Since(m.startTime)
-			m.logger.Info("TUI session ended", "duration_ms", duration.Milliseconds())
-		}
-		return m, tea.Quit
-
 	case "?":
 		m.showHelp = !m.showHelp
 		return m, nil
@@ -2706,7 +2695,7 @@ Input Mode Details:
 
 General:
   ?              Quick toggle help
-  q              Quick quit
+  :q             Quit (via command mode)
   Auto-scroll follows new output. Scroll up to pause,
   press G to resume. "NEW OUTPUT" appears when paused.
 `
@@ -2903,7 +2892,7 @@ func (m Model) renderHelp() string {
 		styles.HelpKey.Render("[i]") + " input",
 		styles.HelpKey.Render("[/]") + " search",
 		styles.HelpKey.Render("[?]") + " help",
-		styles.HelpKey.Render("[q]") + " quit",
+		styles.HelpKey.Render("[:q]") + " quit",
 	}
 
 	// Add terminal key based on visibility
