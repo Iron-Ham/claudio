@@ -253,7 +253,7 @@ func (v *InstanceView) RenderStatusBanner(isRunning, inputMode bool) string {
 		Render("RUNNING")
 	return runningBanner + "  " + styles.Muted.Render("Press ") +
 		styles.HelpKey.Render("[i]") + styles.Muted.Render(" to interact  ") +
-		styles.HelpKey.Render("[t]") + styles.Muted.Render(" for tmux attach cmd")
+		styles.HelpKey.Render("[:tmux]") + styles.Muted.Render(" for tmux attach cmd")
 }
 
 // RenderOutput renders the output area with scrolling support.
