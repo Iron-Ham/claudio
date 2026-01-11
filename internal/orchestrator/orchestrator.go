@@ -417,6 +417,11 @@ func (o *Orchestrator) SessionID() string {
 	return o.sessionID
 }
 
+// BaseDir returns the base directory (where Claudio was invoked)
+func (o *Orchestrator) BaseDir() string {
+	return o.baseDir
+}
+
 // ReleaseLock releases the session lock if one is held.
 // Safe to call multiple times.
 func (o *Orchestrator) ReleaseLock() error {

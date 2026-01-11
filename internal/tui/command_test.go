@@ -514,7 +514,7 @@ func TestCommandAliasesRequiringInstance(t *testing.T) {
 		"D", "remove",
 		"kill",
 		// Utilities
-		"t", "tmux",
+		"tmux", // Note: :t is now a normal mode key for terminal, not a command
 		"r", "pr",
 	}
 
