@@ -24,6 +24,9 @@ type UltraPlanState struct {
 	// Phase-aware navigation state
 	NavigableInstances []string // Ordered list of navigable instance IDs
 	SelectedNavIdx     int      // Index into navigableInstances
+
+	// Group re-trigger mode
+	RetriggerMode bool // When true, next digit key triggers group re-trigger
 }
 
 // RenderContext provides the necessary context for rendering ultraplan views.
@@ -1113,6 +1116,7 @@ func (v *UltraplanView) RenderHelp() string {
 		if len(session.PRUrls) > 0 {
 			keys = append(keys, "[o] open PR")
 		}
+		keys = append(keys, "[R] re-trigger group")
 	}
 
 	return styles.HelpBar.Width(v.ctx.Width).Render(strings.Join(keys, "  "))

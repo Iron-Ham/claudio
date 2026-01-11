@@ -2409,6 +2409,147 @@ func (c *Coordinator) RetryFailedTasks() error {
 	return nil
 }
 
+// RetriggerGroup resets execution state to the specified group index and restarts execution.
+// All state from groups >= targetGroup is cleared, since subsequent groups depend on the
+// re-triggered group's consolidated branch.
+//
+// Preconditions:
+//   - targetGroup must be >= 0 and < number of execution groups
+//   - No tasks currently running (runningCount == 0)
+//   - Not awaiting a group decision
+//
+// This clears:
+//   - CompletedTasks for tasks in groups >= targetGroup
+//   - FailedTasks for tasks in groups >= targetGroup
+//   - TaskToInstance for tasks in groups >= targetGroup
+//   - GroupConsolidatedBranches[>= targetGroup]
+//   - GroupConsolidatorIDs[>= targetGroup]
+//   - GroupConsolidationContexts[>= targetGroup]
+//   - TaskRetries for tasks in groups >= targetGroup
+//   - TaskCommitCounts for tasks in groups >= targetGroup
+//   - Synthesis, Revision, and Consolidation state
+//
+// Note: This method returns nil upon successfully STARTING the retrigger operation.
+// The actual execution happens asynchronously in executionLoop. Errors during execution
+// are communicated via CoordinatorEvent callbacks, not through the return value.
+func (c *Coordinator) RetriggerGroup(targetGroup int) error {
+	session := c.Session()
+	if session == nil || session.Plan == nil {
+		return fmt.Errorf("no plan available")
+	}
+
+	// Validate target group
+	numGroups := len(session.Plan.ExecutionOrder)
+	if targetGroup < 0 || targetGroup >= numGroups {
+		return fmt.Errorf("invalid target group %d (must be 0-%d)", targetGroup, numGroups-1)
+	}
+
+	// Check we're not currently executing tasks
+	c.mu.RLock()
+	runningCount := c.runningCount
+	awaitingDecision := session.GroupDecision != nil && session.GroupDecision.AwaitingDecision
+	c.mu.RUnlock()
+
+	if runningCount > 0 {
+		return fmt.Errorf("cannot retrigger while %d tasks are running", runningCount)
+	}
+
+	if awaitingDecision {
+		return fmt.Errorf("cannot retrigger while awaiting group decision")
+	}
+
+	// Build set of tasks in groups >= targetGroup
+	tasksToReset := make(map[string]bool)
+	for groupIdx := targetGroup; groupIdx < numGroups; groupIdx++ {
+		for _, taskID := range session.Plan.ExecutionOrder[groupIdx] {
+			tasksToReset[taskID] = true
+		}
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Clear CompletedTasks for affected tasks
+	newCompleted := make([]string, 0)
+	for _, taskID := range session.CompletedTasks {
+		if !tasksToReset[taskID] {
+			newCompleted = append(newCompleted, taskID)
+		}
+	}
+	session.CompletedTasks = newCompleted
+
+	// Clear FailedTasks for affected tasks
+	newFailed := make([]string, 0)
+	for _, taskID := range session.FailedTasks {
+		if !tasksToReset[taskID] {
+			newFailed = append(newFailed, taskID)
+		}
+	}
+	session.FailedTasks = newFailed
+
+	// Clear task-related maps for affected tasks
+	for taskID := range tasksToReset {
+		delete(session.TaskToInstance, taskID)
+		delete(session.TaskRetries, taskID)
+		delete(session.TaskCommitCounts, taskID)
+	}
+
+	// Truncate group-related slices
+	if targetGroup < len(session.GroupConsolidatedBranches) {
+		session.GroupConsolidatedBranches = session.GroupConsolidatedBranches[:targetGroup]
+	}
+	if targetGroup < len(session.GroupConsolidatorIDs) {
+		session.GroupConsolidatorIDs = session.GroupConsolidatorIDs[:targetGroup]
+	}
+	if targetGroup < len(session.GroupConsolidationContexts) {
+		session.GroupConsolidationContexts = session.GroupConsolidationContexts[:targetGroup]
+	}
+
+	// Reset CurrentGroup
+	session.CurrentGroup = targetGroup
+
+	// Reset phase to executing
+	session.Phase = PhaseExecuting
+	session.GroupDecision = nil
+	session.Error = ""
+
+	// Clear synthesis/revision/consolidation state
+	session.SynthesisID = ""
+	session.SynthesisCompletion = nil
+	session.SynthesisAwaitingApproval = false
+	session.Revision = nil
+	session.RevisionID = ""
+	session.Consolidation = nil
+	session.ConsolidationID = ""
+	session.PRUrls = nil
+
+	// Log the retrigger
+	c.logger.Info("group retriggered",
+		"target_group", targetGroup,
+		"tasks_reset", len(tasksToReset),
+	)
+
+	// Persist the state - log error but don't fail the operation since state is already modified
+	if err := c.orch.SaveSession(); err != nil {
+		c.logger.Error("failed to persist retrigger state",
+			"target_group", targetGroup,
+			"error", err.Error(),
+		)
+	}
+
+	// Emit event
+	c.manager.emitEvent(CoordinatorEvent{
+		Type:    EventPhaseChange,
+		Message: fmt.Sprintf("Retriggered from group %d", targetGroup),
+	})
+
+	// Restart execution loop
+	c.wg.Add(1)
+	go c.executionLoop()
+
+	return nil
+}
+
 // consolidateGroupWithVerification consolidates a group and verifies commits exist
 func (c *Coordinator) consolidateGroupWithVerification(groupIndex int) error {
 	session := c.Session()
