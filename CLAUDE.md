@@ -31,6 +31,57 @@ golangci-lint run
 
 Address all linting warnings before committing code.
 
+## Architecture & Design Principles
+
+### Single Responsibility
+
+Each package, type, and function should have one clear purpose:
+
+- **Packages** - A package should represent a single concept (e.g., `config`, `worktree`, `tui`)
+- **Types** - A struct should model one thing; avoid "god objects" that do everything
+- **Functions** - A function should do one thing well; if it needs "and" in its description, consider splitting it
+
+### Separation of Concerns
+
+Keep different layers distinct:
+
+- **Domain logic** should not depend on I/O or presentation
+- **I/O operations** (file, network, process) should be isolated behind interfaces
+- **TUI/CLI code** should be thin wrappers that delegate to business logic
+
+### Modular Design
+
+Prefer small, focused packages over large monolithic ones:
+
+- Extract reusable logic into dedicated packages under `internal/`
+- Use interfaces to define boundaries between packages
+- Avoid circular dependencies—if package A imports B, B should not import A
+
+### Dependency Injection
+
+Design for testability by accepting dependencies rather than creating them:
+
+```go
+// Prefer: accepts dependencies
+func NewManager(logger Logger, store Store) *Manager
+
+// Avoid: creates its own dependencies
+func NewManager() *Manager {
+    logger := log.New(...)
+    store := NewFileStore(...)
+}
+```
+
+This makes code easier to test with mocks and more flexible to configure.
+
+### Interface Design
+
+Follow Go idioms for interfaces:
+
+- Define interfaces where they're used, not where they're implemented
+- Keep interfaces small—one or two methods is often ideal
+- Accept interfaces, return concrete types
+
 ### Building
 
 ```bash
