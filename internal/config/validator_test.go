@@ -747,3 +747,87 @@ func TestConfig_Validate_MultipleErrors(t *testing.T) {
 		t.Errorf("expected at least 4 errors, got %d: %v", len(errs), errs)
 	}
 }
+
+func TestConfig_Validate_Paths(t *testing.T) {
+	t.Run("empty worktree dir is valid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.WorktreeDir = ""
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if err.Field == "paths.worktree_dir" {
+				t.Errorf("empty worktree_dir should be valid: %v", err)
+			}
+		}
+	})
+
+	t.Run("valid absolute path", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.WorktreeDir = "/custom/worktrees"
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if err.Field == "paths.worktree_dir" {
+				t.Errorf("absolute path should be valid: %v", err)
+			}
+		}
+	})
+
+	t.Run("valid relative path", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.WorktreeDir = "my-worktrees"
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if err.Field == "paths.worktree_dir" {
+				t.Errorf("relative path should be valid: %v", err)
+			}
+		}
+	})
+
+	t.Run("valid tilde path", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.WorktreeDir = "~/claudio-worktrees"
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if err.Field == "paths.worktree_dir" {
+				t.Errorf("tilde path should be valid: %v", err)
+			}
+		}
+	})
+
+	t.Run("path with null byte is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.WorktreeDir = "/path/with\x00null"
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "paths.worktree_dir" && strings.Contains(err.Message, "null") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for path with null byte")
+		}
+	})
+
+	t.Run("excessively long path is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.WorktreeDir = "/" + strings.Repeat("a", 5000)
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "paths.worktree_dir" && strings.Contains(err.Message, "length") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for excessively long path")
+		}
+	})
+}
