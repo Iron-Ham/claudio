@@ -147,6 +147,7 @@ func classifyGHError(err error, output []byte, issueNum int) error {
 	return fmt.Errorf("gh command failed: %w\n%s", err, string(output))
 }
 
+
 // GitHub issue URL patterns
 var (
 	// githubFullURLRegex matches full GitHub issue URLs like:
