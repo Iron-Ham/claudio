@@ -8,14 +8,20 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+
+	"github.com/Iron-Ham/claudio/internal/orchestrator"
 )
 
 // GitHubIssue represents a GitHub issue with the fields needed for plan ingestion.
+// This struct is populated from the `gh` CLI or GitHub API response.
 type GitHubIssue struct {
-	Number int      `json:"number"`
-	Title  string   `json:"title"`
-	Body   string   `json:"body"`
-	Labels []string `json:"labels"`
+	Number int      `json:"number"` // Issue number (e.g., 42)
+	Title  string   `json:"title"`  // Issue title
+	Body   string   `json:"body"`   // Issue body (markdown content)
+	Labels []string `json:"labels"` // Issue labels (used by gh CLI)
+	URL    string   `json:"url"`    // Full GitHub issue URL (e.g., https://github.com/owner/repo/issues/42)
+	State  string   `json:"state"`  // Issue state ("open", "closed")
 }
 
 // labelJSON is used to unmarshal the nested label objects from gh CLI JSON output.
@@ -29,6 +35,8 @@ type ghIssueResponse struct {
 	Title  string      `json:"title"`
 	Body   string      `json:"body"`
 	Labels []labelJSON `json:"labels"`
+	URL    string      `json:"url"`
+	State  string      `json:"state"`
 }
 
 // CommandExecutor is a function type that executes a command and returns its output.
@@ -79,7 +87,7 @@ func fetchIssueWithExecutor(owner, repo string, issueNum int, executor CommandEx
 		"issue", "view",
 		strconv.Itoa(issueNum),
 		"--repo", repoArg,
-		"--json", "number,title,body,labels",
+		"--json", "number,title,body,labels,url,state",
 	}
 
 	output, err := executor("gh", args...)
@@ -103,6 +111,8 @@ func fetchIssueWithExecutor(owner, repo string, issueNum int, executor CommandEx
 		Title:  response.Title,
 		Body:   response.Body,
 		Labels: labels,
+		URL:    response.URL,
+		State:  response.State,
 	}, nil
 }
 
@@ -554,4 +564,165 @@ func parseParentReference(body string) (int, error) {
 	}
 
 	return num, nil
+}
+
+// =============================================================================
+// GitHub Issue to PlannedTask Conversion (task-6-issue-to-task)
+// =============================================================================
+
+// ConvertToPlannedTask converts a parsed GitHub sub-issue into an orchestrator.PlannedTask.
+// It uses the issue metadata and parsed content to construct a complete PlannedTask
+// suitable for ultraplan execution.
+//
+// Parameters:
+//   - issue: The GitHub issue metadata (number, title, URL, etc.)
+//   - content: The parsed content from the issue body (task description, files, dependencies, complexity)
+//   - issueNumToTaskID: A mapping from issue numbers to task IDs, used to resolve dependency references
+//
+// The function:
+//   - Generates a task ID from the issue number and title (e.g., "task-42-add-auth")
+//   - Maps dependency issue numbers to their corresponding task IDs
+//   - Converts the complexity string to the appropriate TaskComplexity enum
+//   - Sets the IssueURL field to link back to the original GitHub issue
+func ConvertToPlannedTask(issue GitHubIssue, content SubIssueContent, issueNumToTaskID map[int]string) (orchestrator.PlannedTask, error) {
+	// Validate required fields
+	if issue.Number <= 0 {
+		return orchestrator.PlannedTask{}, fmt.Errorf("invalid issue number: %d", issue.Number)
+	}
+	if issue.Title == "" {
+		return orchestrator.PlannedTask{}, fmt.Errorf("issue title is required")
+	}
+	if content.Description == "" {
+		return orchestrator.PlannedTask{}, fmt.Errorf("task description is required")
+	}
+
+	// Generate the task ID from issue number and title
+	taskID := GenerateTaskID(issue.Number, issue.Title)
+
+	// Map dependency issue numbers to task IDs
+	dependsOn, err := MapDependenciesToTaskIDs(content.DependencyIssueNums, issueNumToTaskID)
+	if err != nil {
+		return orchestrator.PlannedTask{}, fmt.Errorf("failed to map dependencies: %w", err)
+	}
+
+	// Convert complexity string to TaskComplexity
+	complexity, err := ParseTaskComplexity(content.Complexity)
+	if err != nil {
+		return orchestrator.PlannedTask{}, fmt.Errorf("failed to parse complexity: %w", err)
+	}
+
+	// Construct the PlannedTask
+	task := orchestrator.PlannedTask{
+		ID:            taskID,
+		Title:         issue.Title,
+		Description:   content.Description,
+		Files:         content.Files,
+		DependsOn:     dependsOn,
+		Priority:      0, // Priority will be determined by execution order during plan construction
+		EstComplexity: complexity,
+		IssueURL:      issue.URL,
+	}
+
+	return task, nil
+}
+
+// GenerateTaskID creates a task ID from an issue number and title.
+// The format is: task-<number>-<slug>
+// where slug is a lowercase, hyphenated version of the title with:
+//   - All non-alphanumeric characters converted to hyphens
+//   - Multiple consecutive hyphens collapsed to single hyphens
+//   - Leading/trailing hyphens removed
+//   - Maximum length of 50 characters for the slug portion
+//
+// Examples:
+//   - (42, "Add user authentication") -> "task-42-add-user-authentication"
+//   - (123, "Fix bug #456") -> "task-123-fix-bug-456"
+//   - (1, "   Multiple   Spaces   ") -> "task-1-multiple-spaces"
+func GenerateTaskID(issueNum int, title string) string {
+	slug := slugify(title, 50)
+	return fmt.Sprintf("task-%d-%s", issueNum, slug)
+}
+
+// slugify converts a string to a URL-friendly slug.
+// It lowercases the input, replaces non-alphanumeric characters with hyphens,
+// collapses multiple hyphens, and trims leading/trailing hyphens.
+// The maxLen parameter limits the slug length (0 for no limit).
+func slugify(s string, maxLen int) string {
+	if s == "" {
+		return ""
+	}
+
+	// Convert to lowercase
+	s = strings.ToLower(s)
+
+	// Build result with only alphanumeric characters and hyphens
+	var result strings.Builder
+	lastWasHyphen := true // Start as true to avoid leading hyphen
+
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			result.WriteRune(r)
+			lastWasHyphen = false
+		} else if !lastWasHyphen {
+			// Non-alphanumeric: add hyphen if we haven't just added one
+			result.WriteRune('-')
+			lastWasHyphen = true
+		}
+	}
+
+	slug := result.String()
+
+	// Trim trailing hyphen
+	slug = strings.TrimRight(slug, "-")
+
+	// Apply max length limit if specified
+	if maxLen > 0 && len(slug) > maxLen {
+		slug = slug[:maxLen]
+		// Remove any trailing hyphen after truncation
+		slug = strings.TrimRight(slug, "-")
+	}
+
+	return slug
+}
+
+// MapDependenciesToTaskIDs converts a list of issue numbers to their corresponding task IDs.
+// It uses the provided mapping to look up each dependency.
+// Returns an error if any dependency issue number is not found in the mapping.
+func MapDependenciesToTaskIDs(issueNums []int, issueNumToTaskID map[int]string) ([]string, error) {
+	if len(issueNums) == 0 {
+		return nil, nil
+	}
+
+	taskIDs := make([]string, 0, len(issueNums))
+	var missingDeps []int
+
+	for _, issueNum := range issueNums {
+		taskID, ok := issueNumToTaskID[issueNum]
+		if !ok {
+			missingDeps = append(missingDeps, issueNum)
+			continue
+		}
+		taskIDs = append(taskIDs, taskID)
+	}
+
+	if len(missingDeps) > 0 {
+		return nil, fmt.Errorf("dependency issue(s) not found in mapping: %v", missingDeps)
+	}
+
+	return taskIDs, nil
+}
+
+// ParseTaskComplexity converts a complexity string to orchestrator.TaskComplexity.
+// Valid values are "low", "medium", and "high" (case-insensitive).
+func ParseTaskComplexity(complexity string) (orchestrator.TaskComplexity, error) {
+	switch strings.ToLower(strings.TrimSpace(complexity)) {
+	case "low":
+		return orchestrator.ComplexityLow, nil
+	case "medium":
+		return orchestrator.ComplexityMedium, nil
+	case "high":
+		return orchestrator.ComplexityHigh, nil
+	default:
+		return "", fmt.Errorf("invalid complexity value: %q (expected low, medium, or high)", complexity)
+	}
 }

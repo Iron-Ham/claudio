@@ -53,7 +53,7 @@ func TestFetchIssue_Success(t *testing.T) {
 	}`
 
 	executor := mockExecutorWithValidation(t,
-		[]string{"issue", "view", "42", "--repo", "owner/repo", "--json", "number,title,body,labels"},
+		[]string{"issue", "view", "42", "--repo", "owner/repo", "--json", "number,title,body,labels,url,state"},
 		[]byte(jsonResponse),
 		nil,
 	)
@@ -305,7 +305,7 @@ func TestFetchIssue_LargeIssueNumber(t *testing.T) {
 	}`
 
 	executor := mockExecutorWithValidation(t,
-		[]string{"issue", "view", "99999", "--repo", "org/project", "--json", "number,title,body,labels"},
+		[]string{"issue", "view", "99999", "--repo", "org/project", "--json", "number,title,body,labels,url,state"},
 		[]byte(jsonResponse),
 		nil,
 	)
@@ -329,7 +329,7 @@ func TestFetchIssue_SpecialCharactersInOwnerRepo(t *testing.T) {
 
 	// Test with hyphens, underscores, and dots which are valid in GitHub owner/repo names
 	executor := mockExecutorWithValidation(t,
-		[]string{"issue", "view", "1", "--repo", "Iron-Ham/my_repo.js", "--json", "number,title,body,labels"},
+		[]string{"issue", "view", "1", "--repo", "Iron-Ham/my_repo.js", "--json", "number,title,body,labels,url,state"},
 		[]byte(jsonResponse),
 		nil,
 	)
@@ -1931,5 +1931,678 @@ Estimated: **low**
 
 	if content.Files != nil {
 		t.Errorf("Expected nil files, got %v", content.Files)
+	}
+}
+
+// =============================================================================
+// Issue to PlannedTask Conversion Tests (task-6-issue-to-task)
+// =============================================================================
+
+func TestConvertToPlannedTask(t *testing.T) {
+	tests := []struct {
+		name             string
+		issue            GitHubIssue
+		content          SubIssueContent
+		issueNumToTaskID map[int]string
+		wantTask         orchestrator.PlannedTask
+		wantErr          bool
+		errContains      string
+	}{
+		{
+			name: "basic conversion with all fields",
+			issue: GitHubIssue{
+				Number: 42,
+				Title:  "Add user authentication",
+				Body:   "## Task\n\nImplement auth...",
+				URL:    "https://github.com/owner/repo/issues/42",
+				State:  "open",
+			},
+			content: SubIssueContent{
+				Description:         "Implement user authentication with JWT tokens.",
+				Files:               []string{"auth/jwt.go", "auth/middleware.go"},
+				DependencyIssueNums: []int{10, 11},
+				Complexity:          "medium",
+				ParentIssueNum:      100,
+			},
+			issueNumToTaskID: map[int]string{
+				10: "task-10-setup-database",
+				11: "task-11-create-models",
+			},
+			wantTask: orchestrator.PlannedTask{
+				ID:            "task-42-add-user-authentication",
+				Title:         "Add user authentication",
+				Description:   "Implement user authentication with JWT tokens.",
+				Files:         []string{"auth/jwt.go", "auth/middleware.go"},
+				DependsOn:     []string{"task-10-setup-database", "task-11-create-models"},
+				Priority:      0,
+				EstComplexity: orchestrator.ComplexityMedium,
+				IssueURL:      "https://github.com/owner/repo/issues/42",
+			},
+			wantErr: false,
+		},
+		{
+			name: "minimal conversion without dependencies or files",
+			issue: GitHubIssue{
+				Number: 1,
+				Title:  "Setup project",
+				URL:    "https://github.com/owner/repo/issues/1",
+			},
+			content: SubIssueContent{
+				Description:    "Initialize the project structure.",
+				Complexity:     "low",
+				ParentIssueNum: 100,
+			},
+			issueNumToTaskID: map[int]string{},
+			wantTask: orchestrator.PlannedTask{
+				ID:            "task-1-setup-project",
+				Title:         "Setup project",
+				Description:   "Initialize the project structure.",
+				Files:         nil,
+				DependsOn:     nil,
+				Priority:      0,
+				EstComplexity: orchestrator.ComplexityLow,
+				IssueURL:      "https://github.com/owner/repo/issues/1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "high complexity task",
+			issue: GitHubIssue{
+				Number: 99,
+				Title:  "Refactor entire API layer",
+				URL:    "https://github.com/owner/repo/issues/99",
+			},
+			content: SubIssueContent{
+				Description:    "Complete API refactoring including breaking changes.",
+				Complexity:     "high",
+				ParentIssueNum: 50,
+			},
+			issueNumToTaskID: map[int]string{},
+			wantTask: orchestrator.PlannedTask{
+				ID:            "task-99-refactor-entire-api-layer",
+				Title:         "Refactor entire API layer",
+				Description:   "Complete API refactoring including breaking changes.",
+				DependsOn:     nil,
+				Priority:      0,
+				EstComplexity: orchestrator.ComplexityHigh,
+				IssueURL:      "https://github.com/owner/repo/issues/99",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid issue number (zero)",
+			issue: GitHubIssue{
+				Number: 0,
+				Title:  "Invalid issue",
+				URL:    "https://github.com/owner/repo/issues/0",
+			},
+			content: SubIssueContent{
+				Description: "Some description.",
+				Complexity:  "low",
+			},
+			wantErr:     true,
+			errContains: "invalid issue number",
+		},
+		{
+			name: "invalid issue number (negative)",
+			issue: GitHubIssue{
+				Number: -1,
+				Title:  "Invalid issue",
+			},
+			content: SubIssueContent{
+				Description: "Some description.",
+				Complexity:  "low",
+			},
+			wantErr:     true,
+			errContains: "invalid issue number",
+		},
+		{
+			name: "missing title",
+			issue: GitHubIssue{
+				Number: 42,
+				Title:  "",
+				URL:    "https://github.com/owner/repo/issues/42",
+			},
+			content: SubIssueContent{
+				Description: "Some description.",
+				Complexity:  "low",
+			},
+			wantErr:     true,
+			errContains: "title is required",
+		},
+		{
+			name: "missing description",
+			issue: GitHubIssue{
+				Number: 42,
+				Title:  "Valid title",
+				URL:    "https://github.com/owner/repo/issues/42",
+			},
+			content: SubIssueContent{
+				Description: "",
+				Complexity:  "low",
+			},
+			wantErr:     true,
+			errContains: "description is required",
+		},
+		{
+			name: "missing dependency in mapping",
+			issue: GitHubIssue{
+				Number: 42,
+				Title:  "Task with missing dep",
+				URL:    "https://github.com/owner/repo/issues/42",
+			},
+			content: SubIssueContent{
+				Description:         "Description.",
+				DependencyIssueNums: []int{10, 999}, // 999 doesn't exist in mapping
+				Complexity:          "low",
+			},
+			issueNumToTaskID: map[int]string{
+				10: "task-10-exists",
+			},
+			wantErr:     true,
+			errContains: "not found in mapping",
+		},
+		{
+			name: "invalid complexity",
+			issue: GitHubIssue{
+				Number: 42,
+				Title:  "Task",
+				URL:    "https://github.com/owner/repo/issues/42",
+			},
+			content: SubIssueContent{
+				Description: "Description.",
+				Complexity:  "extreme",
+			},
+			issueNumToTaskID: map[int]string{},
+			wantErr:          true,
+			errContains:      "invalid complexity",
+		},
+		{
+			name: "title with special characters",
+			issue: GitHubIssue{
+				Number: 123,
+				Title:  "Fix bug #456 in `user.go`",
+				URL:    "https://github.com/owner/repo/issues/123",
+			},
+			content: SubIssueContent{
+				Description: "Fix the reported bug.",
+				Complexity:  "low",
+			},
+			issueNumToTaskID: map[int]string{},
+			wantTask: orchestrator.PlannedTask{
+				ID:            "task-123-fix-bug-456-in-user-go",
+				Title:         "Fix bug #456 in `user.go`",
+				Description:   "Fix the reported bug.",
+				DependsOn:     nil,
+				Priority:      0,
+				EstComplexity: orchestrator.ComplexityLow,
+				IssueURL:      "https://github.com/owner/repo/issues/123",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ConvertToPlannedTask(tt.issue, tt.content, tt.issueNumToTaskID)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ConvertToPlannedTask() expected error containing %q, got nil", tt.errContains)
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("ConvertToPlannedTask() error = %q, want error containing %q", err.Error(), tt.errContains)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("ConvertToPlannedTask() unexpected error: %v", err)
+				return
+			}
+
+			// Compare relevant fields
+			if got.ID != tt.wantTask.ID {
+				t.Errorf("ID = %q, want %q", got.ID, tt.wantTask.ID)
+			}
+			if got.Title != tt.wantTask.Title {
+				t.Errorf("Title = %q, want %q", got.Title, tt.wantTask.Title)
+			}
+			if got.Description != tt.wantTask.Description {
+				t.Errorf("Description = %q, want %q", got.Description, tt.wantTask.Description)
+			}
+			if !reflect.DeepEqual(got.Files, tt.wantTask.Files) {
+				t.Errorf("Files = %v, want %v", got.Files, tt.wantTask.Files)
+			}
+			if !reflect.DeepEqual(got.DependsOn, tt.wantTask.DependsOn) {
+				t.Errorf("DependsOn = %v, want %v", got.DependsOn, tt.wantTask.DependsOn)
+			}
+			if got.EstComplexity != tt.wantTask.EstComplexity {
+				t.Errorf("EstComplexity = %q, want %q", got.EstComplexity, tt.wantTask.EstComplexity)
+			}
+			if got.IssueURL != tt.wantTask.IssueURL {
+				t.Errorf("IssueURL = %q, want %q", got.IssueURL, tt.wantTask.IssueURL)
+			}
+		})
+	}
+}
+
+func TestGenerateTaskID(t *testing.T) {
+	tests := []struct {
+		name     string
+		issueNum int
+		title    string
+		want     string
+	}{
+		{
+			name:     "simple title",
+			issueNum: 42,
+			title:    "Add authentication",
+			want:     "task-42-add-authentication",
+		},
+		{
+			name:     "title with special characters",
+			issueNum: 123,
+			title:    "Fix bug #456 in user.go",
+			want:     "task-123-fix-bug-456-in-user-go",
+		},
+		{
+			name:     "title with multiple spaces",
+			issueNum: 1,
+			title:    "   Multiple   Spaces   Here   ",
+			want:     "task-1-multiple-spaces-here",
+		},
+		{
+			name:     "title with underscores and hyphens",
+			issueNum: 99,
+			title:    "update_user-service",
+			want:     "task-99-update-user-service",
+		},
+		{
+			name:     "title with backticks",
+			issueNum: 10,
+			title:    "Fix `config.yaml` parsing",
+			want:     "task-10-fix-config-yaml-parsing",
+		},
+		{
+			name:     "empty title",
+			issueNum: 5,
+			title:    "",
+			want:     "task-5-",
+		},
+		{
+			name:     "title with only special characters",
+			issueNum: 7,
+			title:    "!@#$%^&*()",
+			want:     "task-7-",
+		},
+		{
+			name:     "unicode characters",
+			issueNum: 88,
+			title:    "Добавить функцию",
+			want:     "task-88-добавить-функцию",
+		},
+		{
+			name:     "mixed case preserved as lowercase",
+			issueNum: 3,
+			title:    "Add USER Authentication",
+			want:     "task-3-add-user-authentication",
+		},
+		{
+			name:     "numbers in title",
+			issueNum: 500,
+			title:    "Migrate to v2 API",
+			want:     "task-500-migrate-to-v2-api",
+		},
+		{
+			name:     "very long title gets truncated",
+			issueNum: 1,
+			title:    "This is a very long title that exceeds the maximum slug length and should be truncated appropriately",
+			want:     "task-1-this-is-a-very-long-title-that-exceeds-the-maximum",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GenerateTaskID(tt.issueNum, tt.title)
+			if got != tt.want {
+				t.Errorf("GenerateTaskID(%d, %q) = %q, want %q", tt.issueNum, tt.title, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSlugify(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		maxLen int
+		want   string
+	}{
+		{
+			name:   "simple string",
+			input:  "Hello World",
+			maxLen: 0,
+			want:   "hello-world",
+		},
+		{
+			name:   "with special characters",
+			input:  "Hello! @World# 123",
+			maxLen: 0,
+			want:   "hello-world-123",
+		},
+		{
+			name:   "multiple spaces and symbols",
+			input:  "  multiple   spaces   ",
+			maxLen: 0,
+			want:   "multiple-spaces",
+		},
+		{
+			name:   "with max length",
+			input:  "This is a long string",
+			maxLen: 10,
+			want:   "this-is-a",
+		},
+		{
+			name:   "max length cuts mid-hyphen",
+			input:  "one two three",
+			maxLen: 8,
+			want:   "one-two",
+		},
+		{
+			name:   "empty string",
+			input:  "",
+			maxLen: 0,
+			want:   "",
+		},
+		{
+			name:   "only special characters",
+			input:  "!@#$%",
+			maxLen: 0,
+			want:   "",
+		},
+		{
+			name:   "leading special characters",
+			input:  "!!!hello",
+			maxLen: 0,
+			want:   "hello",
+		},
+		{
+			name:   "trailing special characters",
+			input:  "hello!!!",
+			maxLen: 0,
+			want:   "hello",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := slugify(tt.input, tt.maxLen)
+			if got != tt.want {
+				t.Errorf("slugify(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMapDependenciesToTaskIDs(t *testing.T) {
+	tests := []struct {
+		name             string
+		issueNums        []int
+		issueNumToTaskID map[int]string
+		want             []string
+		wantErr          bool
+		errContains      string
+	}{
+		{
+			name:      "empty dependencies",
+			issueNums: nil,
+			issueNumToTaskID: map[int]string{
+				10: "task-10-something",
+			},
+			want:    nil,
+			wantErr: false,
+		},
+		{
+			name:             "empty dependencies with empty map",
+			issueNums:        []int{},
+			issueNumToTaskID: map[int]string{},
+			want:             nil,
+			wantErr:          false,
+		},
+		{
+			name:      "single dependency",
+			issueNums: []int{10},
+			issueNumToTaskID: map[int]string{
+				10: "task-10-setup",
+			},
+			want:    []string{"task-10-setup"},
+			wantErr: false,
+		},
+		{
+			name:      "multiple dependencies",
+			issueNums: []int{10, 20, 30},
+			issueNumToTaskID: map[int]string{
+				10: "task-10-first",
+				20: "task-20-second",
+				30: "task-30-third",
+			},
+			want:    []string{"task-10-first", "task-20-second", "task-30-third"},
+			wantErr: false,
+		},
+		{
+			name:      "missing dependency",
+			issueNums: []int{10, 999},
+			issueNumToTaskID: map[int]string{
+				10: "task-10-exists",
+			},
+			want:        nil,
+			wantErr:     true,
+			errContains: "999",
+		},
+		{
+			name:             "all dependencies missing",
+			issueNums:        []int{100, 200},
+			issueNumToTaskID: map[int]string{},
+			want:             nil,
+			wantErr:          true,
+			errContains:      "100",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := MapDependenciesToTaskIDs(tt.issueNums, tt.issueNumToTaskID)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("MapDependenciesToTaskIDs() expected error, got nil")
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("MapDependenciesToTaskIDs() error = %q, want error containing %q", err.Error(), tt.errContains)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("MapDependenciesToTaskIDs() unexpected error: %v", err)
+				return
+			}
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("MapDependenciesToTaskIDs() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseTaskComplexity(t *testing.T) {
+	tests := []struct {
+		name       string
+		complexity string
+		want       orchestrator.TaskComplexity
+		wantErr    bool
+	}{
+		{
+			name:       "low complexity",
+			complexity: "low",
+			want:       orchestrator.ComplexityLow,
+			wantErr:    false,
+		},
+		{
+			name:       "medium complexity",
+			complexity: "medium",
+			want:       orchestrator.ComplexityMedium,
+			wantErr:    false,
+		},
+		{
+			name:       "high complexity",
+			complexity: "high",
+			want:       orchestrator.ComplexityHigh,
+			wantErr:    false,
+		},
+		{
+			name:       "uppercase LOW",
+			complexity: "LOW",
+			want:       orchestrator.ComplexityLow,
+			wantErr:    false,
+		},
+		{
+			name:       "mixed case Medium",
+			complexity: "Medium",
+			want:       orchestrator.ComplexityMedium,
+			wantErr:    false,
+		},
+		{
+			name:       "with whitespace",
+			complexity: "  high  ",
+			want:       orchestrator.ComplexityHigh,
+			wantErr:    false,
+		},
+		{
+			name:       "invalid complexity",
+			complexity: "extreme",
+			want:       "",
+			wantErr:    true,
+		},
+		{
+			name:       "empty string",
+			complexity: "",
+			want:       "",
+			wantErr:    true,
+		},
+		{
+			name:       "unknown value",
+			complexity: "very-high",
+			want:       "",
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseTaskComplexity(tt.complexity)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ParseTaskComplexity(%q) expected error, got nil", tt.complexity)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("ParseTaskComplexity(%q) unexpected error: %v", tt.complexity, err)
+				return
+			}
+
+			if got != tt.want {
+				t.Errorf("ParseTaskComplexity(%q) = %q, want %q", tt.complexity, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConvertToPlannedTask_Integration(t *testing.T) {
+	// This test simulates a real-world scenario where we have a parent issue
+	// with multiple sub-issues that have interdependencies
+
+	// Simulate issue numbers to task IDs (as would be built during ingestion)
+	issueNumToTaskID := map[int]string{
+		101: "task-101-setup-infrastructure",
+		102: "task-102-create-base-types",
+		103: "task-103-implement-main-feature",
+	}
+
+	// Test converting issue 103 which depends on 101 and 102
+	issue := GitHubIssue{
+		Number: 103,
+		Title:  "Implement main feature",
+		Body: `## Task
+
+Implement the core feature using the base types.
+
+## Files to Modify
+
+- ` + "`internal/feature/handler.go`" + `
+- ` + "`internal/feature/service.go`" + `
+
+## Dependencies
+
+Complete these issues first:
+- #101 - Setup infrastructure
+- #102 - Create base types
+
+## Complexity
+
+Estimated: **medium**
+
+---
+*Part of #100*
+`,
+		URL:   "https://github.com/example/repo/issues/103",
+		State: "open",
+	}
+
+	// Parse the body using existing parser
+	content, err := ParseSubIssueBody(issue.Body)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBody() failed: %v", err)
+	}
+
+	// Convert to PlannedTask
+	task, err := ConvertToPlannedTask(issue, *content, issueNumToTaskID)
+	if err != nil {
+		t.Fatalf("ConvertToPlannedTask() failed: %v", err)
+	}
+
+	// Verify the task
+	if task.ID != "task-103-implement-main-feature" {
+		t.Errorf("ID = %q, want %q", task.ID, "task-103-implement-main-feature")
+	}
+	if task.Title != "Implement main feature" {
+		t.Errorf("Title = %q", task.Title)
+	}
+	if !strings.Contains(task.Description, "core feature") {
+		t.Errorf("Description doesn't contain expected content: %q", task.Description)
+	}
+
+	expectedFiles := []string{"internal/feature/handler.go", "internal/feature/service.go"}
+	if !reflect.DeepEqual(task.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", task.Files, expectedFiles)
+	}
+
+	expectedDeps := []string{"task-101-setup-infrastructure", "task-102-create-base-types"}
+	if !reflect.DeepEqual(task.DependsOn, expectedDeps) {
+		t.Errorf("DependsOn = %v, want %v", task.DependsOn, expectedDeps)
+	}
+
+	if task.EstComplexity != orchestrator.ComplexityMedium {
+		t.Errorf("EstComplexity = %q, want %q", task.EstComplexity, orchestrator.ComplexityMedium)
+	}
+
+	if task.IssueURL != "https://github.com/example/repo/issues/103" {
+		t.Errorf("IssueURL = %q", task.IssueURL)
 	}
 }
