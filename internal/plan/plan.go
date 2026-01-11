@@ -348,8 +348,8 @@ func SavePlanToFile(plan *orchestrator.PlanSpec, filePath string) error {
 	return nil
 }
 
-// CreateIssuesFromPlan creates GitHub issues from a plan
-// It creates a parent issue and links all task issues as sub-issues using GitHub's native hierarchy
+// CreateIssuesFromPlan creates GitHub issues from a plan using hierarchical structure
+// Groups with >1 task get their own group issue; single-task groups link directly to parent
 func CreateIssuesFromPlan(plan *orchestrator.PlanSpec, labels []string) (*IssueCreationResult, error) {
 	result := &IssueCreationResult{
 		SubIssueNumbers: make(map[string]int),
@@ -376,22 +376,32 @@ func CreateIssuesFromPlan(plan *orchestrator.PlanSpec, labels []string) (*IssueC
 		fmt.Printf("Warning: could not get parent node ID, sub-issues won't be linked: %v\n", err)
 	}
 
-	// Create sub-issues in dependency order
-	// We need to track created issues to resolve dependency references
+	// Track parent's direct children (groups or single tasks)
+	var parentChildren []ParentChild
+
+	// Track created issues to resolve dependency references
 	dependencyInfo := make(map[string]DependencyInfo)
 
 	for groupIdx, group := range plan.ExecutionOrder {
-		fmt.Printf("Creating issues for group %d...\n", groupIdx+1)
+		groupNum := groupIdx + 1
 
-		for _, taskID := range group {
-			// Find the task
+		if len(group) == 1 {
+			// Single task - link directly to parent (no group issue needed)
+			taskID := group[0]
 			var task orchestrator.PlannedTask
+			var found bool
 			for _, t := range plan.Tasks {
 				if t.ID == taskID {
 					task = t
+					found = true
 					break
 				}
 			}
+			if !found {
+				return nil, fmt.Errorf("task %q referenced in execution order but not found in plan tasks", taskID)
+			}
+
+			fmt.Printf("Creating direct task for group %d (single task)...\n", groupNum)
 
 			// Render sub-issue body
 			body, err := RenderSubIssueBody(task, parentNum, dependencyInfo)
@@ -416,27 +426,160 @@ func CreateIssuesFromPlan(plan *orchestrator.PlanSpec, labels []string) (*IssueC
 				Title:       task.Title,
 			}
 
-			fmt.Printf("  Created sub-issue #%d: %s\n", subNum, task.Title)
+			fmt.Printf("  Created task #%d: %s\n", subNum, task.Title)
 
-			// Link as sub-issue to parent using GitHub's native sub-issues feature
+			// Link directly to parent
 			if parentNodeID != "" {
 				subNodeID, err := GetIssueNodeID(subNum)
 				if err != nil {
 					fmt.Printf("  Warning: could not get node ID for #%d: %v\n", subNum, err)
-					continue
-				}
-
-				if err := AddSubIssue(parentNodeID, subNodeID); err != nil {
+				} else if err := AddSubIssue(parentNodeID, subNodeID); err != nil {
 					fmt.Printf("  Warning: could not link #%d as sub-issue: %v\n", subNum, err)
 				} else {
 					fmt.Printf("  Linked #%d as sub-issue of #%d\n", subNum, parentNum)
 				}
 			}
+
+			// Add as direct child of parent
+			parentChildren = append(parentChildren, ParentChild{
+				Title:       task.Title,
+				IssueNumber: subNum,
+				IsGroup:     false,
+				TaskCount:   1,
+			})
+		} else {
+			// Multiple tasks - create a group issue
+			fmt.Printf("Creating group %d issue (%d tasks)...\n", groupNum, len(group))
+
+			// Generate group title based on tasks
+			groupTitle := generateGroupTitle(groupNum, group, plan)
+
+			// Build dependency info for group (which previous groups it depends on)
+			var dependsOnGroups []int
+			if groupIdx > 0 {
+				dependsOnGroups = append(dependsOnGroups, groupIdx) // depends on previous group
+			}
+
+			// Create placeholder group issue first (will update after task issues are created)
+			groupIssueNum, groupIssueURL, err := CreateIssue(IssueOptions{
+				Title:  fmt.Sprintf("Group %d: %s", groupNum, groupTitle),
+				Body:   fmt.Sprintf("*Creating sub-issues for group %d...*", groupNum),
+				Labels: labels,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to create group %d issue: %w", groupNum, err)
+			}
+
+			fmt.Printf("  Created group issue #%d\n", groupIssueNum)
+
+			// Link group to parent
+			var groupNodeID string
+			if parentNodeID != "" {
+				groupNodeID, err = GetIssueNodeID(groupIssueNum)
+				if err != nil {
+					fmt.Printf("  Warning: could not get node ID for group #%d: %v\n", groupIssueNum, err)
+				} else if err := AddSubIssue(parentNodeID, groupNodeID); err != nil {
+					fmt.Printf("  Warning: could not link group #%d as sub-issue: %v\n", groupIssueNum, err)
+				} else {
+					fmt.Printf("  Linked group #%d as sub-issue of #%d\n", groupIssueNum, parentNum)
+				}
+			}
+
+			// Create task issues within this group
+			var groupTasks []GroupedTask
+			for _, taskID := range group {
+				var task orchestrator.PlannedTask
+				var found bool
+				for _, t := range plan.Tasks {
+					if t.ID == taskID {
+						task = t
+						found = true
+						break
+					}
+				}
+				if !found {
+					return nil, fmt.Errorf("task %q referenced in execution order but not found in plan tasks", taskID)
+				}
+
+				// Render sub-issue body (referencing group as parent)
+				body, err := RenderSubIssueBody(task, groupIssueNum, dependencyInfo)
+				if err != nil {
+					return nil, fmt.Errorf("failed to render body for task %s: %w", taskID, err)
+				}
+
+				// Create the sub-issue
+				subNum, subURL, err := CreateIssue(IssueOptions{
+					Title:  task.Title,
+					Body:   body,
+					Labels: labels,
+				})
+				if err != nil {
+					return nil, fmt.Errorf("failed to create sub-issue for task %s: %w", taskID, err)
+				}
+
+				result.SubIssueNumbers[taskID] = subNum
+				result.SubIssueURLs[taskID] = subURL
+				dependencyInfo[taskID] = DependencyInfo{
+					IssueNumber: subNum,
+					Title:       task.Title,
+				}
+				groupTasks = append(groupTasks, GroupedTask{
+					TaskID:      taskID,
+					Title:       task.Title,
+					IssueNumber: subNum,
+				})
+
+				fmt.Printf("    Created task #%d: %s\n", subNum, task.Title)
+
+				// Link task to group
+				if groupNodeID != "" {
+					subNodeID, err := GetIssueNodeID(subNum)
+					if err != nil {
+						fmt.Printf("    Warning: could not get node ID for #%d: %v\n", subNum, err)
+					} else if err := AddSubIssue(groupNodeID, subNodeID); err != nil {
+						fmt.Printf("    Warning: could not link #%d as sub-issue of group: %v\n", subNum, err)
+					} else {
+						fmt.Printf("    Linked #%d as sub-issue of group #%d\n", subNum, groupIssueNum)
+					}
+				}
+			}
+
+			// Generate group summary
+			groupSummary := generateGroupSummary(groupIdx, len(group))
+
+			// Update group issue body with task links
+			groupBody, err := RenderGroupIssueBody(GroupIssueData{
+				Summary:           groupSummary,
+				DependsOnGroups:   dependsOnGroups,
+				Tasks:             groupTasks,
+				ParentIssueNumber: parentNum,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to render group %d issue body: %w", groupNum, err)
+			}
+
+			if err := UpdateIssueBody(groupIssueNum, groupBody); err != nil {
+				return nil, fmt.Errorf("failed to update group %d issue: %w", groupNum, err)
+			}
+
+			fmt.Printf("  Updated group #%d with task links\n", groupIssueNum)
+
+			// Store group issue info
+			result.GroupIssueNumbers = append(result.GroupIssueNumbers, groupIssueNum)
+			result.GroupIssueURLs = append(result.GroupIssueURLs, groupIssueURL)
+
+			// Add as child of parent
+			parentChildren = append(parentChildren, ParentChild{
+				Title:       fmt.Sprintf("Group %d: %s", groupNum, groupTitle),
+				IssueNumber: groupIssueNum,
+				IsGroup:     true,
+				TaskCount:   len(group),
+			})
 		}
 	}
 
-	// Now update the parent issue with links to all sub-issues
-	parentBody, err := RenderParentIssueBody(plan, result.SubIssueNumbers)
+	// Now update the parent issue with hierarchical children
+	parentBody, err := RenderParentIssueBodyHierarchical(plan, parentChildren)
 	if err != nil {
 		return nil, fmt.Errorf("failed to render parent issue body: %w", err)
 	}
@@ -445,9 +588,72 @@ func CreateIssuesFromPlan(plan *orchestrator.PlanSpec, labels []string) (*IssueC
 		return nil, fmt.Errorf("failed to update parent issue: %w", err)
 	}
 
-	fmt.Printf("Updated parent issue #%d with sub-issue links\n", parentNum)
+	fmt.Printf("Updated parent issue #%d with hierarchical structure\n", parentNum)
 
 	return result, nil
+}
+
+// generateGroupTitle creates a descriptive title for a group based on its tasks
+func generateGroupTitle(groupNum int, taskIDs []string, plan *orchestrator.PlanSpec) string {
+	// Try to find common themes in task titles
+	var titles []string
+	for _, taskID := range taskIDs {
+		for _, task := range plan.Tasks {
+			if task.ID == taskID {
+				titles = append(titles, task.Title)
+				break
+			}
+		}
+	}
+
+	// For now, use a simple heuristic - look for common prefixes
+	if len(titles) == 0 {
+		return "Tasks"
+	}
+
+	// Check for common patterns like "Extract X", "Implement X", etc.
+	prefixes := map[string]int{}
+	for _, title := range titles {
+		words := strings.Fields(title)
+		if len(words) > 0 {
+			prefixes[words[0]]++
+		}
+	}
+
+	// Find most common prefix (use alphabetical order as tiebreaker for determinism)
+	var commonPrefix string
+	maxCount := 0
+	for prefix, count := range prefixes {
+		if count > maxCount || (count == maxCount && prefix < commonPrefix) {
+			maxCount = count
+			commonPrefix = prefix
+		}
+	}
+
+	if maxCount > len(titles)/2 {
+		// Majority share a common action word
+		return fmt.Sprintf("%s Components", commonPrefix)
+	}
+
+	// Default: generic title based on group position
+	switch groupNum {
+	case 1:
+		return "Foundation"
+	case 2:
+		return "Core Implementation"
+	case 3:
+		return "Integration"
+	default:
+		return fmt.Sprintf("Phase %d", groupNum)
+	}
+}
+
+// generateGroupSummary creates a summary for a group issue
+func generateGroupSummary(groupIdx, taskCount int) string {
+	if groupIdx == 0 {
+		return fmt.Sprintf("This group contains %d tasks that can start immediately with no dependencies.", taskCount)
+	}
+	return fmt.Sprintf("This group contains %d tasks that depend on the completion of previous group(s).", taskCount)
 }
 
 func truncateTitle(s string, maxLen int) string {

@@ -32,13 +32,30 @@ type GroupedTask struct {
 	IssueNumber int
 }
 
+// ParentChild represents either a group issue or a direct task in the parent
+type ParentChild struct {
+	Title       string
+	IssueNumber int
+	IsGroup     bool // true if this is a group issue, false if direct task
+	TaskCount   int  // number of tasks in the group (only relevant for groups)
+}
+
 // ParentIssueData holds data for rendering the parent issue body
 type ParentIssueData struct {
 	Objective    string
 	Summary      string
 	Insights     []string
 	Constraints  []string
-	GroupedTasks [][]GroupedTask // tasks grouped by execution order
+	GroupedTasks [][]GroupedTask // tasks grouped by execution order (legacy, kept for compatibility)
+	Children     []ParentChild   // hierarchical children (groups or direct tasks)
+}
+
+// GroupIssueData holds data for rendering a group issue body
+type GroupIssueData struct {
+	Summary           string
+	DependsOnGroups   []int // group numbers this depends on
+	Tasks             []GroupedTask
+	ParentIssueNumber int
 }
 
 const parentIssueBodyTemplate = `## Summary
@@ -56,20 +73,47 @@ const parentIssueBodyTemplate = `## Summary
 {{end}}
 {{end}}
 ## Sub-Issues
+{{if .Children}}
+{{range .Children}}- [ ] #{{.IssueNumber}} - **{{.Title}}**{{if .IsGroup}} ({{.TaskCount}} tasks){{end}}
+{{end}}
+{{else}}
 {{range $groupIdx, $group := .GroupedTasks}}
 ### Group {{add $groupIdx 1}}{{if eq $groupIdx 0}} (can start immediately){{else}} (depends on previous groups){{end}}
 {{range $group}}- [ ] #{{.IssueNumber}} - **{{.Title}}**
 {{end}}
 {{end}}
+{{end}}
 ## Execution Order
 
-Tasks are grouped by dependencies. All tasks within a group can be worked on in parallel.
-Complete each group before starting the next.
+Groups/tasks are ordered by dependencies. Complete each before starting those that depend on it.
 
 ## Acceptance Criteria
 
 - [ ] All sub-issues completed
 - [ ] Integration verified
+`
+
+const groupIssueBodyTemplate = `## Summary
+
+{{.Summary}}
+
+{{if gt (len .DependsOnGroups) 0}}## Dependencies
+
+Complete these groups first:
+{{range .DependsOnGroups}}- Group {{.}}
+{{end}}
+{{end}}
+## Sub-Issues
+
+{{range .Tasks}}- [ ] #{{.IssueNumber}} - **{{.Title}}**
+{{end}}
+
+## Acceptance Criteria
+
+- [ ] All {{len .Tasks}} sub-issues completed
+
+---
+*Part of #{{.ParentIssueNumber}}*
 `
 
 const subIssueBodyTemplate = `## Task
@@ -101,6 +145,7 @@ var templateFuncs = template.FuncMap{
 }
 
 // RenderParentIssueBody renders the parent issue body from plan data
+// This is the legacy version that creates flat task references (used when not using hierarchical groups)
 func RenderParentIssueBody(plan *orchestrator.PlanSpec, subIssueNumbers map[string]int) (string, error) {
 	// Build grouped tasks from execution order
 	groupedTasks := make([][]GroupedTask, len(plan.ExecutionOrder))
@@ -137,6 +182,53 @@ func RenderParentIssueBody(plan *orchestrator.PlanSpec, subIssueNumbers map[stri
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return "", fmt.Errorf("failed to render parent issue template: %w", err)
+	}
+
+	return buf.String(), nil
+}
+
+// RenderParentIssueBodyHierarchical renders the parent issue body with hierarchical children
+// Children can be either group issues (for groups with >1 task) or direct task issues (for single-task groups)
+func RenderParentIssueBodyHierarchical(plan *orchestrator.PlanSpec, children []ParentChild) (string, error) {
+	data := ParentIssueData{
+		Objective:   plan.Objective,
+		Summary:     plan.Summary,
+		Insights:    plan.Insights,
+		Constraints: plan.Constraints,
+		Children:    children,
+	}
+
+	tmpl, err := template.New("parent-issue").Funcs(templateFuncs).Parse(parentIssueBodyTemplate)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse parent issue template: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("failed to render parent issue template: %w", err)
+	}
+
+	return buf.String(), nil
+}
+
+// RenderGroupIssueBody renders a group issue body
+func RenderGroupIssueBody(data GroupIssueData) (string, error) {
+	// Validate required fields
+	if len(data.Tasks) == 0 {
+		return "", fmt.Errorf("group must have at least one task")
+	}
+	if data.ParentIssueNumber < 1 {
+		return "", fmt.Errorf("invalid parent issue number: %d", data.ParentIssueNumber)
+	}
+
+	tmpl, err := template.New("group-issue").Parse(groupIssueBodyTemplate)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse group issue template: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("failed to render group issue template: %w", err)
 	}
 
 	return buf.String(), nil
