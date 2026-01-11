@@ -52,8 +52,9 @@ func (v *TerminalView) Render(state TerminalState) string {
 	b.WriteString(header)
 	b.WriteString("\n")
 
-	// Output area (remaining height minus header)
-	outputHeight := v.Height - 2 // 1 for header, 1 for border
+	// Output area: total height minus border (2 lines) and header (1 line)
+	// The border style adds 2 lines (top + bottom), and we have 1 header line
+	outputHeight := v.Height - 3
 	if outputHeight < 1 {
 		outputHeight = 1
 	}
@@ -67,7 +68,7 @@ func (v *TerminalView) Render(state TerminalState) string {
 	}
 
 	return borderStyle.
-		Width(v.Width - 2). // Account for border
+		Width(v.Width - 2). // Account for border only (padding is inside)
 		Height(v.Height).
 		MaxHeight(v.Height).
 		Render(b.String())
