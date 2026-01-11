@@ -139,8 +139,7 @@ var (
 
 	SidebarTitle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(PrimaryColor).
-			MarginBottom(1)
+			Foreground(PrimaryColor)
 
 	SidebarSectionTitle = lipgloss.NewStyle().
 				Foreground(MutedColor).
