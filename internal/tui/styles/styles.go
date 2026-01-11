@@ -232,7 +232,7 @@ var (
 
 	SearchCurrentMatch = lipgloss.NewStyle().
 				Background(lipgloss.Color("#C2410C")). // Dark orange for current match
-				Foreground(lipgloss.Color("#FFF7ED")).  // Light orange-white text
+				Foreground(lipgloss.Color("#FFF7ED")). // Light orange-white text
 				Bold(true)
 
 	SearchInfo = lipgloss.NewStyle().

@@ -64,8 +64,8 @@ func DefaultManagerConfig() ManagerConfig {
 		OutputBufferSize:         100000, // 100KB
 		CaptureIntervalMs:        100,
 		TmuxWidth:                200,
-		TmuxHeight:               30, // Shorter height so prompts scroll off and users see actual work
-		ActivityTimeoutMinutes:   30, // 30 minutes of no activity
+		TmuxHeight:               30,  // Shorter height so prompts scroll off and users see actual work
+		ActivityTimeoutMinutes:   30,  // 30 minutes of no activity
 		CompletionTimeoutMinutes: 120, // 2 hours max runtime
 		StaleDetection:           true,
 	}
@@ -101,12 +101,12 @@ type Manager struct {
 	startTime       *time.Time
 
 	// Timeout tracking
-	lastActivityTime    time.Time      // Last time output changed
-	lastOutputHash      string         // Hash of last output for change detection
-	repeatedOutputCount int            // Count of consecutive identical outputs (for stale detection)
+	lastActivityTime    time.Time // Last time output changed
+	lastOutputHash      string    // Hash of last output for change detection
+	repeatedOutputCount int       // Count of consecutive identical outputs (for stale detection)
 	timeoutCallback     TimeoutCallback
-	timedOut            bool           // Whether a timeout has been triggered
-	timeoutType         TimeoutType    // Type of timeout that was triggered
+	timedOut            bool        // Whether a timeout has been triggered
+	timeoutType         TimeoutType // Type of timeout that was triggered
 
 	// Bell tracking
 	bellCallback  BellCallback
@@ -260,9 +260,9 @@ func (m *Manager) Start() error {
 	// Create a new detached tmux session with color support
 	createCmd := exec.Command("tmux",
 		"new-session",
-		"-d",                                      // detached
-		"-s", m.sessionName,                       // session name
-		"-x", fmt.Sprintf("%d", m.config.TmuxWidth),  // width
+		"-d",                // detached
+		"-s", m.sessionName, // session name
+		"-x", fmt.Sprintf("%d", m.config.TmuxWidth), // width
 		"-y", fmt.Sprintf("%d", m.config.TmuxHeight), // height
 	)
 	createCmd.Dir = m.workdir

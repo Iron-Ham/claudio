@@ -31,10 +31,10 @@ func TestGetMultiPassStrategyNames(t *testing.T) {
 // TestGetMultiPassPlanningPrompt verifies strategy prompts are correctly constructed
 func TestGetMultiPassPlanningPrompt(t *testing.T) {
 	tests := []struct {
-		name      string
-		strategy  string
-		objective string
-		wantParts []string // Strings that should appear in the prompt
+		name       string
+		strategy   string
+		objective  string
+		wantParts  []string // Strings that should appear in the prompt
 		wantAbsent []string // Strings that should NOT appear
 	}{
 		{
@@ -42,7 +42,7 @@ func TestGetMultiPassPlanningPrompt(t *testing.T) {
 			strategy:  "maximize-parallelism",
 			objective: "Add user authentication",
 			wantParts: []string{
-				"Add user authentication",            // Objective
+				"Add user authentication",               // Objective
 				"Strategic Focus: Maximize Parallelism", // Strategy header
 				"Minimize Dependencies",                 // Strategy-specific content
 				"Flatten the Dependency Graph",

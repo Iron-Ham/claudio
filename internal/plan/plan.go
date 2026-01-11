@@ -242,10 +242,10 @@ func parsePlanFromOutput(output, objective string) (*orchestrator.PlanSpec, erro
 
 	// Parse the JSON
 	var rawPlan struct {
-		Summary     string                    `json:"summary"`
+		Summary     string                     `json:"summary"`
 		Tasks       []orchestrator.PlannedTask `json:"tasks"`
-		Insights    []string                  `json:"insights"`
-		Constraints []string                  `json:"constraints"`
+		Insights    []string                   `json:"insights"`
+		Constraints []string                   `json:"constraints"`
 	}
 
 	if err := json.Unmarshal([]byte(output), &rawPlan); err != nil {

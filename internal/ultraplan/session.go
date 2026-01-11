@@ -10,12 +10,12 @@ import (
 
 // Config holds configuration for an ultra-plan session.
 type Config struct {
-	MaxParallel int  `json:"max_parallel"`   // Maximum concurrent child sessions
-	DryRun      bool `json:"dry_run"`        // Run planning only, don't execute
-	NoSynthesis bool `json:"no_synthesis"`   // Skip synthesis phase after execution
-	AutoApprove bool `json:"auto_approve"`   // Auto-approve spawned tasks without confirmation
-	Review      bool `json:"review"`         // Force plan editor to open for review (overrides AutoApprove)
-	MultiPass   bool `json:"multi_pass"`     // Enable multi-pass planning with plan comparison
+	MaxParallel int  `json:"max_parallel"` // Maximum concurrent child sessions
+	DryRun      bool `json:"dry_run"`      // Run planning only, don't execute
+	NoSynthesis bool `json:"no_synthesis"` // Skip synthesis phase after execution
+	AutoApprove bool `json:"auto_approve"` // Auto-approve spawned tasks without confirmation
+	Review      bool `json:"review"`       // Force plan editor to open for review (overrides AutoApprove)
+	MultiPass   bool `json:"multi_pass"`   // Enable multi-pass planning with plan comparison
 
 	// Consolidation settings
 	ConsolidationMode ConsolidationMode `json:"consolidation_mode,omitempty"` // "stacked" or "single"
@@ -24,8 +24,8 @@ type Config struct {
 	BranchPrefix      string            `json:"branch_prefix,omitempty"`      // Branch prefix for consolidated branches
 
 	// Task verification settings
-	MaxTaskRetries         int  `json:"max_task_retries,omitempty"`   // Max retry attempts for tasks with no commits (default: 3)
-	RequireVerifiedCommits bool `json:"require_verified_commits"`     // If true, tasks must produce commits to be marked successful (default: true)
+	MaxTaskRetries         int  `json:"max_task_retries,omitempty"` // Max retry attempts for tasks with no commits (default: 3)
+	RequireVerifiedCommits bool `json:"require_verified_commits"`   // If true, tasks must produce commits to be marked successful (default: true)
 }
 
 // DefaultConfig returns the default configuration.
@@ -47,12 +47,12 @@ func DefaultConfig() Config {
 
 // RevisionState tracks the state of the revision phase.
 type RevisionState struct {
-	Issues          []RevisionIssue   `json:"issues"`                       // Issues identified during synthesis
-	RevisionRound   int               `json:"revision_round"`               // Current revision iteration (starts at 1)
-	MaxRevisions    int               `json:"max_revisions"`                // Maximum allowed revision rounds
-	TasksToRevise   []string          `json:"tasks_to_revise,omitempty"`    // Task IDs that need revision
-	RevisedTasks    []string          `json:"revised_tasks,omitempty"`      // Task IDs that have been revised
-	RevisionPrompts map[string]string `json:"revision_prompts,omitempty"`   // Task ID -> revision prompt
+	Issues          []RevisionIssue   `json:"issues"`                     // Issues identified during synthesis
+	RevisionRound   int               `json:"revision_round"`             // Current revision iteration (starts at 1)
+	MaxRevisions    int               `json:"max_revisions"`              // Maximum allowed revision rounds
+	TasksToRevise   []string          `json:"tasks_to_revise,omitempty"`  // Task IDs that need revision
+	RevisedTasks    []string          `json:"revised_tasks,omitempty"`    // Task IDs that have been revised
+	RevisionPrompts map[string]string `json:"revision_prompts,omitempty"` // Task ID -> revision prompt
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
 	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
 }
@@ -97,13 +97,13 @@ type SynthesisCompletionFile struct {
 
 // GroupConsolidationCompletionFile represents context passed between group consolidations.
 type GroupConsolidationCompletionFile struct {
-	GroupIndex    int      `json:"group_index"`
-	BranchName    string   `json:"branch_name"`
-	TasksSummary  string   `json:"tasks_summary"`
-	FilesChanged  []string `json:"files_changed"`
-	CommitCount   int      `json:"commit_count"`
-	Notes         string   `json:"notes,omitempty"`
-	CompletedAt   string   `json:"completed_at"`
+	GroupIndex   int      `json:"group_index"`
+	BranchName   string   `json:"branch_name"`
+	TasksSummary string   `json:"tasks_summary"`
+	FilesChanged []string `json:"files_changed"`
+	CommitCount  int      `json:"commit_count"`
+	Notes        string   `json:"notes,omitempty"`
+	CompletedAt  string   `json:"completed_at"`
 }
 
 // Session represents an ultra-plan orchestration session.

@@ -23,12 +23,12 @@ const (
 
 // Metrics tracks resource usage and costs for an instance
 type Metrics struct {
-	InputTokens  int64   `json:"input_tokens"`
-	OutputTokens int64   `json:"output_tokens"`
-	CacheRead    int64   `json:"cache_read,omitempty"`
-	CacheWrite   int64   `json:"cache_write,omitempty"`
-	Cost         float64 `json:"cost"`
-	APICalls     int     `json:"api_calls"`
+	InputTokens  int64      `json:"input_tokens"`
+	OutputTokens int64      `json:"output_tokens"`
+	CacheRead    int64      `json:"cache_read,omitempty"`
+	CacheWrite   int64      `json:"cache_write,omitempty"`
+	Cost         float64    `json:"cost"`
+	APICalls     int        `json:"api_calls"`
 	StartTime    *time.Time `json:"start_time,omitempty"`
 	EndTime      *time.Time `json:"end_time,omitempty"`
 }

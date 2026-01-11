@@ -54,9 +54,9 @@ func (m *mockTaskExecutor) GetStatus() ExecutionStatus {
 
 // mockTaskExecutorFactory provides a test implementation of TaskExecutorFactory.
 type mockTaskExecutorFactory struct {
-	executors    map[string]*mockTaskExecutor
-	createError  error
-	mu           sync.Mutex
+	executors   map[string]*mockTaskExecutor
+	createError error
+	mu          sync.Mutex
 }
 
 func newMockTaskExecutorFactory() *mockTaskExecutorFactory {

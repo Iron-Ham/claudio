@@ -23,7 +23,7 @@ type baseEvent struct {
 	timestamp time.Time
 }
 
-func (e baseEvent) EventType() string  { return e.eventType }
+func (e baseEvent) EventType() string    { return e.eventType }
 func (e baseEvent) Timestamp() time.Time { return e.timestamp }
 
 // newBaseEvent creates a baseEvent with the current time.

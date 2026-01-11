@@ -14,16 +14,16 @@ import (
 
 // mockProcess implements the process.Process interface for testing.
 type mockProcess struct {
-	running       bool
-	startError    error
-	stopError     error
-	sendError     error
-	waitError     error
-	output        []byte
-	mu            sync.Mutex
-	startCalled   bool
-	stopCalled    bool
-	sendInputs    []string
+	running     bool
+	startError  error
+	stopError   error
+	sendError   error
+	waitError   error
+	output      []byte
+	mu          sync.Mutex
+	startCalled bool
+	stopCalled  bool
+	sendInputs  []string
 }
 
 func newMockProcess() *mockProcess {

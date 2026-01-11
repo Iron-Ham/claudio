@@ -12,30 +12,30 @@ import (
 // Validation panel styles (local to this file)
 var (
 	validationPanelStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
-		Padding(0, 1)
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("240")).
+				Padding(0, 1)
 
 	validationErrorStyle = lipgloss.NewStyle().
-		Foreground(styles.RedColor).
-		Bold(true)
+				Foreground(styles.RedColor).
+				Bold(true)
 
 	validationWarningStyle = lipgloss.NewStyle().
-		Foreground(styles.YellowColor)
+				Foreground(styles.YellowColor)
 
 	validationInfoStyle = lipgloss.NewStyle().
-		Foreground(styles.BlueColor)
+				Foreground(styles.BlueColor)
 
 	validationHeaderStyle = lipgloss.NewStyle().
-		Bold(true).
-		Underline(true)
+				Bold(true).
+				Underline(true)
 
 	validationTaskStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245"))
+				Foreground(lipgloss.Color("245"))
 
 	cyclicTaskStyle = lipgloss.NewStyle().
-		Foreground(styles.RedColor).
-		Bold(true)
+			Foreground(styles.RedColor).
+			Bold(true)
 )
 
 // PlanEditorState holds the rendering state for the plan editor view.

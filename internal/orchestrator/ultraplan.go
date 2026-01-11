@@ -55,8 +55,8 @@ type PlannedTask struct {
 // PlanSpec represents the output of the planning phase
 type PlanSpec struct {
 	ID              string              `json:"id"`
-	Objective       string              `json:"objective"`        // Original user request
-	Summary         string              `json:"summary"`          // Executive summary of the plan
+	Objective       string              `json:"objective"` // Original user request
+	Summary         string              `json:"summary"`   // Executive summary of the plan
 	Tasks           []PlannedTask       `json:"tasks"`
 	DependencyGraph map[string][]string `json:"dependency_graph"` // task_id -> depends_on[]
 	ExecutionOrder  [][]string          `json:"execution_order"`  // Groups of parallelizable tasks
@@ -67,12 +67,12 @@ type PlanSpec struct {
 
 // UltraPlanConfig holds configuration for an ultra-plan session
 type UltraPlanConfig struct {
-	MaxParallel   int  `json:"max_parallel"`    // Maximum concurrent child sessions
-	DryRun        bool `json:"dry_run"`         // Run planning only, don't execute
-	NoSynthesis   bool `json:"no_synthesis"`    // Skip synthesis phase after execution
-	AutoApprove   bool `json:"auto_approve"`    // Auto-approve spawned tasks without confirmation
-	Review        bool `json:"review"`          // Force plan editor to open for review (overrides AutoApprove)
-	MultiPass     bool `json:"multi_pass"`      // Enable multi-pass planning with plan comparison
+	MaxParallel int  `json:"max_parallel"` // Maximum concurrent child sessions
+	DryRun      bool `json:"dry_run"`      // Run planning only, don't execute
+	NoSynthesis bool `json:"no_synthesis"` // Skip synthesis phase after execution
+	AutoApprove bool `json:"auto_approve"` // Auto-approve spawned tasks without confirmation
+	Review      bool `json:"review"`       // Force plan editor to open for review (overrides AutoApprove)
+	MultiPass   bool `json:"multi_pass"`   // Enable multi-pass planning with plan comparison
 
 	// Consolidation settings
 	ConsolidationMode ConsolidationMode `json:"consolidation_mode,omitempty"` // "stacked" or "single"
@@ -81,8 +81,8 @@ type UltraPlanConfig struct {
 	BranchPrefix      string            `json:"branch_prefix,omitempty"`      // Branch prefix for consolidated branches
 
 	// Task verification settings
-	MaxTaskRetries         int  `json:"max_task_retries,omitempty"`   // Max retry attempts for tasks with no commits (default: 3)
-	RequireVerifiedCommits bool `json:"require_verified_commits"`     // If true, tasks must produce commits to be marked successful (default: true)
+	MaxTaskRetries         int  `json:"max_task_retries,omitempty"` // Max retry attempts for tasks with no commits (default: 3)
+	RequireVerifiedCommits bool `json:"require_verified_commits"`   // If true, tasks must produce commits to be marked successful (default: true)
 }
 
 // DefaultUltraPlanConfig returns the default configuration
@@ -104,11 +104,11 @@ func DefaultUltraPlanConfig() UltraPlanConfig {
 
 // RevisionIssue represents an issue identified during synthesis that needs to be addressed
 type RevisionIssue struct {
-	TaskID      string   `json:"task_id"`               // Task ID that needs revision (empty for cross-cutting issues)
-	Description string   `json:"description"`           // Description of the issue
-	Files       []string `json:"files,omitempty"`       // Files affected by the issue
-	Severity    string   `json:"severity,omitempty"`    // "critical", "major", "minor"
-	Suggestion  string   `json:"suggestion,omitempty"`  // Suggested fix
+	TaskID      string   `json:"task_id"`              // Task ID that needs revision (empty for cross-cutting issues)
+	Description string   `json:"description"`          // Description of the issue
+	Files       []string `json:"files,omitempty"`      // Files affected by the issue
+	Severity    string   `json:"severity,omitempty"`   // "critical", "major", "minor"
+	Suggestion  string   `json:"suggestion,omitempty"` // Suggested fix
 }
 
 // PlanScore represents the evaluation of a single candidate plan
@@ -129,14 +129,14 @@ type PlanDecision struct {
 
 // RevisionState tracks the state of the revision phase
 type RevisionState struct {
-	Issues           []RevisionIssue `json:"issues"`                      // Issues identified during synthesis
-	RevisionRound    int             `json:"revision_round"`              // Current revision iteration (starts at 1)
-	MaxRevisions     int             `json:"max_revisions"`               // Maximum allowed revision rounds
-	TasksToRevise    []string        `json:"tasks_to_revise,omitempty"`   // Task IDs that need revision
-	RevisedTasks     []string        `json:"revised_tasks,omitempty"`     // Task IDs that have been revised
-	RevisionPrompts  map[string]string `json:"revision_prompts,omitempty"` // Task ID -> revision prompt
-	StartedAt        *time.Time      `json:"started_at,omitempty"`
-	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
+	Issues          []RevisionIssue   `json:"issues"`                     // Issues identified during synthesis
+	RevisionRound   int               `json:"revision_round"`             // Current revision iteration (starts at 1)
+	MaxRevisions    int               `json:"max_revisions"`              // Maximum allowed revision rounds
+	TasksToRevise   []string          `json:"tasks_to_revise,omitempty"`  // Task IDs that need revision
+	RevisedTasks    []string          `json:"revised_tasks,omitempty"`    // Task IDs that have been revised
+	RevisionPrompts map[string]string `json:"revision_prompts,omitempty"` // Task ID -> revision prompt
+	StartedAt       *time.Time        `json:"started_at,omitempty"`
+	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
 }
 
 // NewRevisionState creates a new revision state
@@ -271,19 +271,19 @@ type GroupDecisionState struct {
 
 // UltraPlanSession represents an ultra-plan orchestration session
 type UltraPlanSession struct {
-	ID              string            `json:"id"`
-	Objective       string            `json:"objective"`
-	Plan            *PlanSpec         `json:"plan,omitempty"`
-	Phase           UltraPlanPhase    `json:"phase"`
-	Config          UltraPlanConfig   `json:"config"`
-	CoordinatorID   string            `json:"coordinator_id,omitempty"`   // Instance ID of the planning coordinator
+	ID            string          `json:"id"`
+	Objective     string          `json:"objective"`
+	Plan          *PlanSpec       `json:"plan,omitempty"`
+	Phase         UltraPlanPhase  `json:"phase"`
+	Config        UltraPlanConfig `json:"config"`
+	CoordinatorID string          `json:"coordinator_id,omitempty"` // Instance ID of the planning coordinator
 
 	// Multi-pass planning state
-	CandidatePlans        []*PlanSpec    `json:"candidate_plans,omitempty"`         // Plans from each coordinator (multi-pass)
-	PlanCoordinatorIDs    []string       `json:"plan_coordinator_ids,omitempty"`    // Instance IDs of planning coordinators
-	ProcessedCoordinators map[int]bool   `json:"processed_coordinators,omitempty"`  // Tracks which coordinators have completed (index -> completed)
-	PlanManagerID         string         `json:"plan_manager_id,omitempty"`         // Instance ID of the coordinator-manager
-	SelectedPlanIndex     int            `json:"selected_plan_index,omitempty"`     // Index of selected plan (-1 if merged)
+	CandidatePlans        []*PlanSpec  `json:"candidate_plans,omitempty"`        // Plans from each coordinator (multi-pass)
+	PlanCoordinatorIDs    []string     `json:"plan_coordinator_ids,omitempty"`   // Instance IDs of planning coordinators
+	ProcessedCoordinators map[int]bool `json:"processed_coordinators,omitempty"` // Tracks which coordinators have completed (index -> completed)
+	PlanManagerID         string       `json:"plan_manager_id,omitempty"`        // Instance ID of the coordinator-manager
+	SelectedPlanIndex     int          `json:"selected_plan_index,omitempty"`    // Index of selected plan (-1 if merged)
 
 	SynthesisID     string            `json:"synthesis_id,omitempty"`     // Instance ID of the synthesis reviewer
 	RevisionID      string            `json:"revision_id,omitempty"`      // Instance ID of the current revision coordinator
@@ -291,7 +291,7 @@ type UltraPlanSession struct {
 	TaskToInstance  map[string]string `json:"task_to_instance"`           // PlannedTask.ID -> Instance.ID
 	CompletedTasks  []string          `json:"completed_tasks"`
 	FailedTasks     []string          `json:"failed_tasks"`
-	CurrentGroup    int               `json:"current_group"`      // Index into ExecutionOrder
+	CurrentGroup    int               `json:"current_group"` // Index into ExecutionOrder
 	Created         time.Time         `json:"created"`
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
 	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
@@ -1234,10 +1234,10 @@ const RevisionCompletionFileName = ".claudio-revision-complete.json"
 type RevisionCompletionFile struct {
 	TaskID          string   `json:"task_id"`
 	RevisionRound   int      `json:"revision_round"`
-	IssuesAddressed []string `json:"issues_addressed"`  // Issue descriptions that were fixed
-	Summary         string   `json:"summary"`           // What was changed
+	IssuesAddressed []string `json:"issues_addressed"` // Issue descriptions that were fixed
+	Summary         string   `json:"summary"`          // What was changed
 	FilesModified   []string `json:"files_modified"`
-	RemainingIssues []string `json:"remaining_issues"`  // Issues that couldn't be fixed
+	RemainingIssues []string `json:"remaining_issues"` // Issues that couldn't be fixed
 }
 
 // RevisionCompletionFilePath returns the full path to the revision completion file
@@ -1266,13 +1266,13 @@ const ConsolidationCompletionFileName = ".claudio-consolidation-complete.json"
 
 // ConsolidationCompletionFile represents the completion report from consolidation
 type ConsolidationCompletionFile struct {
-	Status           string                     `json:"status"` // "complete", "partial", "failed"
-	Mode             string                     `json:"mode"`   // "stacked" or "single"
-	GroupResults     []GroupConsolidationInfo   `json:"group_results"`
-	PRsCreated       []PRInfo                   `json:"prs_created"`
-	SynthesisContext *SynthesisCompletionFile   `json:"synthesis_context,omitempty"`
-	TotalCommits     int                        `json:"total_commits"`
-	FilesChanged     []string                   `json:"files_changed"`
+	Status           string                   `json:"status"` // "complete", "partial", "failed"
+	Mode             string                   `json:"mode"`   // "stacked" or "single"
+	GroupResults     []GroupConsolidationInfo `json:"group_results"`
+	PRsCreated       []PRInfo                 `json:"prs_created"`
+	SynthesisContext *SynthesisCompletionFile `json:"synthesis_context,omitempty"`
+	TotalCommits     int                      `json:"total_commits"`
+	FilesChanged     []string                 `json:"files_changed"`
 }
 
 // GroupConsolidationInfo holds info about a consolidated group
@@ -1324,10 +1324,10 @@ type ConflictResolution struct {
 // VerificationResult holds the results of build/lint/test verification
 // The consolidator determines appropriate commands based on project type
 type VerificationResult struct {
-	ProjectType  string             `json:"project_type,omitempty"` // Detected: "go", "node", "ios", "python", etc.
-	CommandsRun  []VerificationStep `json:"commands_run"`
-	OverallSuccess bool             `json:"overall_success"`
-	Summary      string             `json:"summary,omitempty"` // Brief summary of verification outcome
+	ProjectType    string             `json:"project_type,omitempty"` // Detected: "go", "node", "ios", "python", etc.
+	CommandsRun    []VerificationStep `json:"commands_run"`
+	OverallSuccess bool               `json:"overall_success"`
+	Summary        string             `json:"summary,omitempty"` // Brief summary of verification outcome
 }
 
 // VerificationStep represents a single verification command and its result
@@ -1348,7 +1348,7 @@ type GroupConsolidationCompletionFile struct {
 	ConflictsResolved  []ConflictResolution   `json:"conflicts_resolved,omitempty"`
 	Verification       VerificationResult     `json:"verification"`
 	AggregatedContext  *AggregatedTaskContext `json:"aggregated_context,omitempty"`
-	Notes              string                 `json:"notes,omitempty"`               // Consolidator's observations
+	Notes              string                 `json:"notes,omitempty"`                 // Consolidator's observations
 	IssuesForNextGroup []string               `json:"issues_for_next_group,omitempty"` // Warnings/concerns to pass forward
 }
 

@@ -26,10 +26,10 @@ const (
 // It is safe for concurrent use.
 type Logger struct {
 	logger   *slog.Logger
-	file     *os.File           // For backward compatibility when not using rotation
-	rotation *RotatingWriter    // Used when rotation is enabled
-	mu       sync.Mutex         // Protects file operations
-	attrs    []slog.Attr        // Persistent attributes (session, instance, phase)
+	file     *os.File        // For backward compatibility when not using rotation
+	rotation *RotatingWriter // Used when rotation is enabled
+	mu       sync.Mutex      // Protects file operations
+	attrs    []slog.Attr     // Persistent attributes (session, instance, phase)
 }
 
 // NewLogger creates a new Logger that writes JSON-formatted logs to a file

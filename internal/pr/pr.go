@@ -27,12 +27,12 @@ type PROptions struct {
 
 // Context holds all the information needed to generate PR content
 type Context struct {
-	Task          string
-	Branch        string
-	Diff          string
-	CommitLog     string
-	ChangedFiles  []string
-	InstanceID    string
+	Task         string
+	Branch       string
+	Diff         string
+	CommitLog    string
+	ChangedFiles []string
+	InstanceID   string
 }
 
 // Generator creates PR content using Claude

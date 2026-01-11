@@ -58,19 +58,19 @@ type Model struct {
 	planEditor *PlanEditorState
 
 	// UI state
-	activeTab      int
-	width          int
-	height         int
-	ready          bool
-	quitting       bool
-	showHelp       bool
-	showConflicts  bool // When true, show detailed conflict view
+	activeTab       int
+	width           int
+	height          int
+	ready           bool
+	quitting        bool
+	showHelp        bool
+	showConflicts   bool // When true, show detailed conflict view
 	addingTask      bool
 	taskInput       string
 	taskInputCursor int // Cursor position within taskInput (0 = before first char)
-	errorMessage string
-	infoMessage  string // Non-error status message
-	inputMode    bool   // When true, all keys are forwarded to the active instance's tmux session
+	errorMessage    string
+	infoMessage     string // Non-error status message
+	inputMode       bool   // When true, all keys are forwarded to the active instance's tmux session
 
 	// Command mode state (vim-style ex commands with ':' prefix)
 	commandMode   bool   // When true, we're typing a command after ':'

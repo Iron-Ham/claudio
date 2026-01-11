@@ -27,43 +27,43 @@ const (
 type ConsolidationPhase string
 
 const (
-	ConsolidationIdle            ConsolidationPhase = "idle"
-	ConsolidationDetecting       ConsolidationPhase = "detecting_conflicts"
+	ConsolidationIdle             ConsolidationPhase = "idle"
+	ConsolidationDetecting        ConsolidationPhase = "detecting_conflicts"
 	ConsolidationCreatingBranches ConsolidationPhase = "creating_branches"
-	ConsolidationMergingTasks    ConsolidationPhase = "merging_tasks"
-	ConsolidationPushing         ConsolidationPhase = "pushing"
-	ConsolidationCreatingPRs     ConsolidationPhase = "creating_prs"
-	ConsolidationPaused          ConsolidationPhase = "paused"
-	ConsolidationComplete        ConsolidationPhase = "complete"
-	ConsolidationFailed          ConsolidationPhase = "failed"
+	ConsolidationMergingTasks     ConsolidationPhase = "merging_tasks"
+	ConsolidationPushing          ConsolidationPhase = "pushing"
+	ConsolidationCreatingPRs      ConsolidationPhase = "creating_prs"
+	ConsolidationPaused           ConsolidationPhase = "paused"
+	ConsolidationComplete         ConsolidationPhase = "complete"
+	ConsolidationFailed           ConsolidationPhase = "failed"
 )
 
 // ConsolidationState tracks the progress of consolidation
 type ConsolidationState struct {
-	Phase             ConsolidationPhase `json:"phase"`
-	CurrentGroup      int                `json:"current_group"`
-	TotalGroups       int                `json:"total_groups"`
-	CurrentTask       string             `json:"current_task,omitempty"`
-	GroupBranches     []string           `json:"group_branches"`
-	PRUrls            []string           `json:"pr_urls"`
-	ConflictFiles     []string           `json:"conflict_files,omitempty"`
-	ConflictTaskID    string             `json:"conflict_task_id,omitempty"`
-	ConflictWorktree  string             `json:"conflict_worktree,omitempty"`
-	Error             string             `json:"error,omitempty"`
-	StartedAt         *time.Time         `json:"started_at,omitempty"`
-	CompletedAt       *time.Time         `json:"completed_at,omitempty"`
+	Phase            ConsolidationPhase `json:"phase"`
+	CurrentGroup     int                `json:"current_group"`
+	TotalGroups      int                `json:"total_groups"`
+	CurrentTask      string             `json:"current_task,omitempty"`
+	GroupBranches    []string           `json:"group_branches"`
+	PRUrls           []string           `json:"pr_urls"`
+	ConflictFiles    []string           `json:"conflict_files,omitempty"`
+	ConflictTaskID   string             `json:"conflict_task_id,omitempty"`
+	ConflictWorktree string             `json:"conflict_worktree,omitempty"`
+	Error            string             `json:"error,omitempty"`
+	StartedAt        *time.Time         `json:"started_at,omitempty"`
+	CompletedAt      *time.Time         `json:"completed_at,omitempty"`
 }
 
 // GroupConsolidationResult holds the result of consolidating one group
 type GroupConsolidationResult struct {
-	GroupIndex    int      `json:"group_index"`
-	TaskIDs       []string `json:"task_ids"`
-	BranchName    string   `json:"branch_name"`
-	CommitCount   int      `json:"commit_count"`
-	FilesChanged  []string `json:"files_changed"`
-	PRUrl         string   `json:"pr_url,omitempty"`
-	Success       bool     `json:"success"`
-	Error         string   `json:"error,omitempty"`
+	GroupIndex   int      `json:"group_index"`
+	TaskIDs      []string `json:"task_ids"`
+	BranchName   string   `json:"branch_name"`
+	CommitCount  int      `json:"commit_count"`
+	FilesChanged []string `json:"files_changed"`
+	PRUrl        string   `json:"pr_url,omitempty"`
+	Success      bool     `json:"success"`
+	Error        string   `json:"error,omitempty"`
 }
 
 // ConsolidationConfig holds configuration for branch consolidation
@@ -1085,10 +1085,10 @@ func (e *ConflictError) Error() string {
 // and aggregates the context for use in consolidation prompts and PR descriptions
 func (c *Consolidator) gatherTaskCompletionContext(taskIDs []string) *AggregatedTaskContext {
 	context := &AggregatedTaskContext{
-		TaskSummaries: make(map[string]string),
-		AllIssues:     make([]string, 0),
+		TaskSummaries:  make(map[string]string),
+		AllIssues:      make([]string, 0),
 		AllSuggestions: make([]string, 0),
-		Dependencies:  make([]string, 0),
+		Dependencies:   make([]string, 0),
 	}
 
 	seenDeps := make(map[string]bool)

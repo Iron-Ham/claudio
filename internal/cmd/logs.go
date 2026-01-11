@@ -68,12 +68,12 @@ func init() {
 
 // logEntry represents a parsed JSON log line
 type logEntry struct {
-	Time       time.Time              `json:"time"`
-	Level      string                 `json:"level"`
-	Msg        string                 `json:"msg"`
-	SessionID  string                 `json:"session_id,omitempty"`
-	InstanceID string                 `json:"instance_id,omitempty"`
-	Phase      string                 `json:"phase,omitempty"`
+	Time       time.Time      `json:"time"`
+	Level      string         `json:"level"`
+	Msg        string         `json:"msg"`
+	SessionID  string         `json:"session_id,omitempty"`
+	InstanceID string         `json:"instance_id,omitempty"`
+	Phase      string         `json:"phase,omitempty"`
 	Extra      map[string]any `json:"-"` // Captures additional fields
 }
 
