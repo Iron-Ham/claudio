@@ -163,6 +163,11 @@ func attachToSession(cwd, sessionID string, cfg *config.Config) error {
 		fmt.Printf("Reconnected to %d running instance(s)\n", len(reconnected))
 	}
 
+	// Check if this is an ultraplan session - if so, resume it
+	if sess.UltraPlan != nil {
+		return resumeUltraplanSession(orch, sess, logger)
+	}
+
 	return launchTUI(cwd, orch, sess, logger)
 }
 
@@ -263,6 +268,109 @@ func launchTUI(cwd string, orch *orchestrator.Orchestrator, sess *orchestrator.S
 	}
 
 	return nil
+}
+
+// resumeUltraplanSession resumes an interrupted ultraplan session.
+// It detects the current phase and automatically continues execution from where it left off.
+func resumeUltraplanSession(orch *orchestrator.Orchestrator, sess *orchestrator.Session, logger *logging.Logger) error {
+	ultraSession := sess.UltraPlan
+
+	// Log the resume attempt
+	logger.Info("resuming ultraplan session",
+		"session_id", sess.ID,
+		"phase", string(ultraSession.Phase),
+		"current_group", ultraSession.CurrentGroup,
+	)
+
+	// Print resume info to console
+	groupInfo := ""
+	if ultraSession.Plan != nil && len(ultraSession.Plan.ExecutionOrder) > 0 {
+		groupInfo = fmt.Sprintf(", group: %d/%d", ultraSession.CurrentGroup+1, len(ultraSession.Plan.ExecutionOrder))
+	}
+	fmt.Printf("Resuming ultraplan session (phase: %s%s)\n", ultraSession.Phase, groupInfo)
+
+	// Create coordinator from the loaded session state
+	coordinator := orchestrator.NewCoordinator(orch, sess, ultraSession, logger)
+
+	// Resume based on current phase
+	switch ultraSession.Phase {
+	case orchestrator.PhasePlanning:
+		// Check if planning coordinator instance exists and is still running
+		if ultraSession.CoordinatorID != "" && orch.GetInstance(ultraSession.CoordinatorID) != nil {
+			fmt.Println("Planning in progress...")
+		} else {
+			fmt.Println("Restarting planning...")
+			if err := coordinator.RunPlanning(); err != nil {
+				return fmt.Errorf("failed to restart planning: %w", err)
+			}
+		}
+
+	case orchestrator.PhasePlanSelection:
+		fmt.Println("Plan selection in progress...")
+
+	case orchestrator.PhaseRefresh:
+		fmt.Println("Plan ready for review...")
+
+	case orchestrator.PhaseExecuting:
+		fmt.Println("Resuming execution...")
+		if err := coordinator.StartExecution(); err != nil {
+			return fmt.Errorf("failed to resume execution: %w", err)
+		}
+
+	case orchestrator.PhaseSynthesis:
+		if ultraSession.SynthesisAwaitingApproval {
+			fmt.Println("Synthesis complete, awaiting approval...")
+		} else if ultraSession.SynthesisID != "" && orch.GetInstance(ultraSession.SynthesisID) != nil {
+			fmt.Println("Synthesis in progress...")
+		} else {
+			fmt.Println("Restarting synthesis...")
+			if err := coordinator.RunSynthesis(); err != nil {
+				return fmt.Errorf("failed to restart synthesis: %w", err)
+			}
+		}
+
+	case orchestrator.PhaseRevision:
+		fmt.Println("Revision phase...")
+
+	case orchestrator.PhaseConsolidating:
+		fmt.Println("Consolidation in progress...")
+		// Restart consolidation if the instance is gone
+		if ultraSession.ConsolidationID != "" && orch.GetInstance(ultraSession.ConsolidationID) == nil {
+			if err := coordinator.StartConsolidation(); err != nil {
+				return fmt.Errorf("failed to restart consolidation: %w", err)
+			}
+		}
+
+	case orchestrator.PhaseComplete:
+		fmt.Println("Session already completed. Use [R] to re-trigger a group.")
+
+	case orchestrator.PhaseFailed:
+		fmt.Printf("Session previously failed: %s\n", ultraSession.Error)
+		fmt.Println("Use [R] to re-trigger a group or [r] to retry failed tasks.")
+
+	default:
+		logger.Error("unknown ultraplan phase encountered",
+			"phase", string(ultraSession.Phase),
+			"session_id", sess.ID,
+		)
+		return fmt.Errorf("unknown ultraplan phase: %s", ultraSession.Phase)
+	}
+
+	// Get terminal dimensions and set them on the orchestrator
+	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err != nil {
+		logger.Info("terminal size detection failed, using defaults",
+			"error", err.Error(),
+		)
+	} else {
+		contentWidth, contentHeight := tui.CalculateContentDimensions(termWidth, termHeight)
+		if contentWidth > 0 && contentHeight > 0 {
+			orch.SetDisplayDimensions(contentWidth, contentHeight)
+		}
+	}
+
+	// Launch TUI in ultraplan mode
+	app := tui.NewWithUltraPlan(orch, sess, coordinator, logger.WithSession(sess.ID))
+	return app.Run()
 }
 
 // CreateLogger creates a logger if logging is enabled in config.

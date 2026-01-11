@@ -383,6 +383,39 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 		}
 	}
 
+	// Handle retrigger mode - number keys select group to retrigger
+	if m.ultraPlan.RetriggerMode {
+		switch msg.String() {
+		case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			groupNum := int(msg.String()[0] - '0')
+			if err := m.ultraPlan.Coordinator.RetriggerGroup(groupNum); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to retrigger: %v", err)
+				// Log the failure for debugging
+				if m.logger != nil {
+					m.logger.Error("retrigger failed",
+						"target_group", groupNum,
+						"error", err.Error())
+				}
+			} else {
+				m.infoMessage = fmt.Sprintf("Re-triggering from group %d", groupNum)
+				// Log user decision
+				if m.logger != nil {
+					m.logger.Info("user decision",
+						"decision_type", "retrigger_group",
+						"target_group", groupNum)
+				}
+			}
+			m.ultraPlan.RetriggerMode = false
+			return true, m, nil
+		case "esc", "escape":
+			m.ultraPlan.RetriggerMode = false
+			m.infoMessage = ""
+			return true, m, nil
+		}
+		// Don't process other keys while in retrigger mode
+		return true, m, nil
+	}
+
 	switch msg.String() {
 	case "v":
 		// Toggle plan view (only when plan is available)
@@ -511,9 +544,54 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 			}
 		}
 		return true, m, nil
+
+	case "R":
+		// Enter re-trigger mode (capital R to prevent accidental triggers)
+		// Available when: complete, failed, or executing with no running tasks
+		if m.canRetriggerGroup(session) {
+			numGroups := len(session.Plan.ExecutionOrder)
+			m.ultraPlan.RetriggerMode = true
+			m.infoMessage = fmt.Sprintf("Enter group number (0-%d) to re-trigger, or Esc to cancel", numGroups-1)
+		} else {
+			m.errorMessage = "Cannot re-trigger: execution in progress or no plan available"
+		}
+		return true, m, nil
 	}
 
 	return false, m, nil
+}
+
+// canRetriggerGroup returns true if group re-triggering is currently allowed
+func (m *Model) canRetriggerGroup(session *orchestrator.UltraPlanSession) bool {
+	if session == nil || session.Plan == nil {
+		return false
+	}
+
+	// Can retrigger when complete or failed
+	if session.Phase == orchestrator.PhaseComplete || session.Phase == orchestrator.PhaseFailed {
+		return true
+	}
+
+	// Can retrigger during execution if no tasks are running and not awaiting decision
+	if session.Phase == orchestrator.PhaseExecuting {
+		if session.GroupDecision != nil && session.GroupDecision.AwaitingDecision {
+			return false
+		}
+		// Bounds check before accessing ExecutionOrder
+		if session.CurrentGroup < 0 || session.CurrentGroup >= len(session.Plan.ExecutionOrder) {
+			return false
+		}
+		// Check if any tasks are currently running by looking at TaskToInstance
+		// Tasks are removed from this map when they complete
+		for _, taskID := range session.Plan.ExecutionOrder[session.CurrentGroup] {
+			if _, running := session.TaskToInstance[taskID]; running {
+				return false
+			}
+		}
+		return true
+	}
+
+	return false
 }
 
 // selectTaskInstance switches to the instance associated with the currently selected task
