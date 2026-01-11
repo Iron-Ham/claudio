@@ -220,3 +220,222 @@ func TestInstance_Created_Timestamp(t *testing.T) {
 		t.Errorf("instance.Created = %v, should be between %v and %v", inst.Created, before, after)
 	}
 }
+
+// Test dependency-related functionality
+
+func TestInstance_DependencyFields(t *testing.T) {
+	inst := NewInstance("test task")
+
+	// DependsOn should be nil initially
+	if inst.DependsOn != nil {
+		t.Errorf("instance.DependsOn should be nil initially, got %v", inst.DependsOn)
+	}
+
+	// Dependents should be nil initially
+	if inst.Dependents != nil {
+		t.Errorf("instance.Dependents should be nil initially, got %v", inst.Dependents)
+	}
+
+	// AutoStart should be false initially
+	if inst.AutoStart {
+		t.Error("instance.AutoStart should be false initially")
+	}
+
+	// Should be settable
+	inst.DependsOn = []string{"inst-1", "inst-2"}
+	inst.Dependents = []string{"inst-3"}
+	inst.AutoStart = true
+
+	if len(inst.DependsOn) != 2 {
+		t.Errorf("instance.DependsOn length = %d, want 2", len(inst.DependsOn))
+	}
+	if len(inst.Dependents) != 1 {
+		t.Errorf("instance.Dependents length = %d, want 1", len(inst.Dependents))
+	}
+	if !inst.AutoStart {
+		t.Error("instance.AutoStart should be true after setting")
+	}
+}
+
+func TestSession_AreDependenciesMet(t *testing.T) {
+	session := NewSession("test", "/repo")
+
+	// Create instances
+	inst1 := NewInstance("task 1")
+	inst1.ID = "inst-1"
+	inst1.Status = StatusCompleted
+
+	inst2 := NewInstance("task 2")
+	inst2.ID = "inst-2"
+	inst2.Status = StatusWorking
+
+	inst3 := NewInstance("task 3 - depends on 1 and 2")
+	inst3.ID = "inst-3"
+	inst3.DependsOn = []string{"inst-1", "inst-2"}
+
+	inst4 := NewInstance("task 4 - no dependencies")
+	inst4.ID = "inst-4"
+
+	session.Instances = []*Instance{inst1, inst2, inst3, inst4}
+
+	tests := []struct {
+		name     string
+		inst     *Instance
+		expected bool
+	}{
+		{
+			name:     "no dependencies - always met",
+			inst:     inst4,
+			expected: true,
+		},
+		{
+			name:     "all dependencies completed",
+			inst:     &Instance{DependsOn: []string{"inst-1"}},
+			expected: true,
+		},
+		{
+			name:     "some dependencies not completed",
+			inst:     inst3,
+			expected: false,
+		},
+		{
+			name:     "dependency on non-existent instance",
+			inst:     &Instance{DependsOn: []string{"inst-999"}},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := session.AreDependenciesMet(tt.inst)
+			if result != tt.expected {
+				t.Errorf("AreDependenciesMet() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSession_GetDependentInstances(t *testing.T) {
+	session := NewSession("test", "/repo")
+
+	// Create instances with dependency relationships
+	inst1 := NewInstance("task 1")
+	inst1.ID = "inst-1"
+
+	inst2 := NewInstance("task 2 - depends on 1")
+	inst2.ID = "inst-2"
+	inst2.DependsOn = []string{"inst-1"}
+
+	inst3 := NewInstance("task 3 - depends on 1")
+	inst3.ID = "inst-3"
+	inst3.DependsOn = []string{"inst-1"}
+
+	inst4 := NewInstance("task 4 - depends on 2")
+	inst4.ID = "inst-4"
+	inst4.DependsOn = []string{"inst-2"}
+
+	session.Instances = []*Instance{inst1, inst2, inst3, inst4}
+
+	tests := []struct {
+		name          string
+		instanceID    string
+		expectedCount int
+		expectedIDs   []string
+	}{
+		{
+			name:          "instance with two dependents",
+			instanceID:    "inst-1",
+			expectedCount: 2,
+			expectedIDs:   []string{"inst-2", "inst-3"},
+		},
+		{
+			name:          "instance with one dependent",
+			instanceID:    "inst-2",
+			expectedCount: 1,
+			expectedIDs:   []string{"inst-4"},
+		},
+		{
+			name:          "instance with no dependents",
+			instanceID:    "inst-4",
+			expectedCount: 0,
+			expectedIDs:   nil,
+		},
+		{
+			name:          "non-existent instance",
+			instanceID:    "inst-999",
+			expectedCount: 0,
+			expectedIDs:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dependents := session.GetDependentInstances(tt.instanceID)
+			if len(dependents) != tt.expectedCount {
+				t.Errorf("GetDependentInstances(%q) returned %d instances, want %d",
+					tt.instanceID, len(dependents), tt.expectedCount)
+			}
+
+			// Check that expected IDs are present
+			if tt.expectedIDs != nil {
+				for _, expectedID := range tt.expectedIDs {
+					found := false
+					for _, dep := range dependents {
+						if dep.ID == expectedID {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Errorf("GetDependentInstances(%q) missing expected dependent %q",
+							tt.instanceID, expectedID)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestSession_GetReadyInstances(t *testing.T) {
+	session := NewSession("test", "/repo")
+
+	// Create instances
+	inst1 := NewInstance("task 1 - completed")
+	inst1.ID = "inst-1"
+	inst1.Status = StatusCompleted
+
+	inst2 := NewInstance("task 2 - pending, auto-start, depends on 1")
+	inst2.ID = "inst-2"
+	inst2.Status = StatusPending
+	inst2.AutoStart = true
+	inst2.DependsOn = []string{"inst-1"}
+
+	inst3 := NewInstance("task 3 - pending, no auto-start")
+	inst3.ID = "inst-3"
+	inst3.Status = StatusPending
+	inst3.AutoStart = false
+
+	inst4 := NewInstance("task 4 - pending, auto-start, deps not met")
+	inst4.ID = "inst-4"
+	inst4.Status = StatusPending
+	inst4.AutoStart = true
+	inst4.DependsOn = []string{"inst-3"} // inst-3 is not completed
+
+	inst5 := NewInstance("task 5 - already working")
+	inst5.ID = "inst-5"
+	inst5.Status = StatusWorking
+	inst5.AutoStart = true
+
+	session.Instances = []*Instance{inst1, inst2, inst3, inst4, inst5}
+
+	ready := session.GetReadyInstances()
+
+	// Only inst2 should be ready (pending, auto-start, deps met)
+	if len(ready) != 1 {
+		t.Errorf("GetReadyInstances() returned %d instances, want 1", len(ready))
+	}
+
+	if len(ready) > 0 && ready[0].ID != "inst-2" {
+		t.Errorf("GetReadyInstances()[0].ID = %q, want %q", ready[0].ID, "inst-2")
+	}
+}

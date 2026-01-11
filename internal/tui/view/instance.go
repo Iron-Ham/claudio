@@ -61,7 +61,14 @@ type RenderState struct {
 
 // Render renders the complete instance detail view.
 // This is the main entry point for instance rendering.
+// Use RenderWithSession if you need to display dependency information.
 func (v *InstanceView) Render(inst *orchestrator.Instance, state RenderState) string {
+	return v.RenderWithSession(inst, state, nil)
+}
+
+// RenderWithSession renders the complete instance detail view with session context.
+// When session is provided, dependency information is displayed.
+func (v *InstanceView) RenderWithSession(inst *orchestrator.Instance, state RenderState, session *orchestrator.Session) string {
 	var b strings.Builder
 
 	// Render header (status badge + branch info)
@@ -71,6 +78,14 @@ func (v *InstanceView) Render(inst *orchestrator.Instance, state RenderState) st
 	// Render task description
 	b.WriteString(v.RenderTask(inst.Task))
 	b.WriteString("\n")
+
+	// Render dependency information if available
+	if session != nil {
+		depInfo := v.RenderDependencies(inst, session)
+		if depInfo != "" {
+			b.WriteString(depInfo)
+		}
+	}
 
 	// Render metrics if enabled and available
 	cfg := config.Get()
@@ -104,6 +119,71 @@ func (v *InstanceView) RenderHeader(inst *orchestrator.Instance) string {
 	statusBadge := styles.StatusBadge.Background(statusColor).Render(string(inst.Status))
 	info := fmt.Sprintf("%s  Branch: %s", statusBadge, inst.Branch)
 	return styles.InstanceInfo.Render(info)
+}
+
+// RenderDependencies renders the dependency chain information for an instance.
+// Returns empty string if the instance has no dependencies or dependents.
+func (v *InstanceView) RenderDependencies(inst *orchestrator.Instance, session *orchestrator.Session) string {
+	if len(inst.DependsOn) == 0 && len(inst.Dependents) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+
+	// Show upstream dependencies (what this instance waits for)
+	if len(inst.DependsOn) > 0 {
+		b.WriteString(styles.Muted.Render("Depends on: "))
+		var deps []string
+		for _, depID := range inst.DependsOn {
+			depInst := session.GetInstance(depID)
+			if depInst != nil {
+				var statusIcon string
+				switch depInst.Status {
+				case orchestrator.StatusCompleted:
+					statusIcon = "✓"
+				case orchestrator.StatusWorking, orchestrator.StatusWaitingInput:
+					statusIcon = "●"
+				case orchestrator.StatusError, orchestrator.StatusTimeout:
+					statusIcon = "✗"
+				default:
+					statusIcon = "○" // pending
+				}
+				deps = append(deps, fmt.Sprintf("%s %s", statusIcon, truncateTask(depInst.Task, 20)))
+			} else {
+				deps = append(deps, depID+" (not found)")
+			}
+		}
+		b.WriteString(strings.Join(deps, ", "))
+		b.WriteString("\n")
+	}
+
+	// Show downstream dependents (what instances wait for this one)
+	if len(inst.Dependents) > 0 {
+		b.WriteString(styles.Muted.Render("Dependents: "))
+		var deps []string
+		for _, depID := range inst.Dependents {
+			depInst := session.GetInstance(depID)
+			if depInst != nil {
+				deps = append(deps, truncateTask(depInst.Task, 20))
+			} else {
+				deps = append(deps, depID)
+			}
+		}
+		b.WriteString(strings.Join(deps, ", "))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+// truncateTask truncates a task description to maxLen characters.
+func truncateTask(task string, maxLen int) string {
+	// Remove newlines
+	task = strings.ReplaceAll(task, "\n", " ")
+	if len(task) <= maxLen {
+		return task
+	}
+	return task[:maxLen-3] + "..."
 }
 
 // RenderTask renders the task description, truncated to maxTaskLines.
