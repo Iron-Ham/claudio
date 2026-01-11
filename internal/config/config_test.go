@@ -363,3 +363,92 @@ func TestConfig_UltraplanMultiPass_ConfigCascade(t *testing.T) {
 		}
 	})
 }
+
+func TestConfig_PathsConfig_Defaults(t *testing.T) {
+	cfg := Default()
+
+	// WorktreeDir should be empty by default (meaning use default location)
+	if cfg.Paths.WorktreeDir != "" {
+		t.Errorf("Paths.WorktreeDir should be empty by default, got %q", cfg.Paths.WorktreeDir)
+	}
+}
+
+func TestPathsConfig_ResolveWorktreeDir(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("could not get home directory: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		worktreeDir string
+		baseDir     string
+		expected    string
+	}{
+		{
+			name:        "empty uses default",
+			worktreeDir: "",
+			baseDir:     "/repo",
+			expected:    "/repo/.claudio/worktrees",
+		},
+		{
+			name:        "absolute path used as-is",
+			worktreeDir: "/custom/worktrees",
+			baseDir:     "/repo",
+			expected:    "/custom/worktrees",
+		},
+		{
+			name:        "tilde expands to home",
+			worktreeDir: "~/claudio-worktrees",
+			baseDir:     "/repo",
+			expected:    filepath.Join(home, "claudio-worktrees"),
+		},
+		{
+			name:        "tilde alone expands to home",
+			worktreeDir: "~",
+			baseDir:     "/repo",
+			expected:    home,
+		},
+		{
+			name:        "relative path resolved against baseDir",
+			worktreeDir: "custom-worktrees",
+			baseDir:     "/repo",
+			expected:    "/repo/custom-worktrees",
+		},
+		{
+			name:        "relative path with subdirs",
+			worktreeDir: "../shared/worktrees",
+			baseDir:     "/repo/project",
+			expected:    "/repo/shared/worktrees", // filepath.Join normalizes the path
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &PathsConfig{WorktreeDir: tt.worktreeDir}
+			result := p.ResolveWorktreeDir(tt.baseDir)
+			if result != tt.expected {
+				t.Errorf("ResolveWorktreeDir(%q) = %q, want %q", tt.baseDir, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestPathsConfig_ResolveWorktreeDir_ViperLoading(t *testing.T) {
+	// Test that the worktree_dir setting is properly loaded via viper
+	viper.Reset()
+	SetDefaults()
+
+	// After SetDefaults, paths.worktree_dir should be empty
+	worktreeDir := viper.GetString("paths.worktree_dir")
+	if worktreeDir != "" {
+		t.Errorf("viper.GetString('paths.worktree_dir') should be empty by default, got %q", worktreeDir)
+	}
+
+	// Test setting via viper (simulates environment variable or config file)
+	viper.Set("paths.worktree_dir", "/custom/worktrees")
+	cfg := Get()
+	if cfg.Paths.WorktreeDir != "/custom/worktrees" {
+		t.Errorf("Paths.WorktreeDir = %q, want %q", cfg.Paths.WorktreeDir, "/custom/worktrees")
+	}
+}
