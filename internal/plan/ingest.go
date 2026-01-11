@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
@@ -724,5 +725,233 @@ func ParseTaskComplexity(complexity string) (orchestrator.TaskComplexity, error)
 		return orchestrator.ComplexityHigh, nil
 	default:
 		return "", fmt.Errorf("invalid complexity value: %q (expected low, medium, or high)", complexity)
+	}
+}
+
+// =============================================================================
+// URL-to-PlanSpec Ingestion Pipeline
+// =============================================================================
+
+// SourceProvider identifies the source of an issue URL
+type SourceProvider string
+
+const (
+	ProviderGitHub  SourceProvider = "github"
+	ProviderLinear  SourceProvider = "linear"
+	ProviderNotion  SourceProvider = "notion"
+	ProviderUnknown SourceProvider = ""
+)
+
+// DetectSourceProvider determines the issue provider from a URL string
+func DetectSourceProvider(url string) SourceProvider {
+	if IsGitHubIssueURL(url) {
+		return ProviderGitHub
+	}
+	// Future: Add Linear and Notion detection
+	// if IsLinearIssueURL(url) { return ProviderLinear }
+	// if IsNotionPageURL(url) { return ProviderNotion }
+	return ProviderUnknown
+}
+
+// ErrUnsupportedProvider indicates that the URL provider is not supported for ingestion
+var ErrUnsupportedProvider = errors.New("unsupported issue provider")
+
+// ErrNoSubIssues indicates that the parent issue has no sub-issues defined
+var ErrNoSubIssues = errors.New("parent issue has no sub-issues")
+
+// ErrParsingFailed indicates that parsing the issue content failed
+var ErrParsingFailed = errors.New("failed to parse issue content")
+
+// BuildPlanFromURL fetches a parent issue from a URL and converts it (and all
+// its sub-issues) into a PlanSpec suitable for ultraplan execution.
+//
+// The function:
+//  1. Detects the source provider (GitHub, Linear, Notion) from the URL
+//  2. Fetches the parent issue
+//  3. Parses the parent issue body to extract sub-issue references
+//  4. Fetches all referenced sub-issues
+//  5. Converts each sub-issue to a PlannedTask
+//  6. Assembles everything into a complete PlanSpec
+//
+// Currently only GitHub is supported. Linear and Notion support is planned.
+func BuildPlanFromURL(url string) (*orchestrator.PlanSpec, error) {
+	return buildPlanFromURLWithExecutor(url, defaultExecutor)
+}
+
+// buildPlanFromURLWithExecutor is the internal implementation that accepts a command
+// executor for testability.
+func buildPlanFromURLWithExecutor(url string, executor CommandExecutor) (*orchestrator.PlanSpec, error) {
+	provider := DetectSourceProvider(url)
+	if provider == ProviderUnknown {
+		return nil, fmt.Errorf("%w: unable to detect provider from URL %q", ErrUnsupportedProvider, url)
+	}
+
+	switch provider {
+	case ProviderGitHub:
+		return buildPlanFromGitHubIssue(url, executor)
+	case ProviderLinear:
+		return nil, fmt.Errorf("%w: Linear is not yet supported", ErrUnsupportedProvider)
+	case ProviderNotion:
+		return nil, fmt.Errorf("%w: Notion is not yet supported", ErrUnsupportedProvider)
+	default:
+		return nil, fmt.Errorf("%w: %s", ErrUnsupportedProvider, provider)
+	}
+}
+
+// buildPlanFromGitHubIssue implements the GitHub-specific ingestion logic
+func buildPlanFromGitHubIssue(url string, executor CommandExecutor) (*orchestrator.PlanSpec, error) {
+	// Step 1: Parse the URL to extract owner, repo, and issue number
+	owner, repo, issueNum, err := ParseGitHubIssueURL(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse GitHub issue URL: %w", err)
+	}
+
+	// Step 2: Fetch the parent issue
+	parentIssue, err := fetchIssueWithExecutor(owner, repo, issueNum, executor)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch parent issue #%d: %w", issueNum, err)
+	}
+
+	// Step 3: Parse the parent issue body to extract structure
+	parentContent, err := ParseParentIssueBody(parentIssue.Body)
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to parse parent issue body: %v", ErrParsingFailed, err)
+	}
+
+	// Step 4: Collect all sub-issue numbers from execution groups
+	subIssueNums := collectSubIssueNumbers(parentContent.ExecutionGroups)
+	if len(subIssueNums) == 0 {
+		return nil, fmt.Errorf("%w: no sub-issues found in parent issue #%d", ErrNoSubIssues, issueNum)
+	}
+
+	// Step 5: Fetch all sub-issues and build the issue number to task ID mapping
+	subIssues, issueNumToTaskID, err := fetchSubIssuesWithMapping(owner, repo, subIssueNums, executor)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch sub-issues: %w", err)
+	}
+
+	// Step 6: Convert each sub-issue to a PlannedTask
+	tasks, err := convertSubIssuesToTasks(subIssues, issueNumToTaskID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert issues to tasks: %w", err)
+	}
+
+	// Step 7: Build execution order from parent's execution groups
+	executionOrder := buildExecutionOrder(parentContent.ExecutionGroups, issueNumToTaskID)
+
+	// Step 8: Build dependency graph from tasks
+	dependencyGraph := make(map[string][]string)
+	for _, task := range tasks {
+		dependencyGraph[task.ID] = task.DependsOn
+	}
+
+	// Step 9: Assign priorities based on execution order
+	assignPriorities(tasks, executionOrder)
+
+	// Step 10: Assemble the PlanSpec
+	plan := &orchestrator.PlanSpec{
+		ID:              orchestrator.GenerateID(),
+		Objective:       parentIssue.Title,
+		Summary:         parentContent.Summary,
+		Tasks:           tasks,
+		DependencyGraph: dependencyGraph,
+		ExecutionOrder:  executionOrder,
+		Insights:        parentContent.Insights,
+		Constraints:     parentContent.Constraints,
+		CreatedAt:       time.Now(),
+	}
+
+	return plan, nil
+}
+
+// collectSubIssueNumbers extracts all unique issue numbers from execution groups
+func collectSubIssueNumbers(executionGroups [][]int) []int {
+	seen := make(map[int]bool)
+	var nums []int
+	for _, group := range executionGroups {
+		for _, num := range group {
+			if !seen[num] {
+				seen[num] = true
+				nums = append(nums, num)
+			}
+		}
+	}
+	return nums
+}
+
+// fetchSubIssuesWithMapping fetches all sub-issues and builds a mapping from
+// issue numbers to task IDs (which are generated from issue number and title)
+func fetchSubIssuesWithMapping(owner, repo string, issueNums []int, executor CommandExecutor) (map[int]*GitHubIssue, map[int]string, error) {
+	issues := make(map[int]*GitHubIssue)
+	issueNumToTaskID := make(map[int]string)
+
+	for _, num := range issueNums {
+		issue, err := fetchIssueWithExecutor(owner, repo, num, executor)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to fetch sub-issue #%d: %w", num, err)
+		}
+		issues[num] = issue
+		// Generate task ID immediately so we can use it for dependency resolution
+		issueNumToTaskID[num] = GenerateTaskID(num, issue.Title)
+	}
+
+	return issues, issueNumToTaskID, nil
+}
+
+// convertSubIssuesToTasks converts all fetched sub-issues to PlannedTasks
+func convertSubIssuesToTasks(subIssues map[int]*GitHubIssue, issueNumToTaskID map[int]string) ([]orchestrator.PlannedTask, error) {
+	var tasks []orchestrator.PlannedTask
+
+	for num, issue := range subIssues {
+		// Parse the sub-issue body
+		content, err := ParseSubIssueBody(issue.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse sub-issue #%d body: %w", num, err)
+		}
+
+		// Convert to PlannedTask
+		task, err := ConvertToPlannedTask(*issue, *content, issueNumToTaskID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert sub-issue #%d to task: %w", num, err)
+		}
+
+		tasks = append(tasks, task)
+	}
+
+	return tasks, nil
+}
+
+// buildExecutionOrder converts issue number groups to task ID groups
+func buildExecutionOrder(executionGroups [][]int, issueNumToTaskID map[int]string) [][]string {
+	result := make([][]string, len(executionGroups))
+	for i, group := range executionGroups {
+		result[i] = make([]string, 0, len(group))
+		for _, num := range group {
+			if taskID, ok := issueNumToTaskID[num]; ok {
+				result[i] = append(result[i], taskID)
+			}
+		}
+	}
+	return result
+}
+
+// assignPriorities sets task priorities based on their position in execution order
+// Tasks in earlier groups have lower (higher priority) values
+func assignPriorities(tasks []orchestrator.PlannedTask, executionOrder [][]string) {
+	// Build a map of task ID to its group index
+	taskPriority := make(map[string]int)
+	for groupIdx, group := range executionOrder {
+		for taskIdx, taskID := range group {
+			// Priority = group index * 100 + position within group
+			// This ensures tasks in earlier groups always have lower priority values
+			taskPriority[taskID] = groupIdx*100 + taskIdx
+		}
+	}
+
+	// Apply priorities to tasks
+	for i := range tasks {
+		if priority, ok := taskPriority[tasks[i].ID]; ok {
+			tasks[i].Priority = priority
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os/exec"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -2604,5 +2605,419 @@ Estimated: **medium**
 
 	if task.IssueURL != "https://github.com/example/repo/issues/103" {
 		t.Errorf("IssueURL = %q", task.IssueURL)
+	}
+}
+
+// =============================================================================
+// URL-to-PlanSpec Ingestion Pipeline Tests
+// =============================================================================
+
+func TestDetectSourceProvider(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want SourceProvider
+	}{
+		{
+			name: "GitHub full URL",
+			url:  "https://github.com/owner/repo/issues/123",
+			want: ProviderGitHub,
+		},
+		{
+			name: "GitHub shorthand",
+			url:  "owner/repo#123",
+			want: ProviderGitHub,
+		},
+		{
+			name: "GitHub URL with query",
+			url:  "https://github.com/owner/repo/issues/456?foo=bar",
+			want: ProviderGitHub,
+		},
+		{
+			name: "empty URL",
+			url:  "",
+			want: ProviderUnknown,
+		},
+		{
+			name: "random string",
+			url:  "not a url",
+			want: ProviderUnknown,
+		},
+		{
+			name: "GitLab URL (unsupported)",
+			url:  "https://gitlab.com/owner/repo/issues/123",
+			want: ProviderUnknown,
+		},
+		{
+			name: "GitHub PR URL (not an issue)",
+			url:  "https://github.com/owner/repo/pull/123",
+			want: ProviderUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectSourceProvider(tt.url)
+			if got != tt.want {
+				t.Errorf("DetectSourceProvider(%q) = %q, want %q", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildPlanFromURL_UnsupportedProvider(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{
+			name: "empty URL",
+			url:  "",
+		},
+		{
+			name: "random string",
+			url:  "not a valid url",
+		},
+		{
+			name: "GitLab URL",
+			url:  "https://gitlab.com/owner/repo/issues/123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := buildPlanFromURLWithExecutor(tt.url, mockExecutor(nil, nil))
+			if err == nil {
+				t.Error("expected error for unsupported URL, got nil")
+			}
+			if !errors.Is(err, ErrUnsupportedProvider) {
+				t.Errorf("expected ErrUnsupportedProvider, got: %v", err)
+			}
+		})
+	}
+}
+
+// multiIssueMockExecutor creates a mock that returns different responses
+// based on the issue number being requested
+func multiIssueMockExecutor(issueResponses map[int]string) CommandExecutor {
+	return func(name string, args ...string) ([]byte, error) {
+		// Parse the issue number from the args
+		// Format: gh issue view <num> --repo owner/repo --json ...
+		if len(args) < 2 {
+			return nil, errors.New("unexpected args")
+		}
+		issueNum, err := strconv.Atoi(args[2])
+		if err != nil {
+			return nil, err
+		}
+		response, ok := issueResponses[issueNum]
+		if !ok {
+			return []byte("issue not found"), errors.New("exit status 1")
+		}
+		return []byte(response), nil
+	}
+}
+
+func TestBuildPlanFromURL_FullPipeline(t *testing.T) {
+	// This test simulates the full pipeline of:
+	// 1. Parsing a parent issue URL
+	// 2. Fetching the parent issue
+	// 3. Parsing the parent body to get sub-issue refs
+	// 4. Fetching all sub-issues
+	// 5. Converting to a PlanSpec
+
+	parentIssueJSON := `{
+		"number": 100,
+		"title": "Plan: Implement user authentication",
+		"body": "## Summary\n\nAdd OAuth2 authentication support.\n\n## Analysis\n\n- Existing user table can be extended\n- JWT library available\n\n## Constraints\n\n- Must maintain backward compatibility\n\n## Sub-Issues\n\n### Group 1 (can start immediately)\n- [ ] #101 - **Setup auth models**\n- [ ] #102 - **Add JWT utilities**\n\n### Group 2 (depends on previous groups)\n- [ ] #103 - **Implement OAuth endpoints**\n\n## Execution Order\n\nTasks grouped by dependencies.",
+		"labels": [{"name": "plan"}],
+		"url": "https://github.com/owner/repo/issues/100",
+		"state": "open"
+	}`
+
+	subIssue101JSON := `{
+		"number": 101,
+		"title": "Setup auth models",
+		"body": "## Task\n\nCreate the User and Token models.\n\n## Files to Modify\n\n- ` + "`models/user.go`" + `\n- ` + "`models/token.go`" + `\n\n## Complexity\n\nEstimated: **low**\n\n---\n*Part of #100*",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/101",
+		"state": "open"
+	}`
+
+	subIssue102JSON := `{
+		"number": 102,
+		"title": "Add JWT utilities",
+		"body": "## Task\n\nImplement JWT token generation and validation.\n\n## Files to Modify\n\n- ` + "`auth/jwt.go`" + `\n\n## Complexity\n\nEstimated: **medium**\n\n---\n*Part of #100*",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/102",
+		"state": "open"
+	}`
+
+	subIssue103JSON := `{
+		"number": 103,
+		"title": "Implement OAuth endpoints",
+		"body": "## Task\n\nAdd OAuth login and callback endpoints.\n\n## Files to Modify\n\n- ` + "`api/oauth.go`" + `\n\n## Dependencies\n\nComplete these issues first:\n- #101 - Setup auth models\n- #102 - Add JWT utilities\n\n## Complexity\n\nEstimated: **high**\n\n---\n*Part of #100*",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/103",
+		"state": "open"
+	}`
+
+	issueResponses := map[int]string{
+		100: parentIssueJSON,
+		101: subIssue101JSON,
+		102: subIssue102JSON,
+		103: subIssue103JSON,
+	}
+
+	executor := multiIssueMockExecutor(issueResponses)
+
+	plan, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/100", executor)
+	if err != nil {
+		t.Fatalf("buildPlanFromURLWithExecutor() error: %v", err)
+	}
+
+	// Verify plan metadata
+	if plan.Objective != "Plan: Implement user authentication" {
+		t.Errorf("Objective = %q", plan.Objective)
+	}
+	if plan.Summary != "Add OAuth2 authentication support." {
+		t.Errorf("Summary = %q", plan.Summary)
+	}
+
+	// Verify insights
+	expectedInsights := []string{
+		"Existing user table can be extended",
+		"JWT library available",
+	}
+	if !reflect.DeepEqual(plan.Insights, expectedInsights) {
+		t.Errorf("Insights = %v, want %v", plan.Insights, expectedInsights)
+	}
+
+	// Verify constraints
+	expectedConstraints := []string{"Must maintain backward compatibility"}
+	if !reflect.DeepEqual(plan.Constraints, expectedConstraints) {
+		t.Errorf("Constraints = %v, want %v", plan.Constraints, expectedConstraints)
+	}
+
+	// Verify we have 3 tasks
+	if len(plan.Tasks) != 3 {
+		t.Fatalf("Expected 3 tasks, got %d", len(plan.Tasks))
+	}
+
+	// Verify execution order structure (2 groups)
+	if len(plan.ExecutionOrder) != 2 {
+		t.Fatalf("Expected 2 execution groups, got %d", len(plan.ExecutionOrder))
+	}
+
+	// Group 1 should have 2 tasks (101, 102)
+	if len(plan.ExecutionOrder[0]) != 2 {
+		t.Errorf("Group 1 should have 2 tasks, got %d", len(plan.ExecutionOrder[0]))
+	}
+
+	// Group 2 should have 1 task (103)
+	if len(plan.ExecutionOrder[1]) != 1 {
+		t.Errorf("Group 2 should have 1 task, got %d", len(plan.ExecutionOrder[1]))
+	}
+
+	// Find task 103 and verify its dependencies
+	var task103 *orchestrator.PlannedTask
+	for i := range plan.Tasks {
+		if strings.Contains(plan.Tasks[i].ID, "103") {
+			task103 = &plan.Tasks[i]
+			break
+		}
+	}
+	if task103 == nil {
+		t.Fatal("Task 103 not found")
+	}
+
+	// Task 103 should depend on tasks 101 and 102
+	if len(task103.DependsOn) != 2 {
+		t.Errorf("Task 103 should have 2 dependencies, got %d: %v", len(task103.DependsOn), task103.DependsOn)
+	}
+
+	// Verify complexity was parsed correctly
+	if task103.EstComplexity != orchestrator.ComplexityHigh {
+		t.Errorf("Task 103 complexity = %q, want %q", task103.EstComplexity, orchestrator.ComplexityHigh)
+	}
+
+	// Verify IssueURL was set
+	if task103.IssueURL != "https://github.com/owner/repo/issues/103" {
+		t.Errorf("Task 103 IssueURL = %q", task103.IssueURL)
+	}
+}
+
+func TestBuildPlanFromURL_NoSubIssues(t *testing.T) {
+	// Parent issue with no sub-issues should return error
+	parentIssueJSON := `{
+		"number": 100,
+		"title": "Empty Plan",
+		"body": "## Summary\n\nNo sub-issues here.\n\n## Analysis\n\n- Some insight\n",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/100",
+		"state": "open"
+	}`
+
+	executor := multiIssueMockExecutor(map[int]string{100: parentIssueJSON})
+
+	_, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/100", executor)
+	if err == nil {
+		t.Error("expected error for parent with no sub-issues")
+	}
+	if !errors.Is(err, ErrNoSubIssues) {
+		t.Errorf("expected ErrNoSubIssues, got: %v", err)
+	}
+}
+
+func TestBuildPlanFromURL_ParentFetchFails(t *testing.T) {
+	// Mock executor that fails to find the parent issue
+	executor := mockExecutor([]byte("issue not found"), errors.New("exit status 1"))
+
+	_, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/999", executor)
+	if err == nil {
+		t.Error("expected error when parent issue fetch fails")
+	}
+	if !strings.Contains(err.Error(), "failed to fetch parent issue") {
+		t.Errorf("error should mention parent issue fetch failure: %v", err)
+	}
+}
+
+func TestBuildPlanFromURL_SubIssueFetchFails(t *testing.T) {
+	// Parent issue exists but sub-issue #101 doesn't
+	parentIssueJSON := `{
+		"number": 100,
+		"title": "Plan with missing sub-issue",
+		"body": "## Summary\n\nTest plan.\n\n## Sub-Issues\n\n### Group 1\n- [ ] #101 - **Missing issue**\n",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/100",
+		"state": "open"
+	}`
+
+	executor := multiIssueMockExecutor(map[int]string{100: parentIssueJSON})
+
+	_, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/100", executor)
+	if err == nil {
+		t.Error("expected error when sub-issue fetch fails")
+	}
+	if !strings.Contains(err.Error(), "failed to fetch sub-issue") {
+		t.Errorf("error should mention sub-issue fetch failure: %v", err)
+	}
+}
+
+func TestCollectSubIssueNumbers(t *testing.T) {
+	tests := []struct {
+		name   string
+		groups [][]int
+		want   []int
+	}{
+		{
+			name:   "empty groups",
+			groups: [][]int{},
+			want:   nil,
+		},
+		{
+			name:   "single group single issue",
+			groups: [][]int{{42}},
+			want:   []int{42},
+		},
+		{
+			name:   "multiple groups",
+			groups: [][]int{{1, 2}, {3}, {4, 5, 6}},
+			want:   []int{1, 2, 3, 4, 5, 6},
+		},
+		{
+			name:   "deduplicates repeated numbers",
+			groups: [][]int{{1, 2}, {2, 3}, {3, 4}},
+			want:   []int{1, 2, 3, 4},
+		},
+		{
+			name:   "empty groups in middle",
+			groups: [][]int{{1}, {}, {2}},
+			want:   []int{1, 2},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := collectSubIssueNumbers(tt.groups)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("collectSubIssueNumbers() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildExecutionOrder(t *testing.T) {
+	issueNumToTaskID := map[int]string{
+		10: "task-10-first",
+		20: "task-20-second",
+		30: "task-30-third",
+	}
+
+	tests := []struct {
+		name   string
+		groups [][]int
+		want   [][]string
+	}{
+		{
+			name:   "empty groups",
+			groups: [][]int{},
+			want:   [][]string{},
+		},
+		{
+			name:   "single group",
+			groups: [][]int{{10, 20}},
+			want:   [][]string{{"task-10-first", "task-20-second"}},
+		},
+		{
+			name:   "multiple groups",
+			groups: [][]int{{10, 20}, {30}},
+			want:   [][]string{{"task-10-first", "task-20-second"}, {"task-30-third"}},
+		},
+		{
+			name:   "missing issue number skipped",
+			groups: [][]int{{10, 999, 20}},
+			want:   [][]string{{"task-10-first", "task-20-second"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildExecutionOrder(tt.groups, issueNumToTaskID)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("buildExecutionOrder() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAssignPriorities(t *testing.T) {
+	tasks := []orchestrator.PlannedTask{
+		{ID: "task-1"},
+		{ID: "task-2"},
+		{ID: "task-3"},
+		{ID: "task-4"},
+	}
+
+	executionOrder := [][]string{
+		{"task-1", "task-2"}, // Group 0: priorities 0, 1
+		{"task-3"},           // Group 1: priority 100
+		{"task-4"},           // Group 2: priority 200
+	}
+
+	assignPriorities(tasks, executionOrder)
+
+	expectedPriorities := map[string]int{
+		"task-1": 0,   // Group 0, position 0
+		"task-2": 1,   // Group 0, position 1
+		"task-3": 100, // Group 1, position 0
+		"task-4": 200, // Group 2, position 0
+	}
+
+	for _, task := range tasks {
+		expected := expectedPriorities[task.ID]
+		if task.Priority != expected {
+			t.Errorf("Task %s priority = %d, want %d", task.ID, task.Priority, expected)
+		}
 	}
 }
