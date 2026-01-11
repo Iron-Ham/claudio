@@ -54,8 +54,8 @@ type Coordinator struct {
 	mu         sync.RWMutex
 
 	// Task tracking
-	runningTasks   map[string]string // taskID -> instanceID
-	runningCount   int
+	runningTasks map[string]string // taskID -> instanceID
+	runningCount int
 }
 
 // NewCoordinator creates a new coordinator for an ultra-plan session.
@@ -578,7 +578,6 @@ func (c *Coordinator) buildPlanComparisonSection() string {
 
 	return sb.String()
 }
-
 
 // SetPlan sets the plan for this ultra-plan session (used after planning completes)
 func (c *Coordinator) SetPlan(plan *PlanSpec) error {
@@ -1814,7 +1813,6 @@ func (c *Coordinator) TriggerConsolidation() error {
 	c.onSynthesisComplete()
 	return nil
 }
-
 
 // StartConsolidation begins the consolidation phase
 // This creates a Claude instance that performs branch consolidation and PR creation

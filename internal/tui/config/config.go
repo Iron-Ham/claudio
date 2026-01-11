@@ -742,9 +742,9 @@ func (m *Model) resetCurrentToDefault() {
 		"instance.completion_timeout_minutes": defaults.Instance.CompletionTimeoutMinutes,
 		"instance.stale_detection":            defaults.Instance.StaleDetection,
 		// Pull Request
-		"pr.draft":          defaults.PR.Draft,
-		"pr.auto_rebase":    defaults.PR.AutoRebase,
-		"pr.use_ai":         defaults.PR.UseAI,
+		"pr.draft":           defaults.PR.Draft,
+		"pr.auto_rebase":     defaults.PR.AutoRebase,
+		"pr.use_ai":          defaults.PR.UseAI,
 		"pr.auto_pr_on_stop": defaults.PR.AutoPROnStop,
 		// Branch
 		"branch.prefix":     defaults.Branch.Prefix,

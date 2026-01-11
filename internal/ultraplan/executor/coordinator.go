@@ -67,15 +67,15 @@ type Coordinator struct {
 	eventHandler   EventHandler
 	worktreeGetter WorktreeGetter
 
-	mu             sync.RWMutex
-	progress       ExecutionProgress
-	runningTasks   map[string]*runningTask
-	taskExecutors  map[string]TaskExecutor
-	currentGroup   int
-	started        bool
-	stopped        bool
-	stopChan       chan struct{}
-	wg             sync.WaitGroup
+	mu            sync.RWMutex
+	progress      ExecutionProgress
+	runningTasks  map[string]*runningTask
+	taskExecutors map[string]TaskExecutor
+	currentGroup  int
+	started       bool
+	stopped       bool
+	stopChan      chan struct{}
+	wg            sync.WaitGroup
 }
 
 // WorktreeGetter provides worktree paths for tasks.

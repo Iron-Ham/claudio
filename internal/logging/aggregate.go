@@ -17,12 +17,12 @@ import (
 
 // LogEntry represents a parsed log entry with all structured fields.
 type LogEntry struct {
-	Timestamp  time.Time              `json:"time"`
-	Level      string                 `json:"level"`
-	Message    string                 `json:"msg"`
-	SessionID  string                 `json:"session_id,omitempty"`
-	InstanceID string                 `json:"instance_id,omitempty"`
-	Phase      string                 `json:"phase,omitempty"`
+	Timestamp  time.Time      `json:"time"`
+	Level      string         `json:"level"`
+	Message    string         `json:"msg"`
+	SessionID  string         `json:"session_id,omitempty"`
+	InstanceID string         `json:"instance_id,omitempty"`
+	Phase      string         `json:"phase,omitempty"`
 	Attrs      map[string]any `json:"attrs,omitempty"`
 }
 

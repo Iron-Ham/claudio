@@ -735,21 +735,21 @@ const (
 
 // ValidationMessage represents a single validation issue with structured information
 type ValidationMessage struct {
-	Severity    ValidationSeverity `json:"severity"`
-	Message     string             `json:"message"`
-	TaskID      string             `json:"task_id,omitempty"`      // The task this message relates to (empty for plan-level issues)
-	Field       string             `json:"field,omitempty"`        // The field causing the issue (e.g., "depends_on", "description")
-	Suggestion  string             `json:"suggestion,omitempty"`   // A suggested fix
-	RelatedIDs  []string           `json:"related_ids,omitempty"`  // Related task IDs (for cycles, conflicts, etc.)
+	Severity   ValidationSeverity `json:"severity"`
+	Message    string             `json:"message"`
+	TaskID     string             `json:"task_id,omitempty"`     // The task this message relates to (empty for plan-level issues)
+	Field      string             `json:"field,omitempty"`       // The field causing the issue (e.g., "depends_on", "description")
+	Suggestion string             `json:"suggestion,omitempty"`  // A suggested fix
+	RelatedIDs []string           `json:"related_ids,omitempty"` // Related task IDs (for cycles, conflicts, etc.)
 }
 
 // ValidationResult contains the complete validation results for a plan
 type ValidationResult struct {
-	IsValid   bool                `json:"is_valid"`   // True if there are no errors (warnings allowed)
-	Messages  []ValidationMessage `json:"messages"`
-	ErrorCount   int              `json:"error_count"`
-	WarningCount int              `json:"warning_count"`
-	InfoCount    int              `json:"info_count"`
+	IsValid      bool                `json:"is_valid"` // True if there are no errors (warnings allowed)
+	Messages     []ValidationMessage `json:"messages"`
+	ErrorCount   int                 `json:"error_count"`
+	WarningCount int                 `json:"warning_count"`
+	InfoCount    int                 `json:"info_count"`
 }
 
 // HasErrors returns true if there are any error-level messages

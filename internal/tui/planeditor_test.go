@@ -105,11 +105,11 @@ func TestPlanEditorState_Initialization(t *testing.T) {
 
 func TestPlanEditorMoveSelection(t *testing.T) {
 	tests := []struct {
-		name           string
-		initialIdx     int
-		delta          int
-		numTasks       int
-		expectedIdx    int
+		name        string
+		initialIdx  int
+		delta       int
+		numTasks    int
+		expectedIdx int
 	}{
 		{
 			name:        "move down from first",
@@ -247,14 +247,14 @@ func TestPlanEditorEnsureVisible(t *testing.T) {
 
 func TestStartEditingField(t *testing.T) {
 	tests := []struct {
-		name          string
-		field         string
-		taskTitle     string
-		taskDesc      string
-		taskFiles     []string
-		taskPriority  int
-		taskDeps      []string
-		expectedBuf   string
+		name         string
+		field        string
+		taskTitle    string
+		taskDesc     string
+		taskFiles    []string
+		taskPriority int
+		taskDeps     []string
+		expectedBuf  string
 	}{
 		{
 			name:        "edit title",
@@ -384,11 +384,11 @@ func TestCancelFieldEdit(t *testing.T) {
 
 func TestConfirmFieldEdit(t *testing.T) {
 	tests := []struct {
-		name         string
-		field        string
-		editBuffer   string
-		wantErr      bool
-		checkResult  func(t *testing.T, plan *orchestrator.PlanSpec)
+		name        string
+		field       string
+		editBuffer  string
+		wantErr     bool
+		checkResult func(t *testing.T, plan *orchestrator.PlanSpec)
 	}{
 		{
 			name:       "confirm title edit",
@@ -829,12 +829,12 @@ func TestCycleTaskComplexity(t *testing.T) {
 
 func TestDeleteSelectedTask(t *testing.T) {
 	tests := []struct {
-		name            string
-		selectedIdx     int
-		numTasks        int
-		expectedRemain  int
-		expectedNewIdx  int
-		wantErr         bool
+		name           string
+		selectedIdx    int
+		numTasks       int
+		expectedRemain int
+		expectedNewIdx int
+		wantErr        bool
 	}{
 		{
 			name:           "delete first task",

@@ -150,13 +150,13 @@ type PRCreator interface {
 
 // Consolidator handles the consolidation of task branches into group branches and PR creation.
 type Consolidator struct {
-	session  *ultraplan.Session
-	config   Config
-	wt       WorktreeManager
-	pr       PRCreator
-	state    *State
-	results  []*GroupResult
-	logger   *logging.Logger
+	session *ultraplan.Session
+	config  Config
+	wt      WorktreeManager
+	pr      PRCreator
+	state   *State
+	results []*GroupResult
+	logger  *logging.Logger
 
 	// Task branch mapping: task ID -> branch name
 	taskBranches map[string]string

@@ -48,7 +48,7 @@ func TestTimeoutDetector_CheckTimeout_NoTimeout(t *testing.T) {
 	detector := NewTimeoutDetector(cfg)
 
 	now := time.Now()
-	startTime := now.Add(-10 * time.Minute) // Started 10 minutes ago
+	startTime := now.Add(-10 * time.Minute)   // Started 10 minutes ago
 	lastActivity := now.Add(-1 * time.Minute) // Activity 1 minute ago
 
 	input := CheckInput{
@@ -98,7 +98,7 @@ func TestTimeoutDetector_CheckTimeout_ActivityTimeout(t *testing.T) {
 	detector := NewTimeoutDetector(cfg)
 
 	now := time.Now()
-	startTime := now.Add(-45 * time.Minute)   // Started 45 min ago (within 2h)
+	startTime := now.Add(-45 * time.Minute)    // Started 45 min ago (within 2h)
 	lastActivity := now.Add(-35 * time.Minute) // No activity for 35 min (exceeds 30m)
 
 	input := CheckInput{

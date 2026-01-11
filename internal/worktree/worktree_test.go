@@ -14,9 +14,9 @@ func TestFindGitRoot(t *testing.T) {
 	testutil.SkipIfNoGit(t)
 
 	tests := []struct {
-		name      string
-		setup     func(t *testing.T) (startDir string, wantRoot string)
-		wantErr   bool
+		name    string
+		setup   func(t *testing.T) (startDir string, wantRoot string)
+		wantErr bool
 	}{
 		{
 			name: "from repository root",

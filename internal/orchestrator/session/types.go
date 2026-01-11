@@ -22,16 +22,16 @@ type SessionData struct {
 
 // InstanceData represents instance information for persistence.
 type InstanceData struct {
-	ID            string         `json:"id"`
-	WorktreePath  string         `json:"worktree_path"`
-	Branch        string         `json:"branch"`
-	Task          string         `json:"task"`
-	Status        string         `json:"status"`
-	PID           int            `json:"pid,omitempty"`
-	FilesModified []string       `json:"files_modified,omitempty"`
-	Created       time.Time      `json:"created"`
-	TmuxSession   string         `json:"tmux_session,omitempty"`
-	Metrics       *MetricsData   `json:"metrics,omitempty"`
+	ID            string       `json:"id"`
+	WorktreePath  string       `json:"worktree_path"`
+	Branch        string       `json:"branch"`
+	Task          string       `json:"task"`
+	Status        string       `json:"status"`
+	PID           int          `json:"pid,omitempty"`
+	FilesModified []string     `json:"files_modified,omitempty"`
+	Created       time.Time    `json:"created"`
+	TmuxSession   string       `json:"tmux_session,omitempty"`
+	Metrics       *MetricsData `json:"metrics,omitempty"`
 }
 
 // MetricsData represents instance resource usage metrics for persistence.

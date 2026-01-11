@@ -124,12 +124,12 @@ func printStatsText(session *orchestrator.Session, metrics *orchestrator.Session
 
 	// Sort instances by cost
 	type instData struct {
-		num     int
-		id      string
-		task    string
-		cost    float64
-		tokens  int64
-		status  string
+		num    int
+		id     string
+		task   string
+		cost   float64
+		tokens int64
+		status string
 	}
 	var instances []instData
 	for i, inst := range session.Instances {

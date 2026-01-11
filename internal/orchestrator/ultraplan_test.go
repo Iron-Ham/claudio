@@ -470,8 +470,8 @@ func TestUltraPlanSession_GetReadyTasks_AwaitingDecision(t *testing.T) {
 				{"task-3", "task-4"}, // Group 1
 			},
 		},
-		CompletedTasks: []string{"task-1"},       // task-1 succeeded
-		FailedTasks:    []string{"task-2"},       // task-2 failed - partial failure
+		CompletedTasks: []string{"task-1"}, // task-1 succeeded
+		FailedTasks:    []string{"task-2"}, // task-2 failed - partial failure
 		TaskToInstance: make(map[string]string),
 		CurrentGroup:   0, // Still at group 0 (not advanced)
 		GroupDecision: &GroupDecisionState{
@@ -787,8 +787,8 @@ That concludes my evaluation.`,
 			wantSelectedIndex: 1,
 		},
 		{
-			name: "valid decision with minimal fields",
-			output: `<plan_decision>{"action":"select","selected_index":0,"reasoning":"","plan_scores":[]}</plan_decision>`,
+			name:              "valid decision with minimal fields",
+			output:            `<plan_decision>{"action":"select","selected_index":0,"reasoning":"","plan_scores":[]}</plan_decision>`,
 			wantErr:           false,
 			wantAction:        "select",
 			wantSelectedIndex: 0,
@@ -819,4 +819,3 @@ That concludes my evaluation.`,
 		})
 	}
 }
-

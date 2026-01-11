@@ -32,8 +32,8 @@ Multiple Claudio sessions can run simultaneously in different terminal windows.`
 }
 
 var (
-	forceNew       bool
-	attachSession  string // --session flag to attach to specific session
+	forceNew      bool
+	attachSession string // --session flag to attach to specific session
 )
 
 func init() {

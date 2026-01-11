@@ -221,11 +221,11 @@ func TestConfig_Validate_Instance(t *testing.T) {
 			expectError   bool
 			field         string
 		}{
-			{79, 50, true, "instance.tmux_width"},   // width too small
-			{501, 50, true, "instance.tmux_width"},  // width too large
-			{200, 23, true, "instance.tmux_height"}, // height too small
+			{79, 50, true, "instance.tmux_width"},    // width too small
+			{501, 50, true, "instance.tmux_width"},   // width too large
+			{200, 23, true, "instance.tmux_height"},  // height too small
 			{200, 201, true, "instance.tmux_height"}, // height too large
-			{200, 50, false, ""},                    // valid
+			{200, 50, false, ""},                     // valid
 		}
 
 		for _, tt := range tests {
@@ -287,10 +287,10 @@ func TestConfig_Validate_Instance(t *testing.T) {
 
 func TestConfig_Validate_Branch(t *testing.T) {
 	tests := []struct {
-		name      string
-		prefix    string
-		hasError  bool
-		errorMsg  string
+		name     string
+		prefix   string
+		hasError bool
+		errorMsg string
 	}{
 		{"valid simple", "claudio", false, ""},
 		{"valid with hyphen", "Iron-Ham", false, ""},

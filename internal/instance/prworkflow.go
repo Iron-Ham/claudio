@@ -13,11 +13,11 @@ import (
 
 // PRWorkflowConfig holds configuration for the PR workflow
 type PRWorkflowConfig struct {
-	UseAI       bool
-	Draft       bool
-	AutoRebase  bool
-	TmuxWidth   int
-	TmuxHeight  int
+	UseAI      bool
+	Draft      bool
+	AutoRebase bool
+	TmuxWidth  int
+	TmuxHeight int
 }
 
 // PRWorkflowCallback is called when the PR workflow completes

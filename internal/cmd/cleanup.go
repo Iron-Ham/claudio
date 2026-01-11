@@ -16,18 +16,18 @@ import (
 
 // CleanupResult holds information about resources to be cleaned up
 type CleanupResult struct {
-	StaleWorktrees     []StaleWorktree
-	StaleBranches      []string
-	OrphanedTmuxSess   []string
-	ActiveInstanceIDs  map[string]bool // IDs of instances in active session
+	StaleWorktrees    []StaleWorktree
+	StaleBranches     []string
+	OrphanedTmuxSess  []string
+	ActiveInstanceIDs map[string]bool // IDs of instances in active session
 }
 
 // StaleWorktree represents a worktree that may need cleanup
 type StaleWorktree struct {
-	Path              string
-	Branch            string
-	HasUncommitted    bool
-	ExistsOnRemote    bool
+	Path           string
+	Branch         string
+	HasUncommitted bool
+	ExistsOnRemote bool
 }
 
 var cleanupCmd = &cobra.Command{
@@ -45,11 +45,11 @@ Use --dry-run to see what would be cleaned up without making changes.`,
 }
 
 var (
-	cleanupDryRun     bool
-	cleanupForce      bool
-	cleanupWorktrees  bool
-	cleanupBranches   bool
-	cleanupTmux       bool
+	cleanupDryRun    bool
+	cleanupForce     bool
+	cleanupWorktrees bool
+	cleanupBranches  bool
+	cleanupTmux      bool
 )
 
 func init() {

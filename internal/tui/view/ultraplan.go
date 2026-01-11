@@ -30,15 +30,15 @@ type UltraPlanState struct {
 // This allows the view to access orchestrator and session state without
 // direct coupling to the Model struct.
 type RenderContext struct {
-	Orchestrator  *orchestrator.Orchestrator
-	Session       *orchestrator.Session
-	UltraPlan     *UltraPlanState
-	ActiveTab     int
-	Width         int
-	Height        int
-	Outputs       map[string]string
-	GetInstance   func(id string) *orchestrator.Instance
-	IsSelected    func(instanceID string) bool
+	Orchestrator *orchestrator.Orchestrator
+	Session      *orchestrator.Session
+	UltraPlan    *UltraPlanState
+	ActiveTab    int
+	Width        int
+	Height       int
+	Outputs      map[string]string
+	GetInstance  func(id string) *orchestrator.Instance
+	IsSelected   func(instanceID string) bool
 }
 
 // UltraplanView handles rendering of ultra-plan UI components including
@@ -1370,4 +1370,3 @@ func OpenURL(url string) error {
 
 	return cmd.Start()
 }
-

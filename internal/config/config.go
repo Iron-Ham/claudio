@@ -204,10 +204,10 @@ func Default() *Config {
 			KeepRemoteBranches: true,
 		},
 		Resources: ResourceConfig{
-			CostWarningThreshold:  5.00,  // Warn at $5
-			CostLimit:             0,     // No limit by default
-			TokenLimitPerInstance: 0,     // No limit by default
-			ShowMetricsInSidebar:  true,  // Show metrics by default
+			CostWarningThreshold:  5.00, // Warn at $5
+			CostLimit:             0,    // No limit by default
+			TokenLimitPerInstance: 0,    // No limit by default
+			ShowMetricsInSidebar:  true, // Show metrics by default
 		},
 		Ultraplan: UltraplanConfig{
 			MaxParallel: 3,

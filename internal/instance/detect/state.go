@@ -100,12 +100,12 @@ var (
 		`(?i)do you want (?:me )?to (?:proceed|continue|run|execute|apply|make)`,
 		`(?i)(?:shall|should|can|may) I (?:proceed|continue|go ahead|run|execute|apply)`,
 		`(?i)(?:allow|permit|approve) (?:this|the) (?:action|change|operation)`,
-		`(?i)\[Y(?:es)?/[Nn](?:o)?\]`,                                     // [Y/N] or [Yes/No] prompts
-		`(?i)\(y(?:es)?/n(?:o)?\)`,                                        // (y/n) or (yes/no) prompts
-		`(?i)press (?:y|enter) to (?:confirm|continue|proceed|approve)`,   // Press y to confirm
-		`(?i)type ['"]?(?:yes|y)['"]? to (?:confirm|continue|proceed)`,    // Type yes to confirm
-		`(?i)waiting for (?:your )?(?:approval|confirmation|permission)`,  // Explicit waiting
-		`(?i)requires? (?:your )?(?:approval|confirmation|permission)`,    // Requires permission
+		`(?i)\[Y(?:es)?/[Nn](?:o)?\]`,                                    // [Y/N] or [Yes/No] prompts
+		`(?i)\(y(?:es)?/n(?:o)?\)`,                                       // (y/n) or (yes/no) prompts
+		`(?i)press (?:y|enter) to (?:confirm|continue|proceed|approve)`,  // Press y to confirm
+		`(?i)type ['"]?(?:yes|y)['"]? to (?:confirm|continue|proceed)`,   // Type yes to confirm
+		`(?i)waiting for (?:your )?(?:approval|confirmation|permission)`, // Explicit waiting
+		`(?i)requires? (?:your )?(?:approval|confirmation|permission)`,   // Requires permission
 	}
 
 	// QuestionPatterns detect Claude asking for information or clarification.
@@ -127,10 +127,10 @@ var (
 	// These are specific to Claude Code's terminal interface.
 	InputWaitingPatterns = []string{
 		// Claude Code prompt mode indicators (shown in status bar)
-		`⏵⏵\s*bypass permissions`,           // Bypass mode indicator
-		`⏵\s*(?:allow|approve|bypass)`,       // Single arrow prompt indicators
-		`↵\s*send`,                           // Send indicator at end of input line
-		`\(shift\+tab to cycle\)`,            // Mode cycling hint
+		`⏵⏵\s*bypass permissions`,      // Bypass mode indicator
+		`⏵\s*(?:allow|approve|bypass)`, // Single arrow prompt indicators
+		`↵\s*send`,                     // Send indicator at end of input line
+		`\(shift\+tab to cycle\)`,      // Mode cycling hint
 		// Input prompt line pattern (> followed by text and send indicator)
 		`>\s+.*↵`,
 	}

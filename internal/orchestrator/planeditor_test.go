@@ -1080,11 +1080,11 @@ func TestUpdateTaskTitle_TableDriven(t *testing.T) {
 			},
 		},
 		{
-			name:    "update non-existent task",
-			taskID:  "nonexistent",
+			name:     "update non-existent task",
+			taskID:   "nonexistent",
 			newTitle: "Title",
-			wantErr: true,
-			errType: ErrTaskNotFound{},
+			wantErr:  true,
+			errType:  ErrTaskNotFound{},
 		},
 	}
 
