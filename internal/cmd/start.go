@@ -91,8 +91,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 
 	// If there are unlocked sessions and we're not forcing new, prompt user
-	if len(unlockedSessions) > 0 && !forceNew {
-		action, selectedID, err := promptMultiSessionAction(unlockedSessions)
+sessionLoop:
+	for len(unlockedSessions) > 0 && !forceNew {
+		action, selectedID, err := promptMultiSessionAction(cwd, unlockedSessions)
 		if err != nil {
 			return err
 		}
@@ -101,11 +102,25 @@ func runStart(cmd *cobra.Command, args []string) error {
 		case "attach":
 			return attachToSession(cwd, selectedID, cfg)
 		case "new":
-			// Continue to create new session below
+			// Exit loop to create new session below
+			break sessionLoop
 		case "list":
 			return runSessionsList(cmd, args)
 		case "quit":
 			return nil
+		case "refresh":
+			// Re-list sessions after cleanup/shutdown
+			sessions, err = session.ListSessions(cwd)
+			if err != nil {
+				return fmt.Errorf("failed to list sessions: %w", err)
+			}
+			unlockedSessions = nil
+			for _, s := range sessions {
+				if !s.IsLocked {
+					unlockedSessions = append(unlockedSessions, s)
+				}
+			}
+			// Continue loop to re-prompt
 		}
 	}
 
@@ -401,7 +416,15 @@ func CreateLogger(sessionDir string, cfg *config.Config) *logging.Logger {
 }
 
 // promptMultiSessionAction prompts the user to choose what to do when sessions exist
-func promptMultiSessionAction(sessions []*session.Info) (action string, selectedID string, err error) {
+func promptMultiSessionAction(baseDir string, sessions []*session.Info) (action string, selectedID string, err error) {
+	// Count empty sessions
+	var emptyCount int
+	for _, s := range sessions {
+		if s.InstanceCount == 0 && !s.IsLocked {
+			emptyCount++
+		}
+	}
+
 	fmt.Println("\nExisting sessions found:")
 	fmt.Println()
 
@@ -414,11 +437,15 @@ func promptMultiSessionAction(sessions []*session.Info) (action string, selected
 		if s.IsLocked {
 			lockStatus = " [LOCKED]"
 		}
-		fmt.Printf("  [%d] %s - %s (%d instances)%s\n", i+1, s.ID[:8], name, s.InstanceCount, lockStatus)
+		fmt.Printf("  [%d] %s - %s (%d instances)%s\n", i+1, session.TruncateID(s.ID, 8), name, s.InstanceCount, lockStatus)
 	}
 
 	fmt.Println()
 	fmt.Println("  [n] Create new session")
+	if emptyCount > 0 {
+		fmt.Printf("  [c] Clean up %d empty session(s)\n", emptyCount)
+	}
+	fmt.Println("  [s] Shutdown all sessions")
 	fmt.Println("  [l] List all sessions with details")
 	fmt.Println("  [q] Quit")
 	fmt.Println()
@@ -435,6 +462,16 @@ func promptMultiSessionAction(sessions []*session.Info) (action string, selected
 	switch input {
 	case "n", "new":
 		return "new", "", nil
+	case "c", "clean":
+		if emptyCount > 0 {
+			cleanEmptySessions(baseDir)
+			return "refresh", "", nil
+		}
+		fmt.Println("No empty sessions to clean")
+		return "refresh", "", nil
+	case "s", "shutdown":
+		shutdownAllSessions()
+		return "refresh", "", nil
 	case "l", "list":
 		return "list", "", nil
 	case "q", "quit":
@@ -461,6 +498,75 @@ func promptMultiSessionAction(sessions []*session.Info) (action string, selected
 		}
 		fmt.Printf("Unknown option '%s', creating new session\n", input)
 		return "new", "", nil
+	}
+}
+
+// cleanEmptySessions removes all empty sessions (0 instances)
+func cleanEmptySessions(baseDir string) {
+	emptySessions, err := session.FindEmptySessions(baseDir)
+	if err != nil {
+		fmt.Printf("Error finding empty sessions: %v\n", err)
+		return
+	}
+
+	if len(emptySessions) == 0 {
+		fmt.Println("No empty sessions to clean")
+		return
+	}
+
+	var removed int
+	for _, s := range emptySessions {
+		if err := session.RemoveSession(baseDir, s.ID); err != nil {
+			fmt.Printf("Warning: failed to remove session %s: %v\n", session.TruncateID(s.ID, 8), err)
+			continue
+		}
+		name := s.Name
+		if name == "" {
+			name = "(unnamed)"
+		}
+		fmt.Printf("Removed empty session: %s - %s\n", session.TruncateID(s.ID, 8), name)
+		removed++
+	}
+	fmt.Printf("Cleaned %d empty session(s)\n\n", removed)
+}
+
+// shutdownAllSessions kills all claudio-* tmux sessions
+func shutdownAllSessions() {
+	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	output, err := cmd.Output()
+	if err != nil {
+		// Check if it's just "no server running" which is expected
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := string(exitErr.Stderr)
+			if strings.Contains(stderr, "no server running") {
+				fmt.Println("No tmux sessions running")
+				return
+			}
+		}
+		fmt.Printf("Error listing tmux sessions: %v\n", err)
+		return
+	}
+
+	var killed int
+	tmuxSessions := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, sess := range tmuxSessions {
+		sess = strings.TrimSpace(sess)
+		if sess == "" || !strings.HasPrefix(sess, "claudio-") {
+			continue
+		}
+
+		killCmd := exec.Command("tmux", "kill-session", "-t", sess)
+		if err := killCmd.Run(); err != nil {
+			fmt.Printf("Warning: failed to kill tmux session %s: %v\n", sess, err)
+			continue
+		}
+		fmt.Printf("Killed tmux session: %s\n", sess)
+		killed++
+	}
+	if killed > 0 {
+		fmt.Printf("Shutdown %d tmux session(s)\n\n", killed)
+	} else {
+		fmt.Println("No claudio tmux sessions running")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 	"github.com/spf13/cobra"
 )
@@ -19,6 +20,7 @@ type CleanupResult struct {
 	StaleWorktrees    []StaleWorktree
 	StaleBranches     []string
 	OrphanedTmuxSess  []string
+	EmptySessions     []*session.Info // Sessions with 0 instances
 	ActiveInstanceIDs map[string]bool // IDs of instances in active session
 }
 
@@ -32,24 +34,32 @@ type StaleWorktree struct {
 
 var cleanupCmd = &cobra.Command{
 	Use:   "cleanup",
-	Short: "Clean up stale worktrees, branches, and tmux sessions",
+	Short: "Clean up stale worktrees, branches, tmux sessions, and empty sessions",
 	Long: `Cleanup removes orphaned resources that can accumulate over time:
 
 - Worktrees: In .claudio/worktrees/ with no active session
 - Branches: <prefix>/* branches not associated with active work
   (prefix is configured via branch.prefix, default: "claudio")
 - Tmux sessions: Orphaned claudio-* tmux sessions
+- Empty sessions: Sessions with 0 instances
+
+Additional flags:
+  --all-sessions    Kill ALL claudio-* tmux sessions
+  --deep-clean      Remove session directories (empty only, or all with --all-sessions)
 
 Use --dry-run to see what would be cleaned up without making changes.`,
 	RunE: runCleanup,
 }
 
 var (
-	cleanupDryRun    bool
-	cleanupForce     bool
-	cleanupWorktrees bool
-	cleanupBranches  bool
-	cleanupTmux      bool
+	cleanupDryRun      bool
+	cleanupForce       bool
+	cleanupWorktrees   bool
+	cleanupBranches    bool
+	cleanupTmux        bool
+	cleanupSessions    bool
+	cleanupAllSessions bool
+	cleanupDeepClean   bool
 )
 
 func init() {
@@ -59,6 +69,9 @@ func init() {
 	cleanupCmd.Flags().BoolVar(&cleanupWorktrees, "worktrees", false, "Clean up only worktrees")
 	cleanupCmd.Flags().BoolVar(&cleanupBranches, "branches", false, "Clean up only branches")
 	cleanupCmd.Flags().BoolVar(&cleanupTmux, "tmux", false, "Clean up only tmux sessions")
+	cleanupCmd.Flags().BoolVar(&cleanupSessions, "sessions", false, "Clean up only empty sessions (0 instances)")
+	cleanupCmd.Flags().BoolVar(&cleanupAllSessions, "all-sessions", false, "Kill all claudio-* tmux sessions")
+	cleanupCmd.Flags().BoolVar(&cleanupDeepClean, "deep-clean", false, "Also remove session directories (empty only, or all with --all-sessions)")
 }
 
 func runCleanup(cmd *cobra.Command, args []string) error {
@@ -67,8 +80,8 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 
-	// If no specific flags, clean all
-	cleanAll := !cleanupWorktrees && !cleanupBranches && !cleanupTmux
+	// If no specific flags, clean all standard resources
+	cleanAll := !cleanupWorktrees && !cleanupBranches && !cleanupTmux && !cleanupSessions && !cleanupAllSessions && !cleanupDeepClean
 
 	// Discover stale resources
 	result, err := discoverStaleResources(cwd)
@@ -79,7 +92,9 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 	// Check if there's anything to clean
 	hasWork := ((cleanAll || cleanupWorktrees) && len(result.StaleWorktrees) > 0) ||
 		((cleanAll || cleanupBranches) && len(result.StaleBranches) > 0) ||
-		((cleanAll || cleanupTmux) && len(result.OrphanedTmuxSess) > 0)
+		((cleanAll || cleanupTmux) && len(result.OrphanedTmuxSess) > 0) ||
+		((cleanAll || cleanupSessions || cleanupDeepClean) && len(result.EmptySessions) > 0) ||
+		cleanupAllSessions // Always has work if killing all tmux sessions
 
 	if !hasWork {
 		fmt.Println("No stale resources found. Nothing to clean up.")
@@ -144,6 +159,13 @@ func discoverStaleResources(baseDir string) (*CleanupResult, error) {
 
 	// Find orphaned tmux sessions
 	result.OrphanedTmuxSess = findOrphanedTmuxSessions(result.ActiveInstanceIDs)
+
+	// Find empty sessions (0 instances)
+	emptySessions, err := session.FindEmptySessions(baseDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to discover empty sessions: %v\n", err)
+	}
+	result.EmptySessions = emptySessions
 
 	return result, nil
 }
@@ -312,6 +334,26 @@ func printCleanupSummary(result *CleanupResult, cleanAll bool) {
 			fmt.Printf("  - %s\n", sess)
 		}
 	}
+
+	if (cleanAll || cleanupSessions || cleanupDeepClean) && len(result.EmptySessions) > 0 {
+		fmt.Printf("\nEmpty Sessions (%d):\n", len(result.EmptySessions))
+		for _, s := range result.EmptySessions {
+			name := s.Name
+			if name == "" {
+				name = "(unnamed)"
+			}
+			fmt.Printf("  - %s - %s\n", session.TruncateID(s.ID, 8), name)
+		}
+	}
+
+	if cleanupAllSessions {
+		fmt.Println("\n--all-sessions: Will kill ALL claudio-* tmux sessions")
+		if cleanupDeepClean {
+			fmt.Println("--deep-clean: Will also remove ALL session directories")
+		}
+	} else if cleanupDeepClean && len(result.EmptySessions) > 0 {
+		fmt.Println("\n--deep-clean: Will remove empty session directories listed above")
+	}
 }
 
 func performCleanup(baseDir string, result *CleanupResult, cleanAll bool) error {
@@ -388,6 +430,99 @@ func performCleanup(baseDir string, result *CleanupResult, cleanAll bool) error 
 		}
 	}
 
+	// Handle --all-sessions: kill ALL claudio-* tmux sessions
+	if cleanupAllSessions {
+		killed := killAllClaudioTmuxSessions()
+		totalRemoved += killed
+	}
+
+	// Clean empty sessions (part of default cleanup or with --sessions flag)
+	if cleanAll || cleanupSessions || cleanupDeepClean {
+		for _, s := range result.EmptySessions {
+			if err := session.RemoveSession(baseDir, s.ID); err != nil {
+				fmt.Printf("Warning: failed to remove session %s: %v\n", session.TruncateID(s.ID, 8), err)
+				continue
+			}
+			name := s.Name
+			if name == "" {
+				name = "(unnamed)"
+			}
+			fmt.Printf("Removed empty session: %s - %s\n", session.TruncateID(s.ID, 8), name)
+			totalRemoved++
+		}
+	}
+
+	// Handle --deep-clean with --all-sessions: remove ALL session directories
+	if cleanupDeepClean && cleanupAllSessions {
+		removed := removeAllSessions(baseDir)
+		totalRemoved += removed
+	}
+
 	fmt.Printf("\nCleanup complete. Removed %d resources.\n", totalRemoved)
 	return nil
+}
+
+// killAllClaudioTmuxSessions kills all tmux sessions with claudio-* prefix
+func killAllClaudioTmuxSessions() int {
+	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	output, err := cmd.Output()
+	if err != nil {
+		// Check if it's just "no server running" which is expected
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := string(exitErr.Stderr)
+			if strings.Contains(stderr, "no server running") {
+				return 0
+			}
+		}
+		fmt.Fprintf(os.Stderr, "Warning: failed to list tmux sessions: %v\n", err)
+		return 0
+	}
+
+	var killed int
+	sessions := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, sess := range sessions {
+		sess = strings.TrimSpace(sess)
+		if sess == "" || !strings.HasPrefix(sess, "claudio-") {
+			continue
+		}
+
+		killCmd := exec.Command("tmux", "kill-session", "-t", sess)
+		if err := killCmd.Run(); err != nil {
+			fmt.Printf("Warning: failed to kill tmux session %s: %v\n", sess, err)
+			continue
+		}
+		fmt.Printf("Killed tmux session: %s\n", sess)
+		killed++
+	}
+	return killed
+}
+
+// removeAllSessions removes all session directories
+func removeAllSessions(baseDir string) int {
+	sessions, err := session.ListSessions(baseDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to list sessions for removal: %v\n", err)
+		return 0
+	}
+
+	var removed int
+	for _, s := range sessions {
+		// Skip locked sessions
+		if s.IsLocked {
+			fmt.Printf("Skipping locked session: %s\n", session.TruncateID(s.ID, 8))
+			continue
+		}
+
+		if err := session.RemoveSession(baseDir, s.ID); err != nil {
+			fmt.Printf("Warning: failed to remove session %s: %v\n", session.TruncateID(s.ID, 8), err)
+			continue
+		}
+		name := s.Name
+		if name == "" {
+			name = "(unnamed)"
+		}
+		fmt.Printf("Removed session: %s - %s\n", session.TruncateID(s.ID, 8), name)
+		removed++
+	}
+	return removed
 }
