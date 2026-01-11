@@ -861,6 +861,14 @@ func (m *UltraPlanManager) CountCoordinatorsCompleted() int {
 // MarkTaskComplete marks a task as completed and closes any linked external issue
 func (m *UltraPlanManager) MarkTaskComplete(taskID string) {
 	m.mu.Lock()
+	// Defense-in-depth: check if task is already marked complete to prevent duplicates
+	// This can happen due to race conditions between task monitoring and polling
+	for _, completedID := range m.session.CompletedTasks {
+		if completedID == taskID {
+			m.mu.Unlock()
+			return
+		}
+	}
 	m.session.CompletedTasks = append(m.session.CompletedTasks, taskID)
 	delete(m.session.TaskToInstance, taskID)
 	task := m.session.GetTask(taskID)
@@ -890,6 +898,20 @@ func (m *UltraPlanManager) MarkTaskComplete(taskID string) {
 // MarkTaskFailed marks a task as failed
 func (m *UltraPlanManager) MarkTaskFailed(taskID string, reason string) {
 	m.mu.Lock()
+	// Defense-in-depth: check if task is already marked failed to prevent duplicates
+	for _, failedID := range m.session.FailedTasks {
+		if failedID == taskID {
+			m.mu.Unlock()
+			return
+		}
+	}
+	// Also check if already completed (shouldn't happen, but be safe)
+	for _, completedID := range m.session.CompletedTasks {
+		if completedID == taskID {
+			m.mu.Unlock()
+			return
+		}
+	}
 	m.session.FailedTasks = append(m.session.FailedTasks, taskID)
 	delete(m.session.TaskToInstance, taskID)
 	m.mu.Unlock()

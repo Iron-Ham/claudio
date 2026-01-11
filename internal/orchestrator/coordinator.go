@@ -1135,15 +1135,47 @@ func (c *Coordinator) getOrCreateRetryState(taskID string, maxRetries int) *Task
 
 // handleTaskCompletion handles a task completion notification
 func (c *Coordinator) handleTaskCompletion(completion taskCompletion) {
+	session := c.Session()
+
+	// Check if this task was already processed (race between monitor goroutine and poll)
+	// Both monitorTaskInstance and pollTaskCompletions can detect the same completion file
+	// and send to completionChan, causing duplicate processing
 	c.mu.Lock()
-	delete(c.runningTasks, completion.taskID)
-	c.runningCount--
+	alreadyProcessed := false
+	for _, taskID := range session.CompletedTasks {
+		if taskID == completion.taskID {
+			alreadyProcessed = true
+			break
+		}
+	}
+	if !alreadyProcessed {
+		for _, taskID := range session.FailedTasks {
+			if taskID == completion.taskID {
+				alreadyProcessed = true
+				break
+			}
+		}
+	}
+	c.mu.Unlock()
+
+	if alreadyProcessed {
+		c.logger.Debug("skipping duplicate task completion",
+			"task_id", completion.taskID,
+			"instance_id", completion.instanceID,
+		)
+		return
+	}
+
+	// Only decrement running count if task is still tracked as running
+	c.mu.Lock()
+	if _, isRunning := c.runningTasks[completion.taskID]; isRunning {
+		delete(c.runningTasks, completion.taskID)
+		c.runningCount--
+	}
 	c.mu.Unlock()
 
 	// Handle retry case - task needs to be re-run
 	if completion.needsRetry {
-		session := c.Session()
-
 		// Remove from TaskToInstance so it becomes "ready" again for the execution loop
 		c.mu.Lock()
 		delete(session.TaskToInstance, completion.taskID)
