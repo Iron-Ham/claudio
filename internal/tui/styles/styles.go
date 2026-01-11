@@ -263,6 +263,25 @@ var (
 
 	FilterCheckboxEmpty = lipgloss.NewStyle().
 				Foreground(MutedColor)
+
+	// Terminal pane styles
+	TerminalPaneBorder = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(BorderColor).
+				Padding(0, 1)
+
+	TerminalPaneBorderFocused = lipgloss.NewStyle().
+					Border(lipgloss.RoundedBorder()).
+					BorderForeground(SecondaryColor).
+					Padding(0, 1)
+
+	TerminalHeader = lipgloss.NewStyle().
+			Foreground(MutedColor)
+
+	TerminalFocusIndicator = lipgloss.NewStyle().
+				Background(SecondaryColor).
+				Foreground(TextColor).
+				Bold(true)
 )
 
 // StatusColor returns the color for a given status
