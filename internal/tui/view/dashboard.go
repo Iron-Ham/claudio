@@ -34,6 +34,8 @@ type DashboardState interface {
 	TerminalWidth() int
 	// TerminalHeight returns the terminal height
 	TerminalHeight() int
+	// IsAddingTask returns whether the user is currently adding a new task
+	IsAddingTask() bool
 }
 
 // DashboardView handles rendering of the instance list/dashboard sidebar.
@@ -61,7 +63,9 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 		instanceCount = len(session.Instances)
 	}
 
-	if instanceCount == 0 {
+	isAddingTask := state.IsAddingTask()
+
+	if instanceCount == 0 && !isAddingTask {
 		b.WriteString(styles.Muted.Render("No instances"))
 		b.WriteString("\n")
 		b.WriteString(styles.Muted.Render("Press [a] to add"))
@@ -69,6 +73,9 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 		// Calculate available slots for instances
 		// Reserve: 1 for title, 1 for blank line, 1 for add hint, 2 for scroll indicators, plus border padding
 		reservedLines := 6
+		if isAddingTask {
+			reservedLines++
+		}
 		availableSlots := max(height-reservedLines, 3) // Minimum to show at least a few instances
 
 		scrollOffset := state.SidebarScrollOffset()
@@ -90,7 +97,10 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 		endIdx := min(scrollOffset+availableSlots, instanceCount)
 
 		// Render visible instances
-		activeTab := state.ActiveTab()
+		activeTab := -1 // No instance highlighted when adding
+		if !isAddingTask {
+			activeTab = state.ActiveTab()
+		}
 		for i := startIdx; i < endIdx; i++ {
 			inst := session.Instances[i]
 			b.WriteString(dv.renderSidebarInstance(i, inst, conflictingInstances, activeTab, width))
@@ -102,6 +112,13 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 			remaining := instanceCount - endIdx
 			scrollDown := styles.Muted.Render(fmt.Sprintf("▼ %d more below", remaining))
 			b.WriteString(scrollDown)
+			b.WriteString("\n")
+		}
+
+		if isAddingTask {
+			newTaskLabel := fmt.Sprintf("%d New Task", instanceCount+1)
+			dot := lipgloss.NewStyle().Foreground(styles.PrimaryColor).Render("●")
+			b.WriteString(dot + " " + styles.SidebarItemActive.Render(newTaskLabel))
 			b.WriteString("\n")
 		}
 	}

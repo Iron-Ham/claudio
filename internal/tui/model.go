@@ -542,3 +542,8 @@ func (m Model) TerminalWidth() int {
 func (m Model) TerminalHeight() int {
 	return m.height
 }
+
+// IsAddingTask returns whether the user is currently adding a new task
+func (m Model) IsAddingTask() bool {
+	return m.addingTask
+}
