@@ -18,6 +18,7 @@ import (
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/lifecycle"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/prworkflow"
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/worktree"
@@ -29,6 +30,7 @@ import (
 // The Orchestrator acts as a facade that composes several specialized managers:
 //   - sessionMgr: Handles session persistence (load, save, create, delete)
 //   - lifecycleMgr: Manages instance lifecycle (start, stop, status tracking)
+//   - prWorkflowMgr: Manages PR workflow operations (commit, push, PR creation)
 //   - eventBus: Enables decoupled communication between components
 //
 // For backwards compatibility, the Orchestrator maintains its existing public API
@@ -43,13 +45,13 @@ type Orchestrator struct {
 	logger      *logging.Logger // Structured logger for debugging (nil = no logging)
 
 	// Composed managers (delegation targets for refactored operations)
-	sessionMgr   *orchsession.Manager // Session lifecycle management
-	lifecycleMgr *lifecycle.Manager   // Instance lifecycle management
-	eventBus     *event.Bus           // Inter-component event communication
+	sessionMgr    *orchsession.Manager // Session lifecycle management
+	lifecycleMgr  *lifecycle.Manager   // Instance lifecycle management
+	prWorkflowMgr *prworkflow.Manager  // PR workflow management
+	eventBus      *event.Bus           // Inter-component event communication
 
 	session          *Session
 	instances        map[string]*instance.Manager
-	prWorkflows      map[string]*instance.PRWorkflow
 	wt               *worktree.Manager
 	conflictDetector *conflict.Detector
 	config           *config.Config
@@ -58,9 +60,6 @@ type Orchestrator struct {
 	// These are updated when the TUI window resizes
 	displayWidth  int
 	displayHeight int
-
-	// Callback for when PR workflow completes and instance should be removed
-	prCompleteCallback func(instanceID string, success bool)
 
 	// Callback for when a PR URL is detected in instance output (inline PR creation)
 	prOpenedCallback func(instanceID string)
@@ -111,15 +110,22 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		nil, // logger set later via SetLogger
 	)
 
+	// Create PR workflow manager (legacy mode without session ID)
+	prWorkflowMgr := prworkflow.NewManager(
+		prworkflow.NewConfigFromConfig(cfg),
+		"", // no session ID in legacy mode
+		eventBus,
+	)
+
 	return &Orchestrator{
 		baseDir:          baseDir,
 		claudioDir:       claudioDir,
 		worktreeDir:      worktreeDir,
 		sessionMgr:       sessionMgr,
 		lifecycleMgr:     lifecycleMgr,
+		prWorkflowMgr:    prWorkflowMgr,
 		eventBus:         eventBus,
 		instances:        make(map[string]*instance.Manager),
-		prWorkflows:      make(map[string]*instance.PRWorkflow),
 		wt:               wt,
 		conflictDetector: detector,
 		config:           cfg,
@@ -166,6 +172,13 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		nil, // logger set later via SetLogger
 	)
 
+	// Create PR workflow manager with session-scoped naming
+	prWorkflowMgr := prworkflow.NewManager(
+		prworkflow.NewConfigFromConfig(cfg),
+		sessionID,
+		eventBus,
+	)
+
 	return &Orchestrator{
 		baseDir:          baseDir,
 		claudioDir:       claudioDir,
@@ -174,9 +187,9 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		sessionDir:       sessionDir,
 		sessionMgr:       sessionMgr,
 		lifecycleMgr:     lifecycleMgr,
+		prWorkflowMgr:    prWorkflowMgr,
 		eventBus:         eventBus,
 		instances:        make(map[string]*instance.Manager),
-		prWorkflows:      make(map[string]*instance.PRWorkflow),
 		wt:               wt,
 		conflictDetector: detector,
 		config:           cfg,
@@ -920,71 +933,31 @@ func (o *Orchestrator) StopInstanceWithAutoPR(inst *Instance) (bool, error) {
 	return true, nil
 }
 
-// StartPRWorkflow starts the commit-push-PR workflow for an instance
+// StartPRWorkflow starts the commit-push-PR workflow for an instance.
+// Delegates to the prWorkflowMgr for workflow management.
 func (o *Orchestrator) StartPRWorkflow(inst *Instance) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
+	// Update display dimensions on the manager before starting
+	o.mu.RLock()
+	displayWidth := o.displayWidth
+	displayHeight := o.displayHeight
+	o.mu.RUnlock()
 
-	// Create PR workflow configuration from orchestrator config
-	cfg := instance.PRWorkflowConfig{
-		UseAI:      o.config.PR.UseAI,
-		Draft:      o.config.PR.Draft,
-		AutoRebase: o.config.PR.AutoRebase,
-		TmuxWidth:  o.displayWidth,
-		TmuxHeight: o.displayHeight,
+	if displayWidth > 0 && displayHeight > 0 {
+		o.prWorkflowMgr.SetDisplayDimensions(displayWidth, displayHeight)
 	}
 
-	// Use config defaults if display dimensions not set
-	if cfg.TmuxWidth == 0 {
-		cfg.TmuxWidth = o.config.Instance.TmuxWidth
-	}
-	if cfg.TmuxHeight == 0 {
-		cfg.TmuxHeight = o.config.Instance.TmuxHeight
-	}
-
-	// Create and start PR workflow with session-scoped naming if in multi-session mode
-	var workflow *instance.PRWorkflow
-	if o.sessionID != "" {
-		workflow = instance.NewPRWorkflowWithSession(o.sessionID, inst.ID, inst.WorktreePath, inst.Branch, inst.Task, cfg)
-	} else {
-		workflow = instance.NewPRWorkflow(inst.ID, inst.WorktreePath, inst.Branch, inst.Task, cfg)
-	}
-	workflow.SetCallback(o.handlePRWorkflowComplete)
-
-	if err := workflow.Start(); err != nil {
+	if err := o.prWorkflowMgr.Start(inst); err != nil {
 		return err
 	}
 
-	o.prWorkflows[inst.ID] = workflow
 	inst.Status = StatusCreatingPR
-
 	return o.saveSession()
 }
 
-// handlePRWorkflowComplete handles PR workflow completion
-func (o *Orchestrator) handlePRWorkflowComplete(instanceID string, success bool, output string) {
-	o.mu.Lock()
-	// Clean up PR workflow
-	delete(o.prWorkflows, instanceID)
-
-	// Get the callback before unlocking
-	callback := o.prCompleteCallback
-	o.mu.Unlock()
-
-	// Publish event to event bus
-	o.eventBus.Publish(event.NewPRCompleteEvent(instanceID, success, "", ""))
-
-	// Notify via callback if set (for backwards compatibility)
-	if callback != nil {
-		callback(instanceID, success)
-	}
-}
-
-// SetPRCompleteCallback sets the callback for PR workflow completion
+// SetPRCompleteCallback sets the callback for PR workflow completion.
+// Delegates to the prWorkflowMgr.
 func (o *Orchestrator) SetPRCompleteCallback(cb func(instanceID string, success bool)) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.prCompleteCallback = cb
+	o.prWorkflowMgr.SetCompleteCallback(cb)
 }
 
 // SetPROpenedCallback sets the callback for when a PR URL is detected in instance output
@@ -1039,11 +1012,15 @@ func (o *Orchestrator) LifecycleManager() *lifecycle.Manager {
 	return o.lifecycleMgr
 }
 
-// GetPRWorkflow returns the PR workflow for an instance, if any
+// GetPRWorkflow returns the PR workflow for an instance, if any.
+// Delegates to the prWorkflowMgr.
 func (o *Orchestrator) GetPRWorkflow(id string) *instance.PRWorkflow {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return o.prWorkflows[id]
+	return o.prWorkflowMgr.Get(id)
+}
+
+// PRWorkflowManager returns the PR workflow manager for advanced operations.
+func (o *Orchestrator) PRWorkflowManager() *prworkflow.Manager {
+	return o.prWorkflowMgr
 }
 
 // RemoveInstance stops and removes a specific instance, including its worktree and branch
@@ -1080,11 +1057,8 @@ func (o *Orchestrator) RemoveInstance(session *Session, instanceID string, force
 		delete(o.instances, inst.ID)
 	}
 
-	// Stop PR workflow if running
-	if workflow, ok := o.prWorkflows[inst.ID]; ok {
-		_ = workflow.Stop()
-		delete(o.prWorkflows, inst.ID)
-	}
+	// Stop PR workflow if running (delegates to prWorkflowMgr)
+	_ = o.prWorkflowMgr.Stop(inst.ID)
 
 	// Remove worktree
 	if err := o.wt.Remove(inst.WorktreePath); err != nil {
@@ -1129,11 +1103,8 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 		}
 	}
 
-	// Stop all PR workflows
-	for _, workflow := range o.prWorkflows {
-		_ = workflow.Stop()
-	}
-	o.prWorkflows = make(map[string]*instance.PRWorkflow)
+	// Stop all PR workflows (delegates to prWorkflowMgr)
+	o.prWorkflowMgr.StopAll()
 
 	// Clean up worktrees if forced
 	if force {
