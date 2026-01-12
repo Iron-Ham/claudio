@@ -49,7 +49,7 @@ func (m Model) renderPlanEditorView(width int) string {
 		Plan:                           session.Plan,
 		State:                          m.buildPlanEditorViewState(),
 		Width:                          width,
-		Height:                         m.height,
+		Height:                         m.terminalManager.Height(),
 		SelectedTaskValidationMessages: m.getValidationMessagesForSelectedTask(),
 	})
 }
@@ -57,7 +57,7 @@ func (m Model) renderPlanEditorView(width int) string {
 // renderPlanEditorHelp renders the help bar for plan editor mode.
 // Delegates to the view package for the actual rendering.
 func (m Model) renderPlanEditorHelp() string {
-	return planEditorView.RenderHelp(m.buildPlanEditorViewState(), m.width)
+	return planEditorView.RenderHelp(m.buildPlanEditorViewState(), m.terminalManager.Width())
 }
 
 // handlePlanEditorKeypress handles keyboard input for the plan editor mode.
@@ -397,7 +397,7 @@ func (m *Model) planEditorMoveSelection(delta int, plan *orchestrator.PlanSpec) 
 // planEditorEnsureVisible adjusts scroll offset to keep selected task visible
 func (m *Model) planEditorEnsureVisible(plan *orchestrator.PlanSpec) {
 	// Calculate visible area (assume ~5 lines per task in compact view)
-	maxVisible := max(3, (m.height-10)/5)
+	maxVisible := max(3, (m.terminalManager.Height()-10)/5)
 
 	if m.planEditor.selectedTaskIdx < m.planEditor.scrollOffset {
 		m.planEditor.scrollOffset = m.planEditor.selectedTaskIdx

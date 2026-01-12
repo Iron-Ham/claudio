@@ -17,7 +17,9 @@ import (
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/display"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/lifecycle"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/prworkflow"
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/worktree"
@@ -29,6 +31,8 @@ import (
 // The Orchestrator acts as a facade that composes several specialized managers:
 //   - sessionMgr: Handles session persistence (load, save, create, delete)
 //   - lifecycleMgr: Manages instance lifecycle (start, stop, status tracking)
+//   - prWorkflowMgr: Manages PR workflow operations (commit, push, PR creation)
+//   - displayMgr: Manages display dimensions and resize coordination
 //   - eventBus: Enables decoupled communication between components
 //
 // For backwards compatibility, the Orchestrator maintains its existing public API
@@ -43,24 +47,17 @@ type Orchestrator struct {
 	logger      *logging.Logger // Structured logger for debugging (nil = no logging)
 
 	// Composed managers (delegation targets for refactored operations)
-	sessionMgr   *orchsession.Manager // Session lifecycle management
-	lifecycleMgr *lifecycle.Manager   // Instance lifecycle management
-	eventBus     *event.Bus           // Inter-component event communication
+	sessionMgr    *orchsession.Manager // Session lifecycle management
+	lifecycleMgr  *lifecycle.Manager   // Instance lifecycle management
+	prWorkflowMgr *prworkflow.Manager  // PR workflow management
+	displayMgr    *display.Manager     // Display dimension management
+	eventBus      *event.Bus           // Inter-component event communication
 
 	session          *Session
 	instances        map[string]*instance.Manager
-	prWorkflows      map[string]*instance.PRWorkflow
 	wt               *worktree.Manager
 	conflictDetector *conflict.Detector
 	config           *config.Config
-
-	// Current display dimensions for tmux sessions
-	// These are updated when the TUI window resizes
-	displayWidth  int
-	displayHeight int
-
-	// Callback for when PR workflow completes and instance should be removed
-	prCompleteCallback func(instanceID string, success bool)
 
 	// Callback for when a PR URL is detected in instance output (inline PR creation)
 	prOpenedCallback func(instanceID string)
@@ -111,15 +108,29 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		nil, // logger set later via SetLogger
 	)
 
+	// Create PR workflow manager (legacy mode without session ID)
+	prWorkflowMgr := prworkflow.NewManager(
+		prworkflow.NewConfigFromConfig(cfg),
+		"", // no session ID in legacy mode
+		eventBus,
+	)
+
+	// Create display manager with config-derived defaults
+	displayMgr := display.NewManager(display.Config{
+		DefaultWidth:  cfg.Instance.TmuxWidth,
+		DefaultHeight: cfg.Instance.TmuxHeight,
+	})
+
 	return &Orchestrator{
 		baseDir:          baseDir,
 		claudioDir:       claudioDir,
 		worktreeDir:      worktreeDir,
 		sessionMgr:       sessionMgr,
 		lifecycleMgr:     lifecycleMgr,
+		prWorkflowMgr:    prWorkflowMgr,
+		displayMgr:       displayMgr,
 		eventBus:         eventBus,
 		instances:        make(map[string]*instance.Manager),
-		prWorkflows:      make(map[string]*instance.PRWorkflow),
 		wt:               wt,
 		conflictDetector: detector,
 		config:           cfg,
@@ -166,6 +177,19 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		nil, // logger set later via SetLogger
 	)
 
+	// Create PR workflow manager with session-scoped naming
+	prWorkflowMgr := prworkflow.NewManager(
+		prworkflow.NewConfigFromConfig(cfg),
+		sessionID,
+		eventBus,
+	)
+
+	// Create display manager with config-derived defaults
+	displayMgr := display.NewManager(display.Config{
+		DefaultWidth:  cfg.Instance.TmuxWidth,
+		DefaultHeight: cfg.Instance.TmuxHeight,
+	})
+
 	return &Orchestrator{
 		baseDir:          baseDir,
 		claudioDir:       claudioDir,
@@ -174,9 +198,10 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		sessionDir:       sessionDir,
 		sessionMgr:       sessionMgr,
 		lifecycleMgr:     lifecycleMgr,
+		prWorkflowMgr:    prWorkflowMgr,
+		displayMgr:       displayMgr,
 		eventBus:         eventBus,
 		instances:        make(map[string]*instance.Manager),
-		prWorkflows:      make(map[string]*instance.PRWorkflow),
 		wt:               wt,
 		conflictDetector: detector,
 		config:           cfg,
@@ -920,71 +945,28 @@ func (o *Orchestrator) StopInstanceWithAutoPR(inst *Instance) (bool, error) {
 	return true, nil
 }
 
-// StartPRWorkflow starts the commit-push-PR workflow for an instance
+// StartPRWorkflow starts the commit-push-PR workflow for an instance.
+// Delegates to the prWorkflowMgr for workflow management.
 func (o *Orchestrator) StartPRWorkflow(inst *Instance) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
+	// Get current display dimensions from displayMgr (falls back to defaults if not set)
+	width, height := o.displayMgr.GetDimensions()
 
-	// Create PR workflow configuration from orchestrator config
-	cfg := instance.PRWorkflowConfig{
-		UseAI:      o.config.PR.UseAI,
-		Draft:      o.config.PR.Draft,
-		AutoRebase: o.config.PR.AutoRebase,
-		TmuxWidth:  o.displayWidth,
-		TmuxHeight: o.displayHeight,
+	if width > 0 && height > 0 {
+		o.prWorkflowMgr.SetDisplayDimensions(width, height)
 	}
 
-	// Use config defaults if display dimensions not set
-	if cfg.TmuxWidth == 0 {
-		cfg.TmuxWidth = o.config.Instance.TmuxWidth
-	}
-	if cfg.TmuxHeight == 0 {
-		cfg.TmuxHeight = o.config.Instance.TmuxHeight
-	}
-
-	// Create and start PR workflow with session-scoped naming if in multi-session mode
-	var workflow *instance.PRWorkflow
-	if o.sessionID != "" {
-		workflow = instance.NewPRWorkflowWithSession(o.sessionID, inst.ID, inst.WorktreePath, inst.Branch, inst.Task, cfg)
-	} else {
-		workflow = instance.NewPRWorkflow(inst.ID, inst.WorktreePath, inst.Branch, inst.Task, cfg)
-	}
-	workflow.SetCallback(o.handlePRWorkflowComplete)
-
-	if err := workflow.Start(); err != nil {
+	if err := o.prWorkflowMgr.Start(inst); err != nil {
 		return err
 	}
 
-	o.prWorkflows[inst.ID] = workflow
 	inst.Status = StatusCreatingPR
-
 	return o.saveSession()
 }
 
-// handlePRWorkflowComplete handles PR workflow completion
-func (o *Orchestrator) handlePRWorkflowComplete(instanceID string, success bool, output string) {
-	o.mu.Lock()
-	// Clean up PR workflow
-	delete(o.prWorkflows, instanceID)
-
-	// Get the callback before unlocking
-	callback := o.prCompleteCallback
-	o.mu.Unlock()
-
-	// Publish event to event bus
-	o.eventBus.Publish(event.NewPRCompleteEvent(instanceID, success, "", ""))
-
-	// Notify via callback if set (for backwards compatibility)
-	if callback != nil {
-		callback(instanceID, success)
-	}
-}
-
-// SetPRCompleteCallback sets the callback for PR workflow completion
+// SetPRCompleteCallback sets the callback for PR workflow completion.
+// Delegates to the prWorkflowMgr.
 func (o *Orchestrator) SetPRCompleteCallback(cb func(instanceID string, success bool)) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.prCompleteCallback = cb
+	o.prWorkflowMgr.SetCompleteCallback(cb)
 }
 
 // SetPROpenedCallback sets the callback for when a PR URL is detected in instance output
@@ -1039,11 +1021,15 @@ func (o *Orchestrator) LifecycleManager() *lifecycle.Manager {
 	return o.lifecycleMgr
 }
 
-// GetPRWorkflow returns the PR workflow for an instance, if any
+// GetPRWorkflow returns the PR workflow for an instance, if any.
+// Delegates to the prWorkflowMgr.
 func (o *Orchestrator) GetPRWorkflow(id string) *instance.PRWorkflow {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return o.prWorkflows[id]
+	return o.prWorkflowMgr.Get(id)
+}
+
+// PRWorkflowManager returns the PR workflow manager for advanced operations.
+func (o *Orchestrator) PRWorkflowManager() *prworkflow.Manager {
+	return o.prWorkflowMgr
 }
 
 // RemoveInstance stops and removes a specific instance, including its worktree and branch
@@ -1077,14 +1063,12 @@ func (o *Orchestrator) RemoveInstance(session *Session, instanceID string, force
 	// Stop the instance if running
 	if mgr, ok := o.instances[inst.ID]; ok {
 		_ = mgr.Stop()
+		o.displayMgr.RemoveObserver(mgr)
 		delete(o.instances, inst.ID)
 	}
 
-	// Stop PR workflow if running
-	if workflow, ok := o.prWorkflows[inst.ID]; ok {
-		_ = workflow.Stop()
-		delete(o.prWorkflows, inst.ID)
-	}
+	// Stop PR workflow if running (delegates to prWorkflowMgr)
+	_ = o.prWorkflowMgr.Stop(inst.ID)
 
 	// Remove worktree
 	if err := o.wt.Remove(inst.WorktreePath); err != nil {
@@ -1129,11 +1113,8 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 		}
 	}
 
-	// Stop all PR workflows
-	for _, workflow := range o.prWorkflows {
-		_ = workflow.Stop()
-	}
-	o.prWorkflows = make(map[string]*instance.PRWorkflow)
+	// Stop all PR workflows (delegates to prWorkflowMgr)
+	o.prWorkflowMgr.StopAll()
 
 	// Clean up worktrees if forced
 	if force {
@@ -1181,18 +1162,9 @@ func (o *Orchestrator) Config() *config.Config {
 }
 
 // instanceManagerConfig converts the orchestrator config to instance.ManagerConfig
-// Uses the current display dimensions if available, otherwise falls back to config defaults
+// Uses the current display dimensions from displayMgr (falls back to defaults if not set)
 func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
-	width := o.config.Instance.TmuxWidth
-	height := o.config.Instance.TmuxHeight
-
-	// Use the current display dimensions if they've been set by a resize event
-	if o.displayWidth > 0 {
-		width = o.displayWidth
-	}
-	if o.displayHeight > 0 {
-		height = o.displayHeight
-	}
+	width, height := o.displayMgr.GetDimensions()
 
 	return instance.ManagerConfig{
 		OutputBufferSize:         o.config.Instance.OutputBufferSize,
@@ -1207,12 +1179,20 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 
 // newInstanceManager creates a new instance manager with the appropriate constructor.
 // Uses session-scoped tmux naming when sessionID is set (multi-session mode).
+// The manager is automatically registered with the display manager to receive resize events.
 func (o *Orchestrator) newInstanceManager(instanceID, workdir, task string) *instance.Manager {
 	cfg := o.instanceManagerConfig()
+	var mgr *instance.Manager
 	if o.sessionID != "" {
-		return instance.NewManagerWithSession(o.sessionID, instanceID, workdir, task, cfg)
+		mgr = instance.NewManagerWithSession(o.sessionID, instanceID, workdir, task, cfg)
+	} else {
+		mgr = instance.NewManagerWithConfig(instanceID, workdir, task, cfg)
 	}
-	return instance.NewManagerWithConfig(instanceID, workdir, task, cfg)
+
+	// Register the manager as a resize observer so it receives dimension updates
+	o.displayMgr.AddObserver(mgr)
+
+	return mgr
 }
 
 // Session returns the current session
@@ -1231,28 +1211,20 @@ func (o *Orchestrator) GetConflictDetector() *conflict.Detector {
 // This should be called before the TUI starts to ensure instances are created
 // with the correct size from the beginning
 func (o *Orchestrator) SetDisplayDimensions(width, height int) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.displayWidth = width
-	o.displayHeight = height
+	o.displayMgr.SetDimensions(width, height)
 }
 
 // ResizeAllInstances resizes all running tmux sessions to the given dimensions
 // and stores the dimensions for new instances
 func (o *Orchestrator) ResizeAllInstances(width, height int) {
-	o.mu.Lock()
-	o.displayWidth = width
-	o.displayHeight = height
-	o.mu.Unlock()
+	// Use the displayMgr to notify all registered observers
+	o.displayMgr.NotifyResize(width, height)
+}
 
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-
-	for _, mgr := range o.instances {
-		if mgr != nil && mgr.Running() {
-			_ = mgr.Resize(width, height)
-		}
-	}
+// DisplayManager returns the display manager for advanced display operations.
+// Components that need to register for resize notifications can use this.
+func (o *Orchestrator) DisplayManager() *display.Manager {
+	return o.displayMgr
 }
 
 // saveSession persists the session state to disk

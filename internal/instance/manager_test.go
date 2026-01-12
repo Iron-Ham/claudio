@@ -3,8 +3,10 @@ package instance
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
+	"github.com/Iron-Ham/claudio/internal/instance/lifecycle"
 )
 
 func TestExtractInstanceIDFromSession(t *testing.T) {
@@ -280,5 +282,129 @@ func TestListClaudioTmuxSessions_NoTmuxServer(t *testing.T) {
 		if !strings.HasPrefix(sess, "claudio-") {
 			t.Errorf("ListClaudioTmuxSessions returned non-claudio session: %q", sess)
 		}
+	}
+}
+
+// Tests for lifecycle.Instance interface implementation
+
+func TestManager_WorkDir(t *testing.T) {
+	mgr := NewManager("test-id", "/custom/workdir", "task")
+	if mgr.WorkDir() != "/custom/workdir" {
+		t.Errorf("WorkDir() = %q, want %q", mgr.WorkDir(), "/custom/workdir")
+	}
+}
+
+func TestManager_Task(t *testing.T) {
+	mgr := NewManager("test-id", "/tmp", "custom task prompt")
+	if mgr.Task() != "custom task prompt" {
+		t.Errorf("Task() = %q, want %q", mgr.Task(), "custom task prompt")
+	}
+}
+
+func TestManager_Config_ReturnsLifecycleConfig(t *testing.T) {
+	cfg := ManagerConfig{
+		TmuxWidth:  150,
+		TmuxHeight: 40,
+	}
+	mgr := NewManagerWithConfig("test", "/tmp", "task", cfg)
+
+	lcConfig := mgr.Config()
+	if lcConfig.TmuxWidth != 150 {
+		t.Errorf("Config().TmuxWidth = %d, want %d", lcConfig.TmuxWidth, 150)
+	}
+	if lcConfig.TmuxHeight != 40 {
+		t.Errorf("Config().TmuxHeight = %d, want %d", lcConfig.TmuxHeight, 40)
+	}
+}
+
+func TestManager_SetRunning(t *testing.T) {
+	mgr := NewManager("test", "/tmp", "task")
+
+	if mgr.Running() {
+		t.Error("Running() should initially be false")
+	}
+
+	mgr.SetRunning(true)
+	if !mgr.Running() {
+		t.Error("Running() should be true after SetRunning(true)")
+	}
+
+	mgr.SetRunning(false)
+	if mgr.Running() {
+		t.Error("Running() should be false after SetRunning(false)")
+	}
+}
+
+func TestManager_IsRunning(t *testing.T) {
+	mgr := NewManager("test", "/tmp", "task")
+
+	// IsRunning and Running should return the same value
+	if mgr.IsRunning() != mgr.Running() {
+		t.Error("IsRunning() and Running() should return the same value")
+	}
+
+	mgr.SetRunning(true)
+	if mgr.IsRunning() != mgr.Running() {
+		t.Error("IsRunning() and Running() should return the same value after SetRunning")
+	}
+}
+
+func TestManager_SetStartTime(t *testing.T) {
+	mgr := NewManager("test", "/tmp", "task")
+
+	if mgr.StartTime() != nil {
+		t.Error("StartTime() should be nil initially")
+	}
+
+	now := time.Now()
+	mgr.SetStartTime(now)
+
+	startTime := mgr.StartTime()
+	if startTime == nil {
+		t.Fatal("StartTime() should not be nil after SetStartTime")
+	}
+	if !startTime.Equal(now) {
+		t.Errorf("StartTime() = %v, want %v", *startTime, now)
+	}
+}
+
+func TestManager_SetLifecycleManager(t *testing.T) {
+	mgr := NewManager("test", "/tmp", "task")
+
+	if mgr.LifecycleManager() != nil {
+		t.Error("LifecycleManager() should initially be nil")
+	}
+
+	// Create a lifecycle manager and set it
+	// Note: We pass nil logger since we're just testing the setter
+	lm := lifecycle.NewManager(nil)
+	mgr.SetLifecycleManager(lm)
+
+	if mgr.LifecycleManager() != lm {
+		t.Error("LifecycleManager() should return the set manager")
+	}
+
+	// Clearing it
+	mgr.SetLifecycleManager(nil)
+	if mgr.LifecycleManager() != nil {
+		t.Error("LifecycleManager() should be nil after setting nil")
+	}
+}
+
+func TestManager_LifecycleConfig(t *testing.T) {
+	cfg := ManagerConfig{
+		OutputBufferSize:  1000,
+		CaptureIntervalMs: 50,
+		TmuxWidth:         180,
+		TmuxHeight:        25,
+	}
+	mgr := NewManagerWithConfig("test", "/tmp", "task", cfg)
+
+	lcConfig := mgr.LifecycleConfig()
+	if lcConfig.TmuxWidth != 180 {
+		t.Errorf("LifecycleConfig().TmuxWidth = %d, want %d", lcConfig.TmuxWidth, 180)
+	}
+	if lcConfig.TmuxHeight != 25 {
+		t.Errorf("LifecycleConfig().TmuxHeight = %d, want %d", lcConfig.TmuxHeight, 25)
 	}
 }

@@ -11,7 +11,10 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/instance/capture"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
+	"github.com/Iron-Ham/claudio/internal/instance/input"
+	"github.com/Iron-Ham/claudio/internal/instance/lifecycle"
 	"github.com/Iron-Ham/claudio/internal/instance/metrics"
+	"github.com/Iron-Ham/claudio/internal/instance/state"
 	"github.com/Iron-Ham/claudio/internal/logging"
 )
 
@@ -120,8 +123,18 @@ type Manager struct {
 	bellCallback  BellCallback
 	lastBellState bool // Track last bell flag state to detect transitions
 
+	// Input handling
+	inputHandler *input.Handler
+
 	// Logger for structured logging
 	logger *logging.Logger
+
+	// lifecycleManager is an optional lifecycle manager for coordinated lifecycle operations.
+	// When set, certain operations may delegate to this manager for better separation of concerns.
+	lifecycleManager *lifecycle.Manager
+
+	// Optional external state monitor for centralized state tracking
+	stateMonitor *state.Monitor
 }
 
 // NewManager creates a new instance manager with default configuration
@@ -143,6 +156,7 @@ func NewManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager 
 		detector:      detect.NewDetector(),
 		currentState:  detect.StateWorking,
 		metricsParser: metrics.NewMetricsParser(),
+		inputHandler:  input.NewHandler(),
 	}
 }
 
@@ -170,6 +184,7 @@ func NewManagerWithSession(sessionID, id, workdir, task string, cfg ManagerConfi
 		detector:      detect.NewDetector(),
 		currentState:  detect.StateWorking,
 		metricsParser: metrics.NewMetricsParser(),
+		inputHandler:  input.NewHandler(),
 	}
 }
 
@@ -207,6 +222,25 @@ func (m *Manager) SetLogger(logger *logging.Logger) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.logger = logger
+}
+
+// SetStateMonitor sets an external state monitor for centralized state tracking.
+// When set, the manager delegates state detection, timeout checking, and bell detection
+// to the monitor. This allows multiple managers to share a single monitor for
+// coordinated state management.
+//
+// If monitor is nil, the manager uses its internal state tracking.
+func (m *Manager) SetStateMonitor(monitor *state.Monitor) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stateMonitor = monitor
+}
+
+// StateMonitor returns the configured state monitor, or nil if not set.
+func (m *Manager) StateMonitor() *state.Monitor {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.stateMonitor
 }
 
 // CurrentMetrics returns the currently parsed metrics
@@ -247,10 +281,17 @@ func (m *Manager) LastActivityTime() time.Time {
 // ClearTimeout resets the timeout state (for recovery/restart scenarios)
 func (m *Manager) ClearTimeout() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.timedOut = false
 	m.repeatedOutputCount = 0
 	m.lastActivityTime = time.Now()
+	stateMonitor := m.stateMonitor
+	instanceID := m.id
+	m.mu.Unlock()
+
+	// Also clear timeout in external state monitor if configured
+	if stateMonitor != nil {
+		stateMonitor.ClearTimeout(instanceID)
+	}
 }
 
 // Start launches the Claude Code process in a tmux session
@@ -329,6 +370,11 @@ func (m *Manager) Start() error {
 	now := time.Now()
 	m.startTime = &now
 	m.lastActivityTime = now
+
+	// Register with external state monitor if configured
+	if m.stateMonitor != nil {
+		m.stateMonitor.Start(m.id)
+	}
 
 	// Start background goroutine to capture output periodically
 	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)
@@ -420,6 +466,8 @@ func (m *Manager) captureLoop() {
 				m.lastOutputHash = lastOutput
 				m.repeatedOutputCount = 0
 				logger := m.logger
+				stateMonitor := m.stateMonitor
+				instanceID := m.id
 				m.mu.Unlock()
 
 				if logger != nil {
@@ -430,21 +478,43 @@ func (m *Manager) captureLoop() {
 				lastOutput = currentOutput
 
 				// Detect waiting state from the new output
-				m.detectAndNotifyState(output)
+				if stateMonitor != nil {
+					// Use external state monitor for state detection
+					stateMonitor.ProcessOutput(instanceID, output, currentOutput)
+				} else {
+					// Fall back to internal state detection
+					m.detectAndNotifyState(output)
+				}
 			} else {
 				// Output hasn't changed - check for stale detection
 				m.mu.Lock()
 				if m.config.StaleDetection {
 					m.repeatedOutputCount++
 				}
+				stateMonitor := m.stateMonitor
+				instanceID := m.id
 				m.mu.Unlock()
+
+				// Also notify state monitor about unchanged output (for stale tracking)
+				if stateMonitor != nil {
+					stateMonitor.ProcessOutput(instanceID, output, currentOutput)
+				}
 			}
 
 			// Check for timeout conditions
-			m.checkTimeouts()
+			m.mu.RLock()
+			stateMonitor := m.stateMonitor
+			instanceID := m.id
+			m.mu.RUnlock()
+
+			if stateMonitor != nil {
+				stateMonitor.CheckTimeouts(instanceID)
+			} else {
+				m.checkTimeouts()
+			}
 
 			// Check for terminal bells and forward them
-			m.checkAndForwardBell(sessionName)
+			m.checkAndForwardBellWithMonitor(sessionName, stateMonitor, instanceID)
 
 			// Check if the session is still running
 			checkCmd := exec.Command("tmux", "has-session", "-t", sessionName)
@@ -453,13 +523,20 @@ func (m *Manager) captureLoop() {
 				m.mu.Lock()
 				m.running = false
 				callback := m.stateCallback
-				instanceID := m.id
+				localInstanceID := m.id
+				localStateMonitor := m.stateMonitor
 				m.currentState = detect.StateCompleted
 				m.mu.Unlock()
 
+				// Notify state monitor about completion
+				if localStateMonitor != nil {
+					localStateMonitor.SetState(localInstanceID, detect.StateCompleted)
+					localStateMonitor.Stop(localInstanceID)
+				}
+
 				// Fire the completion callback so coordinator knows task is done
 				if callback != nil {
-					callback(instanceID, detect.StateCompleted)
+					callback(localInstanceID, detect.StateCompleted)
 				}
 				return
 			}
@@ -587,8 +664,9 @@ func (m *Manager) checkTimeouts() {
 	}
 }
 
-// checkAndForwardBell checks for terminal bells and triggers the callback if detected
-func (m *Manager) checkAndForwardBell(sessionName string) {
+// checkAndForwardBellWithMonitor checks for terminal bells using either the state monitor
+// or internal tracking, depending on whether a monitor is configured.
+func (m *Manager) checkAndForwardBellWithMonitor(sessionName string, stateMonitor *state.Monitor, instanceID string) {
 	// Query the window_bell_flag from tmux
 	bellCmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#{window_bell_flag}")
 	output, err := bellCmd.Output()
@@ -598,23 +676,26 @@ func (m *Manager) checkAndForwardBell(sessionName string) {
 
 	bellActive := strings.TrimSpace(string(output)) == "1"
 
-	m.mu.Lock()
-	lastBellState := m.lastBellState
-	callback := m.bellCallback
-	instanceID := m.id
-	logger := m.logger
-	m.lastBellState = bellActive
-	m.mu.Unlock()
+	if stateMonitor != nil {
+		// Use external state monitor for bell detection
+		stateMonitor.CheckBell(instanceID, bellActive)
+	} else {
+		// Fall back to internal bell detection
+		m.mu.Lock()
+		lastBellState := m.lastBellState
+		callback := m.bellCallback
+		logger := m.logger
+		m.lastBellState = bellActive
+		m.mu.Unlock()
 
-	// Trigger callback on transition from no-bell to bell (edge detection)
-	// This ensures we only fire once per bell, not continuously while the flag is set
-	if bellActive && !lastBellState {
-		if logger != nil {
-			logger.Debug("bell detected",
-				"instance_id", instanceID)
-		}
-		if callback != nil {
-			callback(instanceID)
+		if bellActive && !lastBellState {
+			if logger != nil {
+				logger.Debug("bell detected",
+					"instance_id", instanceID)
+			}
+			if callback != nil {
+				callback(instanceID)
+			}
 		}
 	}
 }
@@ -728,6 +809,11 @@ func (m *Manager) Stop() error {
 		}
 	}
 
+	// Unregister from external state monitor if configured
+	if m.stateMonitor != nil {
+		m.stateMonitor.Stop(m.id)
+	}
+
 	m.running = false
 	return nil
 }
@@ -761,108 +847,74 @@ func (m *Manager) Resume() error {
 // SendInput sends input to the tmux session
 func (m *Manager) SendInput(data []byte) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	running := m.running
+	sessionName := m.sessionName
+	handler := m.inputHandler
+	m.mu.RUnlock()
 
-	if !m.running {
+	if !running {
 		return
 	}
 
-	// Convert bytes to string for send-keys
-	input := string(data)
-
-	// Handle special characters
-	// tmux send-keys interprets certain prefixes specially
-	// We need to handle newlines, control characters, etc.
-	for _, r := range input {
-		var key string
-		switch r {
-		case '\r', '\n':
-			key = "Enter"
-		case '\t':
-			key = "Tab"
-		case '\x7f', '\b': // backspace
-			key = "BSpace"
-		case '\x1b': // escape
-			key = "Escape"
-		case ' ':
-			key = "Space"
-		default:
-			if r < 32 {
-				// Control character: Ctrl+letter
-				key = fmt.Sprintf("C-%c", r+'a'-1)
-			} else {
-				// Regular character - send literally
-				key = string(r)
-			}
-		}
-
-		_ = exec.Command("tmux", "send-keys", "-t", m.sessionName, "-l", key).Run()
-	}
+	// Delegate to InputHandler for encoding and sending
+	_ = handler.SendInput(sessionName, string(data))
 }
 
 // SendKey sends a special key to the tmux session
 func (m *Manager) SendKey(key string) {
 	m.mu.RLock()
-	sessionName := m.sessionName
 	running := m.running
+	sessionName := m.sessionName
+	handler := m.inputHandler
 	m.mu.RUnlock()
 
 	if !running {
 		return
 	}
 
-	// Run async to avoid blocking the UI thread
-	go func() {
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, key).Run()
-	}()
+	// Delegate to InputHandler (already async)
+	_ = handler.SendKey(sessionName, key)
 }
 
 // SendLiteral sends literal text to the tmux session (no interpretation)
 func (m *Manager) SendLiteral(text string) {
 	m.mu.RLock()
-	sessionName := m.sessionName
 	running := m.running
+	sessionName := m.sessionName
+	handler := m.inputHandler
 	m.mu.RUnlock()
 
 	if !running {
 		return
 	}
 
-	// Run async to avoid blocking the UI thread
-	// -l flag sends keys literally without interpretation
-	go func() {
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
-	}()
+	// Delegate to InputHandler (already async)
+	_ = handler.SendLiteral(sessionName, text)
 }
 
 // SendPaste sends pasted text to the tmux session with bracketed paste sequences
 // This preserves the paste context for applications that support bracketed paste mode
 func (m *Manager) SendPaste(text string) {
 	m.mu.RLock()
-	sessionName := m.sessionName
 	running := m.running
+	sessionName := m.sessionName
+	handler := m.inputHandler
 	m.mu.RUnlock()
 
 	if !running {
 		return
 	}
 
-	// Run async to avoid blocking the UI thread
-	// Commands run sequentially within the goroutine to maintain paste order
-	go func() {
-		// Bracketed paste mode escape sequences
-		// Start: ESC[200~ End: ESC[201~
-		// This tells the receiving application that the following text is pasted
-		pasteStart := "\x1b[200~"
-		pasteEnd := "\x1b[201~"
+	// Delegate to InputHandler (already async with bracketed paste)
+	_ = handler.SendPaste(sessionName, text)
+}
 
-		// Send bracketed paste start
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteStart).Run()
-		// Send the pasted content
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
-		// Send bracketed paste end
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteEnd).Run()
-	}()
+// InputHandler returns the input handler for this manager.
+// This allows access to input history and buffering features.
+func (m *Manager) InputHandler() *input.Handler {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.inputHandler
 }
 
 // GetOutput returns all buffered output
@@ -952,6 +1004,11 @@ func (m *Manager) Reconnect() error {
 	m.lastActivityTime = time.Now()
 	m.lastBellState = false // Reset bell state on reconnect
 	m.doneChan = make(chan struct{})
+
+	// Register with external state monitor if configured
+	if m.stateMonitor != nil {
+		m.stateMonitor.Start(m.id)
+	}
 
 	// Start background goroutine to capture output periodically
 	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)
@@ -1056,6 +1113,111 @@ func ListSessionTmuxSessions(sessionID string) ([]string, error) {
 	return sessions, nil
 }
 
+// SetLifecycleManager sets an optional lifecycle manager for coordinated operations.
+// When set, the Manager can participate in lifecycle operations coordinated by the
+// LifecycleManager. This is optional for backward compatibility.
+func (m *Manager) SetLifecycleManager(lm *lifecycle.Manager) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lifecycleManager = lm
+}
+
+// LifecycleManager returns the configured lifecycle manager, if any.
+func (m *Manager) LifecycleManager() *lifecycle.Manager {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lifecycleManager
+}
+
+// WorkDir returns the working directory for this instance.
+// Implements lifecycle.Instance interface.
+func (m *Manager) WorkDir() string {
+	return m.workdir
+}
+
+// Task returns the task/prompt to execute.
+// Implements lifecycle.Instance interface.
+func (m *Manager) Task() string {
+	return m.task
+}
+
+// LifecycleConfig returns the configuration needed for lifecycle operations.
+// Implements lifecycle.Instance interface.
+func (m *Manager) LifecycleConfig() lifecycle.InstanceConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return lifecycle.InstanceConfig{
+		TmuxWidth:  m.config.TmuxWidth,
+		TmuxHeight: m.config.TmuxHeight,
+	}
+}
+
+// Config returns the lifecycle instance configuration.
+// Implements lifecycle.Instance interface.
+func (m *Manager) Config() lifecycle.InstanceConfig {
+	return m.LifecycleConfig()
+}
+
+// SetRunning sets the running state of the instance.
+// Implements lifecycle.Instance interface.
+func (m *Manager) SetRunning(running bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.running = running
+}
+
+// IsRunning returns whether the instance is currently running.
+// Implements lifecycle.Instance interface.
+func (m *Manager) IsRunning() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.running
+}
+
+// SetStartTime sets the start time of the instance.
+// Implements lifecycle.Instance interface.
+func (m *Manager) SetStartTime(t time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.startTime = &t
+}
+
+// OnStarted is called when the instance has been started by the lifecycle manager.
+// Implements lifecycle.Instance interface.
+func (m *Manager) OnStarted() {
+	m.mu.Lock()
+	m.paused = false
+	m.timedOut = false
+	m.repeatedOutputCount = 0
+	m.lastActivityTime = time.Now()
+
+	// Start background goroutine to capture output periodically
+	m.doneChan = make(chan struct{})
+	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)
+	m.mu.Unlock()
+
+	go m.captureLoop()
+}
+
+// OnStopped is called when the instance has been stopped by the lifecycle manager.
+// Implements lifecycle.Instance interface.
+func (m *Manager) OnStopped() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Signal stop to capture loop
+	select {
+	case <-m.doneChan:
+	default:
+		close(m.doneChan)
+	}
+
+	// Stop the ticker
+	if m.captureTick != nil {
+		m.captureTick.Stop()
+	}
+}
+
 // Resize changes the tmux pane dimensions
 // This is useful when the display area changes (e.g., sidebar added/removed)
 func (m *Manager) Resize(width, height int) error {
@@ -1084,3 +1246,6 @@ func (m *Manager) Resize(width, height int) error {
 
 	return nil
 }
+
+// Verify Manager implements lifecycle.Instance at compile time.
+var _ lifecycle.Instance = (*Manager)(nil)

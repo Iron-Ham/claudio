@@ -14,6 +14,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/issue"
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/retry"
 )
 
 // UltraPlanPhase represents the current phase of an ultra-plan session
@@ -252,14 +253,9 @@ type TaskWorktreeInfo struct {
 	Branch       string `json:"branch"`
 }
 
-// TaskRetryState tracks retry attempts for a task that produces no commits
-type TaskRetryState struct {
-	TaskID       string `json:"task_id"`
-	RetryCount   int    `json:"retry_count"`
-	MaxRetries   int    `json:"max_retries"`
-	LastError    string `json:"last_error,omitempty"`
-	CommitCounts []int  `json:"commit_counts,omitempty"` // Commits per attempt (for debugging)
-}
+// TaskRetryState tracks retry attempts for a task that produces no commits.
+// This is an alias to retry.TaskState for backward compatibility.
+type TaskRetryState = retry.TaskState
 
 // GroupDecisionState tracks state when a group has partial success/failure
 type GroupDecisionState struct {

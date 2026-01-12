@@ -2,10 +2,13 @@ package tui
 
 import (
 	"testing"
+
+	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 )
 
 func TestTerminalHeightConstants(t *testing.T) {
 	// Verify the terminal height constants are set to reasonable values
+	// These are re-exported from terminal package for backward compatibility
 	t.Run("DefaultTerminalHeight is at least MinTerminalHeight", func(t *testing.T) {
 		if DefaultTerminalHeight < MinTerminalHeight {
 			t.Errorf("DefaultTerminalHeight (%d) should be >= MinTerminalHeight (%d)",
@@ -40,37 +43,48 @@ func TestTerminalHeightConstants(t *testing.T) {
 
 func TestTerminalPaneHeight(t *testing.T) {
 	tests := []struct {
-		name            string
-		terminalVisible bool
-		terminalHeight  int
-		expectedHeight  int
+		name           string
+		visible        bool
+		paneHeight     int
+		terminalHeight int // total terminal height for max ratio calculation
+		expectedHeight int
 	}{
 		{
-			name:            "returns 0 when terminal not visible",
-			terminalVisible: false,
-			terminalHeight:  15,
-			expectedHeight:  0,
+			name:           "returns 0 when terminal not visible",
+			visible:        false,
+			paneHeight:     15,
+			terminalHeight: 100,
+			expectedHeight: 0,
 		},
 		{
-			name:            "returns default height when visible and height is 0",
-			terminalVisible: true,
-			terminalHeight:  0,
-			expectedHeight:  DefaultTerminalHeight,
+			name:           "returns default height when visible and paneHeight is 0",
+			visible:        true,
+			paneHeight:     0,
+			terminalHeight: 100,
+			expectedHeight: terminal.DefaultPaneHeight,
 		},
 		{
-			name:            "returns stored height when visible and height is set",
-			terminalVisible: true,
-			terminalHeight:  20,
-			expectedHeight:  20,
+			name:           "returns stored height when visible and height is set",
+			visible:        true,
+			paneHeight:     20,
+			terminalHeight: 100,
+			expectedHeight: 20,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := Model{
-				terminalVisible: tt.terminalVisible,
-				terminalHeight:  tt.terminalHeight,
+				terminalManager: terminal.NewManager(),
 			}
+			m.terminalManager.SetSize(80, tt.terminalHeight)
+			m.terminalManager.SetPaneHeight(tt.paneHeight)
+			if tt.visible {
+				m.terminalManager.SetLayout(terminal.LayoutVisible)
+			} else {
+				m.terminalManager.SetLayout(terminal.LayoutHidden)
+			}
+
 			got := m.TerminalPaneHeight()
 			if got != tt.expectedHeight {
 				t.Errorf("TerminalPaneHeight() = %d, want %d", got, tt.expectedHeight)
@@ -81,27 +95,43 @@ func TestTerminalPaneHeight(t *testing.T) {
 
 func TestIsTerminalMode(t *testing.T) {
 	tests := []struct {
-		name         string
-		terminalMode bool
-		expected     bool
+		name     string
+		visible  bool
+		focused  bool
+		expected bool
 	}{
 		{
-			name:         "returns true when in terminal mode",
-			terminalMode: true,
-			expected:     true,
+			name:     "returns true when visible and focused",
+			visible:  true,
+			focused:  true,
+			expected: true,
 		},
 		{
-			name:         "returns false when not in terminal mode",
-			terminalMode: false,
-			expected:     false,
+			name:     "returns false when visible but not focused",
+			visible:  true,
+			focused:  false,
+			expected: false,
+		},
+		{
+			name:     "returns false when not visible",
+			visible:  false,
+			focused:  false,
+			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := Model{
-				terminalMode: tt.terminalMode,
+				terminalManager: terminal.NewManager(),
 			}
+			if tt.visible {
+				m.terminalManager.SetLayout(terminal.LayoutVisible)
+			}
+			if tt.focused {
+				m.terminalManager.SetFocused(true)
+			}
+
 			got := m.IsTerminalMode()
 			if got != tt.expected {
 				t.Errorf("IsTerminalMode() = %v, want %v", got, tt.expected)
@@ -112,27 +142,31 @@ func TestIsTerminalMode(t *testing.T) {
 
 func TestIsTerminalVisible(t *testing.T) {
 	tests := []struct {
-		name            string
-		terminalVisible bool
-		expected        bool
+		name     string
+		visible  bool
+		expected bool
 	}{
 		{
-			name:            "returns true when terminal visible",
-			terminalVisible: true,
-			expected:        true,
+			name:     "returns true when terminal visible",
+			visible:  true,
+			expected: true,
 		},
 		{
-			name:            "returns false when terminal not visible",
-			terminalVisible: false,
-			expected:        false,
+			name:     "returns false when terminal not visible",
+			visible:  false,
+			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := Model{
-				terminalVisible: tt.terminalVisible,
+				terminalManager: terminal.NewManager(),
 			}
+			if tt.visible {
+				m.terminalManager.SetLayout(terminal.LayoutVisible)
+			}
+
 			got := m.IsTerminalVisible()
 			if got != tt.expected {
 				t.Errorf("IsTerminalVisible() = %v, want %v", got, tt.expected)
@@ -221,41 +255,37 @@ func TestTerminalContentDimensionCalculation(t *testing.T) {
 
 func TestEnterTerminalMode(t *testing.T) {
 	tests := []struct {
-		name                    string
-		terminalVisible         bool
-		terminalProcessRunning  bool
-		expectTerminalModeAfter bool
+		name               string
+		visible            bool
+		expectFocusedAfter bool
 	}{
 		{
-			name:                    "does not enter when terminal not visible",
-			terminalVisible:         false,
-			terminalProcessRunning:  true,
-			expectTerminalModeAfter: false,
+			name:               "does not enter when terminal not visible",
+			visible:            false,
+			expectFocusedAfter: false,
 		},
 		{
-			name:                    "does not enter when no terminal process",
-			terminalVisible:         true,
-			terminalProcessRunning:  false,
-			expectTerminalModeAfter: false,
+			name:               "does not enter when no terminal process",
+			visible:            true,
+			expectFocusedAfter: false, // No process, so enterTerminalMode does nothing
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := Model{
-				terminalVisible: tt.terminalVisible,
-				terminalMode:    false,
+				terminalManager: terminal.NewManager(),
 				// terminalProcess is nil, which means IsRunning() would panic
 				// but enterTerminalMode checks terminalProcess != nil first
 			}
-
-			// Only call if terminal not visible (to avoid nil pointer)
-			if !tt.terminalVisible {
-				m.enterTerminalMode()
+			if tt.visible {
+				m.terminalManager.SetLayout(terminal.LayoutVisible)
 			}
 
-			if m.terminalMode != tt.expectTerminalModeAfter {
-				t.Errorf("terminalMode = %v, want %v", m.terminalMode, tt.expectTerminalModeAfter)
+			m.enterTerminalMode()
+
+			if m.terminalManager.IsFocused() != tt.expectFocusedAfter {
+				t.Errorf("IsFocused() = %v, want %v", m.terminalManager.IsFocused(), tt.expectFocusedAfter)
 			}
 		})
 	}
@@ -263,13 +293,15 @@ func TestEnterTerminalMode(t *testing.T) {
 
 func TestExitTerminalMode(t *testing.T) {
 	m := Model{
-		terminalMode: true,
+		terminalManager: terminal.NewManager(),
 	}
+	m.terminalManager.SetLayout(terminal.LayoutVisible)
+	m.terminalManager.SetFocused(true)
 
 	m.exitTerminalMode()
 
-	if m.terminalMode != false {
-		t.Error("exitTerminalMode() should set terminalMode to false")
+	if m.terminalManager.IsFocused() {
+		t.Error("exitTerminalMode() should set focused to false")
 	}
 }
 
@@ -291,6 +323,7 @@ func TestGetTerminalDir(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := Model{
+				terminalManager: terminal.NewManager(),
 				terminalDirMode: tt.terminalDirMode,
 				invocationDir:   tt.invocationDir,
 			}
