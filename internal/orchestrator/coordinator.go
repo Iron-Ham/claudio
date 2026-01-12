@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/retry"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/verify"
 )
 
@@ -53,12 +54,13 @@ type Verifier interface {
 
 // Coordinator orchestrates the execution of an ultra-plan
 type Coordinator struct {
-	manager     *UltraPlanManager
-	orch        *Orchestrator
-	baseSession *Session
-	callbacks   *CoordinatorCallbacks
-	logger      *logging.Logger
-	verifier    Verifier
+	manager      *UltraPlanManager
+	orch         *Orchestrator
+	baseSession  *Session
+	callbacks    *CoordinatorCallbacks
+	logger       *logging.Logger
+	verifier     Verifier
+	retryManager *retry.Manager
 
 	// Running state
 	ctx        context.Context
@@ -71,22 +73,17 @@ type Coordinator struct {
 	runningCount int
 }
 
-// coordinatorRetryTracker adapts the Coordinator's retry state management to the verify.RetryTracker interface.
+// coordinatorRetryTracker adapts the Coordinator's RetryManager to the verify.RetryTracker interface.
 type coordinatorRetryTracker struct {
 	c *Coordinator
 }
 
 func (rt *coordinatorRetryTracker) GetRetryCount(taskID string) int {
-	session := rt.c.Session()
-	if session == nil || session.TaskRetries == nil {
+	state := rt.c.retryManager.GetState(taskID)
+	if state == nil {
 		return 0
 	}
-	rt.c.mu.RLock()
-	defer rt.c.mu.RUnlock()
-	if state, exists := session.TaskRetries[taskID]; exists {
-		return state.RetryCount
-	}
-	return 0
+	return state.RetryCount
 }
 
 func (rt *coordinatorRetryTracker) IncrementRetry(taskID string) int {
@@ -96,10 +93,10 @@ func (rt *coordinatorRetryTracker) IncrementRetry(taskID string) int {
 	if maxRetries == 0 {
 		maxRetries = 3
 	}
-	state := rt.c.getOrCreateRetryState(taskID, maxRetries)
-	state.RetryCount++
-	state.LastError = "task produced no commits"
-	return state.RetryCount
+	state := rt.c.retryManager.GetOrCreateState(taskID, maxRetries)
+	rt.c.retryManager.RecordAttempt(taskID, false) // false = failure
+	rt.c.retryManager.SetLastError(taskID, "task produced no commits")
+	return state.RetryCount + 1
 }
 
 func (rt *coordinatorRetryTracker) RecordCommitCount(taskID string, count int) {
@@ -109,21 +106,16 @@ func (rt *coordinatorRetryTracker) RecordCommitCount(taskID string, count int) {
 	if maxRetries == 0 {
 		maxRetries = 3
 	}
-	state := rt.c.getOrCreateRetryState(taskID, maxRetries)
-	state.CommitCounts = append(state.CommitCounts, count)
+	rt.c.retryManager.GetOrCreateState(taskID, maxRetries)
+	rt.c.retryManager.RecordCommitCount(taskID, count)
 }
 
 func (rt *coordinatorRetryTracker) GetMaxRetries(taskID string) int {
-	session := rt.c.Session()
-	if session == nil || session.TaskRetries == nil {
+	state := rt.c.retryManager.GetState(taskID)
+	if state == nil {
 		return 0
 	}
-	rt.c.mu.RLock()
-	defer rt.c.mu.RUnlock()
-	if state, exists := session.TaskRetries[taskID]; exists {
-		return state.MaxRetries
-	}
-	return 0
+	return state.MaxRetries
 }
 
 // coordinatorEventEmitter adapts the Coordinator's event emission to the verify.EventEmitter interface.
@@ -169,11 +161,18 @@ func NewCoordinator(orch *Orchestrator, baseSession *Session, ultraSession *Ultr
 	// Add session context to logger
 	sessionLogger := logger.WithSession(ultraSession.ID).WithPhase("coordinator")
 
+	// Initialize retry manager and load existing state from session
+	retryMgr := retry.NewManager()
+	if ultraSession.TaskRetries != nil {
+		retryMgr.LoadStates(ultraSession.TaskRetries)
+	}
+
 	c := &Coordinator{
 		manager:      manager,
 		orch:         orch,
 		baseSession:  baseSession,
 		logger:       sessionLogger,
+		retryManager: retryMgr,
 		ctx:          ctx,
 		cancelFunc:   cancel,
 		runningTasks: make(map[string]string),
@@ -217,6 +216,20 @@ func (c *Coordinator) Manager() *UltraPlanManager {
 // Session returns the ultra-plan session
 func (c *Coordinator) Session() *UltraPlanSession {
 	return c.manager.Session()
+}
+
+// RetryManager returns the retry manager for task retry state management.
+func (c *Coordinator) RetryManager() *retry.Manager {
+	return c.retryManager
+}
+
+// syncRetryState syncs the retry manager's state back to the session.
+// This should be called before saving the session to ensure retry state is persisted.
+func (c *Coordinator) syncRetryState() {
+	session := c.Session()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	session.TaskRetries = c.retryManager.GetAllStates()
 }
 
 // StoreCandidatePlan stores a candidate plan at the given index with proper mutex protection.
@@ -1140,6 +1153,9 @@ func (c *Coordinator) verifyTaskWork(taskID string, inst *Instance) taskCompleti
 		c.mu.Unlock()
 	}
 
+	// Sync retry state back to session for persistence after verification
+	c.syncRetryState()
+
 	// Convert verify result to internal taskCompletion type
 	return taskCompletion{
 		taskID:      verifyResult.TaskID,
@@ -1149,30 +1165,6 @@ func (c *Coordinator) verifyTaskWork(taskID string, inst *Instance) taskCompleti
 		needsRetry:  verifyResult.NeedsRetry,
 		commitCount: verifyResult.CommitCount,
 	}
-}
-
-// getOrCreateRetryState returns or creates retry state for a task
-func (c *Coordinator) getOrCreateRetryState(taskID string, maxRetries int) *TaskRetryState {
-	session := c.Session()
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if session.TaskRetries == nil {
-		session.TaskRetries = make(map[string]*TaskRetryState)
-	}
-
-	state, exists := session.TaskRetries[taskID]
-	if !exists {
-		state = &TaskRetryState{
-			TaskID:       taskID,
-			MaxRetries:   maxRetries,
-			CommitCounts: make([]int, 0),
-		}
-		session.TaskRetries[taskID] = state
-	}
-
-	return state
 }
 
 // handleTaskCompletion handles a task completion notification
@@ -2412,10 +2404,8 @@ func (c *Coordinator) RetryFailedTasks() error {
 	// Reset retry states and remove from failed list
 	c.mu.Lock()
 	for _, taskID := range failedTasks {
-		// Reset retry counter
-		if state, ok := session.TaskRetries[taskID]; ok {
-			state.RetryCount = 0
-		}
+		// Reset retry counter using RetryManager
+		c.retryManager.Reset(taskID)
 		// Remove from failed list
 		newFailed := make([]string, 0)
 		for _, ft := range session.FailedTasks {
@@ -2435,6 +2425,8 @@ func (c *Coordinator) RetryFailedTasks() error {
 		// Remove from TaskToInstance so they become ready again
 		delete(session.TaskToInstance, taskID)
 	}
+	// Sync retry state back to session for persistence
+	session.TaskRetries = c.retryManager.GetAllStates()
 
 	// Ensure we stay at the current group (should already be at groupIdx)
 	// and clear the decision state so tasks can be retried
@@ -2532,9 +2524,11 @@ func (c *Coordinator) RetriggerGroup(targetGroup int) error {
 	// Clear task-related maps for affected tasks
 	for taskID := range tasksToReset {
 		delete(session.TaskToInstance, taskID)
-		delete(session.TaskRetries, taskID)
+		c.retryManager.Reset(taskID)
 		delete(session.TaskCommitCounts, taskID)
 	}
+	// Sync retry state back to session for persistence
+	session.TaskRetries = c.retryManager.GetAllStates()
 
 	// Truncate group-related slices
 	if targetGroup < len(session.GroupConsolidatedBranches) {
