@@ -19,6 +19,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
+	"github.com/Iron-Ham/claudio/internal/tui/input"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
@@ -447,6 +448,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeypress processes keyboard input
 func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Sync router state for mode tracking
+	m.syncRouterState()
+
 	// Handle search mode - typing search pattern
 	if m.searchMode {
 		return m.handleSearchInput(msg)
@@ -966,6 +970,31 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// CurrentInputMode returns the current input mode based on the model's state.
+// This is useful for status line displays and debugging.
+func (m Model) CurrentInputMode() input.Mode {
+	if m.inputRouter != nil {
+		return m.inputRouter.Mode()
+	}
+	// Fallback if router not initialized
+	switch {
+	case m.searchMode:
+		return input.ModeSearch
+	case m.filterMode:
+		return input.ModeFilter
+	case m.inputMode:
+		return input.ModeInput
+	case m.terminalMode:
+		return input.ModeTerminal
+	case m.addingTask:
+		return input.ModeTaskInput
+	case m.commandMode:
+		return input.ModeCommand
+	default:
+		return input.ModeNormal
+	}
 }
 
 // handleCommandInput handles keystrokes when in command mode (after pressing ':')

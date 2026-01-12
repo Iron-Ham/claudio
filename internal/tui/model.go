@@ -8,6 +8,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
+	"github.com/Iron-Ham/claudio/internal/tui/input"
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 )
 
@@ -63,6 +64,9 @@ type Model struct {
 	logger         *logging.Logger
 	startTime      time.Time        // Time when the TUI session started
 	commandHandler *command.Handler // Handler for vim-style commands
+
+	// Input routing
+	inputRouter *input.Router
 
 	// Ultra-plan mode (nil if not in ultra-plan mode)
 	ultraPlan *UltraPlanState
@@ -245,6 +249,7 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 		logger:           tuiLogger,
 		startTime:        time.Now(),
 		commandHandler:   command.New(),
+		inputRouter:      input.NewRouter(),
 		outputs:          make(map[string]string),
 		outputScrolls:    make(map[string]int),
 		outputAutoScroll: make(map[string]bool),
@@ -260,6 +265,59 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 		invocationDir:  invocationDir,
 		terminalHeight: DefaultTerminalHeight,
 	}
+}
+
+// InputRouter returns the input router for this model.
+func (m Model) InputRouter() *input.Router {
+	return m.inputRouter
+}
+
+// syncRouterState synchronizes the InputRouter state with the Model's mode flags.
+// This ensures the router reflects the current mode based on the existing boolean flags.
+func (m *Model) syncRouterState() {
+	if m.inputRouter == nil {
+		return
+	}
+
+	// Sync mode based on priority order (matching handleKeypress)
+	switch {
+	case m.searchMode:
+		m.inputRouter.SetMode(input.ModeSearch)
+	case m.filterMode:
+		m.inputRouter.SetMode(input.ModeFilter)
+	case m.inputMode:
+		m.inputRouter.SetMode(input.ModeInput)
+	case m.terminalMode:
+		m.inputRouter.SetMode(input.ModeTerminal)
+	case m.addingTask:
+		m.inputRouter.SetMode(input.ModeTaskInput)
+	case m.commandMode:
+		m.inputRouter.SetMode(input.ModeCommand)
+	default:
+		m.inputRouter.SetMode(input.ModeNormal)
+	}
+
+	// Sync submode states
+	m.inputRouter.SetUltraPlanActive(m.ultraPlan != nil)
+	m.inputRouter.SetPlanEditorActive(m.IsPlanEditorActive())
+	m.inputRouter.SetTemplateDropdown(m.showTemplates)
+
+	// Sync group decision and retrigger modes from ultra-plan state
+	if m.ultraPlan != nil && m.ultraPlan.Coordinator != nil {
+		session := m.ultraPlan.Coordinator.Session()
+		if session != nil && session.GroupDecision != nil {
+			m.inputRouter.SetGroupDecisionMode(session.GroupDecision.AwaitingDecision)
+		} else {
+			m.inputRouter.SetGroupDecisionMode(false)
+		}
+		m.inputRouter.SetRetriggerMode(m.ultraPlan.RetriggerMode)
+	} else {
+		m.inputRouter.SetGroupDecisionMode(false)
+		m.inputRouter.SetRetriggerMode(false)
+	}
+
+	// Sync command buffer
+	m.inputRouter.Buffer = m.commandBuffer
 }
 
 // activeInstance returns the currently focused instance
