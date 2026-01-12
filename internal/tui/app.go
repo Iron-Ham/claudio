@@ -733,9 +733,10 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter", "i":
 		// Enter input mode for the active instance
+		// Allow input if tmux session exists (running or waiting for input)
 		if inst := m.activeInstance(); inst != nil {
 			mgr := m.orchestrator.GetInstanceManager(inst.ID)
-			if mgr != nil && mgr.Running() {
+			if mgr != nil && mgr.TmuxSessionExists() {
 				m.inputMode = true
 			}
 		}

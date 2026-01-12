@@ -1074,9 +1074,12 @@ func (v *UltraplanView) RenderHelp() string {
 	case orchestrator.PhasePlanning:
 		keys = append(keys, "[p] parse plan")
 		keys = append(keys, "[i] input mode")
+		keys = append(keys, "[:restart] restart step")
 
 	case orchestrator.PhasePlanSelection:
 		keys = append(keys, "[v] toggle plan view")
+		keys = append(keys, "[i] input mode")
+		keys = append(keys, "[:restart] restart step")
 
 	case orchestrator.PhaseRefresh:
 		keys = append(keys, "[e] start execution")
@@ -1087,11 +1090,13 @@ func (v *UltraplanView) RenderHelp() string {
 		keys = append(keys, "[1-9] select task")
 		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
+		keys = append(keys, "[:restart] restart task")
 		keys = append(keys, "[:cancel] cancel")
 
 	case orchestrator.PhaseSynthesis:
 		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
+		keys = append(keys, "[:restart] restart synthesis")
 		if session.SynthesisAwaitingApproval {
 			keys = append(keys, "[s] approve → proceed")
 		} else {
@@ -1100,13 +1105,17 @@ func (v *UltraplanView) RenderHelp() string {
 
 	case orchestrator.PhaseRevision:
 		keys = append(keys, "[tab] next instance")
+		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
+		keys = append(keys, "[:restart] restart revision")
 		if session.Revision != nil {
 			keys = append(keys, fmt.Sprintf("round %d/%d", session.Revision.RevisionRound, session.Revision.MaxRevisions))
 		}
 
 	case orchestrator.PhaseConsolidating:
+		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
+		keys = append(keys, "[:restart] restart consolidation")
 		if session.Consolidation != nil && session.Consolidation.Phase == orchestrator.ConsolidationPaused {
 			keys = append(keys, "[r] resume")
 		}
