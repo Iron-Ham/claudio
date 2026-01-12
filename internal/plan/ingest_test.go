@@ -3021,3 +3021,412 @@ func TestAssignPriorities(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// Issue Format Detection Tests (task-1-detect-issue-format)
+// =============================================================================
+
+func TestDetectIssueFormat_TemplatedFormat(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want IssueFormat
+	}{
+		{
+			name: "complete templated sub-issue",
+			body: `## Task
+
+Implement the new authentication system.
+
+## Files to Modify
+
+- ` + "`internal/auth/handler.go`" + `
+- ` + "`internal/auth/service.go`" + `
+
+## Dependencies
+
+Complete these issues first:
+- #41 - Setup database models
+
+## Complexity
+
+Estimated: **medium**
+
+---
+*Part of #42*
+`,
+			want: IssueFormatTemplated,
+		},
+		{
+			name: "minimal templated sub-issue",
+			body: `## Task
+
+Simple task.
+
+## Complexity
+
+Estimated: **low**
+
+---
+*Part of #100*
+`,
+			want: IssueFormatTemplated,
+		},
+		{
+			name: "templated with high complexity",
+			body: `## Task
+
+Complex refactoring work.
+
+## Complexity
+
+Estimated: **high**
+
+---
+*Part of #50*
+`,
+			want: IssueFormatTemplated,
+		},
+		{
+			name: "templated with extra whitespace in Part of",
+			body: `## Task
+
+Task description.
+
+## Complexity
+
+Estimated: **medium**
+
+---
+*Part  of  #123*
+`,
+			want: IssueFormatTemplated,
+		},
+		{
+			name: "templated without files or dependencies",
+			body: `## Task
+
+Just a simple task.
+
+## Complexity
+
+Estimated: **low**
+
+---
+*Part of #1*
+`,
+			want: IssueFormatTemplated,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectIssueFormat(tt.body)
+			if got != tt.want {
+				t.Errorf("DetectIssueFormat() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectIssueFormat_FreeformFormat(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want IssueFormat
+	}{
+		{
+			name: "human-authored with Summary",
+			body: `## Summary
+
+I'd like to add a dark mode toggle to the settings page.
+
+## Acceptance Criteria
+
+- [ ] Toggle switch in settings
+- [ ] Persists preference to localStorage
+- [ ] Theme applies immediately
+`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "simple feature request",
+			body: `Add support for CSV export in the reports section.
+
+Users should be able to click "Export" and download a CSV file.
+`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "bug report format",
+			body: `## Bug Description
+
+The application crashes when clicking the submit button twice.
+
+## Steps to Reproduce
+
+1. Open the form
+2. Fill in the fields
+3. Click submit twice quickly
+
+## Expected Behavior
+
+Form should only submit once.
+`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "empty body",
+			body: "",
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "whitespace only body",
+			body: "   \n\t\n   ",
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "has Task section but no Part of",
+			body: `## Task
+
+This looks like a task but is missing the Part of marker.
+
+## Complexity
+
+Estimated: **low**
+`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "has Part of but no Task section",
+			body: `## Summary
+
+Some summary.
+
+*Part of #42*
+`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "casual mention of Part of in prose",
+			body: `## Summary
+
+This issue is part of #42 epic. Note that the text "Part of #42" without
+asterisks doesn't match the template pattern.
+
+## Details
+
+More details here.
+`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "has complexity but wrong Part of format",
+			body: `## Task
+
+Some task.
+
+## Complexity
+
+Estimated: **medium**
+
+---
+Part of #42
+`,
+			want: IssueFormatFreeform,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectIssueFormat(tt.body)
+			if got != tt.want {
+				t.Errorf("DetectIssueFormat() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectIssueFormat_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want IssueFormat
+	}{
+		{
+			name: "Part of with large issue number",
+			body: `## Task
+
+Large issue number.
+
+## Complexity
+
+Estimated: **low**
+
+---
+*Part of #99999*
+`,
+			want: IssueFormatTemplated,
+		},
+		{
+			name: "Part of with issue number 1",
+			body: `## Task
+
+Small issue.
+
+## Complexity
+
+Estimated: **high**
+
+---
+*Part of #1*
+`,
+			want: IssueFormatTemplated,
+		},
+		{
+			name: "case insensitive complexity",
+			body: `## Task
+
+Testing case.
+
+## Complexity
+
+Estimated: **LOW**
+
+---
+*Part of #42*
+`,
+			want: IssueFormatTemplated,
+		},
+		{
+			name: "mixed case complexity",
+			body: `## Task
+
+Testing mixed case.
+
+## Complexity
+
+Estimated: **Medium**
+
+---
+*Part of #42*
+`,
+			want: IssueFormatTemplated,
+		},
+		{
+			name: "Part of anywhere in body with Task section",
+			body: `## Task
+
+Do the thing.
+
+## Some Other Section
+
+Blah blah.
+
+*Part of #99*
+`,
+			want: IssueFormatTemplated,
+		},
+		{
+			name: "Part of with Complexity but no Task section",
+			body: `## Summary
+
+Some summary with complexity marker.
+
+Estimated: **low**
+
+*Part of #42*
+`,
+			want: IssueFormatTemplated,
+		},
+		{
+			name: "only Part of marker",
+			body: `*Part of #42*`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "only Task section",
+			body: `## Task
+
+Just a task section.
+`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "only Complexity marker",
+			body: `Estimated: **low**`,
+			want: IssueFormatFreeform,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectIssueFormat(tt.body)
+			if got != tt.want {
+				t.Errorf("DetectIssueFormat() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectIssueFormat_RoundTrip(t *testing.T) {
+	// Test that issues generated by RenderSubIssueBody are detected as templated
+	task := orchestrator.PlannedTask{
+		ID:            "task-1",
+		Title:         "Test Task",
+		Description:   "This is a test task description.",
+		Files:         []string{"internal/foo/bar.go"},
+		DependsOn:     []string{},
+		EstComplexity: orchestrator.ComplexityMedium,
+	}
+
+	dependencyInfo := map[string]DependencyInfo{}
+	parentIssueNumber := 42
+
+	body, err := RenderSubIssueBody(task, parentIssueNumber, dependencyInfo)
+	if err != nil {
+		t.Fatalf("RenderSubIssueBody() error = %v", err)
+	}
+
+	format := DetectIssueFormat(body)
+	if format != IssueFormatTemplated {
+		t.Errorf("DetectIssueFormat(rendered body) = %q, want %q", format, IssueFormatTemplated)
+	}
+}
+
+func TestDetectIssueFormat_RoundTripWithDependencies(t *testing.T) {
+	// Test with a more complex task that has dependencies
+	task := orchestrator.PlannedTask{
+		ID:            "task-2",
+		Title:         "Complex Task",
+		Description:   "Multi-line\ndescription\nwith details.",
+		Files:         []string{"file1.go", "file2.go", "file3.go"},
+		DependsOn:     []string{"task-1"},
+		EstComplexity: orchestrator.ComplexityHigh,
+	}
+
+	dependencyInfo := map[string]DependencyInfo{
+		"task-1": {IssueNumber: 100, Title: "Prerequisite Task"},
+	}
+	parentIssueNumber := 99
+
+	body, err := RenderSubIssueBody(task, parentIssueNumber, dependencyInfo)
+	if err != nil {
+		t.Fatalf("RenderSubIssueBody() error = %v", err)
+	}
+
+	format := DetectIssueFormat(body)
+	if format != IssueFormatTemplated {
+		t.Errorf("DetectIssueFormat(rendered body with deps) = %q, want %q", format, IssueFormatTemplated)
+	}
+}
+
+func TestIssueFormat_StringValues(t *testing.T) {
+	// Verify the string constants have the expected values
+	if IssueFormatTemplated != "templated" {
+		t.Errorf("IssueFormatTemplated = %q, want %q", IssueFormatTemplated, "templated")
+	}
+	if IssueFormatFreeform != "freeform" {
+		t.Errorf("IssueFormatFreeform = %q, want %q", IssueFormatFreeform, "freeform")
+	}
+}

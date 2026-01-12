@@ -955,3 +955,64 @@ func assignPriorities(tasks []orchestrator.PlannedTask, executionOrder [][]strin
 		}
 	}
 }
+
+// =============================================================================
+// Issue Format Detection
+// =============================================================================
+
+// IssueFormat represents the detected format of a GitHub issue body.
+type IssueFormat string
+
+const (
+	// IssueFormatTemplated indicates an issue created by Claudio's template system.
+	// These issues have structured sections like "## Task", "## Complexity", and "*Part of #N*".
+	IssueFormatTemplated IssueFormat = "templated"
+
+	// IssueFormatFreeform indicates a human-authored issue without Claudio's template structure.
+	// These issues may have markdown sections but lack the templated markers.
+	IssueFormatFreeform IssueFormat = "freeform"
+)
+
+// Regex patterns for detecting issue format
+var (
+	// partOfRe matches the "*Part of #N*" pattern used in templated sub-issues
+	partOfRe = regexp.MustCompile(`\*Part\s+of\s+#\d+\*`)
+
+	// taskSectionRe matches the "## Task" header used in templated sub-issues
+	taskSectionRe = regexp.MustCompile(`(?m)^##\s*Task\s*$`)
+
+	// complexitySectionRe matches the "Estimated: **low/medium/high**" pattern
+	complexitySectionRe = regexp.MustCompile(`(?i)Estimated:\s*\*\*(?:low|medium|high)\*\*`)
+)
+
+// DetectIssueFormat analyzes a GitHub issue body and determines whether it follows
+// the Claudio template format or is a freeform human-authored issue.
+//
+// The detection logic looks for signature patterns:
+//   - Templated format: Has "*Part of #N*" marker AND "## Task" section
+//   - Freeform format: Everything else (including issues with "## Summary" but no templated markers)
+//
+// This detection is used to route parsing to the appropriate parser in the ingestion pipeline.
+func DetectIssueFormat(body string) IssueFormat {
+	// Empty bodies are treated as freeform
+	if strings.TrimSpace(body) == "" {
+		return IssueFormatFreeform
+	}
+
+	// Check for templated format markers
+	hasPartOf := partOfRe.MatchString(body)
+	hasTaskSection := taskSectionRe.MatchString(body)
+	hasComplexity := complexitySectionRe.MatchString(body)
+
+	// An issue is considered templated if it has the "*Part of #N*" marker
+	// AND at least one of the other templated section indicators.
+	// This ensures we correctly identify Claudio-generated sub-issues while
+	// avoiding false positives from human-written issues that might accidentally
+	// contain similar text.
+	if hasPartOf && (hasTaskSection || hasComplexity) {
+		return IssueFormatTemplated
+	}
+
+	// Everything else is considered freeform
+	return IssueFormatFreeform
+}
