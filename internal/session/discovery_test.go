@@ -147,6 +147,99 @@ func TestRemoveSession_NonExistent(t *testing.T) {
 	}
 }
 
+func TestRemoveSession_Locked(t *testing.T) {
+	// Create temp directory
+	tempDir, err := os.MkdirTemp("", "claudio-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
+
+	// Create a session
+	sessionID := "session-locked"
+	setupTestSession(t, tempDir, sessionID, "locked-session", 0)
+
+	// Create a lock file with current PID (so it appears locked)
+	sessionDir := GetSessionDir(tempDir, sessionID)
+	lockPath := filepath.Join(sessionDir, LockFileName)
+	lockData := map[string]interface{}{
+		"session_id": sessionID,
+		"pid":        os.Getpid(), // Current process PID - appears as active lock
+		"hostname":   "test-host",
+		"started_at": time.Now(),
+	}
+	lockJSON, err := json.Marshal(lockData)
+	if err != nil {
+		t.Fatalf("failed to marshal lock data: %v", err)
+	}
+	if err := os.WriteFile(lockPath, lockJSON, 0644); err != nil {
+		t.Fatalf("failed to write lock file: %v", err)
+	}
+
+	// Verify the session is locked
+	_, isLocked := IsLocked(sessionDir)
+	if !isLocked {
+		t.Fatal("Session should be locked before removal test")
+	}
+
+	// Try to remove the locked session - should return os.ErrPermission
+	err = RemoveSession(tempDir, sessionID)
+	if err != os.ErrPermission {
+		t.Errorf("RemoveSession() for locked session should return os.ErrPermission, got %v", err)
+	}
+
+	// Verify session still exists
+	if !SessionExists(tempDir, sessionID) {
+		t.Error("Locked session should not have been removed")
+	}
+}
+
+func TestFindEmptySessions_ExcludesLocked(t *testing.T) {
+	// Create temp directory
+	tempDir, err := os.MkdirTemp("", "claudio-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
+
+	// Create two empty sessions
+	setupTestSession(t, tempDir, "session-empty-unlocked", "unlocked", 0)
+	setupTestSession(t, tempDir, "session-empty-locked", "locked", 0)
+
+	// Lock one of them
+	lockedSessionDir := GetSessionDir(tempDir, "session-empty-locked")
+	lockPath := filepath.Join(lockedSessionDir, LockFileName)
+	lockData := map[string]interface{}{
+		"session_id": "session-empty-locked",
+		"pid":        os.Getpid(), // Current process PID - appears as active lock
+		"hostname":   "test-host",
+		"started_at": time.Now(),
+	}
+	lockJSON, err := json.Marshal(lockData)
+	if err != nil {
+		t.Fatalf("failed to marshal lock data: %v", err)
+	}
+	if err := os.WriteFile(lockPath, lockJSON, 0644); err != nil {
+		t.Fatalf("failed to write lock file: %v", err)
+	}
+
+	// Find empty sessions - should only return the unlocked one
+	empty, err := FindEmptySessions(tempDir)
+	if err != nil {
+		t.Fatalf("FindEmptySessions() error = %v", err)
+	}
+
+	// Should find only 1 empty session (the unlocked one)
+	if len(empty) != 1 {
+		t.Errorf("FindEmptySessions() returned %d sessions, want 1 (excluding locked)", len(empty))
+	}
+
+	// Verify it's the unlocked session
+	if len(empty) > 0 && empty[0].ID != "session-empty-unlocked" {
+		t.Errorf("FindEmptySessions() returned session %s, want session-empty-unlocked", empty[0].ID)
+	}
+}
+
 func TestGetSessionsDir(t *testing.T) {
 	baseDir := "/some/path"
 	expected := "/some/path/.claudio/sessions"
