@@ -1501,3 +1501,35 @@ func DetectIssueFormat(body string) IssueFormat {
 	// Everything else is considered freeform
 	return IssueFormatFreeform
 }
+
+// ParseSubIssueBodyAuto is a unified entry point that auto-detects the issue format
+// and delegates to the appropriate parser. This simplifies the ingestion pipeline
+// by providing a single function that handles both templated and freeform sub-issues.
+//
+// Parameters:
+//   - body: The markdown body of the sub-issue to parse
+//   - parentIssueNum: The parent issue number (used for freeform parsing to exclude
+//     the parent from dependencies; pass 0 if unknown)
+//
+// The function:
+//   - Detects the format using DetectIssueFormat
+//   - Delegates to ParseSubIssueBody for templated issues
+//   - Delegates to ParseFreeformSubIssueBody for freeform issues
+//
+// Returns a SubIssueContent struct with consistent fields regardless of input format.
+// For templated issues, the ParentIssueNum is extracted from the body.
+// For freeform issues, the parentIssueNum parameter is used.
+func ParseSubIssueBodyAuto(body string, parentIssueNum int) (*SubIssueContent, error) {
+	format := DetectIssueFormat(body)
+
+	switch format {
+	case IssueFormatTemplated:
+		return ParseSubIssueBody(body)
+	case IssueFormatFreeform:
+		return ParseFreeformSubIssueBody(body, parentIssueNum)
+	default:
+		// This should never happen given the current implementation,
+		// but we handle it gracefully by defaulting to freeform parsing
+		return ParseFreeformSubIssueBody(body, parentIssueNum)
+	}
+}

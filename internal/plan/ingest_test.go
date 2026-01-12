@@ -4994,3 +4994,430 @@ func TestExtractFreeformDescription_Strategies(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// Unified Sub-Issue Parser Tests (task-4-unified-sub-parser)
+// =============================================================================
+
+func TestParseSubIssueBodyAuto_TemplatedFormat(t *testing.T) {
+	// Test that templated issues are correctly routed to ParseSubIssueBody
+	body := `## Task
+
+Implement the new authentication handler.
+
+## Files to Modify
+
+- ` + "`internal/auth/handler.go`" + `
+- ` + "`internal/auth/service.go`" + `
+
+## Dependencies
+
+- #41
+- #42
+
+## Complexity
+
+Estimated: **medium**
+
+---
+*Part of #100*
+`
+
+	content, err := ParseSubIssueBodyAuto(body, 0)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	// Verify templated parsing results
+	if content.Description != "Implement the new authentication handler." {
+		t.Errorf("Description = %q, want %q", content.Description, "Implement the new authentication handler.")
+	}
+	if len(content.Files) != 2 {
+		t.Errorf("len(Files) = %d, want 2", len(content.Files))
+	}
+	if content.Complexity != "medium" {
+		t.Errorf("Complexity = %q, want %q", content.Complexity, "medium")
+	}
+	if content.ParentIssueNum != 100 {
+		t.Errorf("ParentIssueNum = %d, want 100", content.ParentIssueNum)
+	}
+	// Templated parsing gets dependencies from the Dependencies section
+	if len(content.DependencyIssueNums) != 2 {
+		t.Errorf("len(DependencyIssueNums) = %d, want 2", len(content.DependencyIssueNums))
+	}
+}
+
+func TestParseSubIssueBodyAuto_FreeformFormat(t *testing.T) {
+	// Test that freeform issues are correctly routed to ParseFreeformSubIssueBody
+	body := `This is a simple task description written by a human.
+
+We need to update the ` + "`config.go`" + ` file to support the new settings.
+
+See also #45 for related changes.
+`
+
+	content, err := ParseSubIssueBodyAuto(body, 100)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	// Verify freeform parsing results
+	if !strings.Contains(content.Description, "simple task description") {
+		t.Errorf("Description = %q, should contain 'simple task description'", content.Description)
+	}
+	if len(content.Files) != 1 || content.Files[0] != "config.go" {
+		t.Errorf("Files = %v, want [config.go]", content.Files)
+	}
+	// Freeform defaults to medium complexity
+	if content.Complexity != "medium" {
+		t.Errorf("Complexity = %q, want %q", content.Complexity, "medium")
+	}
+	// ParentIssueNum comes from the parameter for freeform
+	if content.ParentIssueNum != 100 {
+		t.Errorf("ParentIssueNum = %d, want 100", content.ParentIssueNum)
+	}
+	// Should extract issue references (excluding parent)
+	if len(content.DependencyIssueNums) != 1 || content.DependencyIssueNums[0] != 45 {
+		t.Errorf("DependencyIssueNums = %v, want [45]", content.DependencyIssueNums)
+	}
+}
+
+func TestParseSubIssueBodyAuto_ConsistentOutput(t *testing.T) {
+	// Test that both formats produce SubIssueContent with all fields populated
+	tests := []struct {
+		name           string
+		body           string
+		parentIssueNum int
+		wantFormat     IssueFormat
+	}{
+		{
+			name: "templated with all fields",
+			body: `## Task
+
+Do the thing.
+
+## Files to Modify
+
+- ` + "`main.go`" + `
+
+## Dependencies
+
+- #10
+
+## Complexity
+
+Estimated: **low**
+
+---
+*Part of #50*
+`,
+			parentIssueNum: 0,
+			wantFormat:     IssueFormatTemplated,
+		},
+		{
+			name: "freeform with mentions",
+			body: `We need to update ` + "`handler.go`" + ` per #20.
+
+This is low complexity work.
+`,
+			parentIssueNum: 50,
+			wantFormat:     IssueFormatFreeform,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify format detection matches expected
+			gotFormat := DetectIssueFormat(tt.body)
+			if gotFormat != tt.wantFormat {
+				t.Errorf("DetectIssueFormat() = %q, want %q", gotFormat, tt.wantFormat)
+			}
+
+			// Parse and verify all fields are present
+			content, err := ParseSubIssueBodyAuto(tt.body, tt.parentIssueNum)
+			if err != nil {
+				t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+			}
+
+			// Description should never be empty
+			if content.Description == "" {
+				t.Error("Description should not be empty")
+			}
+
+			// Complexity should always be set
+			if content.Complexity == "" {
+				t.Error("Complexity should not be empty")
+			}
+			validComplexities := map[string]bool{"low": true, "medium": true, "high": true}
+			if !validComplexities[content.Complexity] {
+				t.Errorf("Complexity = %q, want one of low/medium/high", content.Complexity)
+			}
+
+			// Files can be empty but should not be nil slice with entries
+			// (just verifying no panic occurs)
+			_ = len(content.Files)
+
+			// DependencyIssueNums can be empty
+			_ = len(content.DependencyIssueNums)
+		})
+	}
+}
+
+func TestParseSubIssueBodyAuto_EmptyBody(t *testing.T) {
+	// Empty body should fail (freeform parser rejects empty bodies)
+	_, err := ParseSubIssueBodyAuto("", 0)
+	if err == nil {
+		t.Error("ParseSubIssueBodyAuto() should error on empty body")
+	}
+}
+
+func TestParseSubIssueBodyAuto_WhitespaceOnlyBody(t *testing.T) {
+	// Whitespace-only body should fail
+	_, err := ParseSubIssueBodyAuto("   \n\t\n   ", 0)
+	if err == nil {
+		t.Error("ParseSubIssueBodyAuto() should error on whitespace-only body")
+	}
+}
+
+func TestParseSubIssueBodyAuto_TemplatedMissingRequiredSections(t *testing.T) {
+	// A body that looks templated but is missing required sections should fail
+	// Note: If it has *Part of #N* and ## Task, it's detected as templated
+	// but if Task section is empty, it should fail
+	body := `## Task
+
+## Complexity
+
+Estimated: **low**
+
+---
+*Part of #42*
+`
+	_, err := ParseSubIssueBodyAuto(body, 0)
+	if err == nil {
+		t.Error("ParseSubIssueBodyAuto() should error when Task section is empty")
+	}
+}
+
+func TestParseSubIssueBodyAuto_FreeformWithComplexity(t *testing.T) {
+	// Freeform issue with explicit complexity mentioned
+	body := `Add validation to the form.
+
+This is a low complexity change.
+`
+
+	content, err := ParseSubIssueBodyAuto(body, 10)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	if content.Complexity != "low" {
+		t.Errorf("Complexity = %q, want %q", content.Complexity, "low")
+	}
+}
+
+func TestParseSubIssueBodyAuto_TemplatedParentExtraction(t *testing.T) {
+	// For templated issues, parent should be extracted from body, not parameter
+	body := `## Task
+
+Simple task.
+
+## Complexity
+
+Estimated: **high**
+
+---
+*Part of #999*
+`
+
+	// Pass different parentIssueNum - should be ignored for templated
+	content, err := ParseSubIssueBodyAuto(body, 123)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	// Should use the value from the body, not the parameter
+	if content.ParentIssueNum != 999 {
+		t.Errorf("ParentIssueNum = %d, want 999 (from body)", content.ParentIssueNum)
+	}
+}
+
+func TestParseSubIssueBodyAuto_FreeformParentFromParam(t *testing.T) {
+	// For freeform issues, parent should come from parameter
+	body := `Just a simple freeform task description.
+`
+
+	content, err := ParseSubIssueBodyAuto(body, 456)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	// Should use the parameter value
+	if content.ParentIssueNum != 456 {
+		t.Errorf("ParentIssueNum = %d, want 456 (from parameter)", content.ParentIssueNum)
+	}
+}
+
+func TestParseSubIssueBodyAuto_RealWorldTemplated(t *testing.T) {
+	// Real-world example of a Claudio-generated sub-issue
+	body := `## Task
+
+Create unified sub-issue parser that auto-detects format and delegates to the appropriate parser. This simplifies the ingestion pipeline.
+
+Implement:
+- ` + "`ParseSubIssueBodyAuto(body string, parentIssueNum int) (*SubIssueContent, error)`" + `
+- Detect format using task-1's detection function
+- Delegate to ParseSubIssueBody() for templated or ParseFreeformSubIssueBody() for freeform
+- Ensure consistent output regardless of input format
+
+## Files to Modify
+
+- ` + "`internal/plan/ingest.go`" + `
+- ` + "`internal/plan/ingest_test.go`" + `
+
+## Dependencies
+
+- #290
+- #291
+
+## Complexity
+
+Estimated: **medium**
+
+---
+*Part of #289*
+`
+
+	content, err := ParseSubIssueBodyAuto(body, 0)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	if !strings.Contains(content.Description, "unified sub-issue parser") {
+		t.Errorf("Description should contain 'unified sub-issue parser', got %q", content.Description)
+	}
+	if len(content.Files) != 2 {
+		t.Errorf("len(Files) = %d, want 2", len(content.Files))
+	}
+	if content.Complexity != "medium" {
+		t.Errorf("Complexity = %q, want medium", content.Complexity)
+	}
+	if content.ParentIssueNum != 289 {
+		t.Errorf("ParentIssueNum = %d, want 289", content.ParentIssueNum)
+	}
+	if len(content.DependencyIssueNums) != 2 {
+		t.Errorf("len(DependencyIssueNums) = %d, want 2", len(content.DependencyIssueNums))
+	}
+}
+
+func TestParseSubIssueBodyAuto_RealWorldFreeform(t *testing.T) {
+	// Real-world example of a human-authored issue
+	body := `## Description
+
+We need to add support for parsing user-written GitHub issues that don't follow our template. The current parser is too strict and rejects valid issues.
+
+## Requirements
+
+- Handle issues without structured sections
+- Extract file paths from inline code mentions
+- Detect complexity from keywords
+
+## Files
+
+- ` + "`internal/plan/ingest.go`" + ` - main parser logic
+- ` + "`internal/plan/ingest_test.go`" + ` - tests
+
+## Related
+
+See #100 for the original feature request.
+`
+
+	content, err := ParseSubIssueBodyAuto(body, 50)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	// Should extract description from the Description section
+	if !strings.Contains(content.Description, "parsing user-written GitHub issues") {
+		t.Errorf("Description should mention parsing, got %q", content.Description)
+	}
+
+	// Should find files mentioned in backticks
+	if len(content.Files) != 2 {
+		t.Errorf("len(Files) = %d, want 2, got %v", len(content.Files), content.Files)
+	}
+
+	// Should default to medium complexity
+	if content.Complexity != "medium" {
+		t.Errorf("Complexity = %q, want medium", content.Complexity)
+	}
+
+	// Should use parent from parameter
+	if content.ParentIssueNum != 50 {
+		t.Errorf("ParentIssueNum = %d, want 50", content.ParentIssueNum)
+	}
+
+	// Should extract issue reference #100
+	if len(content.DependencyIssueNums) != 1 || content.DependencyIssueNums[0] != 100 {
+		t.Errorf("DependencyIssueNums = %v, want [100]", content.DependencyIssueNums)
+	}
+}
+
+func TestParseSubIssueBodyAuto_BothFormatsProduceSameStructure(t *testing.T) {
+	// Create equivalent content in both formats and verify structure compatibility
+	templatedBody := `## Task
+
+Update the configuration parser.
+
+## Files to Modify
+
+- ` + "`config.go`" + `
+
+## Complexity
+
+Estimated: **low**
+
+---
+*Part of #100*
+`
+
+	freeformBody := `Update the configuration parser.
+
+Files: ` + "`config.go`" + `
+
+low complexity
+`
+
+	templatedContent, err := ParseSubIssueBodyAuto(templatedBody, 0)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto(templated) error = %v", err)
+	}
+
+	freeformContent, err := ParseSubIssueBodyAuto(freeformBody, 100)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto(freeform) error = %v", err)
+	}
+
+	// Both should produce similar (though not identical) results
+	// Description should exist in both
+	if templatedContent.Description == "" || freeformContent.Description == "" {
+		t.Error("Both should have non-empty descriptions")
+	}
+
+	// Both should have files
+	if len(templatedContent.Files) != 1 || len(freeformContent.Files) != 1 {
+		t.Errorf("Both should have 1 file: templated=%v, freeform=%v",
+			templatedContent.Files, freeformContent.Files)
+	}
+
+	// Both should have complexity
+	if templatedContent.Complexity != "low" || freeformContent.Complexity != "low" {
+		t.Errorf("Both should have low complexity: templated=%q, freeform=%q",
+			templatedContent.Complexity, freeformContent.Complexity)
+	}
+
+	// Both should have parent issue number
+	if templatedContent.ParentIssueNum != 100 || freeformContent.ParentIssueNum != 100 {
+		t.Errorf("Both should have parent 100: templated=%d, freeform=%d",
+			templatedContent.ParentIssueNum, freeformContent.ParentIssueNum)
+	}
+}
