@@ -22,6 +22,10 @@ type InputState struct {
 	Text   string // The current input text
 	Cursor int    // Cursor position (0 = before first char)
 
+	// Title and subtitle (optional - uses defaults if empty)
+	Title    string // Title shown at top (default: "Add New Instance")
+	Subtitle string // Subtitle shown below title (default: "Enter task description:")
+
 	// Template dropdown state
 	ShowTemplates    bool           // Whether the template dropdown is visible
 	Templates        []TemplateItem // Filtered templates to display
@@ -42,10 +46,20 @@ func NewInputView() *InputView {
 func (v *InputView) Render(state *InputState, width int) string {
 	var b strings.Builder
 
-	// Title
-	b.WriteString(styles.Title.Render("Add New Instance"))
+	// Title (use default if not set)
+	title := state.Title
+	if title == "" {
+		title = "Add New Instance"
+	}
+	b.WriteString(styles.Title.Render(title))
 	b.WriteString("\n\n")
-	b.WriteString("Enter task description:\n\n")
+
+	// Subtitle (use default if not set)
+	subtitle := state.Subtitle
+	if subtitle == "" {
+		subtitle = "Enter task description:"
+	}
+	b.WriteString(subtitle + "\n\n")
 
 	// Render text input with cursor
 	b.WriteString(v.renderTextInput(state))

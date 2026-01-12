@@ -217,6 +217,13 @@ type taskAddedMsg struct {
 	err      error
 }
 
+// dependentTaskAddedMsg is sent when async dependent task addition completes
+type dependentTaskAddedMsg struct {
+	instance  *orchestrator.Instance
+	dependsOn string // The instance ID this task depends on
+	err       error
+}
+
 // Commands
 
 func tick() tea.Cmd {
@@ -266,6 +273,15 @@ func addTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, t
 	return func() tea.Msg {
 		inst, err := o.AddInstance(session, task)
 		return taskAddedMsg{instance: inst, err: err}
+	}
+}
+
+// addDependentTaskAsync returns a command that adds a task with dependencies asynchronously
+// The new task will depend on the specified instance and auto-start when it completes
+func addDependentTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string, dependsOn string) tea.Cmd {
+	return func() tea.Msg {
+		inst, err := o.AddInstanceWithDependencies(session, task, []string{dependsOn}, true)
+		return dependentTaskAddedMsg{instance: inst, dependsOn: dependsOn, err: err}
 	}
 }
 
@@ -429,6 +445,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.infoMessage = "" // Clear the "Adding task..." message
 		if msg.err != nil {
 			m.errorMessage = msg.err.Error()
+			if m.logger != nil {
+				m.logger.Error("failed to add task", "error", msg.err.Error())
+			}
 		} else {
 			// Switch to the newly added task and ensure it's visible in sidebar
 			m.activeTab = len(m.session.Instances) - 1
@@ -436,6 +455,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Log user adding instance
 			if m.logger != nil && msg.instance != nil {
 				m.logger.Info("user added instance", "task", msg.instance.Task)
+			}
+		}
+		return m, nil
+
+	case dependentTaskAddedMsg:
+		// Async dependent task addition completed
+		m.infoMessage = "" // Clear the "Adding dependent task..." message
+		if msg.err != nil {
+			m.errorMessage = msg.err.Error()
+			if m.logger != nil {
+				m.logger.Error("failed to add dependent task",
+					"depends_on", msg.dependsOn,
+					"error", msg.err.Error(),
+				)
+			}
+		} else {
+			// Switch to the newly added task and ensure it's visible in sidebar
+			m.activeTab = len(m.session.Instances) - 1
+			m.ensureActiveVisible()
+			// Find the parent instance name for a better message
+			parentTask := msg.dependsOn
+			for _, inst := range m.session.Instances {
+				if inst.ID == msg.dependsOn {
+					parentTask = inst.Task
+					if len(parentTask) > 50 {
+						parentTask = parentTask[:50] + "..."
+					}
+					break
+				}
+			}
+			m.infoMessage = fmt.Sprintf("Chained task added. Will auto-start when \"%s\" completes.", parentTask)
+			// Log user adding dependent instance
+			if m.logger != nil && msg.instance != nil {
+				m.logger.Info("user added dependent instance",
+					"task", msg.instance.Task,
+					"depends_on", msg.dependsOn,
+				)
 			}
 		}
 		return m, nil
@@ -565,6 +621,8 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyEsc:
 			m.addingTask = false
+			m.addingDependentTask = false
+			m.dependentOnInstanceID = ""
 			m.taskInput = ""
 			m.taskInputCursor = 0
 			m.templateSuffix = "" // Clear suffix on cancel
@@ -574,15 +632,26 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// Capture task and clear input state first
 				// Append template suffix if one was set (e.g., /plan instructions)
 				task := m.taskInput + m.templateSuffix
+				isDependent := m.addingDependentTask
+				dependsOn := m.dependentOnInstanceID
 				m.addingTask = false
+				m.addingDependentTask = false
+				m.dependentOnInstanceID = ""
 				m.taskInput = ""
 				m.taskInputCursor = 0
 				m.templateSuffix = "" // Clear suffix after use
-				m.infoMessage = "Adding task..."
+
 				// Add instance asynchronously to avoid blocking UI during git worktree creation
+				if isDependent && dependsOn != "" {
+					m.infoMessage = "Adding dependent task..."
+					return m, addDependentTaskAsync(m.orchestrator, m.session, task, dependsOn)
+				}
+				m.infoMessage = "Adding task..."
 				return m, addTaskAsync(m.orchestrator, m.session, task)
 			}
 			m.addingTask = false
+			m.addingDependentTask = false
+			m.dependentOnInstanceID = ""
 			m.taskInput = ""
 			m.taskInputCursor = 0
 			m.templateSuffix = "" // Clear suffix on cancel
@@ -627,14 +696,25 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.taskInput != "" {
 					// Capture task and clear input state first
 					task := m.taskInput
+					isDependent := m.addingDependentTask
+					dependsOn := m.dependentOnInstanceID
 					m.addingTask = false
+					m.addingDependentTask = false
+					m.dependentOnInstanceID = ""
 					m.taskInput = ""
 					m.taskInputCursor = 0
-					m.infoMessage = "Adding task..."
+
 					// Add instance asynchronously to avoid blocking UI during git worktree creation
+					if isDependent && dependsOn != "" {
+						m.infoMessage = "Adding dependent task..."
+						return m, addDependentTaskAsync(m.orchestrator, m.session, task, dependsOn)
+					}
+					m.infoMessage = "Adding task..."
 					return m, addTaskAsync(m.orchestrator, m.session, task)
 				}
 				m.addingTask = false
+				m.addingDependentTask = false
+				m.dependentOnInstanceID = ""
 				m.taskInput = ""
 				m.taskInputCursor = 0
 				return m, nil
@@ -1089,6 +1169,13 @@ func (m *Model) applyCommandResult(result command.Result) {
 	}
 	if result.AddingTask != nil {
 		m.addingTask = *result.AddingTask
+		m.taskInput = ""
+		m.taskInputCursor = 0
+	}
+	if result.AddingDependentTask != nil && result.DependentOnInstanceID != nil {
+		m.addingDependentTask = *result.AddingDependentTask
+		m.dependentOnInstanceID = *result.DependentOnInstanceID
+		m.addingTask = true // Reuse the task input UI
 		m.taskInput = ""
 		m.taskInputCursor = 0
 	}
@@ -2286,6 +2373,24 @@ func (m Model) renderAddTask(width int) string {
 		Templates:        m.buildTemplateItems(),
 		TemplateSelected: m.templateSelected,
 	}
+
+	// Customize title/subtitle for dependent task mode
+	if m.addingDependentTask && m.dependentOnInstanceID != "" {
+		inputState.Title = "Chain New Task"
+		// Find the parent task name for context
+		parentTask := m.dependentOnInstanceID
+		for _, inst := range m.session.Instances {
+			if inst.ID == m.dependentOnInstanceID {
+				parentTask = inst.Task
+				if len(parentTask) > 50 {
+					parentTask = parentTask[:50] + "..."
+				}
+				break
+			}
+		}
+		inputState.Subtitle = "This task will auto-start when \"" + parentTask + "\" completes:"
+	}
+
 	inputView := view.NewInputView()
 	return inputView.Render(inputState, width)
 }
@@ -2326,6 +2431,7 @@ Instance Commands (press : first, then type command):
   :R :reconnect  Reattach to a stopped instance's tmux session
   :restart       Restart a stuck or timed-out instance
   :a :add        Create and add a new instance to the session
+  :chain :dep :depends  Add task that auto-starts after selected instance
   :D :remove     Remove instance from session (keeps branch)
   :kill          Force kill instance process and remove from session
   :C :clear      Remove all completed instances from the list

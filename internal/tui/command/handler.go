@@ -61,6 +61,11 @@ type Result struct {
 	DiffContent   *string
 	DiffScroll    *int
 
+	// AddingDependentTask signals entering dependent task input mode
+	// DependentOnInstanceID is the ID of the instance the new task will depend on
+	AddingDependentTask   *bool
+	DependentOnInstanceID *string
+
 	// ActiveTabAdjustment indicates how to adjust the active tab after instance removal
 	// -1 = decrement if needed, 0 = no change needed, positive = specific check needed
 	ActiveTabAdjustment int
@@ -128,6 +133,9 @@ func (h *Handler) registerCommands() {
 	// Instance management commands
 	h.commands["a"] = cmdAdd
 	h.commands["add"] = cmdAdd
+	h.commands["chain"] = cmdChain
+	h.commands["dep"] = cmdChain
+	h.commands["depends"] = cmdChain
 	h.commands["D"] = cmdRemove
 	h.commands["remove"] = cmdRemove
 	h.commands["kill"] = cmdKill
@@ -360,6 +368,20 @@ func cmdRestart(deps Dependencies) Result {
 func cmdAdd(_ Dependencies) Result {
 	addingTask := true
 	return Result{AddingTask: &addingTask}
+}
+
+func cmdChain(deps Dependencies) Result {
+	inst := deps.ActiveInstance()
+	if inst == nil {
+		return Result{ErrorMessage: "No instance selected. Select an instance first, then use :chain to add a dependent task."}
+	}
+
+	addingDepTask := true
+	instanceID := inst.ID
+	return Result{
+		AddingDependentTask:   &addingDepTask,
+		DependentOnInstanceID: &instanceID,
+	}
 }
 
 func cmdRemove(deps Dependencies) Result {

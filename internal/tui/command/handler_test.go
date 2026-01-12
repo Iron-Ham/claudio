@@ -164,6 +164,78 @@ func TestAddCommand(t *testing.T) {
 	}
 }
 
+func TestChainCommand(t *testing.T) {
+	t.Run("chain with active instance", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{ID: "test-123", Task: "Test task"}
+
+		result := h.Execute("chain", deps)
+		if result.AddingDependentTask == nil || !*result.AddingDependentTask {
+			t.Error("expected AddingDependentTask to be set to true")
+		}
+		if result.DependentOnInstanceID == nil || *result.DependentOnInstanceID != "test-123" {
+			t.Error("expected DependentOnInstanceID to be set to 'test-123'")
+		}
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+	})
+
+	t.Run("dep alias with active instance", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{ID: "instance-456", Task: "Another task"}
+
+		result := h.Execute("dep", deps)
+		if result.AddingDependentTask == nil || !*result.AddingDependentTask {
+			t.Error("expected AddingDependentTask to be set to true")
+		}
+		if result.DependentOnInstanceID == nil || *result.DependentOnInstanceID != "instance-456" {
+			t.Error("expected DependentOnInstanceID to be set to 'instance-456'")
+		}
+	})
+
+	t.Run("depends alias with active instance", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{ID: "abc-789"}
+
+		result := h.Execute("depends", deps)
+		if result.AddingDependentTask == nil || !*result.AddingDependentTask {
+			t.Error("expected AddingDependentTask to be set to true")
+		}
+		if result.DependentOnInstanceID == nil || *result.DependentOnInstanceID != "abc-789" {
+			t.Error("expected DependentOnInstanceID to be set correctly")
+		}
+	})
+
+	t.Run("chain without active instance returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = nil
+
+		result := h.Execute("chain", deps)
+		if result.ErrorMessage == "" {
+			t.Error("expected error when no instance is selected")
+		}
+		if result.AddingDependentTask != nil {
+			t.Error("expected AddingDependentTask to be nil on error")
+		}
+	})
+
+	t.Run("dep without active instance returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = nil
+
+		result := h.Execute("dep", deps)
+		if result.ErrorMessage == "" {
+			t.Error("expected error when no instance is selected")
+		}
+	})
+}
+
 func TestStatsCommand(t *testing.T) {
 	tests := []struct {
 		name string
@@ -525,7 +597,7 @@ func TestAllCommandsRecognized(t *testing.T) {
 		"s", "start", "x", "stop", "e", "exit", "p", "pause",
 		"R", "reconnect", "restart",
 		// Instance management
-		"a", "add", "D", "remove", "kill", "C", "clear",
+		"a", "add", "chain", "dep", "depends", "D", "remove", "kill", "C", "clear",
 		// View toggles
 		"d", "diff", "m", "metrics", "stats", "c", "conflicts",
 		"f", "F", "filter",
