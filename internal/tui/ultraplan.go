@@ -416,7 +416,93 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 		return true, m, nil
 	}
 
+	// Handle group navigation mode keys
+	if m.ultraPlan.GroupNavMode && session.Plan != nil {
+		numGroups := len(session.Plan.ExecutionOrder)
+		switch msg.String() {
+		case "up", "k":
+			// Navigate to previous group
+			if m.ultraPlan.SelectedGroupIdx > 0 {
+				m.ultraPlan.SelectedGroupIdx--
+			} else {
+				m.ultraPlan.SelectedGroupIdx = numGroups - 1 // Wrap to last
+			}
+			return true, m, nil
+
+		case "down", "j":
+			// Navigate to next group
+			if m.ultraPlan.SelectedGroupIdx < numGroups-1 {
+				m.ultraPlan.SelectedGroupIdx++
+			} else {
+				m.ultraPlan.SelectedGroupIdx = 0 // Wrap to first
+			}
+			return true, m, nil
+
+		case "enter", " ":
+			// Toggle collapse for selected group
+			if m.ultraPlan.CollapsedGroups == nil {
+				m.ultraPlan.CollapsedGroups = make(map[int]bool)
+			}
+			m.ultraPlan.CollapsedGroups[m.ultraPlan.SelectedGroupIdx] = !m.ultraPlan.CollapsedGroups[m.ultraPlan.SelectedGroupIdx]
+			return true, m, nil
+
+		case "right", "l":
+			// Expand selected group and optionally enter task navigation
+			if m.ultraPlan.CollapsedGroups != nil {
+				m.ultraPlan.CollapsedGroups[m.ultraPlan.SelectedGroupIdx] = false
+			}
+			return true, m, nil
+
+		case "left", "h":
+			// Collapse selected group
+			if m.ultraPlan.CollapsedGroups == nil {
+				m.ultraPlan.CollapsedGroups = make(map[int]bool)
+			}
+			m.ultraPlan.CollapsedGroups[m.ultraPlan.SelectedGroupIdx] = true
+			return true, m, nil
+
+		case "e":
+			// Expand all groups
+			if m.ultraPlan.CollapsedGroups != nil {
+				for i := 0; i < numGroups; i++ {
+					m.ultraPlan.CollapsedGroups[i] = false
+				}
+			}
+			m.infoMessage = "All groups expanded"
+			return true, m, nil
+
+		case "c":
+			// Collapse all groups (only in group nav mode, not awaiting decision)
+			if m.ultraPlan.CollapsedGroups == nil {
+				m.ultraPlan.CollapsedGroups = make(map[int]bool)
+			}
+			for i := 0; i < numGroups; i++ {
+				m.ultraPlan.CollapsedGroups[i] = true
+			}
+			m.infoMessage = "All groups collapsed"
+			return true, m, nil
+
+		case "g", "esc", "escape":
+			// Exit group navigation mode
+			m.ultraPlan.GroupNavMode = false
+			m.ultraPlan.SelectedGroupIdx = -1
+			m.infoMessage = ""
+			return true, m, nil
+		}
+	}
+
 	switch msg.String() {
+	case "g":
+		// Enter group navigation mode (when plan is available)
+		if session.Plan != nil && len(session.Plan.ExecutionOrder) > 0 {
+			m.ultraPlan.GroupNavMode = true
+			if m.ultraPlan.SelectedGroupIdx < 0 {
+				m.ultraPlan.SelectedGroupIdx = 0
+			}
+			m.infoMessage = "Group nav: ↑↓ select, enter toggle, e expand all, c collapse all, g/esc exit"
+		}
+		return true, m, nil
+
 	case "v":
 		// Toggle plan view (only when plan is available)
 		if session.Plan != nil {
