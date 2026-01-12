@@ -262,8 +262,9 @@ func (p *Process) CaptureOutput() (string, error) {
 		return "", ErrNotRunning
 	}
 
-	// Capture visible pane content
-	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p")
+	// Capture visible pane content with escape sequences preserved (-e flag)
+	// The -e flag preserves ANSI color codes and other escape sequences
+	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-e")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to capture terminal output: %w", err)
@@ -284,7 +285,8 @@ func (p *Process) CaptureOutputWithHistory(lines int) (string, error) {
 	}
 
 	// Capture with history (-S for start line, negative means history)
-	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", fmt.Sprintf("-%d", lines))
+	// The -e flag preserves ANSI color codes and other escape sequences
+	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-e", "-S", fmt.Sprintf("-%d", lines))
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to capture terminal output with history: %w", err)
