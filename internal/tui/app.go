@@ -373,10 +373,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case outputMsg:
-		if m.outputs == nil {
-			m.outputs = make(map[string]string)
-		}
-		m.outputs[msg.instanceID] += string(msg.data)
+		m.outputManager.AddOutput(msg.instanceID, string(msg.data))
 		return m, nil
 
 	case errMsg:
@@ -1776,7 +1773,7 @@ func (m *Model) executeSearch() {
 		return
 	}
 
-	output := m.outputs[inst.ID]
+	output := m.outputManager.GetOutput(inst.ID)
 	if output == "" {
 		return
 	}
@@ -1943,7 +1940,7 @@ func (m *Model) updateOutputs() {
 			if workflow != nil {
 				output := workflow.GetOutput()
 				if len(output) > 0 {
-					m.outputs[inst.ID] = string(output)
+					m.outputManager.SetOutput(inst.ID, string(output))
 				}
 			}
 			continue
@@ -1953,7 +1950,7 @@ func (m *Model) updateOutputs() {
 		if mgr != nil {
 			output := mgr.GetOutput()
 			if len(output) > 0 {
-				m.outputs[inst.ID] = string(output)
+				m.outputManager.SetOutput(inst.ID, string(output))
 				// Update scroll position (auto-scroll if enabled)
 				m.updateOutputScroll(inst.ID)
 			}
@@ -2212,7 +2209,7 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	isRunning := mgr != nil && mgr.Running()
 
 	// Apply filters to output
-	output := m.outputs[inst.ID]
+	output := m.outputManager.GetOutput(inst.ID)
 	if output != "" {
 		output = m.filterOutput(output)
 	}
@@ -2221,7 +2218,7 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 		Output:            output,
 		IsRunning:         isRunning,
 		InputMode:         m.inputMode,
-		ScrollOffset:      m.outputScrolls[inst.ID],
+		ScrollOffset:      m.outputManager.GetScrollOffset(inst.ID),
 		AutoScrollEnabled: m.isOutputAutoScroll(inst.ID),
 		HasNewOutput:      m.hasNewOutput(inst.ID),
 		SearchPattern:     m.searchPattern,
