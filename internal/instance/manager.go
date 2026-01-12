@@ -11,6 +11,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/instance/capture"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
+	"github.com/Iron-Ham/claudio/internal/instance/input"
 	"github.com/Iron-Ham/claudio/internal/instance/lifecycle"
 	"github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/logging"
@@ -121,6 +122,9 @@ type Manager struct {
 	bellCallback  BellCallback
 	lastBellState bool // Track last bell flag state to detect transitions
 
+	// Input handling
+	inputHandler *input.Handler
+
 	// Logger for structured logging
 	logger *logging.Logger
 
@@ -148,6 +152,7 @@ func NewManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager 
 		detector:      detect.NewDetector(),
 		currentState:  detect.StateWorking,
 		metricsParser: metrics.NewMetricsParser(),
+		inputHandler:  input.NewHandler(),
 	}
 }
 
@@ -175,6 +180,7 @@ func NewManagerWithSession(sessionID, id, workdir, task string, cfg ManagerConfi
 		detector:      detect.NewDetector(),
 		currentState:  detect.StateWorking,
 		metricsParser: metrics.NewMetricsParser(),
+		inputHandler:  input.NewHandler(),
 	}
 }
 
@@ -766,108 +772,74 @@ func (m *Manager) Resume() error {
 // SendInput sends input to the tmux session
 func (m *Manager) SendInput(data []byte) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	running := m.running
+	sessionName := m.sessionName
+	handler := m.inputHandler
+	m.mu.RUnlock()
 
-	if !m.running {
+	if !running {
 		return
 	}
 
-	// Convert bytes to string for send-keys
-	input := string(data)
-
-	// Handle special characters
-	// tmux send-keys interprets certain prefixes specially
-	// We need to handle newlines, control characters, etc.
-	for _, r := range input {
-		var key string
-		switch r {
-		case '\r', '\n':
-			key = "Enter"
-		case '\t':
-			key = "Tab"
-		case '\x7f', '\b': // backspace
-			key = "BSpace"
-		case '\x1b': // escape
-			key = "Escape"
-		case ' ':
-			key = "Space"
-		default:
-			if r < 32 {
-				// Control character: Ctrl+letter
-				key = fmt.Sprintf("C-%c", r+'a'-1)
-			} else {
-				// Regular character - send literally
-				key = string(r)
-			}
-		}
-
-		_ = exec.Command("tmux", "send-keys", "-t", m.sessionName, "-l", key).Run()
-	}
+	// Delegate to InputHandler for encoding and sending
+	_ = handler.SendInput(sessionName, string(data))
 }
 
 // SendKey sends a special key to the tmux session
 func (m *Manager) SendKey(key string) {
 	m.mu.RLock()
-	sessionName := m.sessionName
 	running := m.running
+	sessionName := m.sessionName
+	handler := m.inputHandler
 	m.mu.RUnlock()
 
 	if !running {
 		return
 	}
 
-	// Run async to avoid blocking the UI thread
-	go func() {
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, key).Run()
-	}()
+	// Delegate to InputHandler (already async)
+	_ = handler.SendKey(sessionName, key)
 }
 
 // SendLiteral sends literal text to the tmux session (no interpretation)
 func (m *Manager) SendLiteral(text string) {
 	m.mu.RLock()
-	sessionName := m.sessionName
 	running := m.running
+	sessionName := m.sessionName
+	handler := m.inputHandler
 	m.mu.RUnlock()
 
 	if !running {
 		return
 	}
 
-	// Run async to avoid blocking the UI thread
-	// -l flag sends keys literally without interpretation
-	go func() {
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
-	}()
+	// Delegate to InputHandler (already async)
+	_ = handler.SendLiteral(sessionName, text)
 }
 
 // SendPaste sends pasted text to the tmux session with bracketed paste sequences
 // This preserves the paste context for applications that support bracketed paste mode
 func (m *Manager) SendPaste(text string) {
 	m.mu.RLock()
-	sessionName := m.sessionName
 	running := m.running
+	sessionName := m.sessionName
+	handler := m.inputHandler
 	m.mu.RUnlock()
 
 	if !running {
 		return
 	}
 
-	// Run async to avoid blocking the UI thread
-	// Commands run sequentially within the goroutine to maintain paste order
-	go func() {
-		// Bracketed paste mode escape sequences
-		// Start: ESC[200~ End: ESC[201~
-		// This tells the receiving application that the following text is pasted
-		pasteStart := "\x1b[200~"
-		pasteEnd := "\x1b[201~"
+	// Delegate to InputHandler (already async with bracketed paste)
+	_ = handler.SendPaste(sessionName, text)
+}
 
-		// Send bracketed paste start
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteStart).Run()
-		// Send the pasted content
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", text).Run()
-		// Send bracketed paste end
-		_ = exec.Command("tmux", "send-keys", "-t", sessionName, "-l", pasteEnd).Run()
-	}()
+// InputHandler returns the input handler for this manager.
+// This allows access to input history and buffering features.
+func (m *Manager) InputHandler() *input.Handler {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.inputHandler
 }
 
 // GetOutput returns all buffered output
