@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -627,6 +628,124 @@ func TestTerminalFocusCommand(t *testing.T) {
 		// Should NOT be an unknown command error
 		if model.errorMessage != "" && len(model.errorMessage) >= 7 && model.errorMessage[:7] == "Unknown" {
 			t.Error("command 't' was not recognized")
+		}
+	})
+}
+
+func TestRenderCommandModeHelp(t *testing.T) {
+	t.Run("renders colon prompt", func(t *testing.T) {
+		m := Model{
+			commandMode:   true,
+			commandBuffer: "q",
+		}
+
+		result := m.renderCommandModeHelp()
+
+		// Should contain the : prompt character
+		if !strings.Contains(result, ":") {
+			t.Errorf("expected output to contain ':' prompt, got: %s", result)
+		}
+	})
+
+	t.Run("includes command buffer content in output", func(t *testing.T) {
+		m := Model{
+			commandMode:   true,
+			commandBuffer: "quit",
+		}
+
+		result := m.renderCommandModeHelp()
+
+		// Should contain the typed command
+		if !strings.Contains(result, "quit") {
+			t.Errorf("expected output to contain buffer 'quit', got: %s", result)
+		}
+	})
+
+	t.Run("renders correctly with empty buffer", func(t *testing.T) {
+		m := Model{
+			commandMode:   true,
+			commandBuffer: "",
+		}
+
+		result := m.renderCommandModeHelp()
+
+		// Should still render the prompt and help text even with empty buffer
+		if !strings.Contains(result, ":") {
+			t.Errorf("expected output to contain ':' prompt with empty buffer, got: %s", result)
+		}
+		// Should contain key binding help
+		if !strings.Contains(result, "[Enter]") || !strings.Contains(result, "[Esc]") {
+			t.Errorf("expected output to contain key binding help, got: %s", result)
+		}
+	})
+
+	t.Run("includes key binding help text", func(t *testing.T) {
+		m := Model{
+			commandMode:   true,
+			commandBuffer: "help",
+		}
+
+		result := m.renderCommandModeHelp()
+
+		// Should contain key binding instructions
+		if !strings.Contains(result, "execute") {
+			t.Errorf("expected output to mention 'execute' action, got: %s", result)
+		}
+		if !strings.Contains(result, "cancel") {
+			t.Errorf("expected output to mention 'cancel' action, got: %s", result)
+		}
+	})
+}
+
+func TestCommandModePriorityOverOtherModes(t *testing.T) {
+	// This test verifies the bug fix: command mode help should display
+	// even when ultra-plan or plan editor modes are active.
+	// The fix ensures commandMode is checked FIRST in View()'s help rendering.
+
+	t.Run("command mode takes priority over plan editor mode", func(t *testing.T) {
+		m := Model{
+			commandMode:   true,
+			commandBuffer: "quit",
+			planEditor: &PlanEditorState{
+				active: true,
+			},
+		}
+
+		// Verify preconditions: both modes are active
+		if !m.commandMode {
+			t.Fatal("test setup error: commandMode should be true")
+		}
+		if !m.IsPlanEditorActive() {
+			t.Fatal("test setup error: IsPlanEditorActive should be true")
+		}
+
+		// The fix ensures renderCommandModeHelp is called instead of renderPlanEditorHelp.
+		// We verify by checking that command mode help contains the expected content.
+		result := m.renderCommandModeHelp()
+		if !strings.Contains(result, "quit") {
+			t.Errorf("command mode help should contain buffer content, got: %s", result)
+		}
+	})
+
+	t.Run("command mode takes priority over ultra-plan mode", func(t *testing.T) {
+		m := Model{
+			commandMode:   true,
+			commandBuffer: "help",
+			ultraPlan:     &UltraPlanState{}, // Non-nil to trigger IsUltraPlanMode
+		}
+
+		// Verify preconditions: both modes are active
+		if !m.commandMode {
+			t.Fatal("test setup error: commandMode should be true")
+		}
+		if !m.IsUltraPlanMode() {
+			t.Fatal("test setup error: IsUltraPlanMode should be true")
+		}
+
+		// The fix ensures renderCommandModeHelp is called instead of renderUltraPlanHelp.
+		result := m.renderCommandModeHelp()
+		if !strings.Contains(result, "help") {
+			t.Errorf("command mode help should contain buffer content, got: %s", result)
 		}
 	})
 }

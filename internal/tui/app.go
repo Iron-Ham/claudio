@@ -2405,8 +2405,11 @@ func (m Model) View() string {
 	}
 
 	// Help/status bar - use appropriate help based on mode
+	// Command mode takes priority over all other modes to show the : prompt
 	b.WriteString("\n")
-	if m.IsPlanEditorActive() {
+	if m.commandMode {
+		b.WriteString(m.renderCommandModeHelp())
+	} else if m.IsPlanEditorActive() {
 		b.WriteString(m.renderPlanEditorHelp())
 	} else if m.IsUltraPlanMode() {
 		b.WriteString(m.renderUltraPlanHelp())
@@ -2831,6 +2834,18 @@ func (m Model) buildInstanceInfoList() []view.InstanceInfo {
 	return instances
 }
 
+// renderCommandModeHelp renders the help bar when in command mode.
+// This is separate so it can take priority in all modes (normal, ultra-plan, plan editor).
+func (m Model) renderCommandModeHelp() string {
+	return styles.HelpBar.Render(
+		styles.Primary.Bold(true).Render(":") + styles.Primary.Render(m.commandBuffer) +
+			styles.Muted.Render("█") + "  " +
+			styles.HelpKey.Render("[Enter]") + " execute  " +
+			styles.HelpKey.Render("[Esc]") + " cancel  " +
+			styles.Muted.Render("Commands: s/x/e/p/R a/D/C d/m/c/f t/r h/q (or :help)"),
+	)
+}
+
 // renderHelp renders the help bar
 func (m Model) renderHelp() string {
 	if m.inputMode {
@@ -2852,16 +2867,6 @@ func (m Model) renderHelp() string {
 				styles.HelpKey.Render("[Ctrl+Shift+T]") + " switch dir  " +
 				styles.Muted.Render("("+dirMode+")") + "  " +
 				"All keystrokes forwarded to terminal",
-		)
-	}
-
-	if m.commandMode {
-		return styles.HelpBar.Render(
-			styles.Primary.Bold(true).Render(":") + styles.Primary.Render(m.commandBuffer) +
-				styles.Muted.Render("█") + "  " +
-				styles.HelpKey.Render("[Enter]") + " execute  " +
-				styles.HelpKey.Render("[Esc]") + " cancel  " +
-				styles.Muted.Render("Commands: s/x/e/p/R a/D/C d/m/c/f t/r h/q (or :help)"),
 		)
 	}
 
