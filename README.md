@@ -53,7 +53,12 @@ go build -o claudio ./cmd/claudio
 
 # Install to your PATH (optional)
 go install ./cmd/claudio
+
+# Ensure Go's bin directory is in your PATH
+export PATH="$PATH:$HOME/go/bin"
 ```
+
+To make this permanent, add the export line to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.).
 
 ### Verify Installation
 
