@@ -1104,6 +1104,28 @@ func calculateExecutionOrder(tasks []PlannedTask, deps map[string][]string) [][]
 	return groups
 }
 
+// EnsurePlanComputed fills in computed fields (DependencyGraph and ExecutionOrder)
+// if they are missing. This is used when loading a plan file that only has tasks
+// with depends_on fields but not the pre-computed graph and execution order.
+func EnsurePlanComputed(plan *PlanSpec) {
+	if plan == nil || len(plan.Tasks) == 0 {
+		return
+	}
+
+	// Build DependencyGraph from task DependsOn fields if missing
+	if len(plan.DependencyGraph) == 0 {
+		plan.DependencyGraph = make(map[string][]string)
+		for _, task := range plan.Tasks {
+			plan.DependencyGraph[task.ID] = task.DependsOn
+		}
+	}
+
+	// Calculate ExecutionOrder if missing
+	if len(plan.ExecutionOrder) == 0 {
+		plan.ExecutionOrder = calculateExecutionOrder(plan.Tasks, plan.DependencyGraph)
+	}
+}
+
 // ValidatePlan checks the plan for validity (no cycles, valid dependencies)
 func ValidatePlan(plan *PlanSpec) error {
 	if plan == nil {

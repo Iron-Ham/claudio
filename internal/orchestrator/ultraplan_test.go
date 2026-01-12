@@ -192,6 +192,121 @@ func TestValidatePlan(t *testing.T) {
 	}
 }
 
+func TestEnsurePlanComputed(t *testing.T) {
+	tests := []struct {
+		name              string
+		plan              *PlanSpec
+		wantGroups        int
+		wantDependencyMap map[string][]string
+	}{
+		{
+			name: "computes missing fields from tasks with depends_on",
+			plan: &PlanSpec{
+				Tasks: []PlannedTask{
+					{ID: "task-1", DependsOn: []string{}, Priority: 1},
+					{ID: "task-2", DependsOn: []string{"task-1"}, Priority: 2},
+					{ID: "task-3", DependsOn: []string{"task-1"}, Priority: 3},
+					{ID: "task-4", DependsOn: []string{"task-2", "task-3"}, Priority: 4},
+				},
+			},
+			wantGroups: 3, // Group 1: task-1, Group 2: task-2+task-3, Group 3: task-4
+			wantDependencyMap: map[string][]string{
+				"task-1": {},
+				"task-2": {"task-1"},
+				"task-3": {"task-1"},
+				"task-4": {"task-2", "task-3"},
+			},
+		},
+		{
+			name: "preserves existing ExecutionOrder and DependencyGraph",
+			plan: &PlanSpec{
+				Tasks: []PlannedTask{
+					{ID: "task-1", DependsOn: []string{}},
+					{ID: "task-2", DependsOn: []string{"task-1"}},
+				},
+				DependencyGraph: map[string][]string{
+					"task-1": {},
+					"task-2": {"task-1"},
+				},
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+			},
+			wantGroups: 2,
+			wantDependencyMap: map[string][]string{
+				"task-1": {},
+				"task-2": {"task-1"},
+			},
+		},
+		{
+			name:       "handles nil plan",
+			plan:       nil,
+			wantGroups: 0,
+		},
+		{
+			name: "handles empty tasks",
+			plan: &PlanSpec{
+				Tasks: []PlannedTask{},
+			},
+			wantGroups: 0,
+		},
+		{
+			name: "all independent tasks in single group",
+			plan: &PlanSpec{
+				Tasks: []PlannedTask{
+					{ID: "task-1", DependsOn: []string{}, Priority: 1},
+					{ID: "task-2", DependsOn: []string{}, Priority: 2},
+					{ID: "task-3", DependsOn: []string{}, Priority: 3},
+				},
+			},
+			wantGroups: 1, // All tasks in one group since no dependencies
+			wantDependencyMap: map[string][]string{
+				"task-1": {},
+				"task-2": {},
+				"task-3": {},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			EnsurePlanComputed(tt.plan)
+
+			if tt.plan == nil {
+				return // Nothing to check for nil plan
+			}
+
+			if len(tt.plan.Tasks) == 0 {
+				if len(tt.plan.ExecutionOrder) != 0 {
+					t.Errorf("EnsurePlanComputed() ExecutionOrder should be empty for empty tasks")
+				}
+				return
+			}
+
+			if len(tt.plan.ExecutionOrder) != tt.wantGroups {
+				t.Errorf("EnsurePlanComputed() got %d groups, want %d", len(tt.plan.ExecutionOrder), tt.wantGroups)
+			}
+
+			// Verify all tasks are scheduled
+			scheduledTasks := 0
+			for _, group := range tt.plan.ExecutionOrder {
+				scheduledTasks += len(group)
+			}
+			if scheduledTasks != len(tt.plan.Tasks) {
+				t.Errorf("EnsurePlanComputed() scheduled %d tasks, want %d", scheduledTasks, len(tt.plan.Tasks))
+			}
+
+			// Verify DependencyGraph was built correctly
+			if tt.wantDependencyMap != nil {
+				for taskID, wantDeps := range tt.wantDependencyMap {
+					gotDeps := tt.plan.DependencyGraph[taskID]
+					if len(gotDeps) != len(wantDeps) {
+						t.Errorf("DependencyGraph[%s] = %v, want %v", taskID, gotDeps, wantDeps)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestUltraPlanSession_IsTaskReady(t *testing.T) {
 	session := &UltraPlanSession{
 		Plan: &PlanSpec{
