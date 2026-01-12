@@ -10,6 +10,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
+	"github.com/Iron-Ham/claudio/internal/plan"
 	sessutil "github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
 	"github.com/spf13/cobra"
@@ -61,8 +62,17 @@ Examples:
   # Start with a pre-existing plan file
   claudio ultraplan --plan plan.json
 
+  # Load plan from a GitHub issue (full URL)
+  claudio ultraplan --issue https://github.com/owner/repo/issues/123
+
+  # Load plan from a GitHub issue (shorthand format)
+  claudio ultraplan --issue owner/repo#123
+
   # Review and edit a plan before execution
   claudio ultraplan --plan plan.json --review
+
+  # Load plan from GitHub issue and review before execution
+  claudio ultraplan --issue owner/repo#123 --review
 
   # Dry run - only generate the plan, don't execute
   claudio ultraplan --dry-run "Refactor the API layer"
@@ -84,6 +94,7 @@ Examples:
 
 var (
 	ultraplanPlanFile    string
+	ultraplanIssueURL    string
 	ultraplanMaxParallel int
 	ultraplanDryRun      bool
 	ultraplanNoSynthesis bool
@@ -96,6 +107,7 @@ func init() {
 	rootCmd.AddCommand(ultraplanCmd)
 
 	ultraplanCmd.Flags().StringVar(&ultraplanPlanFile, "plan", "", "Use existing plan file instead of planning phase")
+	ultraplanCmd.Flags().StringVar(&ultraplanIssueURL, "issue", "", "Load plan from GitHub issue URL or shorthand (owner/repo#123)")
 	ultraplanCmd.Flags().IntVar(&ultraplanMaxParallel, "max-parallel", 3, "Maximum concurrent child sessions (0 = unlimited)")
 	ultraplanCmd.Flags().BoolVar(&ultraplanDryRun, "dry-run", false, "Run planning only, output plan without executing")
 	ultraplanCmd.Flags().BoolVar(&ultraplanNoSynthesis, "no-synthesis", false, "Skip synthesis phase after execution")
@@ -110,12 +122,17 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 
+	// Validate that --issue and --plan are mutually exclusive
+	if ultraplanIssueURL != "" && ultraplanPlanFile != "" {
+		return fmt.Errorf("--issue and --plan are mutually exclusive; use one or the other")
+	}
+
 	// Get objective from args or prompt
 	var objective string
 	if len(args) > 0 {
 		objective = args[0]
-	} else if ultraplanPlanFile == "" {
-		// Prompt for objective if not provided and no plan file
+	} else if ultraplanPlanFile == "" && ultraplanIssueURL == "" {
+		// Prompt for objective if not provided and no plan file or issue URL
 		objective, err = promptObjective()
 		if err != nil {
 			return err
@@ -188,19 +205,27 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	)
 
 	// Create or load the plan
-	var plan *orchestrator.PlanSpec
+	var loadedPlan *orchestrator.PlanSpec
 	if ultraplanPlanFile != "" {
-		plan, err = loadPlanFile(ultraplanPlanFile)
+		loadedPlan, err = loadPlanFile(ultraplanPlanFile)
 		if err != nil {
 			return fmt.Errorf("failed to load plan file: %w", err)
 		}
-		objective = plan.Objective
+		objective = loadedPlan.Objective
+	} else if ultraplanIssueURL != "" {
+		// Load plan from GitHub issue
+		loadedPlan, err = loadPlanFromIssue(ultraplanIssueURL)
+		if err != nil {
+			return fmt.Errorf("failed to load plan from issue: %w", err)
+		}
+		// Set objective from the parent issue title (stored in plan.Objective)
+		objective = loadedPlan.Objective
 	}
 
 	// Create ultra-plan session
 	ultraSession := orchestrator.NewUltraPlanSession(objective, ultraConfig)
-	if plan != nil {
-		ultraSession.Plan = plan
+	if loadedPlan != nil {
+		ultraSession.Plan = loadedPlan
 		ultraSession.Phase = orchestrator.PhaseRefresh // Skip to refresh if plan provided
 	}
 
@@ -257,16 +282,36 @@ func loadPlanFile(path string) (*orchestrator.PlanSpec, error) {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
 
-	var plan orchestrator.PlanSpec
-	if err := json.Unmarshal(data, &plan); err != nil {
+	var p orchestrator.PlanSpec
+	if err := json.Unmarshal(data, &p); err != nil {
 		return nil, fmt.Errorf("failed to parse plan JSON: %w", err)
 	}
 
-	if err := orchestrator.ValidatePlan(&plan); err != nil {
+	if err := orchestrator.ValidatePlan(&p); err != nil {
 		return nil, err
 	}
 
-	return &plan, nil
+	return &p, nil
+}
+
+// loadPlanFromIssue loads a plan from a GitHub issue URL or shorthand.
+// It supports both full URLs (https://github.com/owner/repo/issues/123)
+// and shorthand format (owner/repo#123).
+//
+// The function fetches the parent issue, parses its structure, fetches all
+// sub-issues, and converts them into a PlanSpec. Both templated (Claudio-generated)
+// and freeform (human-authored) issue formats are supported.
+func loadPlanFromIssue(issueURL string) (*orchestrator.PlanSpec, error) {
+	planSpec, err := plan.BuildPlanFromURL(issueURL)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := orchestrator.ValidatePlan(planSpec); err != nil {
+		return nil, err
+	}
+
+	return planSpec, nil
 }
 
 // slugifyWords creates a slug from words
