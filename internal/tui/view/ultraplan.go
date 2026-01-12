@@ -1087,7 +1087,7 @@ func (v *UltraplanView) RenderHelp() string {
 		keys = append(keys, "[1-9] select task")
 		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
-		keys = append(keys, "[c] cancel")
+		keys = append(keys, "[:cancel] cancel")
 
 	case orchestrator.PhaseSynthesis:
 		keys = append(keys, "[i] input mode")

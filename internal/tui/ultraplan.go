@@ -470,13 +470,8 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 		}
 		return true, m, nil
 
-	case "c":
-		// Cancel execution (only during executing phase)
-		if session.Phase == orchestrator.PhaseExecuting {
-			m.ultraPlan.Coordinator.Cancel()
-			m.infoMessage = "Execution cancelled"
-		}
-		return true, m, nil
+	// NOTE: Cancel execution ('c') is now handled via command mode (:cancel)
+	// to prevent accidental cancellation from stray keypresses. See executeCommand() in app.go.
 
 	case "tab", "l":
 		// Navigate to next navigable instance across all phases
