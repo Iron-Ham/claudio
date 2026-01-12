@@ -939,23 +939,21 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		// Enter search mode
 		m.searchMode = true
-		m.searchPattern = ""
-		m.searchMatches = nil
-		m.searchCurrent = 0
+		m.searchEngine.Clear()
 		return m, nil
 
 	case "n":
 		// Next search match
-		if m.searchPattern != "" && len(m.searchMatches) > 0 {
-			m.searchCurrent = (m.searchCurrent + 1) % len(m.searchMatches)
+		if m.searchEngine.HasMatches() {
+			m.searchEngine.Next()
 			m.scrollToMatch()
 		}
 		return m, nil
 
 	case "N":
 		// Previous search match
-		if m.searchPattern != "" && len(m.searchMatches) > 0 {
-			m.searchCurrent = (m.searchCurrent - 1 + len(m.searchMatches)) % len(m.searchMatches)
+		if m.searchEngine.HasMatches() {
+			m.searchEngine.Previous()
 			m.scrollToMatch()
 		}
 		return m, nil
@@ -1663,21 +1661,21 @@ func (m Model) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyBackspace:
-		if len(m.searchPattern) > 0 {
-			m.searchPattern = m.searchPattern[:len(m.searchPattern)-1]
+		if len(m.searchInput) > 0 {
+			m.searchInput = m.searchInput[:len(m.searchInput)-1]
 			// Live search as user types
 			m.executeSearch()
 		}
 		return m, nil
 
 	case tea.KeyRunes:
-		m.searchPattern += string(msg.Runes)
+		m.searchInput += string(msg.Runes)
 		// Live search as user types
 		m.executeSearch()
 		return m, nil
 
 	case tea.KeySpace:
-		m.searchPattern += " "
+		m.searchInput += " "
 		m.executeSearch()
 		return m, nil
 	}
@@ -1760,11 +1758,10 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// executeSearch compiles the search pattern and finds all matches
+// executeSearch uses the search engine to find all matches in the output
 func (m *Model) executeSearch() {
-	if m.searchPattern == "" {
-		m.searchMatches = nil
-		m.searchRegex = nil
+	if m.searchInput == "" {
+		m.searchEngine.Clear()
 		return
 	}
 
@@ -1778,53 +1775,30 @@ func (m *Model) executeSearch() {
 		return
 	}
 
-	// Try to compile as regex if it starts with r:
-	if strings.HasPrefix(m.searchPattern, "r:") {
-		pattern := m.searchPattern[2:]
-		re, err := regexp.Compile("(?i)" + pattern)
-		if err != nil {
-			m.searchRegex = nil
-			m.searchMatches = nil
-			return
-		}
-		m.searchRegex = re
-	} else {
-		// Literal search (case-insensitive)
-		m.searchRegex = regexp.MustCompile("(?i)" + regexp.QuoteMeta(m.searchPattern))
-	}
+	// Execute search using the search engine
+	m.searchEngine.Search(m.searchInput, output)
 
-	// Find all matching lines
-	lines := strings.Split(output, "\n")
-	m.searchMatches = nil
-	for i, line := range lines {
-		if m.searchRegex.MatchString(line) {
-			m.searchMatches = append(m.searchMatches, i)
-		}
-	}
-
-	// Set current match
-	if len(m.searchMatches) > 0 {
-		m.searchCurrent = 0
+	// Scroll to first match if any
+	if m.searchEngine.HasMatches() {
 		m.scrollToMatch()
 	}
 }
 
-// clearSearch clears the current search
+// clearSearch clears the current search state
 func (m *Model) clearSearch() {
-	m.searchPattern = ""
-	m.searchRegex = nil
-	m.searchMatches = nil
-	m.searchCurrent = 0
+	m.searchInput = ""
+	m.searchEngine.Clear()
 	m.outputScroll = 0
 }
 
 // scrollToMatch adjusts output scroll to show the current match
 func (m *Model) scrollToMatch() {
-	if len(m.searchMatches) == 0 || m.searchCurrent >= len(m.searchMatches) {
+	current := m.searchEngine.Current()
+	if current == nil {
 		return
 	}
 
-	matchLine := m.searchMatches[m.searchCurrent]
+	matchLine := current.LineNumber
 	maxLines := m.height - 12
 	if maxLines < 5 {
 		maxLines = 5
@@ -2221,10 +2195,10 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 		ScrollOffset:      m.outputManager.GetScrollOffset(inst.ID),
 		AutoScrollEnabled: m.isOutputAutoScroll(inst.ID),
 		HasNewOutput:      m.hasNewOutput(inst.ID),
-		SearchPattern:     m.searchPattern,
-		SearchRegex:       m.searchRegex,
-		SearchMatches:     m.searchMatches,
-		SearchCurrent:     m.searchCurrent,
+		SearchPattern:     m.searchInput,
+		SearchRegex:       m.searchEngine.Regex(),
+		SearchMatches:     m.searchEngine.MatchingLines(),
+		SearchCurrent:     m.searchEngine.CurrentIndex(),
 		SearchMode:        m.searchMode,
 	}
 
@@ -2626,8 +2600,8 @@ func (m Model) renderHelp() string {
 	}
 
 	// Add search status indicator if search is active
-	if m.searchPattern != "" && len(m.searchMatches) > 0 {
-		searchStatus := styles.Secondary.Render(fmt.Sprintf("[%d/%d]", m.searchCurrent+1, len(m.searchMatches)))
+	if m.searchEngine.HasMatches() {
+		searchStatus := styles.Secondary.Render(fmt.Sprintf("[%d/%d]", m.searchEngine.CurrentIndex()+1, m.searchEngine.MatchCount()))
 		keys = append(keys, searchStatus+" "+styles.HelpKey.Render("[n/N]")+" match")
 	}
 

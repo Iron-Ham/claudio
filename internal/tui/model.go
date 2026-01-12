@@ -10,6 +10,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/command"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
 	"github.com/Iron-Ham/claudio/internal/tui/output"
+	"github.com/Iron-Ham/claudio/internal/tui/search"
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 )
 
@@ -118,11 +119,9 @@ type Model struct {
 	showStats bool // When true, show the stats panel
 
 	// Search state
-	searchMode    bool           // Whether search mode is active (typing pattern)
-	searchPattern string         // Current search pattern
-	searchRegex   *regexp.Regexp // Compiled regex (nil for literal search)
-	searchMatches []int          // Line numbers containing matches
-	searchCurrent int            // Current match index (for n/N navigation)
+	searchMode   bool           // Whether search mode is active (typing pattern)
+	searchInput  string         // Current search input being typed (live updated)
+	searchEngine *search.Engine // Search engine for output buffer searching
 
 	// Filter state
 	filterMode       bool            // Whether filter mode is active
@@ -247,6 +246,7 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 		commandHandler:   command.New(),
 		inputRouter:      input.NewRouter(),
 		outputManager:    output.NewManager(),
+		searchEngine:     search.NewEngine(),
 		filterCategories: map[string]bool{
 			"errors":   true,
 			"warnings": true,
