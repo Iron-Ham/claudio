@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // TmuxSender defines the interface for sending commands to tmux.
@@ -32,6 +33,19 @@ func (d *DefaultTmuxSender) SendKeys(sessionName string, keys string, literal bo
 	args = append(args, keys)
 	return exec.Command("tmux", args...).Run()
 }
+
+// inputItem represents an item to be sent to tmux.
+// It can be either literal text (batched) or a special key.
+type inputItem struct {
+	sessionName string
+	text        string // for literal text
+	key         string // for special keys (mutually exclusive with text)
+	literal     bool   // true if text should be sent with -l flag
+}
+
+// workerBatchTimeout is how long the worker waits for more input before flushing.
+// This allows rapid keystrokes to be batched while ensuring responsive feedback.
+const workerBatchTimeout = 5 * time.Millisecond
 
 // HistoryEntry represents a single entry in the input history.
 type HistoryEntry struct {
@@ -88,6 +102,11 @@ type Handler struct {
 	// Input buffer for batching small inputs
 	buffer     []byte
 	bufferLock sync.Mutex
+
+	// Worker goroutine for batching keyboard input
+	workerChan chan inputItem // channel for sending items to worker
+	workerDone chan struct{}  // signal to stop worker
+	workerOnce sync.Once      // ensures worker starts only once
 }
 
 // Option configures the Handler.
@@ -116,6 +135,8 @@ func NewHandler(opts ...Option) *Handler {
 		maxHistory: 100,
 		history:    make([]HistoryEntry, 0),
 		buffer:     make([]byte, 0),
+		workerChan: make(chan inputItem, 256), // buffered to avoid blocking callers
+		workerDone: make(chan struct{}),
 	}
 
 	for _, opt := range opts {
@@ -229,6 +250,128 @@ func (h *Handler) SendPaste(sessionName string, text string) error {
 
 	h.recordHistory(text, InputTypePaste)
 	return nil
+}
+
+// ensureWorkerRunning starts the worker goroutine if not already running.
+// The worker batches consecutive literal characters to reduce subprocess calls.
+func (h *Handler) ensureWorkerRunning() {
+	h.workerOnce.Do(func() {
+		go h.workerLoop()
+	})
+}
+
+// workerLoop is the main loop for the batching worker goroutine.
+// It collects literal characters and batches them together, flushing when:
+// - A special key arrives (non-literal)
+// - The session changes
+// - A timeout occurs (workerBatchTimeout)
+// - The worker is shutting down
+func (h *Handler) workerLoop() {
+	var batch strings.Builder
+	var currentSession string
+	timer := time.NewTimer(workerBatchTimeout)
+	timer.Stop() // Start stopped; we'll reset it when we have data
+
+	flush := func() {
+		if batch.Len() > 0 && currentSession != "" {
+			h.mu.RLock()
+			sender := h.sender
+			h.mu.RUnlock()
+			_ = sender.SendKeys(currentSession, batch.String(), true)
+			batch.Reset()
+		}
+		timer.Stop()
+	}
+
+	for {
+		select {
+		case <-h.workerDone:
+			flush()
+			return
+
+		case item := <-h.workerChan:
+			// If session changed, flush previous batch
+			if currentSession != "" && item.sessionName != currentSession {
+				flush()
+			}
+			currentSession = item.sessionName
+
+			if item.key != "" {
+				// Special key - flush batch first, then send the key
+				flush()
+				h.mu.RLock()
+				sender := h.sender
+				h.mu.RUnlock()
+				_ = sender.SendKeys(item.sessionName, item.key, false)
+			} else if item.text != "" {
+				// Literal text - add to batch
+				batch.WriteString(item.text)
+				// Reset timer to flush after timeout if no more input arrives
+				timer.Reset(workerBatchTimeout)
+			}
+
+		case <-timer.C:
+			// Timeout - flush whatever we have
+			flush()
+		}
+	}
+}
+
+// QueueLiteral queues literal text to be sent to the tmux session.
+// Unlike SendLiteral, this uses a worker goroutine to batch consecutive
+// characters, reducing the number of tmux subprocess calls.
+// This method returns immediately and is safe for use in keyboard handlers.
+func (h *Handler) QueueLiteral(sessionName string, text string) {
+	h.ensureWorkerRunning()
+
+	// Non-blocking send - if channel is full, fall back to direct send
+	select {
+	case h.workerChan <- inputItem{sessionName: sessionName, text: text, literal: true}:
+		// Successfully queued
+	default:
+		// Channel full - send directly to avoid blocking
+		h.mu.RLock()
+		sender := h.sender
+		h.mu.RUnlock()
+		go func() {
+			_ = sender.SendKeys(sessionName, text, true)
+		}()
+	}
+
+	h.recordHistory(text, InputTypeLiteral)
+}
+
+// QueueKey queues a special key to be sent to the tmux session.
+// This causes any pending literal characters to be flushed first.
+func (h *Handler) QueueKey(sessionName string, key string) {
+	h.ensureWorkerRunning()
+
+	// Non-blocking send - if channel is full, fall back to direct send
+	select {
+	case h.workerChan <- inputItem{sessionName: sessionName, key: key}:
+		// Successfully queued
+	default:
+		// Channel full - send directly to avoid blocking
+		h.mu.RLock()
+		sender := h.sender
+		h.mu.RUnlock()
+		go func() {
+			_ = sender.SendKeys(sessionName, key, false)
+		}()
+	}
+
+	h.recordHistory(key, InputTypeKey)
+}
+
+// StopWorker stops the batching worker goroutine.
+// This should be called when the handler is no longer needed.
+func (h *Handler) StopWorker() {
+	select {
+	case <-h.workerDone:
+		// Already closed
+	default:
+		close(h.workerDone)
+	}
 }
 
 // isSpecialRune returns true if the rune requires special handling by tmux

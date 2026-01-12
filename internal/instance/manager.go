@@ -877,6 +877,7 @@ func (m *Manager) SendKey(key string) {
 }
 
 // SendLiteral sends literal text to the tmux session (no interpretation)
+// Deprecated: Use QueueLiteral for keyboard input to benefit from batching.
 func (m *Manager) SendLiteral(text string) {
 	m.mu.RLock()
 	running := m.running
@@ -890,6 +891,41 @@ func (m *Manager) SendLiteral(text string) {
 
 	// Delegate to InputHandler (already async)
 	_ = handler.SendLiteral(sessionName, text)
+}
+
+// QueueLiteral queues literal text to be sent to the tmux session.
+// This method uses a persistent worker goroutine to batch consecutive
+// characters, significantly reducing subprocess overhead for keyboard input.
+// Unlike SendLiteral, this batches rapid keystrokes before sending to tmux.
+func (m *Manager) QueueLiteral(text string) {
+	m.mu.RLock()
+	running := m.running
+	sessionName := m.sessionName
+	handler := m.inputHandler
+	m.mu.RUnlock()
+
+	if !running {
+		return
+	}
+
+	handler.QueueLiteral(sessionName, text)
+}
+
+// QueueKey queues a special key to be sent to the tmux session.
+// This causes any pending literal characters to be flushed first,
+// preserving the correct order of input.
+func (m *Manager) QueueKey(key string) {
+	m.mu.RLock()
+	running := m.running
+	sessionName := m.sessionName
+	handler := m.inputHandler
+	m.mu.RUnlock()
+
+	if !running {
+		return
+	}
+
+	handler.QueueKey(sessionName, key)
 }
 
 // SendPaste sends pasted text to the tmux session with bracketed paste sequences

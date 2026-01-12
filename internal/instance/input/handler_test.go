@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // mockTmuxSender is a test implementation of TmuxSender that records all calls.
@@ -910,5 +911,390 @@ func TestHandler_SendInput_ErrorMidBatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "mid-batch error") {
 		t.Errorf("error should contain 'mid-batch error', got: %v", err)
+	}
+}
+
+// delayedMockTmuxSender tracks calls with timestamps for testing batching timing.
+type delayedMockTmuxSender struct {
+	mu    sync.Mutex
+	calls []sendCall
+}
+
+func (d *delayedMockTmuxSender) SendKeys(sessionName string, keys string, literal bool) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.calls = append(d.calls, sendCall{
+		sessionName: sessionName,
+		keys:        keys,
+		literal:     literal,
+	})
+	return nil
+}
+
+func (d *delayedMockTmuxSender) getCalls() []sendCall {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	result := make([]sendCall, len(d.calls))
+	copy(result, d.calls)
+	return result
+}
+
+func (d *delayedMockTmuxSender) waitForCalls(n int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		d.mu.Lock()
+		count := len(d.calls)
+		d.mu.Unlock()
+		if count >= n {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return false
+}
+
+// TestHandler_QueueLiteral tests the basic QueueLiteral functionality.
+func TestHandler_QueueLiteral(t *testing.T) {
+	mock := &delayedMockTmuxSender{}
+	h := NewHandler(WithTmuxSender(mock))
+	defer h.StopWorker()
+
+	h.QueueLiteral("test-session", "a")
+
+	// Wait for the batch to be flushed (timeout-based)
+	if !mock.waitForCalls(1, 100*time.Millisecond) {
+		t.Fatal("expected at least 1 call within timeout")
+	}
+
+	calls := mock.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("got %d calls, want 1", len(calls))
+	}
+
+	if calls[0].keys != "a" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "a")
+	}
+	if !calls[0].literal {
+		t.Error("call[0].literal = false, want true")
+	}
+
+	// Check history was recorded
+	history := h.History()
+	if len(history) != 1 {
+		t.Fatalf("history length = %d, want 1", len(history))
+	}
+	if history[0].Input != "a" {
+		t.Errorf("history[0].Input = %q, want %q", history[0].Input, "a")
+	}
+}
+
+// TestHandler_QueueLiteral_Batching tests that consecutive QueueLiteral calls are batched.
+func TestHandler_QueueLiteral_Batching(t *testing.T) {
+	mock := &delayedMockTmuxSender{}
+	h := NewHandler(WithTmuxSender(mock))
+	defer h.StopWorker()
+
+	// Queue multiple characters rapidly
+	h.QueueLiteral("test-session", "h")
+	h.QueueLiteral("test-session", "e")
+	h.QueueLiteral("test-session", "l")
+	h.QueueLiteral("test-session", "l")
+	h.QueueLiteral("test-session", "o")
+
+	// Wait for batch to flush
+	if !mock.waitForCalls(1, 100*time.Millisecond) {
+		t.Fatal("expected at least 1 call within timeout")
+	}
+
+	// Give a little more time to ensure no additional calls are made
+	time.Sleep(20 * time.Millisecond)
+
+	calls := mock.getCalls()
+	// Should be batched into a single call
+	if len(calls) != 1 {
+		t.Fatalf("got %d calls, want 1 (batched)", len(calls))
+	}
+
+	if calls[0].keys != "hello" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "hello")
+	}
+}
+
+// TestHandler_QueueKey tests the QueueKey functionality.
+func TestHandler_QueueKey(t *testing.T) {
+	mock := &delayedMockTmuxSender{}
+	h := NewHandler(WithTmuxSender(mock))
+	defer h.StopWorker()
+
+	h.QueueKey("test-session", "Enter")
+
+	// Wait for the key to be sent
+	if !mock.waitForCalls(1, 100*time.Millisecond) {
+		t.Fatal("expected at least 1 call within timeout")
+	}
+
+	calls := mock.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("got %d calls, want 1", len(calls))
+	}
+
+	if calls[0].keys != "Enter" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "Enter")
+	}
+	if calls[0].literal {
+		t.Error("call[0].literal = true, want false")
+	}
+
+	// Check history was recorded
+	history := h.History()
+	if len(history) != 1 {
+		t.Fatalf("history length = %d, want 1", len(history))
+	}
+	if history[0].Type != InputTypeKey {
+		t.Errorf("history[0].Type = %v, want %v", history[0].Type, InputTypeKey)
+	}
+}
+
+// TestHandler_QueueKey_FlushesBatch tests that QueueKey flushes pending literal batch.
+func TestHandler_QueueKey_FlushesBatch(t *testing.T) {
+	mock := &delayedMockTmuxSender{}
+	h := NewHandler(WithTmuxSender(mock))
+	defer h.StopWorker()
+
+	// Queue literal text then a special key
+	h.QueueLiteral("test-session", "test")
+	h.QueueKey("test-session", "Enter")
+
+	// Wait for both to be sent
+	if !mock.waitForCalls(2, 100*time.Millisecond) {
+		t.Fatal("expected at least 2 calls within timeout")
+	}
+
+	calls := mock.getCalls()
+	if len(calls) != 2 {
+		t.Fatalf("got %d calls, want 2", len(calls))
+	}
+
+	// First should be the batched literal text
+	if calls[0].keys != "test" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "test")
+	}
+	if !calls[0].literal {
+		t.Error("call[0].literal = false, want true")
+	}
+
+	// Second should be the Enter key
+	if calls[1].keys != "Enter" {
+		t.Errorf("call[1].keys = %q, want %q", calls[1].keys, "Enter")
+	}
+	if calls[1].literal {
+		t.Error("call[1].literal = true, want false")
+	}
+}
+
+// TestHandler_QueueLiteral_SessionChange tests that session change flushes batch.
+func TestHandler_QueueLiteral_SessionChange(t *testing.T) {
+	mock := &delayedMockTmuxSender{}
+	h := NewHandler(WithTmuxSender(mock))
+	defer h.StopWorker()
+
+	// Queue to first session
+	h.QueueLiteral("session-1", "abc")
+	// Queue to different session (should flush first batch)
+	h.QueueLiteral("session-2", "xyz")
+
+	// Wait for both batches
+	if !mock.waitForCalls(2, 100*time.Millisecond) {
+		t.Fatal("expected at least 2 calls within timeout")
+	}
+
+	calls := mock.getCalls()
+	if len(calls) != 2 {
+		t.Fatalf("got %d calls, want 2", len(calls))
+	}
+
+	// First batch to session-1
+	if calls[0].sessionName != "session-1" {
+		t.Errorf("call[0].sessionName = %q, want %q", calls[0].sessionName, "session-1")
+	}
+	if calls[0].keys != "abc" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "abc")
+	}
+
+	// Second batch to session-2
+	if calls[1].sessionName != "session-2" {
+		t.Errorf("call[1].sessionName = %q, want %q", calls[1].sessionName, "session-2")
+	}
+	if calls[1].keys != "xyz" {
+		t.Errorf("call[1].keys = %q, want %q", calls[1].keys, "xyz")
+	}
+}
+
+// TestHandler_StopWorker tests graceful worker shutdown.
+func TestHandler_StopWorker(t *testing.T) {
+	mock := &delayedMockTmuxSender{}
+	h := NewHandler(WithTmuxSender(mock))
+
+	// Queue some input and wait for it to be received by the worker
+	h.QueueLiteral("test-session", "pending")
+
+	// Give the worker time to receive the item from the channel
+	time.Sleep(10 * time.Millisecond)
+
+	// Stop the worker - should flush pending batch
+	h.StopWorker()
+
+	// Give time for flush to complete
+	time.Sleep(20 * time.Millisecond)
+
+	calls := mock.getCalls()
+	if len(calls) != 1 {
+		t.Fatalf("got %d calls, want 1 (pending batch should be flushed)", len(calls))
+	}
+
+	if calls[0].keys != "pending" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "pending")
+	}
+
+	// Calling StopWorker again should not panic
+	h.StopWorker()
+}
+
+// TestHandler_QueueLiteral_ConcurrentAccess tests concurrent use of queue methods.
+func TestHandler_QueueLiteral_ConcurrentAccess(t *testing.T) {
+	mock := &delayedMockTmuxSender{}
+	// Set max history high enough to hold all entries
+	h := NewHandler(WithTmuxSender(mock), WithMaxHistory(2000))
+	defer h.StopWorker()
+
+	var wg sync.WaitGroup
+	numGoroutines := 10
+	numOps := 50
+
+	// Concurrent QueueLiteral calls
+	for range numGoroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range numOps {
+				h.QueueLiteral("test-session", "x")
+			}
+		}()
+	}
+
+	// Concurrent QueueKey calls
+	for range numGoroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range numOps {
+				h.QueueKey("test-session", "Enter")
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Wait for all to be processed
+	time.Sleep(50 * time.Millisecond)
+
+	// We just verify no panics occurred - actual call count will vary due to batching
+	calls := mock.getCalls()
+	if len(calls) == 0 {
+		t.Error("expected at least some calls")
+	}
+
+	// History should have recorded all inputs
+	history := h.History()
+	expectedHistoryLen := numGoroutines * numOps * 2 // literals + keys
+	if len(history) != expectedHistoryLen {
+		t.Errorf("history length = %d, want %d", len(history), expectedHistoryLen)
+	}
+}
+
+// TestHandler_Queue_TypicalKeyboardInput simulates typical keyboard input pattern.
+func TestHandler_Queue_TypicalKeyboardInput(t *testing.T) {
+	mock := &delayedMockTmuxSender{}
+	h := NewHandler(WithTmuxSender(mock))
+	defer h.StopWorker()
+
+	// Simulate typing "ls -la" and pressing Enter
+	// Character input arrives rapidly from the TUI
+	chars := []string{"l", "s", " ", "-", "l", "a"}
+	for _, c := range chars {
+		if c == " " {
+			// Space might be sent as literal or key depending on implementation
+			h.QueueLiteral("test-session", " ")
+		} else {
+			h.QueueLiteral("test-session", c)
+		}
+	}
+	h.QueueKey("test-session", "Enter")
+
+	// Wait for all to be processed
+	if !mock.waitForCalls(2, 100*time.Millisecond) {
+		t.Fatal("expected at least 2 calls within timeout")
+	}
+
+	calls := mock.getCalls()
+	// Should be: batched literal text + Enter key
+	if len(calls) != 2 {
+		t.Fatalf("got %d calls, want 2", len(calls))
+	}
+
+	// First call should be the batched characters
+	if calls[0].keys != "ls -la" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "ls -la")
+	}
+	if !calls[0].literal {
+		t.Error("call[0].literal = false, want true")
+	}
+
+	// Second call should be Enter
+	if calls[1].keys != "Enter" {
+		t.Errorf("call[1].keys = %q, want %q", calls[1].keys, "Enter")
+	}
+}
+
+// TestHandler_Queue_AltKeyCombo tests Alt+key combination handling.
+func TestHandler_Queue_AltKeyCombo(t *testing.T) {
+	mock := &delayedMockTmuxSender{}
+	h := NewHandler(WithTmuxSender(mock))
+	defer h.StopWorker()
+
+	// Simulate typing "hello" then pressing Alt+b (word back in bash)
+	h.QueueLiteral("test-session", "h")
+	h.QueueLiteral("test-session", "e")
+	h.QueueLiteral("test-session", "l")
+	h.QueueLiteral("test-session", "l")
+	h.QueueLiteral("test-session", "o")
+
+	// Alt+b is sent as Escape followed by 'b'
+	h.QueueKey("test-session", "Escape")
+	h.QueueLiteral("test-session", "b")
+
+	// Wait for all to be processed
+	if !mock.waitForCalls(3, 100*time.Millisecond) {
+		t.Fatal("expected at least 3 calls within timeout")
+	}
+
+	calls := mock.getCalls()
+	if len(calls) != 3 {
+		t.Fatalf("got %d calls, want 3", len(calls))
+	}
+
+	// First: batched "hello"
+	if calls[0].keys != "hello" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "hello")
+	}
+
+	// Second: Escape key (flushes batch)
+	if calls[1].keys != "Escape" {
+		t.Errorf("call[1].keys = %q, want %q", calls[1].keys, "Escape")
+	}
+
+	// Third: 'b' character (new batch after Escape)
+	if calls[2].keys != "b" {
+		t.Errorf("call[2].keys = %q, want %q", calls[2].keys, "b")
 	}
 }

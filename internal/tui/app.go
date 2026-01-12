@@ -1377,9 +1377,10 @@ func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
 		// Handle Alt+key combinations
 		if msg.Alt {
 			// For alt combinations, tmux uses M- prefix or Escape followed by char
+			// Use QueueKey for escape to flush any pending batch, then queue the character
 			key = string(msg.Runes)
-			mgr.SendKey("Escape") // Send escape first
-			mgr.SendLiteral(key)  // Then send the character
+			mgr.QueueKey("Escape") // Send escape first (flushes batch)
+			mgr.QueueLiteral(key)  // Then send the character
 			return
 		}
 		key = string(msg.Runes)
@@ -1413,11 +1414,11 @@ func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
 		case strings.HasPrefix(keyStr, "alt+"):
 			// Alt combinations: send Escape then the key
 			baseKey := strings.TrimPrefix(keyStr, "alt+")
-			mgr.SendKey("Escape")
+			mgr.QueueKey("Escape")
 			if len(baseKey) == 1 {
-				mgr.SendLiteral(baseKey)
+				mgr.QueueLiteral(baseKey)
 			} else {
-				mgr.SendKey(baseKey)
+				mgr.QueueKey(baseKey)
 			}
 			return
 		case strings.HasPrefix(keyStr, "ctrl+"):
@@ -1438,9 +1439,9 @@ func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
 
 	if key != "" {
 		if literal {
-			mgr.SendLiteral(key)
+			mgr.QueueLiteral(key)
 		} else {
-			mgr.SendKey(key)
+			mgr.QueueKey(key)
 		}
 	}
 }

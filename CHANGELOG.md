@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **TUI Task Chaining** - Chain tasks via TUI using `:chain`, `:dep`, or `:depends` commands to add tasks that auto-start when the selected instance completes
 
+### Performance
+- **Input Mode Batching** - Keyboard input in Input mode now batches consecutive characters through a persistent worker goroutine, dramatically reducing subprocess overhead during typing (#313)
+
 ## [0.3.0] - 2026-01-12
 
 This release brings **deep GitHub Issues integration**, **plan import from URLs**, **a persistent terminal pane**, major **architecture improvements**, and numerous reliability enhancements across the board.
