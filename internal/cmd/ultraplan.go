@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -304,7 +305,7 @@ func loadPlanFile(path string) (*orchestrator.PlanSpec, error) {
 func loadPlanFromIssue(issueURL string) (*orchestrator.PlanSpec, error) {
 	planSpec, err := plan.BuildPlanFromURL(issueURL)
 	if err != nil {
-		return nil, err
+		return nil, formatIngestError(err)
 	}
 
 	if err := orchestrator.ValidatePlan(planSpec); err != nil {
@@ -312,6 +313,17 @@ func loadPlanFromIssue(issueURL string) (*orchestrator.PlanSpec, error) {
 	}
 
 	return planSpec, nil
+}
+
+// formatIngestError formats an IngestError for user-friendly terminal output.
+// If the error is not an IngestError, it returns the error unchanged.
+func formatIngestError(err error) error {
+	var ingestErr *plan.IngestError
+	if errors.As(err, &ingestErr) {
+		// Return a new error with the formatted terminal output
+		return fmt.Errorf("%s", ingestErr.FormatForTerminal())
+	}
+	return err
 }
 
 // slugifyWords creates a slug from words
