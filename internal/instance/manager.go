@@ -27,6 +27,10 @@ const (
 	TimeoutStale                         // Repeated output detected (stuck in loop)
 )
 
+// fullRefreshInterval is the number of capture ticks between full scrollback captures.
+// At 100ms per tick, 50 ticks = 5 seconds between full refreshes.
+const fullRefreshInterval = 50
+
 // timeoutTypeName returns a human-readable name for a timeout type
 func timeoutTypeName(t TimeoutType) string {
 	switch t {
@@ -107,6 +111,10 @@ type Manager struct {
 	timeoutCallback     TimeoutCallback
 	timedOut            bool        // Whether a timeout has been triggered
 	timeoutType         TimeoutType // Type of timeout that was triggered
+
+	// Differential capture optimization
+	lastHistorySize    int // Last captured history size (for differential capture)
+	fullRefreshCounter int // Counter for periodic full refresh
 
 	// Bell tracking
 	bellCallback  BellCallback
@@ -359,19 +367,43 @@ func (m *Manager) captureLoop() {
 				continue
 			}
 
-			// Capture the entire visible pane plus scrollback
-			// -p prints to stdout, -S - starts from beginning of history
-			// -e preserves ANSI escape sequences (colors)
-			captureCmd := exec.Command("tmux",
-				"capture-pane",
-				"-t", sessionName,
-				"-p",      // print to stdout
-				"-e",      // preserve escape sequences (colors)
-				"-S", "-", // start from beginning of scrollback
-				"-E", "-", // end at bottom of scrollback
-			)
-			output, err := captureCmd.Output()
+			// Differential capture optimization:
+			// - Check history size to detect new output
+			// - Capture only visible pane when nothing changed (much faster)
+			// - Do full capture when history grows or periodically (every 50 ticks = 5 seconds)
+			currentHistorySize := m.getHistorySize(sessionName)
+			if currentHistorySize == -1 {
+				// Session may not exist, skip this tick
+				continue
+			}
+
+			m.mu.Lock()
+			lastHistorySize := m.lastHistorySize
+			m.fullRefreshCounter++
+			doFullCapture := m.fullRefreshCounter >= fullRefreshInterval || currentHistorySize > lastHistorySize
+			if doFullCapture {
+				m.fullRefreshCounter = 0
+				m.lastHistorySize = currentHistorySize
+			}
+			m.mu.Unlock()
+
+			var output []byte
+			var err error
+			if doFullCapture {
+				output, err = m.captureFullPane(sessionName)
+			} else {
+				output, err = m.captureVisiblePane(sessionName)
+			}
 			if err != nil {
+				m.mu.RLock()
+				logger := m.logger
+				m.mu.RUnlock()
+				if logger != nil {
+					logger.Debug("capture failed",
+						"session_name", sessionName,
+						"full_capture", doFullCapture,
+						"error", err.Error())
+				}
 				continue
 			}
 
@@ -433,6 +465,57 @@ func (m *Manager) captureLoop() {
 			}
 		}
 	}
+}
+
+// getHistorySize queries the current tmux pane history size.
+// Returns -1 if the query fails (indicates session may not exist or tmux error).
+// Note: Called without lock since it's a tmux query, and lastHistorySize is only
+// modified within the captureLoop goroutine.
+func (m *Manager) getHistorySize(sessionName string) int {
+	cmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#{history_size}")
+	output, err := cmd.Output()
+	if err != nil {
+		// Session not found is expected when session ends - don't log
+		// Other errors (tmux crash, etc.) are worth logging at debug level
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := string(exitErr.Stderr)
+			if !strings.Contains(stderr, "can't find") && !strings.Contains(stderr, "no server running") {
+				m.mu.RLock()
+				logger := m.logger
+				m.mu.RUnlock()
+				if logger != nil {
+					logger.Debug("getHistorySize failed", "session_name", sessionName, "error", err.Error())
+				}
+			}
+		}
+		return -1
+	}
+	var size int
+	_, err = fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &size)
+	if err != nil {
+		m.mu.RLock()
+		logger := m.logger
+		m.mu.RUnlock()
+		if logger != nil {
+			logger.Debug("getHistorySize parse failed",
+				"session_name", sessionName,
+				"output", strings.TrimSpace(string(output)),
+				"error", err.Error())
+		}
+		return -1
+	}
+	return size
+}
+
+// captureVisiblePane captures only the visible pane content (no scrollback history).
+// This is much faster than capturing the full scrollback buffer.
+func (m *Manager) captureVisiblePane(sessionName string) ([]byte, error) {
+	return exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-e").Output()
+}
+
+// captureFullPane captures the full pane content including scrollback history.
+func (m *Manager) captureFullPane(sessionName string) ([]byte, error) {
+	return exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-e", "-S", "-", "-E", "-").Output()
 }
 
 // checkTimeouts checks for various timeout conditions and triggers callbacks

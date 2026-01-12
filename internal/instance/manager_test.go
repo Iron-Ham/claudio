@@ -242,6 +242,29 @@ func TestDefaultManagerConfig(t *testing.T) {
 	}
 }
 
+func TestManager_DifferentialCaptureFieldsInitialized(t *testing.T) {
+	mgr := NewManager("test-diff-capture", "/tmp", "task")
+
+	// Verify differential capture fields are initialized to zero values
+	if mgr.lastHistorySize != 0 {
+		t.Errorf("lastHistorySize should be 0 initially, got %d", mgr.lastHistorySize)
+	}
+
+	if mgr.fullRefreshCounter != 0 {
+		t.Errorf("fullRefreshCounter should be 0 initially, got %d", mgr.fullRefreshCounter)
+	}
+}
+
+func TestManager_GetHistorySize_NoSession(t *testing.T) {
+	mgr := NewManager("nonexistent-hist-test", "/tmp", "task")
+
+	// getHistorySize should return -1 for a non-existent session
+	size := mgr.getHistorySize("nonexistent-session-xyz")
+	if size != -1 {
+		t.Errorf("getHistorySize for non-existent session should return -1, got %d", size)
+	}
+}
+
 func TestListClaudioTmuxSessions_NoTmuxServer(t *testing.T) {
 	// This test may return nil or an empty list depending on whether tmux is running
 	// The important thing is it should not error in a way that causes a panic
