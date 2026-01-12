@@ -7,6 +7,7 @@ package input
 
 import (
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -106,6 +107,16 @@ func WithTmuxSender(sender TmuxSender) Option {
 func WithMaxHistory(max int) Option {
 	return func(h *Handler) {
 		h.maxHistory = max
+	}
+}
+
+// WithPersistentSender creates a persistent tmux sender for the given session.
+// This uses tmux control mode to maintain a persistent connection, avoiding
+// subprocess spawn overhead for each character sent.
+// This option is mutually exclusive with WithTmuxSender.
+func WithPersistentSender(sessionName string, opts ...PersistentOption) Option {
+	return func(h *Handler) {
+		h.sender = NewPersistentTmuxSender(sessionName, opts...)
 	}
 }
 
@@ -351,4 +362,17 @@ func (h *Handler) ClearBuffer() {
 	h.bufferLock.Lock()
 	defer h.bufferLock.Unlock()
 	h.buffer = h.buffer[:0]
+}
+
+// Close releases resources held by the handler.
+// If the handler uses a persistent sender, this closes the connection.
+// This should be called when the handler is no longer needed.
+func (h *Handler) Close() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if closer, ok := h.sender.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
