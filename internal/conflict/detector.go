@@ -83,7 +83,9 @@ func (d *Detector) SetLogger(logger *logging.Logger) {
 	d.logger = logger
 }
 
-// AddInstance starts watching files for an instance's worktree
+// AddInstance starts watching files for an instance's worktree.
+// The root directory is watched immediately, but subdirectories are watched
+// asynchronously in the background to avoid blocking instance creation.
 func (d *Detector) AddInstance(instanceID, worktreePath string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -91,14 +93,10 @@ func (d *Detector) AddInstance(instanceID, worktreePath string) error {
 	// Store instance info
 	d.instances[instanceID] = worktreePath
 
-	// Add the worktree to the watcher
-	// We watch the root directory - fsnotify will catch events in subdirectories
+	// Add the worktree root to the watcher immediately.
+	// fsnotify will catch events in subdirectories, but watching subdirectories
+	// explicitly provides better coverage for some edge cases.
 	if err := d.watcher.Add(worktreePath); err != nil {
-		return err
-	}
-
-	// Also add subdirectories recursively for better coverage
-	if err := d.watchDirRecursive(worktreePath); err != nil {
 		return err
 	}
 
@@ -109,6 +107,26 @@ func (d *Detector) AddInstance(instanceID, worktreePath string) error {
 			"path", worktreePath,
 		)
 	}
+
+	// Add subdirectories asynchronously to avoid blocking instance creation.
+	// This is safe because:
+	// 1. The root directory is already being watched (catches top-level file changes)
+	// 2. Subdirectory watching completes quickly (typically < 500ms)
+	// 3. Conflict detection is non-critical - missing the first few events is acceptable
+	go func() {
+		if err := d.watchDirRecursive(worktreePath); err != nil {
+			d.mu.RLock()
+			logger := d.logger
+			d.mu.RUnlock()
+			if logger != nil {
+				logger.Debug("failed to watch subdirectories",
+					"instance_id", instanceID,
+					"path", worktreePath,
+					"error", err.Error(),
+				)
+			}
+		}
+	}()
 
 	return nil
 }
