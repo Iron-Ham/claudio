@@ -1,2 +1,62 @@
-The terminal doesn't clearly display user input, nor does it clearly display command output. 
-We should have a fully functional terminal there. It should also be taller; it's currently too short to be useful. 
+# Task: Extract TUI TerminalManager
+
+## Part of Ultra-Plan: Refactor four monolithic god objects into approximately 36 focused components across 4 execution groups. Group 1 extracts foundational interfaces and components with no dependencies. Group 2 implements prompt builders, panel renderers, and initial facade refactors. Group 3 extracts phase executors and TUI facade. Group 4 refactors Coordinator as the final thin facade.
+
+## Your Task
+
+Extract terminal pane management from TUI Model into `internal/tui/terminal/manager.go`.
+
+Create struct TerminalManager with methods:
+- SetSize(width, height int)
+- GetPaneDimensions() PaneDimensions
+- ToggleFocus()
+- SetLayout(layout LayoutMode)
+
+Move terminal sizing and pane layout logic. The manager should:
+- Track terminal dimensions
+- Calculate pane sizes
+- Handle focus between panes
+
+Write tests. Update Model to use TerminalManager.
+
+Files to modify:
+- internal/tui/terminal/manager.go
+- internal/tui/terminal/manager_test.go
+- internal/tui/app.go
+
+Part of issue #255.
+
+## Expected Files
+
+You are expected to work with these files:
+- internal/tui/terminal/manager.go
+- internal/tui/terminal/manager_test.go
+- internal/tui/app.go
+
+## Guidelines
+
+- Focus only on this specific task
+- Do not modify files outside of your assigned scope unless necessary
+- Commit your changes before writing the completion file
+
+## Completion Protocol
+
+When your task is complete, you MUST write a completion file to signal the orchestrator:
+
+1. Use Write tool to create `.claudio-task-complete.json` in your worktree root
+2. Include this JSON structure:
+```json
+{
+  "task_id": "task-12-terminalmanager",
+  "status": "complete",
+  "summary": "Brief description of what you accomplished",
+  "files_modified": ["list", "of", "files", "you", "changed"],
+  "notes": "Any implementation notes for the consolidation phase",
+  "issues": ["Any concerns or blocking issues found"],
+  "suggestions": ["Suggestions for integration with other tasks"],
+  "dependencies": ["Any new runtime dependencies added"]
+}
+```
+
+3. Use status "blocked" if you cannot complete (explain in issues), or "failed" if something broke
+4. This file signals that your work is done and provides context for consolidation

@@ -295,18 +295,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		wasReady := m.ready
-		m.width = msg.Width
-		m.height = msg.Height
+		m.terminalManager.SetSize(msg.Width, msg.Height)
 		m.ready = true
 
 		// Calculate the content area dimensions and resize tmux sessions
-		contentWidth, contentHeight := CalculateContentDimensions(m.width, m.height)
+		contentWidth, contentHeight := CalculateContentDimensions(m.terminalManager.Width(), m.terminalManager.Height())
 		if m.orchestrator != nil && contentWidth > 0 && contentHeight > 0 {
 			m.orchestrator.ResizeAllInstances(contentWidth, contentHeight)
 		}
 
 		// Resize terminal pane if visible
-		if m.terminalVisible {
+		if m.terminalManager.IsVisible() {
 			m.resizeTerminal()
 		}
 
@@ -330,7 +329,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update outputs from instances
 		m.updateOutputs()
 		// Update terminal pane output if visible
-		if m.terminalVisible {
+		if m.terminalManager.IsVisible() {
 			m.updateTerminalOutput()
 		}
 		// Check for plan file during planning phase (proactive detection)
@@ -485,7 +484,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle terminal mode - forward keys to the terminal pane's tmux session
-	if m.terminalMode {
+	if m.terminalManager.IsFocused() {
 		// Ctrl+] exits terminal mode (same escape as input mode)
 		if msg.Type == tea.KeyCtrlCloseBracket {
 			m.exitTerminalMode()
@@ -753,7 +752,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+shift+t":
 		// Switch terminal directory mode (worktree <-> invocation)
-		if m.terminalVisible {
+		if m.terminalManager.IsVisible() {
 			m.switchTerminalDir()
 		}
 		return m, nil
@@ -917,7 +916,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Go to bottom of diff or output (re-enables auto-scroll)
 		if m.showDiff {
 			lines := strings.Split(m.diffContent, "\n")
-			maxLines := m.height - 14
+			maxLines := m.terminalManager.Height() - 14
 			if maxLines < 5 {
 				maxLines = 5
 			}
@@ -981,7 +980,7 @@ func (m Model) CurrentInputMode() input.Mode {
 		return input.ModeFilter
 	case m.inputMode:
 		return input.ModeInput
-	case m.terminalMode:
+	case m.terminalManager.IsFocused():
 		return input.ModeTerminal
 	case m.addingTask:
 		return input.ModeTaskInput
@@ -1104,7 +1103,7 @@ func (m *Model) applyCommandResult(result command.Result) {
 			sessionID = m.orchestrator.SessionID()
 		}
 		m.toggleTerminalVisibility(sessionID)
-		if m.terminalVisible {
+		if m.terminalManager.IsVisible() {
 			m.infoMessage = "Terminal pane opened. Press [:t] to focus, [`] to hide."
 		} else {
 			m.infoMessage = "Terminal pane closed."
@@ -1158,6 +1157,118 @@ func (m *Model) applyCommandResult(result command.Result) {
 	if result.EnsureActiveVisible {
 		m.ensureActiveVisible()
 	}
+}
+
+func (m Model) cmdTerminal() (tea.Model, tea.Cmd) {
+	sessionID := ""
+	if m.orchestrator != nil {
+		sessionID = m.orchestrator.SessionID()
+	}
+	m.toggleTerminalVisibility(sessionID)
+	if m.terminalManager.IsVisible() {
+		m.infoMessage = "Terminal pane opened. Press [:t] to focus, [`] to hide."
+	} else {
+		m.infoMessage = "Terminal pane closed."
+	}
+	return m, nil
+}
+
+func (m Model) cmdTerminalDirWorktree() (tea.Model, tea.Cmd) {
+	if m.terminalDirMode == TerminalDirWorktree {
+		m.infoMessage = "Terminal is already in worktree mode."
+		return m, nil
+	}
+	m.terminalDirMode = TerminalDirWorktree
+	if m.terminalProcess != nil && m.terminalProcess.IsRunning() {
+		targetDir := m.getTerminalDir()
+		if err := m.terminalProcess.ChangeDirectory(targetDir); err != nil {
+			m.errorMessage = "Failed to change directory: " + err.Error()
+		} else {
+			m.infoMessage = "Terminal: switched to worktree"
+		}
+	} else {
+		m.infoMessage = "Terminal will use worktree when opened."
+	}
+	return m, nil
+}
+
+func (m Model) cmdTerminalDirInvocation() (tea.Model, tea.Cmd) {
+	if m.terminalDirMode == TerminalDirInvocation {
+		m.infoMessage = "Terminal is already in invocation directory mode."
+		return m, nil
+	}
+	m.terminalDirMode = TerminalDirInvocation
+	if m.terminalProcess != nil && m.terminalProcess.IsRunning() {
+		targetDir := m.getTerminalDir()
+		if err := m.terminalProcess.ChangeDirectory(targetDir); err != nil {
+			m.errorMessage = "Failed to change directory: " + err.Error()
+		} else {
+			m.infoMessage = "Terminal: switched to invocation directory"
+		}
+	} else {
+		m.infoMessage = "Terminal will use invocation directory when opened."
+	}
+	return m, nil
+}
+
+// Ultraplan command implementations
+
+func (m Model) cmdUltraPlanCancel() (tea.Model, tea.Cmd) {
+	// Check if we're in ultraplan mode
+	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
+		m.errorMessage = "Not in ultraplan mode"
+		return m, nil
+	}
+
+	session := m.ultraPlan.Coordinator.Session()
+	if session == nil {
+		m.errorMessage = "No active ultraplan session"
+		return m, nil
+	}
+
+	// Only allow cancellation during executing phase
+	if session.Phase != orchestrator.PhaseExecuting {
+		m.errorMessage = "Can only cancel during execution phase"
+		return m, nil
+	}
+
+	m.ultraPlan.Coordinator.Cancel()
+	m.infoMessage = "Execution cancelled"
+
+	// Log user decision
+	if m.logger != nil {
+		m.logger.Info("user cancelled ultraplan execution via command mode")
+	}
+
+	return m, nil
+}
+
+func (m Model) cmdTmux() (tea.Model, tea.Cmd) {
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	mgr := m.orchestrator.GetInstanceManager(inst.ID)
+	if mgr == nil {
+		m.infoMessage = "Instance has no manager"
+		return m, nil
+	}
+
+	m.infoMessage = "Attach with: " + mgr.AttachCommand()
+	return m, nil
+}
+
+func (m Model) cmdPR() (tea.Model, tea.Cmd) {
+	inst := m.activeInstance()
+	if inst == nil {
+		m.infoMessage = "No instance selected"
+		return m, nil
+	}
+
+	m.infoMessage = fmt.Sprintf("Create PR: claudio pr %s  (add --draft for draft PR)", inst.ID)
+	return m, nil
 }
 
 // sendKeyToTmux sends a key event to the tmux session
@@ -1799,7 +1910,7 @@ func (m *Model) scrollToMatch() {
 	}
 
 	matchLine := current.LineNumber
-	maxLines := m.height - 12
+	maxLines := m.terminalManager.Height() - 12
 	if maxLines < 5 {
 		maxLines = 5
 	}
@@ -2013,22 +2124,17 @@ func (m Model) View() string {
 	b.WriteString("\n")
 
 	// Calculate widths for sidebar and main content
+	// Get pane dimensions from terminal manager
+	dims := m.terminalManager.GetPaneDimensions()
 	effectiveSidebarWidth := SidebarWidth
-	if m.width < 80 {
+	if dims.TerminalWidth < 80 {
 		effectiveSidebarWidth = SidebarMinWidth
 	}
-	mainContentWidth := m.width - effectiveSidebarWidth - 3 // 3 for gap between panels
+	mainContentWidth := dims.TerminalWidth - effectiveSidebarWidth - 3 // 3 for gap between panels
 
-	// Calculate available height for the main area
-	// Reduce height when terminal pane is visible
-	terminalHeight := m.TerminalPaneHeight()
-	mainAreaHeight := m.height - 6 // Header + help bar + margins
-	if m.terminalVisible && terminalHeight > 0 {
-		mainAreaHeight -= terminalHeight + 1 // +1 for spacing
-	}
-	if mainAreaHeight < 10 {
-		mainAreaHeight = 10 // Minimum height for main area
-	}
+	// Main area height is pre-calculated by terminal manager
+	// (accounts for header, footer, and terminal pane)
+	mainAreaHeight := dims.MainAreaHeight
 
 	// Sidebar + Content area (horizontal layout)
 	// Use ultra-plan specific rendering if in ultra-plan mode
@@ -2061,7 +2167,7 @@ func (m Model) View() string {
 	b.WriteString(mainArea)
 
 	// Terminal pane (if visible)
-	if m.terminalVisible {
+	if m.terminalManager.IsVisible() {
 		b.WriteString("\n")
 		b.WriteString(m.renderTerminalPane())
 	}
@@ -2104,20 +2210,20 @@ func (m Model) renderHeader() string {
 		title = fmt.Sprintf("Claudio: %s", m.session.Name)
 	}
 
-	return styles.Header.Width(m.width).Render(title)
+	return styles.Header.Width(m.terminalManager.Width()).Render(title)
 }
 
 // renderTerminalPane renders the terminal pane at the bottom of the screen.
 func (m Model) renderTerminalPane() string {
-	terminalHeight := m.TerminalPaneHeight()
-	if terminalHeight == 0 {
+	dims := m.terminalManager.GetPaneDimensions()
+	if dims.TerminalPaneHeight == 0 {
 		return ""
 	}
 
 	// Build the terminal state for the view
 	state := view.TerminalState{
 		Output:         m.terminalOutput,
-		TerminalMode:   m.terminalMode,
+		TerminalMode:   m.terminalManager.IsFocused(),
 		InvocationDir:  m.invocationDir,
 		IsWorktreeMode: m.terminalDirMode == TerminalDirWorktree,
 	}
@@ -2136,7 +2242,7 @@ func (m Model) renderTerminalPane() string {
 		}
 	}
 
-	termView := view.NewTerminalView(m.width, terminalHeight)
+	termView := view.NewTerminalView(dims.TerminalWidth, dims.TerminalPaneHeight)
 	return termView.Render(state)
 }
 
@@ -2410,7 +2516,7 @@ func (m Model) renderDiffPanel(width int) string {
 	}
 
 	// Calculate available height for diff content
-	maxLines := m.height - 14
+	maxLines := m.terminalManager.Height() - 14
 	if maxLines < 5 {
 		maxLines = 5
 	}
@@ -2533,7 +2639,7 @@ func (m Model) renderHelp() string {
 		)
 	}
 
-	if m.terminalMode {
+	if m.terminalManager.IsFocused() {
 		dirMode := "invoke"
 		if m.terminalDirMode == TerminalDirWorktree {
 			dirMode = "worktree"
@@ -2587,7 +2693,7 @@ func (m Model) renderHelp() string {
 	}
 
 	// Add terminal key based on visibility
-	if m.terminalVisible {
+	if m.terminalManager.IsVisible() {
 		keys = append(keys, styles.HelpKey.Render("[:t]")+" term "+styles.HelpKey.Render("[`]")+" hide")
 	} else {
 		keys = append(keys, styles.HelpKey.Render("[`]")+" term")

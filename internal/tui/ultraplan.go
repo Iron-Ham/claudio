@@ -76,8 +76,8 @@ func (m *Model) createUltraplanView() *view.UltraplanView {
 		Session:      m.session,
 		UltraPlan:    m.ultraPlan,
 		ActiveTab:    m.activeTab,
-		Width:        m.width,
-		Height:       m.height,
+		Width:        m.terminalManager.Width(),
+		Height:       m.terminalManager.Height(),
 		Outputs:      m.outputManager.GetAllOutputs(),
 		GetInstance: func(id string) *orchestrator.Instance {
 			return m.orchestrator.GetInstance(id)

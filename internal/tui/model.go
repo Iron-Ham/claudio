@@ -70,6 +70,9 @@ type Model struct {
 	// Input routing
 	inputRouter *input.Router
 
+	// Terminal pane manager (owns dimensions and layout calculations)
+	terminalManager *terminal.Manager
+
 	// Ultra-plan mode (nil if not in ultra-plan mode)
 	ultraPlan *UltraPlanState
 
@@ -78,8 +81,6 @@ type Model struct {
 
 	// UI state
 	activeTab       int
-	width           int
-	height          int
 	ready           bool
 	quitting        bool
 	showHelp        bool
@@ -130,13 +131,10 @@ type Model struct {
 	filterRegex      *regexp.Regexp  // Compiled custom filter regex
 	outputScroll     int             // Scroll position in output (for search navigation)
 
-	// Terminal pane state
-	terminalVisible bool              // Whether the terminal pane is shown
-	terminalMode    bool              // Whether keys are forwarded to the terminal pane
+	// Terminal pane state (dimension management delegated to terminalManager)
 	terminalProcess *terminal.Process // Manages the terminal tmux session (nil until first toggle)
 	terminalDirMode TerminalDirMode   // Which directory the terminal is in
 	terminalOutput  string            // Cached terminal output
-	terminalHeight  int               // Height of the terminal pane in lines
 	invocationDir   string            // Directory where Claudio was invoked (for terminal)
 }
 
@@ -247,6 +245,7 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 		inputRouter:      input.NewRouter(),
 		outputManager:    output.NewManager(),
 		searchEngine:     search.NewEngine(),
+		terminalManager:  terminal.NewManager(),
 		filterCategories: map[string]bool{
 			"errors":   true,
 			"warnings": true,
@@ -255,8 +254,7 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 			"progress": true,
 		},
 		// Terminal pane defaults
-		invocationDir:  invocationDir,
-		terminalHeight: DefaultTerminalHeight,
+		invocationDir: invocationDir,
 	}
 }
 
@@ -280,7 +278,7 @@ func (m *Model) syncRouterState() {
 		m.inputRouter.SetMode(input.ModeFilter)
 	case m.inputMode:
 		m.inputRouter.SetMode(input.ModeInput)
-	case m.terminalMode:
+	case m.terminalManager.IsFocused():
 		m.inputRouter.SetMode(input.ModeTerminal)
 	case m.addingTask:
 		m.inputRouter.SetMode(input.ModeTaskInput)
@@ -339,8 +337,8 @@ func (m *Model) ensureActiveVisible() {
 	// Calculate visible slots (same calculation as in renderSidebar)
 	// Reserve: 1 for title, 1 for blank line, 1 for add hint, 2 for scroll indicators, plus border padding
 	reservedLines := 6
-	mainAreaHeight := m.height - 6 // Same as in View()
-	availableSlots := mainAreaHeight - reservedLines
+	dims := m.terminalManager.GetPaneDimensions()
+	availableSlots := dims.MainAreaHeight - reservedLines
 	if availableSlots < 3 {
 		availableSlots = 3
 	}
@@ -372,7 +370,9 @@ func (m *Model) ensureActiveVisible() {
 
 // getOutputMaxLines returns the maximum number of lines visible in the output area
 func (m Model) getOutputMaxLines() int {
-	maxLines := m.height - 12
+	dims := m.terminalManager.GetPaneDimensions()
+	// Output area is within main area, minus some reserved lines for header/status
+	maxLines := dims.MainAreaHeight - 6
 	if maxLines < 5 {
 		maxLines = 5
 	}
@@ -537,33 +537,31 @@ func isWordChar(r rune) bool {
 // DefaultTerminalHeight is the default height of the terminal pane in lines.
 // Set to 15 to provide a more useful terminal display showing adequate
 // command output and shell history.
-const DefaultTerminalHeight = 15
+// Deprecated: Use terminal.DefaultPaneHeight instead.
+const DefaultTerminalHeight = terminal.DefaultPaneHeight
 
 // MinTerminalHeight is the minimum height of the terminal pane.
-const MinTerminalHeight = 5
+// Deprecated: Use terminal.MinPaneHeight instead.
+const MinTerminalHeight = terminal.MinPaneHeight
 
 // MaxTerminalHeightRatio is the maximum ratio of terminal height to total height.
-const MaxTerminalHeightRatio = 0.5
+// Deprecated: Use terminal.MaxPaneHeightRatio instead.
+const MaxTerminalHeightRatio = terminal.MaxPaneHeightRatio
 
 // IsTerminalMode returns true if the terminal pane has input focus.
 func (m Model) IsTerminalMode() bool {
-	return m.terminalMode
+	return m.terminalManager.IsFocused()
 }
 
 // IsTerminalVisible returns true if the terminal pane is visible.
 func (m Model) IsTerminalVisible() bool {
-	return m.terminalVisible
+	return m.terminalManager.IsVisible()
 }
 
 // TerminalPaneHeight returns the current terminal pane height (0 if hidden).
 func (m Model) TerminalPaneHeight() int {
-	if !m.terminalVisible {
-		return 0
-	}
-	if m.terminalHeight == 0 {
-		return DefaultTerminalHeight
-	}
-	return m.terminalHeight
+	dims := m.terminalManager.GetPaneDimensions()
+	return dims.TerminalPaneHeight
 }
 
 // getTerminalDir returns the directory path for the terminal based on current mode.
@@ -582,30 +580,21 @@ func (m Model) getTerminalDir() string {
 // toggleTerminalVisibility toggles the terminal pane on or off.
 // If turning on and process doesn't exist, it will be created lazily.
 func (m *Model) toggleTerminalVisibility(sessionID string) {
-	m.terminalVisible = !m.terminalVisible
+	nowVisible := m.terminalManager.ToggleVisibility()
 
-	if m.terminalVisible {
+	if nowVisible {
 		// Initialize terminal process if needed (lazy initialization)
 		if m.terminalProcess == nil {
-			// Account for border (2 lines) and header (1 line) when setting tmux dimensions
-			paneHeight := m.TerminalPaneHeight()
-			contentHeight := paneHeight - 3
-			if contentHeight < 3 {
-				contentHeight = 3
-			}
-			// Width accounts for border (2 chars) and padding (2 chars)
-			contentWidth := m.width - 4
-			if contentWidth < 20 {
-				contentWidth = 20
-			}
-			m.terminalProcess = terminal.NewProcess(sessionID, m.invocationDir, contentWidth, contentHeight)
+			// Get content dimensions from manager
+			dims := m.terminalManager.GetPaneDimensions()
+			m.terminalProcess = terminal.NewProcess(sessionID, m.invocationDir, dims.TerminalPaneContentWidth, dims.TerminalPaneContentHeight)
 		}
 
 		// Start the process if not running
 		if !m.terminalProcess.IsRunning() {
 			if err := m.terminalProcess.Start(); err != nil {
 				m.errorMessage = "Failed to start terminal: " + err.Error()
-				m.terminalVisible = false
+				m.terminalManager.SetLayout(terminal.LayoutHidden)
 				return
 			}
 		}
@@ -620,25 +609,20 @@ func (m *Model) toggleTerminalVisibility(sessionID string) {
 				m.infoMessage = "Terminal opened but could not change to target directory"
 			}
 		}
-
-		// Set default height if not set
-		if m.terminalHeight == 0 {
-			m.terminalHeight = DefaultTerminalHeight
-		}
 	}
 }
 
 // enterTerminalMode enters terminal input mode (keys go to terminal).
 func (m *Model) enterTerminalMode() {
-	if !m.terminalVisible || m.terminalProcess == nil || !m.terminalProcess.IsRunning() {
+	if !m.terminalManager.IsVisible() || m.terminalProcess == nil || !m.terminalProcess.IsRunning() {
 		return
 	}
-	m.terminalMode = true
+	m.terminalManager.SetFocused(true)
 }
 
 // exitTerminalMode exits terminal input mode.
 func (m *Model) exitTerminalMode() {
-	m.terminalMode = false
+	m.terminalManager.SetFocused(false)
 }
 
 // switchTerminalDir toggles between worktree and invocation directory modes.
@@ -686,24 +670,12 @@ func (m *Model) resizeTerminal() {
 		return
 	}
 
-	// Account for the border (2 lines: top and bottom) and header (1 line)
-	// when calculating the tmux pane dimensions. The terminal pane height is
-	// the total visible height, but tmux needs the content area dimensions.
-	paneHeight := m.TerminalPaneHeight()
-	contentHeight := paneHeight - 3 // 2 for border, 1 for header
-	if contentHeight < 3 {
-		contentHeight = 3
-	}
+	// Get content dimensions from manager (accounts for borders, padding, header)
+	dims := m.terminalManager.GetPaneDimensions()
 
-	// Width also needs adjustment for border (2 chars) and padding (2 chars)
-	contentWidth := m.width - 4
-	if contentWidth < 20 {
-		contentWidth = 20
-	}
-
-	if err := m.terminalProcess.Resize(contentWidth, contentHeight); err != nil {
+	if err := m.terminalProcess.Resize(dims.TerminalPaneContentWidth, dims.TerminalPaneContentHeight); err != nil {
 		if m.logger != nil {
-			m.logger.Warn("failed to resize terminal", "width", contentWidth, "height", contentHeight, "error", err)
+			m.logger.Warn("failed to resize terminal", "width", dims.TerminalPaneContentWidth, "height", dims.TerminalPaneContentHeight, "error", err)
 		}
 	}
 }
@@ -765,12 +737,12 @@ func (m Model) Conflicts() []conflict.FileConflict {
 
 // TerminalWidth returns the terminal width.
 func (m Model) TerminalWidth() int {
-	return m.width
+	return m.terminalManager.Width()
 }
 
 // TerminalHeight returns the terminal height.
 func (m Model) TerminalHeight() int {
-	return m.height
+	return m.terminalManager.Height()
 }
 
 // IsAddingTask returns whether the user is currently adding a new task

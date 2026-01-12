@@ -5,14 +5,16 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/tui/command"
+	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// testModel creates a Model with the commandHandler initialized for testing.
+// testModel creates a Model with the commandHandler and terminalManager initialized for testing.
 // This is necessary because tests construct Model directly instead of using NewModel.
 func testModel() Model {
 	return Model{
-		commandHandler: command.New(),
+		commandHandler:  command.New(),
+		terminalManager: terminal.NewManager(),
 	}
 }
 
@@ -120,11 +122,10 @@ func TestHandleCommandInput(t *testing.T) {
 
 func TestTaskInputEnter(t *testing.T) {
 	t.Run("enter key exits task input mode without task", func(t *testing.T) {
-		m := Model{
-			addingTask:      true,
-			taskInput:       "",
-			taskInputCursor: 0,
-		}
+		m := newTestModel()
+		m.addingTask = true
+		m.taskInput = ""
+		m.taskInputCursor = 0
 
 		msg := tea.KeyMsg{Type: tea.KeyEnter}
 		result, _ := m.handleKeypress(msg)
@@ -144,12 +145,11 @@ func TestTaskInputEnter(t *testing.T) {
 		// The important test is the empty task one which confirms Enter is detected
 		t.Skip("skipping - requires mock orchestrator")
 
-		m := Model{
-			addingTask:      true,
-			taskInput:       "test task",
-			taskInputCursor: 9,
-			// orchestrator is nil - AddInstance will fail but mode should still exit
-		}
+		m := newTestModel()
+		m.addingTask = true
+		m.taskInput = "test task"
+		m.taskInputCursor = 9
+		// orchestrator is nil - AddInstance will fail but mode should still exit
 
 		msg := tea.KeyMsg{Type: tea.KeyEnter}
 		result, _ := m.handleKeypress(msg)
@@ -166,11 +166,10 @@ func TestTaskInputEnter(t *testing.T) {
 	t.Run("enter string also submits task", func(t *testing.T) {
 		// Test that msg.String() == "enter" would also be detected
 		// This is to check if the terminal might be sending Enter differently
-		m := Model{
-			addingTask:      true,
-			taskInput:       "",
-			taskInputCursor: 0,
-		}
+		m := newTestModel()
+		m.addingTask = true
+		m.taskInput = ""
+		m.taskInputCursor = 0
 
 		// Simulate what some terminals might send
 		msg := tea.KeyMsg{Type: tea.KeyEnter}
@@ -186,11 +185,10 @@ func TestTaskInputEnter(t *testing.T) {
 	})
 
 	t.Run("alt+enter inserts newline instead of submitting", func(t *testing.T) {
-		m := Model{
-			addingTask:      true,
-			taskInput:       "test",
-			taskInputCursor: 4,
-		}
+		m := newTestModel()
+		m.addingTask = true
+		m.taskInput = "test"
+		m.taskInputCursor = 4
 
 		msg := tea.KeyMsg{Type: tea.KeyEnter, Alt: true}
 		result, _ := m.handleKeypress(msg)
@@ -205,11 +203,10 @@ func TestTaskInputEnter(t *testing.T) {
 	})
 
 	t.Run("ctrl+j inserts newline instead of submitting", func(t *testing.T) {
-		m := Model{
-			addingTask:      true,
-			taskInput:       "test",
-			taskInputCursor: 4,
-		}
+		m := newTestModel()
+		m.addingTask = true
+		m.taskInput = "test"
+		m.taskInputCursor = 4
 
 		msg := tea.KeyMsg{Type: tea.KeyCtrlJ}
 		result, _ := m.handleKeypress(msg)
@@ -224,11 +221,10 @@ func TestTaskInputEnter(t *testing.T) {
 	})
 
 	t.Run("typing adds to task input", func(t *testing.T) {
-		m := Model{
-			addingTask:      true,
-			taskInput:       "te",
-			taskInputCursor: 2,
-		}
+		m := newTestModel()
+		m.addingTask = true
+		m.taskInput = "te"
+		m.taskInputCursor = 2
 
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s', 't'}}
 		result, _ := m.handleKeypress(msg)
@@ -245,11 +241,10 @@ func TestTaskInputEnter(t *testing.T) {
 	t.Run("newline rune submits task (terminal compat)", func(t *testing.T) {
 		// Some terminals/input methods send Enter as KeyRunes with \n
 		// This should submit the task, not insert a newline
-		m := Model{
-			addingTask:      true,
-			taskInput:       "",
-			taskInputCursor: 0,
-		}
+		m := newTestModel()
+		m.addingTask = true
+		m.taskInput = ""
+		m.taskInputCursor = 0
 
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\n'}}
 		result, _ := m.handleKeypress(msg)
@@ -266,11 +261,10 @@ func TestTaskInputEnter(t *testing.T) {
 	t.Run("carriage return rune submits task (terminal compat)", func(t *testing.T) {
 		// Some terminals send Enter as KeyRunes with \r
 		// This should submit the task, not insert a carriage return
-		m := Model{
-			addingTask:      true,
-			taskInput:       "",
-			taskInputCursor: 0,
-		}
+		m := newTestModel()
+		m.addingTask = true
+		m.taskInput = ""
+		m.taskInputCursor = 0
 
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\r'}}
 		result, _ := m.handleKeypress(msg)
@@ -583,10 +577,9 @@ func TestConflictsCommandRequiresConflicts(t *testing.T) {
 func TestTerminalFocusCommand(t *testing.T) {
 	t.Run("t command attempts focus when terminal visible", func(t *testing.T) {
 		// Note: enterTerminalMode() requires a running terminal process to actually
-		// set terminalMode=true. This test verifies the command path is correct.
+		// set focused=true. This test verifies the command path is correct.
 		m := testModel()
-		m.terminalVisible = true
-		m.terminalMode = false
+		m.terminalManager.SetLayout(terminal.LayoutVisible)
 		result, _ := m.executeCommand("t")
 		model := result.(Model)
 
@@ -601,13 +594,12 @@ func TestTerminalFocusCommand(t *testing.T) {
 
 	t.Run("t command shows error when terminal not visible", func(t *testing.T) {
 		m := testModel()
-		m.terminalVisible = false
-		m.terminalMode = false
+		// Terminal manager starts with LayoutHidden by default
 		result, _ := m.executeCommand("t")
 		model := result.(Model)
 
-		if model.terminalMode {
-			t.Error("expected terminalMode to remain false when terminal not visible")
+		if model.terminalManager.IsFocused() {
+			t.Error("expected focused to remain false when terminal not visible")
 		}
 		if model.errorMessage == "" {
 			t.Error("expected error message when terminal not visible")
@@ -618,16 +610,15 @@ func TestTerminalFocusCommand(t *testing.T) {
 		// This is a regression test to ensure 't' key doesn't trigger terminal mode
 		// directly - it should only work via command mode (:t)
 		m := testModel()
-		m.terminalVisible = true
-		m.terminalMode = false
+		m.terminalManager.SetLayout(terminal.LayoutVisible)
 		m.commandMode = false
 
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}}
 		result, _ := m.handleKeypress(msg)
 		model := result.(Model)
 
-		if model.terminalMode {
-			t.Error("expected terminalMode to remain false - 't' key should not trigger terminal mode in normal mode")
+		if model.terminalManager.IsFocused() {
+			t.Error("expected focused to remain false - 't' key should not trigger terminal mode in normal mode")
 		}
 	})
 
