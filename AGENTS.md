@@ -172,6 +172,47 @@ This project uses standard Go testing conventions:
 - Concurrent behavior where applicable
 - Integration points between packages
 
+## Changelog
+
+This project maintains a [CHANGELOG.md](CHANGELOG.md) following the [Keep a Changelog](https://keepachangelog.com/) format. The changelog has an **Unreleased** section at the top where changes accumulate until the next release.
+
+### When to Update
+
+Add an entry to the Unreleased section when making:
+- **New features** (`### Added`)
+- **Bug fixes** (`### Fixed`)
+- **Performance improvements** (`### Performance`)
+- **Breaking changes** (`### Changed` or `### Removed`)
+- **Deprecations** (`### Deprecated`)
+
+Skip changelog entries for:
+- Internal refactors that don't change behavior
+- Test-only changes
+- Documentation-only changes (unless significant)
+- Dependency updates (unless they fix bugs or add features)
+
+### Entry Format
+
+Each entry should be a single bullet point with:
+1. **Bold feature name** - Brief description
+2. PR number in parentheses if available
+
+Example:
+```markdown
+### Added
+- **Task Chaining** - Chain tasks together in normal Claudio mode (#228)
+
+### Fixed
+- **Git Subdirectory Detection** - Correctly detect git repository from subdirectories (#142)
+```
+
+### At Release Time
+
+When cutting a release:
+1. Rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`
+2. Add a new empty `## [Unreleased]` section at the top
+3. Add the version link at the bottom of the file
+
 ## Pre-Commit Checklist
 
 Before committing, ensure:
@@ -181,6 +222,7 @@ Before committing, ensure:
 3. Build succeeds: `go build ./...`
 4. All tests pass: `go test ./...`
 5. New code has tests with reasonable coverage
+6. Notable changes have a CHANGELOG.md entry (see above)
 
 ## Project Structure
 
