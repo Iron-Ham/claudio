@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/retry"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/verify"
 )
@@ -61,6 +62,7 @@ type Coordinator struct {
 	logger       *logging.Logger
 	verifier     Verifier
 	retryManager *retry.Manager
+	groupTracker *group.Tracker
 
 	// Running state
 	ctx        context.Context
@@ -167,12 +169,69 @@ func NewCoordinator(orch *Orchestrator, baseSession *Session, ultraSession *Ultr
 		retryMgr.LoadStates(ultraSession.TaskRetries)
 	}
 
+	// Create session adapter for group tracker
+	sessionAdapter := group.NewSessionAdapter(
+		func() group.PlanData {
+			session := manager.Session()
+			if session == nil || session.Plan == nil {
+				return nil
+			}
+			return group.NewPlanAdapter(
+				func() [][]string { return session.Plan.ExecutionOrder },
+				func(taskID string) *group.Task {
+					for i := range session.Plan.Tasks {
+						if session.Plan.Tasks[i].ID == taskID {
+							t := &session.Plan.Tasks[i]
+							return &group.Task{
+								ID:          t.ID,
+								Title:       t.Title,
+								Description: t.Description,
+								Files:       t.Files,
+								DependsOn:   t.DependsOn,
+							}
+						}
+					}
+					return nil
+				},
+			)
+		},
+		func() []string {
+			session := manager.Session()
+			if session == nil {
+				return nil
+			}
+			return session.CompletedTasks
+		},
+		func() []string {
+			session := manager.Session()
+			if session == nil {
+				return nil
+			}
+			return session.FailedTasks
+		},
+		func() map[string]int {
+			session := manager.Session()
+			if session == nil {
+				return nil
+			}
+			return session.TaskCommitCounts
+		},
+		func() int {
+			session := manager.Session()
+			if session == nil {
+				return 0
+			}
+			return session.CurrentGroup
+		},
+	)
+
 	c := &Coordinator{
 		manager:      manager,
 		orch:         orch,
 		baseSession:  baseSession,
 		logger:       sessionLogger,
 		retryManager: retryMgr,
+		groupTracker: group.NewTracker(sessionAdapter),
 		ctx:          ctx,
 		cancelFunc:   cancel,
 		runningTasks: make(map[string]string),
@@ -230,6 +289,11 @@ func (c *Coordinator) syncRetryState() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	session.TaskRetries = c.retryManager.GetAllStates()
+}
+
+// GroupTracker returns the group tracker for execution group management
+func (c *Coordinator) GroupTracker() *group.Tracker {
+	return c.groupTracker
 }
 
 // StoreCandidatePlan stores a candidate plan at the given index with proper mutex protection.
@@ -972,19 +1036,7 @@ func (c *Coordinator) buildTaskPrompt(task *PlannedTask) string {
 
 // getTaskGroupIndex returns the group index for a given task ID, or -1 if not found
 func (c *Coordinator) getTaskGroupIndex(taskID string) int {
-	session := c.Session()
-	if session == nil || session.Plan == nil {
-		return -1
-	}
-
-	for groupIdx, group := range session.Plan.ExecutionOrder {
-		for _, tid := range group {
-			if tid == taskID {
-				return groupIdx
-			}
-		}
-	}
-	return -1
+	return c.groupTracker.GetTaskGroupIndex(taskID)
 }
 
 // monitorTaskInstance monitors an instance and reports when it completes
@@ -1248,11 +1300,11 @@ func (c *Coordinator) checkAndAdvanceGroup() {
 	// incrementing CurrentGroup, otherwise GetReadyTasks() will return tasks
 	// from the next group prematurely.
 	c.mu.RLock()
-	isComplete := session.IsCurrentGroupComplete()
 	currentGroup := session.CurrentGroup
 	c.mu.RUnlock()
 
-	if !isComplete {
+	// Use groupTracker to check completion status
+	if !c.groupTracker.IsGroupComplete(currentGroup) {
 		return
 	}
 
@@ -1289,14 +1341,17 @@ func (c *Coordinator) checkAndAdvanceGroup() {
 	}
 
 	// NOW advance to the next group - only after consolidation succeeds
+	// Use groupTracker.AdvanceGroup to compute the next group
+	nextGroup, _ := c.groupTracker.AdvanceGroup(currentGroup)
 	c.mu.Lock()
-	session.CurrentGroup++
+	session.CurrentGroup = nextGroup
 	c.mu.Unlock()
 
-	// Log group completion
+	// Log group completion using GetGroupTasks for task count
+	groupTasks := c.groupTracker.GetGroupTasks(currentGroup)
 	taskCount := 0
-	if currentGroup < len(session.Plan.ExecutionOrder) {
-		taskCount = len(session.Plan.ExecutionOrder[currentGroup])
+	if groupTasks != nil {
+		taskCount = len(groupTasks)
 	}
 	c.logger.Info("group completed",
 		"group_index", currentGroup,
@@ -2259,50 +2314,7 @@ func (c *Coordinator) GetRunningTasks() map[string]string {
 
 // hasPartialGroupFailure checks if a group has a mix of successful and failed tasks
 func (c *Coordinator) hasPartialGroupFailure(groupIndex int) bool {
-	session := c.Session()
-	if session == nil || session.Plan == nil {
-		return false
-	}
-
-	if groupIndex >= len(session.Plan.ExecutionOrder) {
-		return false
-	}
-
-	taskIDs := session.Plan.ExecutionOrder[groupIndex]
-	successCount := 0
-	failureCount := 0
-
-	for _, taskID := range taskIDs {
-		// Check if in completed with verified commits
-		isCompleted := false
-		for _, ct := range session.CompletedTasks {
-			if ct == taskID {
-				isCompleted = true
-				break
-			}
-		}
-
-		if isCompleted {
-			// Verify it has commits
-			if count, ok := session.TaskCommitCounts[taskID]; ok && count > 0 {
-				successCount++
-			} else {
-				failureCount++
-			}
-			continue
-		}
-
-		// Check if in failed
-		for _, ft := range session.FailedTasks {
-			if ft == taskID {
-				failureCount++
-				break
-			}
-		}
-	}
-
-	// Partial failure = at least one success AND at least one failure
-	return successCount > 0 && failureCount > 0
+	return c.groupTracker.HasPartialFailure(groupIndex)
 }
 
 // handlePartialGroupFailure pauses execution and waits for user decision
