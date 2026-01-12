@@ -1129,7 +1129,13 @@ func (c *Coordinator) monitorTaskInstance(taskID, instanceID string, completionC
 // This checks for both regular task completion (.claudio-task-complete.json) and
 // revision task completion (.claudio-revision-complete.json) since both use this monitor
 func (c *Coordinator) checkForTaskCompletionFile(inst *Instance) bool {
-	found, _ := c.verifier.CheckCompletionFile(inst.WorktreePath)
+	found, err := c.verifier.CheckCompletionFile(inst.WorktreePath)
+	if err != nil {
+		c.logger.Debug("error checking completion file",
+			"instance_id", inst.ID,
+			"worktree", inst.WorktreePath,
+			"error", err)
+	}
 	return found
 }
 
@@ -2596,6 +2602,406 @@ func (c *Coordinator) RetriggerGroup(targetGroup int) error {
 	go c.executionLoop()
 
 	return nil
+}
+
+// GetStepInfo returns information about a step given its instance ID.
+// This is used by the TUI to determine what kind of step is selected for restart/input operations.
+func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
+	session := c.Session()
+	if session == nil || instanceID == "" {
+		return nil
+	}
+
+	// Check if it's the planning coordinator
+	if session.CoordinatorID == instanceID {
+		return &StepInfo{
+			Type:       StepTypePlanning,
+			InstanceID: instanceID,
+			GroupIndex: -1,
+			Label:      "Planning Coordinator",
+		}
+	}
+
+	// Check multi-pass plan coordinators
+	for i, coordID := range session.PlanCoordinatorIDs {
+		if coordID == instanceID {
+			strategies := GetMultiPassStrategyNames()
+			label := fmt.Sprintf("Plan Coordinator %d", i+1)
+			if i < len(strategies) {
+				label = fmt.Sprintf("Plan Coordinator (%s)", strategies[i])
+			}
+			return &StepInfo{
+				Type:       StepTypePlanning,
+				InstanceID: instanceID,
+				GroupIndex: i,
+				Label:      label,
+			}
+		}
+	}
+
+	// Check if it's the plan manager
+	if session.PlanManagerID == instanceID {
+		return &StepInfo{
+			Type:       StepTypePlanManager,
+			InstanceID: instanceID,
+			GroupIndex: -1,
+			Label:      "Plan Manager",
+		}
+	}
+
+	// Check if it's a task instance
+	for taskID, instID := range session.TaskToInstance {
+		if instID == instanceID {
+			task := session.GetTask(taskID)
+			label := taskID
+			if task != nil {
+				label = task.Title
+			}
+			groupIdx := c.getTaskGroupIndex(taskID)
+			return &StepInfo{
+				Type:       StepTypeTask,
+				InstanceID: instanceID,
+				TaskID:     taskID,
+				GroupIndex: groupIdx,
+				Label:      label,
+			}
+		}
+	}
+
+	// Check group consolidators
+	for i, consolidatorID := range session.GroupConsolidatorIDs {
+		if consolidatorID == instanceID {
+			return &StepInfo{
+				Type:       StepTypeGroupConsolidator,
+				InstanceID: instanceID,
+				GroupIndex: i,
+				Label:      fmt.Sprintf("Group %d Consolidator", i+1),
+			}
+		}
+	}
+
+	// Check if it's the synthesis instance
+	if session.SynthesisID == instanceID {
+		return &StepInfo{
+			Type:       StepTypeSynthesis,
+			InstanceID: instanceID,
+			GroupIndex: -1,
+			Label:      "Synthesis",
+		}
+	}
+
+	// Check if it's the revision instance
+	if session.RevisionID == instanceID {
+		return &StepInfo{
+			Type:       StepTypeRevision,
+			InstanceID: instanceID,
+			GroupIndex: -1,
+			Label:      "Revision",
+		}
+	}
+
+	// Check if it's the consolidation instance
+	if session.ConsolidationID == instanceID {
+		return &StepInfo{
+			Type:       StepTypeConsolidation,
+			InstanceID: instanceID,
+			GroupIndex: -1,
+			Label:      "Consolidation",
+		}
+	}
+
+	return nil
+}
+
+// RestartStep restarts the specified step. This stops any existing instance for that step
+// and starts a fresh one. Returns the new instance ID or an error.
+func (c *Coordinator) RestartStep(stepInfo *StepInfo) (string, error) {
+	if stepInfo == nil {
+		return "", fmt.Errorf("step info is nil")
+	}
+
+	session := c.Session()
+	if session == nil {
+		return "", fmt.Errorf("no session")
+	}
+
+	// Stop the existing instance if it exists (best-effort)
+	if stepInfo.InstanceID != "" {
+		inst := c.orch.GetInstance(stepInfo.InstanceID)
+		if inst != nil {
+			if err := c.orch.StopInstance(inst); err != nil {
+				c.logger.Warn("failed to stop existing instance before restart",
+					"instance_id", stepInfo.InstanceID,
+					"step_type", stepInfo.Type,
+					"error", err)
+				// Continue with restart - stopping is best-effort
+			}
+		}
+	}
+
+	switch stepInfo.Type {
+	case StepTypePlanning:
+		return c.restartPlanning()
+
+	case StepTypePlanManager:
+		return c.restartPlanManager()
+
+	case StepTypeTask:
+		return c.restartTask(stepInfo.TaskID)
+
+	case StepTypeSynthesis:
+		return c.restartSynthesis()
+
+	case StepTypeRevision:
+		return c.restartRevision()
+
+	case StepTypeConsolidation:
+		return c.restartConsolidation()
+
+	case StepTypeGroupConsolidator:
+		return c.restartGroupConsolidator(stepInfo.GroupIndex)
+
+	default:
+		return "", fmt.Errorf("unknown step type: %s", stepInfo.Type)
+	}
+}
+
+// restartPlanning restarts the planning phase
+func (c *Coordinator) restartPlanning() (string, error) {
+	session := c.Session()
+
+	// Reset planning-related state
+	c.mu.Lock()
+	session.CoordinatorID = ""
+	session.Plan = nil
+	session.Phase = PhasePlanning
+	c.mu.Unlock()
+
+	// Run planning again
+	if err := c.RunPlanning(); err != nil {
+		return "", fmt.Errorf("failed to restart planning: %w", err)
+	}
+
+	return session.CoordinatorID, nil
+}
+
+// restartPlanManager restarts the plan manager in multi-pass mode
+func (c *Coordinator) restartPlanManager() (string, error) {
+	session := c.Session()
+	if !session.Config.MultiPass {
+		return "", fmt.Errorf("plan manager only exists in multi-pass mode")
+	}
+
+	// Reset plan manager state
+	c.mu.Lock()
+	session.PlanManagerID = ""
+	session.Plan = nil
+	session.Phase = PhasePlanSelection
+	c.mu.Unlock()
+
+	// Run plan manager again
+	if err := c.RunPlanManager(); err != nil {
+		return "", fmt.Errorf("failed to restart plan manager: %w", err)
+	}
+
+	return session.PlanManagerID, nil
+}
+
+// restartTask restarts a specific task
+func (c *Coordinator) restartTask(taskID string) (string, error) {
+	session := c.Session()
+	if taskID == "" {
+		return "", fmt.Errorf("task ID is required")
+	}
+
+	task := session.GetTask(taskID)
+	if task == nil {
+		return "", fmt.Errorf("task %s not found", taskID)
+	}
+
+	// Check if any tasks are currently running
+	c.mu.RLock()
+	runningCount := c.runningCount
+	c.mu.RUnlock()
+
+	if runningCount > 0 {
+		return "", fmt.Errorf("cannot restart task while %d tasks are running", runningCount)
+	}
+
+	// Reset task state
+	c.mu.Lock()
+	// Remove from completed tasks
+	newCompleted := make([]string, 0, len(session.CompletedTasks))
+	for _, t := range session.CompletedTasks {
+		if t != taskID {
+			newCompleted = append(newCompleted, t)
+		}
+	}
+	session.CompletedTasks = newCompleted
+
+	// Remove from failed tasks
+	newFailed := make([]string, 0, len(session.FailedTasks))
+	for _, t := range session.FailedTasks {
+		if t != taskID {
+			newFailed = append(newFailed, t)
+		}
+	}
+	session.FailedTasks = newFailed
+
+	// Remove from TaskToInstance
+	delete(session.TaskToInstance, taskID)
+
+	// Reset retry state
+	c.retryManager.Reset(taskID)
+	session.TaskRetries = c.retryManager.GetAllStates()
+
+	// Reset commit count
+	delete(session.TaskCommitCounts, taskID)
+
+	// Ensure we're in executing phase
+	session.Phase = PhaseExecuting
+
+	// Clear any group decision state
+	session.GroupDecision = nil
+	c.mu.Unlock()
+
+	// Start the task
+	completionChan := make(chan taskCompletion, 1)
+	if err := c.startTask(taskID, completionChan); err != nil {
+		return "", fmt.Errorf("failed to restart task: %w", err)
+	}
+
+	// Get the new instance ID
+	c.mu.RLock()
+	newInstanceID := session.TaskToInstance[taskID]
+	c.mu.RUnlock()
+
+	// Start monitoring in the background
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		for completion := range completionChan {
+			c.handleTaskCompletion(completion)
+		}
+	}()
+
+	if err := c.orch.SaveSession(); err != nil {
+		c.logger.Error("failed to save session after task restart",
+			"task_id", taskID,
+			"new_instance_id", newInstanceID,
+			"error", err)
+	}
+
+	return newInstanceID, nil
+}
+
+// restartSynthesis restarts the synthesis phase
+func (c *Coordinator) restartSynthesis() (string, error) {
+	session := c.Session()
+
+	// Reset synthesis state
+	c.mu.Lock()
+	session.SynthesisID = ""
+	session.SynthesisCompletion = nil
+	session.SynthesisAwaitingApproval = false
+	session.Phase = PhaseSynthesis
+	c.mu.Unlock()
+
+	// Run synthesis again
+	if err := c.RunSynthesis(); err != nil {
+		return "", fmt.Errorf("failed to restart synthesis: %w", err)
+	}
+
+	return session.SynthesisID, nil
+}
+
+// restartRevision restarts the revision phase
+func (c *Coordinator) restartRevision() (string, error) {
+	session := c.Session()
+
+	if session.Revision == nil || len(session.Revision.Issues) == 0 {
+		return "", fmt.Errorf("no revision issues to address")
+	}
+
+	// Reset revision state
+	c.mu.Lock()
+	session.RevisionID = ""
+	session.Phase = PhaseRevision
+	// Keep the issues but reset progress
+	session.Revision.RevisedTasks = make([]string, 0)
+	session.Revision.TasksToRevise = extractTasksToRevise(session.Revision.Issues)
+	c.mu.Unlock()
+
+	// Run revision again
+	if err := c.StartRevision(session.Revision.Issues); err != nil {
+		return "", fmt.Errorf("failed to restart revision: %w", err)
+	}
+
+	return session.RevisionID, nil
+}
+
+// restartConsolidation restarts the consolidation phase
+func (c *Coordinator) restartConsolidation() (string, error) {
+	session := c.Session()
+
+	// Reset consolidation state
+	c.mu.Lock()
+	session.ConsolidationID = ""
+	session.Consolidation = nil
+	session.PRUrls = nil
+	session.Phase = PhaseConsolidating
+	c.mu.Unlock()
+
+	// Start consolidation again
+	if err := c.StartConsolidation(); err != nil {
+		return "", fmt.Errorf("failed to restart consolidation: %w", err)
+	}
+
+	return session.ConsolidationID, nil
+}
+
+// restartGroupConsolidator restarts a specific group consolidator
+func (c *Coordinator) restartGroupConsolidator(groupIndex int) (string, error) {
+	session := c.Session()
+
+	if groupIndex < 0 || groupIndex >= len(session.Plan.ExecutionOrder) {
+		return "", fmt.Errorf("invalid group index: %d", groupIndex)
+	}
+
+	// Reset group consolidator state
+	c.mu.Lock()
+	if groupIndex < len(session.GroupConsolidatorIDs) {
+		session.GroupConsolidatorIDs[groupIndex] = ""
+	}
+	if groupIndex < len(session.GroupConsolidatedBranches) {
+		session.GroupConsolidatedBranches[groupIndex] = ""
+	}
+	if groupIndex < len(session.GroupConsolidationContexts) {
+		session.GroupConsolidationContexts[groupIndex] = nil
+	}
+	c.mu.Unlock()
+
+	// Start group consolidation again
+	if err := c.startGroupConsolidatorSession(groupIndex); err != nil {
+		return "", fmt.Errorf("failed to restart group consolidator: %w", err)
+	}
+
+	// Get the new instance ID
+	c.mu.RLock()
+	var newInstanceID string
+	if groupIndex < len(session.GroupConsolidatorIDs) {
+		newInstanceID = session.GroupConsolidatorIDs[groupIndex]
+	}
+	c.mu.RUnlock()
+
+	if err := c.orch.SaveSession(); err != nil {
+		c.logger.Error("failed to save session after group consolidator restart",
+			"group_index", groupIndex,
+			"new_instance_id", newInstanceID,
+			"error", err)
+	}
+
+	return newInstanceID, nil
 }
 
 // consolidateGroupWithVerification consolidates a group and verifies commits exist

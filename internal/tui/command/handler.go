@@ -312,6 +312,29 @@ func cmdRestart(deps Dependencies) Result {
 		return Result{ErrorMessage: "No orchestrator available"}
 	}
 
+	// Check if we're in ultraplan mode - if so, use step restart
+	if deps.IsUltraPlanMode() {
+		coordinator := deps.GetUltraPlanCoordinator()
+		if coordinator == nil {
+			// Log inconsistency - ultraplan mode active but no coordinator
+			if logger := deps.GetLogger(); logger != nil {
+				logger.Warn("ultraplan mode active but coordinator is nil", "instance_id", inst.ID)
+			}
+			// Fall through to regular restart
+		} else {
+			stepInfo := coordinator.GetStepInfo(inst.ID)
+			if stepInfo == nil {
+				// Instance doesn't match any ultraplan step - inform user and fall through
+				return Result{InfoMessage: "Instance is not an ultraplan step. Using regular restart."}
+			}
+			newInstID, err := coordinator.RestartStep(stepInfo)
+			if err != nil {
+				return Result{ErrorMessage: fmt.Sprintf("Failed to restart %s: %v", stepInfo.Label, err)}
+			}
+			return Result{InfoMessage: fmt.Sprintf("%s restarted (new instance: %s)", stepInfo.Label, newInstID)}
+		}
+	}
+
 	// Only allow restarting non-running instances
 	switch inst.Status {
 	case orchestrator.StatusWorking, orchestrator.StatusWaitingInput:

@@ -41,6 +41,28 @@ const (
 	ComplexityHigh   TaskComplexity = "high"
 )
 
+// StepType represents the type of an ultraplan step for restart/input mode operations
+type StepType string
+
+const (
+	StepTypePlanning          StepType = "planning"
+	StepTypePlanManager       StepType = "plan_manager"
+	StepTypeTask              StepType = "task"
+	StepTypeSynthesis         StepType = "synthesis"
+	StepTypeRevision          StepType = "revision"
+	StepTypeConsolidation     StepType = "consolidation"
+	StepTypeGroupConsolidator StepType = "group_consolidator"
+)
+
+// StepInfo contains information about an ultraplan step for restart/input operations
+type StepInfo struct {
+	Type       StepType
+	InstanceID string
+	TaskID     string // Only set for task and group_consolidator steps
+	GroupIndex int    // Only set for task and group_consolidator steps (-1 otherwise)
+	Label      string // Human-readable description
+}
+
 // PlannedTask represents a single decomposed task from the planning phase
 type PlannedTask struct {
 	ID            string         `json:"id"`

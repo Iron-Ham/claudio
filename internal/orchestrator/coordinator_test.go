@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
 )
 
 // TestGetMultiPassStrategyNames verifies that we have the expected strategies
@@ -770,5 +772,399 @@ func TestBuildPlanManagerPrompt_DependencyFormatting(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "depends: task-1, task-2") {
 		t.Error("prompt should show multiple dependencies separated by commas")
+	}
+}
+
+// TestStepInfo_Types tests the StepInfo type and StepType constants
+func TestStepInfo_Types(t *testing.T) {
+	// Verify StepType constants have expected values
+	tests := []struct {
+		stepType StepType
+		want     string
+	}{
+		{StepTypePlanning, "planning"},
+		{StepTypePlanManager, "plan_manager"},
+		{StepTypeTask, "task"},
+		{StepTypeSynthesis, "synthesis"},
+		{StepTypeRevision, "revision"},
+		{StepTypeConsolidation, "consolidation"},
+		{StepTypeGroupConsolidator, "group_consolidator"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.stepType), func(t *testing.T) {
+			if string(tt.stepType) != tt.want {
+				t.Errorf("StepType = %q, want %q", tt.stepType, tt.want)
+			}
+		})
+	}
+}
+
+// TestStepInfo_Structure tests the StepInfo struct
+func TestStepInfo_Structure(t *testing.T) {
+	info := StepInfo{
+		Type:       StepTypeTask,
+		InstanceID: "inst-123",
+		TaskID:     "task-1",
+		GroupIndex: 0,
+		Label:      "Setup Database",
+	}
+
+	if info.Type != StepTypeTask {
+		t.Errorf("Type = %v, want %v", info.Type, StepTypeTask)
+	}
+	if info.InstanceID != "inst-123" {
+		t.Errorf("InstanceID = %q, want %q", info.InstanceID, "inst-123")
+	}
+	if info.TaskID != "task-1" {
+		t.Errorf("TaskID = %q, want %q", info.TaskID, "task-1")
+	}
+	if info.GroupIndex != 0 {
+		t.Errorf("GroupIndex = %d, want %d", info.GroupIndex, 0)
+	}
+	if info.Label != "Setup Database" {
+		t.Errorf("Label = %q, want %q", info.Label, "Setup Database")
+	}
+}
+
+// TestGetStepInfo_Nil tests GetStepInfo with nil session
+func TestGetStepInfo_Nil(t *testing.T) {
+	// Create a minimal coordinator with a session
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	manager := &UltraPlanManager{session: session}
+
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	// Test with empty instance ID
+	info := coord.GetStepInfo("")
+	if info != nil {
+		t.Errorf("GetStepInfo(\"\") = %v, want nil", info)
+	}
+
+	// Test with unknown instance ID
+	info = coord.GetStepInfo("unknown-instance")
+	if info != nil {
+		t.Errorf("GetStepInfo(\"unknown-instance\") = %v, want nil", info)
+	}
+}
+
+// TestGetStepInfo_Planning tests GetStepInfo for planning coordinator
+func TestGetStepInfo_Planning(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.CoordinatorID = "plan-coord-123"
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	info := coord.GetStepInfo("plan-coord-123")
+	if info == nil {
+		t.Fatal("GetStepInfo returned nil for planning coordinator")
+	}
+	if info.Type != StepTypePlanning {
+		t.Errorf("Type = %v, want %v", info.Type, StepTypePlanning)
+	}
+	if info.InstanceID != "plan-coord-123" {
+		t.Errorf("InstanceID = %q, want %q", info.InstanceID, "plan-coord-123")
+	}
+	if info.GroupIndex != -1 {
+		t.Errorf("GroupIndex = %d, want %d", info.GroupIndex, -1)
+	}
+	if info.Label != "Planning Coordinator" {
+		t.Errorf("Label = %q, want %q", info.Label, "Planning Coordinator")
+	}
+}
+
+// TestGetStepInfo_MultiPassCoordinators tests GetStepInfo for multi-pass planning coordinators
+func TestGetStepInfo_MultiPassCoordinators(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.PlanCoordinatorIDs = []string{"coord-0", "coord-1", "coord-2"}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	strategies := GetMultiPassStrategyNames()
+
+	for i, coordID := range session.PlanCoordinatorIDs {
+		t.Run(coordID, func(t *testing.T) {
+			info := coord.GetStepInfo(coordID)
+			if info == nil {
+				t.Fatalf("GetStepInfo returned nil for coordinator %s", coordID)
+			}
+			if info.Type != StepTypePlanning {
+				t.Errorf("Type = %v, want %v", info.Type, StepTypePlanning)
+			}
+			if info.InstanceID != coordID {
+				t.Errorf("InstanceID = %q, want %q", info.InstanceID, coordID)
+			}
+			if info.GroupIndex != i {
+				t.Errorf("GroupIndex = %d, want %d", info.GroupIndex, i)
+			}
+			expectedLabel := "Plan Coordinator (" + strategies[i] + ")"
+			if info.Label != expectedLabel {
+				t.Errorf("Label = %q, want %q", info.Label, expectedLabel)
+			}
+		})
+	}
+}
+
+// TestGetStepInfo_PlanManager tests GetStepInfo for plan manager
+func TestGetStepInfo_PlanManager(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.PlanManagerID = "plan-manager-123"
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	info := coord.GetStepInfo("plan-manager-123")
+	if info == nil {
+		t.Fatal("GetStepInfo returned nil for plan manager")
+	}
+	if info.Type != StepTypePlanManager {
+		t.Errorf("Type = %v, want %v", info.Type, StepTypePlanManager)
+	}
+	if info.InstanceID != "plan-manager-123" {
+		t.Errorf("InstanceID = %q, want %q", info.InstanceID, "plan-manager-123")
+	}
+	if info.Label != "Plan Manager" {
+		t.Errorf("Label = %q, want %q", info.Label, "Plan Manager")
+	}
+}
+
+// TestGetStepInfo_Task tests GetStepInfo for task instances
+func TestGetStepInfo_Task(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.Plan = &PlanSpec{
+		Tasks: []PlannedTask{
+			{ID: "task-1", Title: "Setup Database"},
+		},
+		ExecutionOrder: [][]string{{"task-1"}},
+	}
+	session.TaskToInstance = map[string]string{
+		"task-1": "task-inst-123",
+	}
+
+	manager := &UltraPlanManager{session: session}
+
+	// Create a group tracker using the adapter pattern
+	sessionAdapter := group.NewSessionAdapter(
+		func() group.PlanData {
+			return group.NewPlanAdapter(
+				func() [][]string { return session.Plan.ExecutionOrder },
+				func(taskID string) *group.Task {
+					task := session.GetTask(taskID)
+					if task == nil {
+						return nil
+					}
+					return &group.Task{ID: task.ID, Title: task.Title}
+				},
+			)
+		},
+		func() []string { return session.CompletedTasks },
+		func() []string { return session.FailedTasks },
+		func() map[string]int { return session.TaskCommitCounts },
+		func() int { return session.CurrentGroup },
+	)
+	groupTracker := group.NewTracker(sessionAdapter)
+
+	coord := &Coordinator{
+		manager:      manager,
+		groupTracker: groupTracker,
+	}
+
+	info := coord.GetStepInfo("task-inst-123")
+	if info == nil {
+		t.Fatal("GetStepInfo returned nil for task instance")
+	}
+	if info.Type != StepTypeTask {
+		t.Errorf("Type = %v, want %v", info.Type, StepTypeTask)
+	}
+	if info.InstanceID != "task-inst-123" {
+		t.Errorf("InstanceID = %q, want %q", info.InstanceID, "task-inst-123")
+	}
+	if info.TaskID != "task-1" {
+		t.Errorf("TaskID = %q, want %q", info.TaskID, "task-1")
+	}
+	if info.GroupIndex != 0 {
+		t.Errorf("GroupIndex = %d, want %d", info.GroupIndex, 0)
+	}
+	if info.Label != "Setup Database" {
+		t.Errorf("Label = %q, want %q", info.Label, "Setup Database")
+	}
+}
+
+// TestGetStepInfo_Synthesis tests GetStepInfo for synthesis instance
+func TestGetStepInfo_Synthesis(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.SynthesisID = "synth-123"
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	info := coord.GetStepInfo("synth-123")
+	if info == nil {
+		t.Fatal("GetStepInfo returned nil for synthesis instance")
+	}
+	if info.Type != StepTypeSynthesis {
+		t.Errorf("Type = %v, want %v", info.Type, StepTypeSynthesis)
+	}
+	if info.InstanceID != "synth-123" {
+		t.Errorf("InstanceID = %q, want %q", info.InstanceID, "synth-123")
+	}
+	if info.Label != "Synthesis" {
+		t.Errorf("Label = %q, want %q", info.Label, "Synthesis")
+	}
+}
+
+// TestGetStepInfo_Revision tests GetStepInfo for revision instance
+func TestGetStepInfo_Revision(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.RevisionID = "rev-123"
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	info := coord.GetStepInfo("rev-123")
+	if info == nil {
+		t.Fatal("GetStepInfo returned nil for revision instance")
+	}
+	if info.Type != StepTypeRevision {
+		t.Errorf("Type = %v, want %v", info.Type, StepTypeRevision)
+	}
+	if info.InstanceID != "rev-123" {
+		t.Errorf("InstanceID = %q, want %q", info.InstanceID, "rev-123")
+	}
+	if info.Label != "Revision" {
+		t.Errorf("Label = %q, want %q", info.Label, "Revision")
+	}
+}
+
+// TestGetStepInfo_Consolidation tests GetStepInfo for consolidation instance
+func TestGetStepInfo_Consolidation(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.ConsolidationID = "consol-123"
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	info := coord.GetStepInfo("consol-123")
+	if info == nil {
+		t.Fatal("GetStepInfo returned nil for consolidation instance")
+	}
+	if info.Type != StepTypeConsolidation {
+		t.Errorf("Type = %v, want %v", info.Type, StepTypeConsolidation)
+	}
+	if info.InstanceID != "consol-123" {
+		t.Errorf("InstanceID = %q, want %q", info.InstanceID, "consol-123")
+	}
+	if info.Label != "Consolidation" {
+		t.Errorf("Label = %q, want %q", info.Label, "Consolidation")
+	}
+}
+
+// TestGetStepInfo_GroupConsolidator tests GetStepInfo for group consolidator instances
+func TestGetStepInfo_GroupConsolidator(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.GroupConsolidatorIDs = []string{"group-consol-0", "group-consol-1"}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	for i, consolidatorID := range session.GroupConsolidatorIDs {
+		t.Run(consolidatorID, func(t *testing.T) {
+			info := coord.GetStepInfo(consolidatorID)
+			if info == nil {
+				t.Fatalf("GetStepInfo returned nil for group consolidator %s", consolidatorID)
+			}
+			if info.Type != StepTypeGroupConsolidator {
+				t.Errorf("Type = %v, want %v", info.Type, StepTypeGroupConsolidator)
+			}
+			if info.InstanceID != consolidatorID {
+				t.Errorf("InstanceID = %q, want %q", info.InstanceID, consolidatorID)
+			}
+			if info.GroupIndex != i {
+				t.Errorf("GroupIndex = %d, want %d", info.GroupIndex, i)
+			}
+			expectedLabel := "Group " + itoa(i+1) + " Consolidator"
+			if info.Label != expectedLabel {
+				t.Errorf("Label = %q, want %q", info.Label, expectedLabel)
+			}
+		})
+	}
+}
+
+// TestRestartStep_NilInput tests RestartStep with nil stepInfo
+func TestRestartStep_NilInput(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	_, err := coord.RestartStep(nil)
+	if err == nil {
+		t.Error("RestartStep(nil) should return an error")
+	}
+	if err.Error() != "step info is nil" {
+		t.Errorf("error = %q, want %q", err.Error(), "step info is nil")
+	}
+}
+
+// TestRestartStep_NilSession tests RestartStep with nil session
+func TestRestartStep_NilSession(t *testing.T) {
+	manager := &UltraPlanManager{session: nil}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	// Don't set InstanceID to avoid triggering GetInstance on nil orchestrator
+	stepInfo := &StepInfo{
+		Type: StepTypeSynthesis,
+	}
+
+	_, err := coord.RestartStep(stepInfo)
+	if err == nil {
+		t.Error("RestartStep with nil session should return an error")
+	}
+	if err.Error() != "no session" {
+		t.Errorf("error = %q, want %q", err.Error(), "no session")
+	}
+}
+
+// TestRestartStep_UnknownType tests RestartStep with unknown step type
+func TestRestartStep_UnknownType(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	// Don't set InstanceID to avoid triggering GetInstance on nil orchestrator
+	stepInfo := &StepInfo{
+		Type: StepType("unknown_type"),
+	}
+
+	_, err := coord.RestartStep(stepInfo)
+	if err == nil {
+		t.Error("RestartStep with unknown type should return an error")
+	}
+	expected := "unknown step type: unknown_type"
+	if err.Error() != expected {
+		t.Errorf("error = %q, want %q", err.Error(), expected)
 	}
 }
