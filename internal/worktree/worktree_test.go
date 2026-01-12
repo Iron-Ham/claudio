@@ -529,3 +529,132 @@ func TestManager_findMainBranch(t *testing.T) {
 		t.Errorf("findMainBranch() = %v, want 'main'", branch)
 	}
 }
+
+func TestManager_CopyLocalClaudeFiles(t *testing.T) {
+	testutil.SkipIfNoGit(t)
+
+	tests := []struct {
+		name        string
+		setupSource func(t *testing.T, repoDir string) // Setup source files in repo
+		wantCopied  []string                           // Files expected to be copied
+		wantErr     bool
+	}{
+		{
+			name: "copies CLAUDE.local.md when present",
+			setupSource: func(t *testing.T, repoDir string) {
+				content := []byte("# Local Claude Settings\ntest content")
+				if err := os.WriteFile(filepath.Join(repoDir, "CLAUDE.local.md"), content, 0644); err != nil {
+					t.Fatalf("failed to create source file: %v", err)
+				}
+			},
+			wantCopied: []string{"CLAUDE.local.md"},
+			wantErr:    false,
+		},
+		{
+			name:        "no error when CLAUDE.local.md does not exist",
+			setupSource: func(t *testing.T, repoDir string) {},
+			wantErr:     false,
+		},
+		{
+			name: "preserves unicode content",
+			setupSource: func(t *testing.T, repoDir string) {
+				content := []byte("special test content with unicode: éàü 中文 🎉")
+				if err := os.WriteFile(filepath.Join(repoDir, "CLAUDE.local.md"), content, 0644); err != nil {
+					t.Fatalf("failed to create source file: %v", err)
+				}
+			},
+			wantCopied: []string{"CLAUDE.local.md"},
+			wantErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoDir := testutil.SetupTestRepo(t)
+			mgr, err := New(repoDir)
+			if err != nil {
+				t.Fatalf("failed to create manager: %v", err)
+			}
+
+			// Setup source files
+			tt.setupSource(t, repoDir)
+
+			// Create worktree
+			worktreePath := filepath.Join(t.TempDir(), "test-worktree")
+			if err := mgr.Create(worktreePath, "test-branch"); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+
+			// Copy local claude files
+			err = mgr.CopyLocalClaudeFiles(worktreePath)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CopyLocalClaudeFiles() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			// Verify expected files were copied
+			for _, filename := range tt.wantCopied {
+				srcPath := filepath.Join(repoDir, filename)
+				dstPath := filepath.Join(worktreePath, filename)
+
+				// Check destination exists
+				if _, err := os.Stat(dstPath); os.IsNotExist(err) {
+					t.Errorf("expected file %s to be copied but it doesn't exist", filename)
+					continue
+				}
+
+				// Verify content matches
+				srcContent, err := os.ReadFile(srcPath)
+				if err != nil {
+					t.Fatalf("failed to read source file: %v", err)
+				}
+				dstContent, err := os.ReadFile(dstPath)
+				if err != nil {
+					t.Fatalf("failed to read destination file: %v", err)
+				}
+				if string(srcContent) != string(dstContent) {
+					t.Errorf("file content mismatch for %s: got %q, want %q", filename, dstContent, srcContent)
+				}
+			}
+		})
+	}
+}
+
+func TestManager_CopyLocalClaudeFiles_PreservesPermissions(t *testing.T) {
+	testutil.SkipIfNoGit(t)
+
+	repoDir := testutil.SetupTestRepo(t)
+	mgr, err := New(repoDir)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	// Create source file with specific permissions
+	srcPath := filepath.Join(repoDir, "CLAUDE.local.md")
+	if err := os.WriteFile(srcPath, []byte("test"), 0600); err != nil {
+		t.Fatalf("failed to create source file: %v", err)
+	}
+
+	// Create worktree
+	worktreePath := filepath.Join(t.TempDir(), "test-worktree")
+	if err := mgr.Create(worktreePath, "test-branch"); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// Copy files
+	if err := mgr.CopyLocalClaudeFiles(worktreePath); err != nil {
+		t.Fatalf("CopyLocalClaudeFiles() error = %v", err)
+	}
+
+	// Check permissions are preserved
+	dstPath := filepath.Join(worktreePath, "CLAUDE.local.md")
+	srcInfo, _ := os.Stat(srcPath)
+	dstInfo, err := os.Stat(dstPath)
+	if err != nil {
+		t.Fatalf("failed to stat destination file: %v", err)
+	}
+
+	if srcInfo.Mode() != dstInfo.Mode() {
+		t.Errorf("permissions not preserved: got %v, want %v", dstInfo.Mode(), srcInfo.Mode())
+	}
+}

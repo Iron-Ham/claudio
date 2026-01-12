@@ -531,6 +531,9 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 	}
 	inst.WorktreePath = wtPath
 
+	// Copy local Claude configuration files (e.g., CLAUDE.local.md) to the worktree
+	o.copyLocalClaudeFilesToWorktree(inst.ID, wtPath)
+
 	// Add to session
 	session.Instances = append(session.Instances, inst)
 
@@ -619,6 +622,9 @@ func (o *Orchestrator) AddInstanceWithDependencies(session *Session, task string
 		return nil, fmt.Errorf("failed to create worktree: %w", err)
 	}
 	inst.WorktreePath = wtPath
+
+	// Copy local Claude configuration files (e.g., CLAUDE.local.md) to the worktree
+	o.copyLocalClaudeFilesToWorktree(inst.ID, wtPath)
 
 	// Update dependents lists on parent instances
 	for _, depID := range resolvedDeps {
@@ -766,6 +772,9 @@ func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, base
 		return nil, fmt.Errorf("failed to create worktree from branch %s: %w", baseBranch, err)
 	}
 	inst.WorktreePath = wtPath
+
+	// Copy local Claude configuration files (e.g., CLAUDE.local.md) to the worktree
+	o.copyLocalClaudeFilesToWorktree(inst.ID, wtPath)
 
 	// Add to session
 	session.Instances = append(session.Instances, inst)
@@ -1381,6 +1390,21 @@ func slugify(text string) string {
 	slug = strings.TrimSuffix(slug, "-")
 
 	return slug
+}
+
+// copyLocalClaudeFilesToWorktree copies local Claude config files (e.g., CLAUDE.local.md)
+// to the worktree. Errors are logged and reported to stderr but don't fail the operation.
+func (o *Orchestrator) copyLocalClaudeFilesToWorktree(instID, wtPath string) {
+	if err := o.wt.CopyLocalClaudeFiles(wtPath); err != nil {
+		if o.logger != nil {
+			o.logger.Warn("failed to copy local Claude files to worktree",
+				"instance_id", instID,
+				"worktree_path", wtPath,
+				"error", err,
+			)
+		}
+		fmt.Fprintf(os.Stderr, "Warning: failed to copy local Claude files to worktree: %v\n", err)
+	}
 }
 
 // timeoutTypeString converts a TimeoutType to its string representation for logging.
