@@ -17,6 +17,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/display"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/lifecycle"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prworkflow"
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
@@ -31,6 +32,7 @@ import (
 //   - sessionMgr: Handles session persistence (load, save, create, delete)
 //   - lifecycleMgr: Manages instance lifecycle (start, stop, status tracking)
 //   - prWorkflowMgr: Manages PR workflow operations (commit, push, PR creation)
+//   - displayMgr: Manages display dimensions and resize coordination
 //   - eventBus: Enables decoupled communication between components
 //
 // For backwards compatibility, the Orchestrator maintains its existing public API
@@ -48,6 +50,7 @@ type Orchestrator struct {
 	sessionMgr    *orchsession.Manager // Session lifecycle management
 	lifecycleMgr  *lifecycle.Manager   // Instance lifecycle management
 	prWorkflowMgr *prworkflow.Manager  // PR workflow management
+	displayMgr    *display.Manager     // Display dimension management
 	eventBus      *event.Bus           // Inter-component event communication
 
 	session          *Session
@@ -55,11 +58,6 @@ type Orchestrator struct {
 	wt               *worktree.Manager
 	conflictDetector *conflict.Detector
 	config           *config.Config
-
-	// Current display dimensions for tmux sessions
-	// These are updated when the TUI window resizes
-	displayWidth  int
-	displayHeight int
 
 	// Callback for when a PR URL is detected in instance output (inline PR creation)
 	prOpenedCallback func(instanceID string)
@@ -117,6 +115,12 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		eventBus,
 	)
 
+	// Create display manager with config-derived defaults
+	displayMgr := display.NewManager(display.Config{
+		DefaultWidth:  cfg.Instance.TmuxWidth,
+		DefaultHeight: cfg.Instance.TmuxHeight,
+	})
+
 	return &Orchestrator{
 		baseDir:          baseDir,
 		claudioDir:       claudioDir,
@@ -124,6 +128,7 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		sessionMgr:       sessionMgr,
 		lifecycleMgr:     lifecycleMgr,
 		prWorkflowMgr:    prWorkflowMgr,
+		displayMgr:       displayMgr,
 		eventBus:         eventBus,
 		instances:        make(map[string]*instance.Manager),
 		wt:               wt,
@@ -179,6 +184,12 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		eventBus,
 	)
 
+	// Create display manager with config-derived defaults
+	displayMgr := display.NewManager(display.Config{
+		DefaultWidth:  cfg.Instance.TmuxWidth,
+		DefaultHeight: cfg.Instance.TmuxHeight,
+	})
+
 	return &Orchestrator{
 		baseDir:          baseDir,
 		claudioDir:       claudioDir,
@@ -188,6 +199,7 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		sessionMgr:       sessionMgr,
 		lifecycleMgr:     lifecycleMgr,
 		prWorkflowMgr:    prWorkflowMgr,
+		displayMgr:       displayMgr,
 		eventBus:         eventBus,
 		instances:        make(map[string]*instance.Manager),
 		wt:               wt,
@@ -936,14 +948,11 @@ func (o *Orchestrator) StopInstanceWithAutoPR(inst *Instance) (bool, error) {
 // StartPRWorkflow starts the commit-push-PR workflow for an instance.
 // Delegates to the prWorkflowMgr for workflow management.
 func (o *Orchestrator) StartPRWorkflow(inst *Instance) error {
-	// Update display dimensions on the manager before starting
-	o.mu.RLock()
-	displayWidth := o.displayWidth
-	displayHeight := o.displayHeight
-	o.mu.RUnlock()
+	// Get current display dimensions from displayMgr (falls back to defaults if not set)
+	width, height := o.displayMgr.GetDimensions()
 
-	if displayWidth > 0 && displayHeight > 0 {
-		o.prWorkflowMgr.SetDisplayDimensions(displayWidth, displayHeight)
+	if width > 0 && height > 0 {
+		o.prWorkflowMgr.SetDisplayDimensions(width, height)
 	}
 
 	if err := o.prWorkflowMgr.Start(inst); err != nil {
@@ -1054,6 +1063,7 @@ func (o *Orchestrator) RemoveInstance(session *Session, instanceID string, force
 	// Stop the instance if running
 	if mgr, ok := o.instances[inst.ID]; ok {
 		_ = mgr.Stop()
+		o.displayMgr.RemoveObserver(mgr)
 		delete(o.instances, inst.ID)
 	}
 
@@ -1152,18 +1162,9 @@ func (o *Orchestrator) Config() *config.Config {
 }
 
 // instanceManagerConfig converts the orchestrator config to instance.ManagerConfig
-// Uses the current display dimensions if available, otherwise falls back to config defaults
+// Uses the current display dimensions from displayMgr (falls back to defaults if not set)
 func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
-	width := o.config.Instance.TmuxWidth
-	height := o.config.Instance.TmuxHeight
-
-	// Use the current display dimensions if they've been set by a resize event
-	if o.displayWidth > 0 {
-		width = o.displayWidth
-	}
-	if o.displayHeight > 0 {
-		height = o.displayHeight
-	}
+	width, height := o.displayMgr.GetDimensions()
 
 	return instance.ManagerConfig{
 		OutputBufferSize:         o.config.Instance.OutputBufferSize,
@@ -1178,12 +1179,20 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 
 // newInstanceManager creates a new instance manager with the appropriate constructor.
 // Uses session-scoped tmux naming when sessionID is set (multi-session mode).
+// The manager is automatically registered with the display manager to receive resize events.
 func (o *Orchestrator) newInstanceManager(instanceID, workdir, task string) *instance.Manager {
 	cfg := o.instanceManagerConfig()
+	var mgr *instance.Manager
 	if o.sessionID != "" {
-		return instance.NewManagerWithSession(o.sessionID, instanceID, workdir, task, cfg)
+		mgr = instance.NewManagerWithSession(o.sessionID, instanceID, workdir, task, cfg)
+	} else {
+		mgr = instance.NewManagerWithConfig(instanceID, workdir, task, cfg)
 	}
-	return instance.NewManagerWithConfig(instanceID, workdir, task, cfg)
+
+	// Register the manager as a resize observer so it receives dimension updates
+	o.displayMgr.AddObserver(mgr)
+
+	return mgr
 }
 
 // Session returns the current session
@@ -1202,28 +1211,20 @@ func (o *Orchestrator) GetConflictDetector() *conflict.Detector {
 // This should be called before the TUI starts to ensure instances are created
 // with the correct size from the beginning
 func (o *Orchestrator) SetDisplayDimensions(width, height int) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.displayWidth = width
-	o.displayHeight = height
+	o.displayMgr.SetDimensions(width, height)
 }
 
 // ResizeAllInstances resizes all running tmux sessions to the given dimensions
 // and stores the dimensions for new instances
 func (o *Orchestrator) ResizeAllInstances(width, height int) {
-	o.mu.Lock()
-	o.displayWidth = width
-	o.displayHeight = height
-	o.mu.Unlock()
+	// Use the displayMgr to notify all registered observers
+	o.displayMgr.NotifyResize(width, height)
+}
 
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-
-	for _, mgr := range o.instances {
-		if mgr != nil && mgr.Running() {
-			_ = mgr.Resize(width, height)
-		}
-	}
+// DisplayManager returns the display manager for advanced display operations.
+// Components that need to register for resize notifications can use this.
+func (o *Orchestrator) DisplayManager() *display.Manager {
+	return o.displayMgr
 }
 
 // saveSession persists the session state to disk
