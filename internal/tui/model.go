@@ -88,9 +88,13 @@ type Model struct {
 	addingTask      bool
 	taskInput       string
 	taskInputCursor int // Cursor position within taskInput (0 = before first char)
-	errorMessage    string
-	infoMessage     string // Non-error status message
-	inputMode       bool   // When true, all keys are forwarded to the active instance's tmux session
+
+	// Dependent task state (for :chain command - adding a task that depends on another)
+	addingDependentTask   bool   // When true, taskInput will create a dependent task
+	dependentOnInstanceID string // The instance ID that the new task will depend on
+	errorMessage          string
+	infoMessage           string // Non-error status message
+	inputMode             bool   // When true, all keys are forwarded to the active instance's tmux session
 
 	// Command mode state (vim-style ex commands with ':' prefix)
 	commandMode   bool   // When true, we're typing a command after ':'
