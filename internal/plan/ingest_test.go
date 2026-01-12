@@ -2877,8 +2877,19 @@ func TestBuildPlanFromURL_ParentFetchFails(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when parent issue fetch fails")
 	}
-	if !strings.Contains(err.Error(), "failed to fetch parent issue") {
-		t.Errorf("error should mention parent issue fetch failure: %v", err)
+
+	// The error should be an IngestError or contain relevant information
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) {
+		// If it's an IngestError, check the issue number
+		if ingestErr.IssueNum != 999 {
+			t.Errorf("error should reference issue #999, got #%d", ingestErr.IssueNum)
+		}
+	} else {
+		// Fallback: check for issue number in error message
+		if !strings.Contains(err.Error(), "999") {
+			t.Errorf("error should mention parent issue #999: %v", err)
+		}
 	}
 }
 
@@ -2899,8 +2910,19 @@ func TestBuildPlanFromURL_SubIssueFetchFails(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when sub-issue fetch fails")
 	}
-	if !strings.Contains(err.Error(), "failed to fetch sub-issue") {
-		t.Errorf("error should mention sub-issue fetch failure: %v", err)
+
+	// The error should indicate the sub-issue that failed
+	// Check if it's an IngestError with the correct issue number
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) {
+		if ingestErr.IssueNum != 101 {
+			t.Errorf("error should reference issue #101, got #%d", ingestErr.IssueNum)
+		}
+	} else {
+		// Fallback check for string content
+		if !strings.Contains(err.Error(), "101") {
+			t.Errorf("error should mention sub-issue #101: %v", err)
+		}
 	}
 }
 
@@ -3428,5 +3450,3447 @@ func TestIssueFormat_StringValues(t *testing.T) {
 	}
 	if IssueFormatFreeform != "freeform" {
 		t.Errorf("IssueFormatFreeform = %q, want %q", IssueFormatFreeform, "freeform")
+	}
+}
+
+// =============================================================================
+// Freeform Parent Issue Parser Tests (task-2-parse-freeform-parent)
+// =============================================================================
+
+func TestParseFreeformParentIssueBody_BasicStructure(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantSummary    string
+		wantGroups     [][]int
+		wantInsights   []string
+		wantConstraint []string
+	}{
+		{
+			name: "simple summary with bullet list of issues",
+			body: `Add dark mode support to the application.
+
+This should include a toggle in settings and theme switching.
+
+- #10 - Create theme context
+- #11 - Add toggle component
+- #12 - Apply theme to all components
+`,
+			wantSummary: `Add dark mode support to the application.
+
+This should include a toggle in settings and theme switching.`,
+			wantGroups:     [][]int{{10, 11, 12}},
+			wantInsights:   []string{},
+			wantConstraint: []string{},
+		},
+		{
+			name: "grouped issues with ### Group N headers",
+			body: `Implement new authentication system.
+
+### Group 1
+- #20 - Setup auth models
+- #21 - Create token service
+
+### Group 2
+- #22 - Implement login endpoint
+- #23 - Add logout functionality
+
+### Group 3
+- #24 - Add OAuth providers
+`,
+			wantSummary:    "Implement new authentication system.",
+			wantGroups:     [][]int{{20, 21}, {22, 23}, {24}},
+			wantInsights:   []string{},
+			wantConstraint: []string{},
+		},
+		{
+			name: "checkbox format issue references",
+			body: `Refactor the database layer.
+
+Tasks:
+- [ ] #30 - Abstract database interface
+- [x] #31 - Implement PostgreSQL adapter
+- [ ] #32 - Add connection pooling
+`,
+			wantSummary:    "Refactor the database layer.\n\nTasks:",
+			wantGroups:     [][]int{{30, 31, 32}},
+			wantInsights:   []string{},
+			wantConstraint: []string{},
+		},
+		{
+			name:           "empty body",
+			body:           "",
+			wantSummary:    "",
+			wantGroups:     [][]int{},
+			wantInsights:   []string{},
+			wantConstraint: []string{},
+		},
+		{
+			name:           "whitespace only body",
+			body:           "   \n\t\n   ",
+			wantSummary:    "",
+			wantGroups:     [][]int{},
+			wantInsights:   []string{},
+			wantConstraint: []string{},
+		},
+		{
+			name: "no issues referenced",
+			body: `This is a feature request.
+
+It describes what we want to build but doesn't reference any sub-issues yet.
+`,
+			wantSummary: `This is a feature request.
+
+It describes what we want to build but doesn't reference any sub-issues yet.`,
+			wantGroups:     [][]int{},
+			wantInsights:   []string{},
+			wantConstraint: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ParseFreeformParentIssueBody(tt.body)
+			if err != nil {
+				t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+			}
+
+			if content.Summary != tt.wantSummary {
+				t.Errorf("Summary = %q, want %q", content.Summary, tt.wantSummary)
+			}
+
+			if !reflect.DeepEqual(content.ExecutionGroups, tt.wantGroups) {
+				t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, tt.wantGroups)
+			}
+
+			if !reflect.DeepEqual(content.Insights, tt.wantInsights) {
+				t.Errorf("Insights = %v, want %v", content.Insights, tt.wantInsights)
+			}
+
+			if !reflect.DeepEqual(content.Constraints, tt.wantConstraint) {
+				t.Errorf("Constraints = %v, want %v", content.Constraints, tt.wantConstraint)
+			}
+		})
+	}
+}
+
+func TestParseFreeformParentIssueBody_RealWorldExamples(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantSummary string
+		wantGroups  [][]int
+	}{
+		{
+			name: "GitHub-style epic with overview and tasks",
+			body: `## Overview
+
+We need to implement a complete CI/CD pipeline for the project.
+
+## Tasks
+
+### Phase 1 - Setup
+- #100 - Configure GitHub Actions workflow
+- #101 - Add linting step
+
+### Phase 2 - Testing
+- #102 - Add unit test runner
+- #103 - Add integration tests
+- #104 - Setup code coverage
+
+### Phase 3 - Deployment
+- #105 - Add staging deployment
+- #106 - Add production deployment
+`,
+			wantSummary: "",
+			wantGroups:  [][]int{{100, 101}, {102, 103, 104}, {105, 106}},
+		},
+		{
+			name: "simple feature request with sub-issues",
+			body: `Add user profile customization features.
+
+Users should be able to:
+1. Upload a profile picture
+2. Set a custom bio
+3. Choose theme preferences
+
+Related issues:
+- #200 - Image upload component
+- #201 - Bio text editor
+- #202 - Theme selector
+`,
+			wantSummary: `Add user profile customization features.
+
+Users should be able to:
+1. Upload a profile picture
+2. Set a custom bio
+3. Choose theme preferences
+
+Related issues:`,
+			wantGroups: [][]int{{200, 201, 202}},
+		},
+		{
+			name: "bug fix tracking issue",
+			body: `# Critical Bug Fixes for v2.0 Release
+
+These bugs need to be fixed before we can release version 2.0.
+
+## High Priority
+- [ ] #301 - Fix memory leak in WebSocket handler
+- [ ] #302 - Resolve race condition in cache
+
+## Medium Priority
+- [ ] #303 - Fix pagination offset bug
+- [ ] #304 - Correct timezone handling
+`,
+			// H1 headers don't end summary, H2 does - so summary includes the H1 and first paragraph
+			wantSummary: "# Critical Bug Fixes for v2.0 Release\n\nThese bugs need to be fixed before we can release version 2.0.",
+			// H2 headers don't create separate groups, only H3 headers do
+			wantGroups: [][]int{{301, 302, 303, 304}},
+		},
+		{
+			name: "numbered list format",
+			body: `API Migration Plan
+
+Steps to migrate from v1 to v2 API:
+
+1. #400 - Create v2 endpoint structure
+2. #401 - Migrate user endpoints
+3. #402 - Migrate product endpoints
+4. #403 - Add deprecation warnings to v1
+`,
+			wantSummary: `API Migration Plan
+
+Steps to migrate from v1 to v2 API:`,
+			wantGroups: [][]int{{400, 401, 402, 403}},
+		},
+		{
+			name: "mixed format with inline issue references",
+			body: `Dashboard Redesign Project
+
+We're redesigning the dashboard. See #500 for mockups.
+
+### Backend Tasks
+- #501 - New dashboard API endpoint
+- #502 - Add caching layer
+
+### Frontend Tasks
+- #503 - Implement new dashboard component
+- #504 - Add drag-and-drop widgets
+`,
+			// The second paragraph mentions #500, but it's not in a bullet - so it's part of summary
+			wantSummary: "Dashboard Redesign Project\n\nWe're redesigning the dashboard. See #500 for mockups.",
+			wantGroups:  [][]int{{501, 502}, {503, 504}},
+		},
+		{
+			name: "epic with dependencies noted",
+			body: `Search Feature Implementation
+
+Implement full-text search across the application.
+
+### Group 1 (Infrastructure)
+- [ ] #600 - Setup Elasticsearch cluster
+- [ ] #601 - Create indexing service
+
+### Group 2 (Backend)
+Depends on Group 1
+- [ ] #602 - Search API endpoint
+- [ ] #603 - Result ranking algorithm
+
+### Group 3 (Frontend)
+Depends on Group 2
+- [ ] #604 - Search UI component
+- [ ] #605 - Search results page
+`,
+			// Summary includes all text before the first ### header
+			wantSummary: "Search Feature Implementation\n\nImplement full-text search across the application.",
+			wantGroups:  [][]int{{600, 601}, {602, 603}, {604, 605}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ParseFreeformParentIssueBody(tt.body)
+			if err != nil {
+				t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+			}
+
+			if content.Summary != tt.wantSummary {
+				t.Errorf("Summary = %q, want %q", content.Summary, tt.wantSummary)
+			}
+
+			if !reflect.DeepEqual(content.ExecutionGroups, tt.wantGroups) {
+				t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, tt.wantGroups)
+			}
+		})
+	}
+}
+
+func TestParseFreeformParentIssueBody_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantGroups [][]int
+	}{
+		{
+			name: "duplicate issue numbers are deduplicated",
+			body: `Tasks:
+- #10 - First mention
+- #11 - Another task
+- #10 - Duplicate mention
+- #12 - Last task
+`,
+			wantGroups: [][]int{{10, 11, 12}},
+		},
+		{
+			name: "high issue numbers",
+			body: `- #99999 - Very high number
+- #12345 - Another high number
+`,
+			wantGroups: [][]int{{99999, 12345}},
+		},
+		{
+			name: "issue number 1",
+			body: `- #1 - First issue ever
+`,
+			wantGroups: [][]int{{1}},
+		},
+		{
+			name: "multiple issues on same line",
+			body: `- #10 depends on #11 and #12
+- #13 - Separate issue
+`,
+			wantGroups: [][]int{{10, 11, 12, 13}},
+		},
+		{
+			name: "asterisk bullets",
+			body: `Tasks:
+* #20 - First task
+* #21 - Second task
+`,
+			wantGroups: [][]int{{20, 21}},
+		},
+		{
+			name: "mixed bullet styles",
+			body: `Tasks:
+- #30 - Dash bullet
+* #31 - Asterisk bullet
+- #32 - Back to dash
+`,
+			wantGroups: [][]int{{30, 31, 32}},
+		},
+		{
+			name: "Phase headers instead of Group",
+			body: `### Phase 1
+- #40 - First phase task
+
+### Phase 2
+- #41 - Second phase task
+`,
+			wantGroups: [][]int{{40}, {41}},
+		},
+		{
+			name: "Step headers",
+			body: `### Step 1
+- #50 - First step
+
+### Step 2
+- #51 - Second step
+`,
+			wantGroups: [][]int{{50}, {51}},
+		},
+		{
+			name: "Stage headers",
+			body: `### Stage 1
+- #60 - Stage one task
+
+### Stage 2
+- #61 - Stage two task
+`,
+			wantGroups: [][]int{{60}, {61}},
+		},
+		{
+			name: "case insensitive group headers",
+			body: `### GROUP 1
+- #70 - Uppercase group
+
+### group 2
+- #71 - Lowercase group
+`,
+			wantGroups: [][]int{{70}, {71}},
+		},
+		{
+			name: "numbered H3 headers",
+			body: `### 1 Setup
+- #80 - Setup task
+
+### 2 Implementation
+- #81 - Implementation task
+`,
+			wantGroups: [][]int{{80}, {81}},
+		},
+		{
+			name: "generic H3 headers create implicit groups",
+			body: `### Backend
+- #90 - Backend task
+
+### Frontend
+- #91 - Frontend task
+`,
+			wantGroups: [][]int{{90}, {91}},
+		},
+		{
+			name: "H2 headers end summary but don't create groups",
+			body: `Summary text here.
+
+## Section One
+
+Some text.
+
+## Tasks
+
+- #100 - A task
+- #101 - Another task
+`,
+			wantGroups: [][]int{{100, 101}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ParseFreeformParentIssueBody(tt.body)
+			if err != nil {
+				t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+			}
+
+			if !reflect.DeepEqual(content.ExecutionGroups, tt.wantGroups) {
+				t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, tt.wantGroups)
+			}
+		})
+	}
+}
+
+func TestParseFreeformParentIssueBody_SummaryExtraction(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantSummary string
+	}{
+		{
+			name: "summary ends at first H2",
+			body: `This is the summary.
+
+It has multiple paragraphs.
+
+## Section
+
+More content here.
+`,
+			wantSummary: `This is the summary.
+
+It has multiple paragraphs.`,
+		},
+		{
+			name: "summary ends at first H3",
+			body: `Summary text.
+
+### Group 1
+- #10 - Task
+`,
+			wantSummary: "Summary text.",
+		},
+		{
+			name: "summary ends at first issue list",
+			body: `Summary before issues.
+
+- #10 - This starts the issue list
+- #11 - More issues
+`,
+			wantSummary: "Summary before issues.",
+		},
+		{
+			name: "leading whitespace is trimmed",
+			body: `
+
+
+
+This is the actual summary.
+
+- #10 - Task
+`,
+			wantSummary: "This is the actual summary.",
+		},
+		{
+			name: "trailing whitespace in summary is trimmed",
+			body: `Summary with trailing spaces.
+
+## Section
+`,
+			wantSummary: "Summary with trailing spaces.",
+		},
+		{
+			name: "multiline summary preserves internal structure",
+			body: `First paragraph of the summary.
+
+Second paragraph with more details.
+
+- Bullet point one
+- Bullet point two (no issues)
+
+Third paragraph.
+
+## Tasks
+- #10 - Actual task
+`,
+			wantSummary: `First paragraph of the summary.
+
+Second paragraph with more details.
+
+- Bullet point one
+- Bullet point two (no issues)
+
+Third paragraph.`,
+		},
+		{
+			name: "summary with markdown formatting",
+			body: `# Project Title
+
+**Bold text** and *italic text* in the summary.
+
+` + "```go" + `
+code block
+` + "```" + `
+
+## Implementation
+- #10 - Task
+`,
+			wantSummary: `# Project Title
+
+**Bold text** and *italic text* in the summary.
+
+` + "```go" + `
+code block
+` + "```",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ParseFreeformParentIssueBody(tt.body)
+			if err != nil {
+				t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+			}
+
+			if content.Summary != tt.wantSummary {
+				t.Errorf("Summary = %q, want %q", content.Summary, tt.wantSummary)
+			}
+		})
+	}
+}
+
+func TestParseFreeformParentIssueBody_IssueReferenceFormats(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantGroups [][]int
+	}{
+		{
+			name: "checkbox unchecked format",
+			body: `- [ ] #10 - Task title
+- [ ] #11 - Another task
+`,
+			wantGroups: [][]int{{10, 11}},
+		},
+		{
+			name: "checkbox checked format",
+			body: `- [x] #20 - Completed task
+- [X] #21 - Also completed (uppercase X)
+`,
+			wantGroups: [][]int{{20, 21}},
+		},
+		{
+			name: "simple bullet with issue",
+			body: `- #30 - Task title
+- #31
+`,
+			wantGroups: [][]int{{30, 31}},
+		},
+		{
+			name: "issue with full URL text",
+			body: `- #40 https://github.com/org/repo/issues/40
+- #41 - Standard format
+`,
+			wantGroups: [][]int{{40, 41}},
+		},
+		{
+			name: "numbered list with issues",
+			body: `1. #50 - First
+2. #51 - Second
+3. #52 - Third
+`,
+			wantGroups: [][]int{{50, 51, 52}},
+		},
+		{
+			name: "issue references with bold titles",
+			body: `- [ ] #60 - **Bold Title**
+- [ ] #61 - **Another Bold**
+`,
+			wantGroups: [][]int{{60, 61}},
+		},
+		{
+			name: "issue references with labels",
+			body: `- #70 - Task title [bug]
+- #71 - Another task [enhancement]
+`,
+			wantGroups: [][]int{{70, 71}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ParseFreeformParentIssueBody(tt.body)
+			if err != nil {
+				t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+			}
+
+			if !reflect.DeepEqual(content.ExecutionGroups, tt.wantGroups) {
+				t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, tt.wantGroups)
+			}
+		})
+	}
+}
+
+func TestParseFreeformParentIssueBody_ComplexRealWorld(t *testing.T) {
+	// Test with a complex real-world issue body that mimics actual GitHub usage
+	body := `# Epic: Implement Real-time Notifications
+
+## Problem Statement
+
+Users currently have no way to receive real-time updates about activity
+in the application. They must manually refresh to see new content.
+
+## Proposed Solution
+
+Implement a WebSocket-based notification system that pushes updates
+to connected clients in real-time.
+
+## Technical Approach
+
+We'll use a pub/sub model with Redis for message distribution across
+multiple server instances.
+
+## Sub-tasks
+
+### Phase 1: Infrastructure
+These can be done in parallel:
+- [ ] #1001 - Setup Redis pub/sub infrastructure
+- [ ] #1002 - Create WebSocket server module
+- [ ] #1003 - Add connection management
+
+### Phase 2: Backend Integration
+Requires Phase 1 completion:
+- [ ] #1004 - Integrate notifications with user events
+- [ ] #1005 - Add notification persistence layer
+- [ ] #1006 - Create notification preferences API
+
+### Phase 3: Frontend
+Requires Phase 2 completion:
+- [ ] #1007 - Build notification bell component
+- [ ] #1008 - Create notification dropdown
+- [ ] #1009 - Add notification settings page
+
+## Acceptance Criteria
+
+- [ ] Users receive notifications within 500ms
+- [ ] System handles 10k concurrent connections
+- [ ] Notifications persist for offline users
+
+## Notes
+
+See #999 for the original feature request.
+`
+
+	content, err := ParseFreeformParentIssueBody(body)
+	if err != nil {
+		t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+	}
+
+	// H1 headers are kept in summary, H2 headers end the summary section
+	expectedSummary := "# Epic: Implement Real-time Notifications"
+	if content.Summary != expectedSummary {
+		t.Errorf("Summary = %q, want %q", content.Summary, expectedSummary)
+	}
+
+	// Verify we extracted all three phases with correct grouping
+	expectedGroups := [][]int{
+		{1001, 1002, 1003}, // Phase 1
+		{1004, 1005, 1006}, // Phase 2
+		{1007, 1008, 1009}, // Phase 3
+	}
+	if !reflect.DeepEqual(content.ExecutionGroups, expectedGroups) {
+		t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, expectedGroups)
+	}
+
+	// Verify insights and constraints are empty (not in freeform format)
+	if len(content.Insights) != 0 {
+		t.Errorf("Insights should be empty, got %v", content.Insights)
+	}
+	if len(content.Constraints) != 0 {
+		t.Errorf("Constraints should be empty, got %v", content.Constraints)
+	}
+}
+
+func TestParseFreeformParentIssueBody_NoGroups(t *testing.T) {
+	// Test body with issues but no explicit grouping
+	body := `Feature: Add CSV Export
+
+Users want to export their data as CSV files.
+
+Tasks:
+- #200 - Add export button to UI
+- #201 - Create CSV generator service
+- #202 - Add file download endpoint
+- #203 - Write tests for export feature
+`
+
+	content, err := ParseFreeformParentIssueBody(body)
+	if err != nil {
+		t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+	}
+
+	// All issues should be in a single group
+	expectedGroups := [][]int{{200, 201, 202, 203}}
+	if !reflect.DeepEqual(content.ExecutionGroups, expectedGroups) {
+		t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, expectedGroups)
+	}
+
+	expectedSummary := `Feature: Add CSV Export
+
+Users want to export their data as CSV files.
+
+Tasks:`
+	if content.Summary != expectedSummary {
+		t.Errorf("Summary = %q, want %q", content.Summary, expectedSummary)
+	}
+}
+
+func TestDeduplicateIssues(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  []int
+		output []int
+	}{
+		{
+			name:   "no duplicates",
+			input:  []int{1, 2, 3, 4},
+			output: []int{1, 2, 3, 4},
+		},
+		{
+			name:   "with duplicates",
+			input:  []int{1, 2, 1, 3, 2, 4},
+			output: []int{1, 2, 3, 4},
+		},
+		{
+			name:   "all duplicates",
+			input:  []int{5, 5, 5, 5},
+			output: []int{5},
+		},
+		{
+			name:   "empty slice",
+			input:  []int{},
+			output: []int{},
+		},
+		{
+			name:   "single element",
+			input:  []int{42},
+			output: []int{42},
+		},
+		{
+			name:   "preserves order",
+			input:  []int{3, 1, 4, 1, 5, 9, 2, 6, 5, 3},
+			output: []int{3, 1, 4, 5, 9, 2, 6},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deduplicateIssues(tt.input)
+			if !reflect.DeepEqual(got, tt.output) {
+				t.Errorf("deduplicateIssues(%v) = %v, want %v", tt.input, got, tt.output)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Freeform Sub-Issue Parser Tests (task-3-parse-freeform-sub)
+// =============================================================================
+
+func TestParseFreeformSubIssueBody_SimpleBody(t *testing.T) {
+	body := `This is a simple task description without any special formatting.
+
+It spans multiple lines and describes what needs to be done.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should use entire body as description
+	if !strings.Contains(content.Description, "simple task description") {
+		t.Errorf("Description should contain 'simple task description', got %q", content.Description)
+	}
+
+	// Default complexity
+	if content.Complexity != "medium" {
+		t.Errorf("Complexity = %q, want %q", content.Complexity, "medium")
+	}
+
+	// No files or dependencies
+	if len(content.Files) != 0 {
+		t.Errorf("Files should be empty, got %v", content.Files)
+	}
+	if len(content.DependencyIssueNums) != 0 {
+		t.Errorf("DependencyIssueNums should be empty, got %v", content.DependencyIssueNums)
+	}
+}
+
+func TestParseFreeformSubIssueBody_WithFilePaths(t *testing.T) {
+	body := `Fix the authentication bug.
+
+The issue is in ` + "`auth/handler.go`" + ` and ` + "`auth/middleware.go`" + `.
+
+Also check ` + "`config.yaml`" + ` for settings.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	expectedFiles := []string{"auth/handler.go", "auth/middleware.go", "config.yaml"}
+	if !reflect.DeepEqual(content.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", content.Files, expectedFiles)
+	}
+}
+
+func TestParseFreeformSubIssueBody_WithDependencies(t *testing.T) {
+	body := `This task depends on #42 and #43 being completed first.
+
+After those are done, we can implement this feature.
+
+Also related to #100.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	expectedDeps := []int{42, 43, 100}
+	if !reflect.DeepEqual(content.DependencyIssueNums, expectedDeps) {
+		t.Errorf("DependencyIssueNums = %v, want %v", content.DependencyIssueNums, expectedDeps)
+	}
+}
+
+func TestParseFreeformSubIssueBody_ExcludesParentIssue(t *testing.T) {
+	body := `Part of the epic #50.
+
+This task also depends on #42 and #43.`
+
+	content, err := ParseFreeformSubIssueBody(body, 50)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should not include parent issue #50
+	expectedDeps := []int{42, 43}
+	if !reflect.DeepEqual(content.DependencyIssueNums, expectedDeps) {
+		t.Errorf("DependencyIssueNums = %v, want %v", content.DependencyIssueNums, expectedDeps)
+	}
+
+	if content.ParentIssueNum != 50 {
+		t.Errorf("ParentIssueNum = %d, want 50", content.ParentIssueNum)
+	}
+}
+
+func TestParseFreeformSubIssueBody_WithDescriptionHeader(t *testing.T) {
+	body := `## Description
+
+This is the actual task description that should be extracted.
+
+It has multiple paragraphs.
+
+## Files
+
+Some files listed here.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	if !strings.Contains(content.Description, "actual task description") {
+		t.Errorf("Description should contain 'actual task description', got %q", content.Description)
+	}
+	if !strings.Contains(content.Description, "multiple paragraphs") {
+		t.Errorf("Description should contain 'multiple paragraphs', got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_WithOverviewHeader(t *testing.T) {
+	body := `## Overview
+
+This task covers implementing the new API endpoint.
+
+## Implementation Notes
+
+Additional details here.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	if !strings.Contains(content.Description, "new API endpoint") {
+		t.Errorf("Description should contain 'new API endpoint', got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_ContentBeforeFirstHeader(t *testing.T) {
+	body := `This content comes before any headers and should be the description.
+
+## Files Changed
+
+- ` + "`file1.go`" + `
+- ` + "`file2.go`" + ``
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	if !strings.Contains(content.Description, "before any headers") {
+		t.Errorf("Description should contain 'before any headers', got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_ComplexityVariations(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantComplexity string
+	}{
+		{
+			name:           "templated format",
+			body:           "Task description.\n\nEstimated: **low**",
+			wantComplexity: "low",
+		},
+		{
+			name:           "complexity colon format",
+			body:           "Task description.\n\nComplexity: high",
+			wantComplexity: "high",
+		},
+		{
+			name:           "complexity word format",
+			body:           "This is a low complexity task.",
+			wantComplexity: "low",
+		},
+		{
+			name:           "complexity with bold",
+			body:           "Task description.\n\nComplexity: **medium**",
+			wantComplexity: "medium",
+		},
+		{
+			name:           "high complexity phrase",
+			body:           "This is a high complexity refactoring effort.",
+			wantComplexity: "high",
+		},
+		{
+			name:           "no complexity defaults to medium",
+			body:           "Simple task without any complexity mentioned.",
+			wantComplexity: "medium",
+		},
+		{
+			name:           "case insensitive",
+			body:           "Task description.\n\nCOMPLEXITY: LOW",
+			wantComplexity: "low",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ParseFreeformSubIssueBody(tt.body, 0)
+			if err != nil {
+				t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+			}
+			if content.Complexity != tt.wantComplexity {
+				t.Errorf("Complexity = %q, want %q", content.Complexity, tt.wantComplexity)
+			}
+		})
+	}
+}
+
+func TestParseFreeformSubIssueBody_FilePathFiltering(t *testing.T) {
+	body := `Check the code in ` + "`auth/service.go`" + `.
+
+Don't confuse with ` + "`fmt.Println()`" + ` or ` + "`https://example.com`" + `.
+
+Also update ` + "`config.json`" + ` and ` + "`README.md`" + `.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should include file paths but not function calls or URLs
+	expectedFiles := []string{"auth/service.go", "config.json", "README.md"}
+	if !reflect.DeepEqual(content.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", content.Files, expectedFiles)
+	}
+}
+
+func TestParseFreeformSubIssueBody_DeduplicatesFiles(t *testing.T) {
+	body := `Fix ` + "`file.go`" + ` here.
+
+Then update ` + "`file.go`" + ` again.
+
+And ` + "`file.go`" + ` one more time.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should only have one entry for file.go
+	expectedFiles := []string{"file.go"}
+	if !reflect.DeepEqual(content.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", content.Files, expectedFiles)
+	}
+}
+
+func TestParseFreeformSubIssueBody_DeduplicatesDependencies(t *testing.T) {
+	body := `Depends on #42 for the base implementation.
+
+Also see #42 for context.
+
+And #42 again.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should only have one entry for #42
+	expectedDeps := []int{42}
+	if !reflect.DeepEqual(content.DependencyIssueNums, expectedDeps) {
+		t.Errorf("DependencyIssueNums = %v, want %v", content.DependencyIssueNums, expectedDeps)
+	}
+}
+
+func TestParseFreeformSubIssueBody_EmptyBody(t *testing.T) {
+	_, err := ParseFreeformSubIssueBody("", 0)
+	if err == nil {
+		t.Error("Expected error for empty body, got nil")
+	}
+}
+
+func TestParseFreeformSubIssueBody_WhitespaceOnlyBody(t *testing.T) {
+	_, err := ParseFreeformSubIssueBody("   \n\t\n  ", 0)
+	if err == nil {
+		t.Error("Expected error for whitespace-only body, got nil")
+	}
+}
+
+func TestParseFreeformSubIssueBody_WithTaskSection(t *testing.T) {
+	// If the body has a ## Task section, it should be used (like templated format)
+	body := `Some intro text.
+
+## Task
+
+This is the actual task from the Task section.
+
+## Other
+
+Other content.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should use the Task section content
+	if !strings.Contains(content.Description, "actual task from the Task section") {
+		t.Errorf("Description should contain Task section content, got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_BulletListFiles(t *testing.T) {
+	body := `Update these files:
+
+- ` + "`src/main.go`" + `
+- ` + "`src/utils.go`" + `
+- ` + "`tests/main_test.go`" + ``
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	expectedFiles := []string{"src/main.go", "src/utils.go", "tests/main_test.go"}
+	if !reflect.DeepEqual(content.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", content.Files, expectedFiles)
+	}
+}
+
+func TestParseFreeformSubIssueBody_CodeBlockFiles(t *testing.T) {
+	body := "Update the configuration file:\n\n" +
+		"The file " + "`config/settings.yaml`" + " needs to be updated.\n\n" +
+		"Also check " + "`internal/app.go`" + "."
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	expectedFiles := []string{"config/settings.yaml", "internal/app.go"}
+	if !reflect.DeepEqual(content.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", content.Files, expectedFiles)
+	}
+}
+
+func TestParseFreeformSubIssueBody_MixedContent(t *testing.T) {
+	body := `Implement the new authentication flow.
+
+This depends on #10 (user model) and #11 (session handling).
+
+Files to modify:
+- ` + "`internal/auth/handler.go`" + `
+- ` + "`internal/auth/middleware.go`" + `
+
+This is a high complexity task.
+
+Related: #12 (monitoring)`
+
+	content, err := ParseFreeformSubIssueBody(body, 100)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Check description
+	if !strings.Contains(content.Description, "new authentication flow") {
+		t.Errorf("Description should contain 'new authentication flow', got %q", content.Description)
+	}
+
+	// Check files
+	expectedFiles := []string{"internal/auth/handler.go", "internal/auth/middleware.go"}
+	if !reflect.DeepEqual(content.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", content.Files, expectedFiles)
+	}
+
+	// Check dependencies (should not include parent 100)
+	expectedDeps := []int{10, 11, 12}
+	if !reflect.DeepEqual(content.DependencyIssueNums, expectedDeps) {
+		t.Errorf("DependencyIssueNums = %v, want %v", content.DependencyIssueNums, expectedDeps)
+	}
+
+	// Check complexity
+	if content.Complexity != "high" {
+		t.Errorf("Complexity = %q, want %q", content.Complexity, "high")
+	}
+
+	// Check parent
+	if content.ParentIssueNum != 100 {
+		t.Errorf("ParentIssueNum = %d, want 100", content.ParentIssueNum)
+	}
+}
+
+func TestParseFreeformSubIssueBody_RemovesPartOfMarker(t *testing.T) {
+	body := `Fix the bug in the parser.
+
+---
+*Part of #99*`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Description should not contain the "*Part of #99*" marker
+	if strings.Contains(content.Description, "*Part of") {
+		t.Errorf("Description should not contain '*Part of', got %q", content.Description)
+	}
+	if !strings.Contains(content.Description, "Fix the bug") {
+		t.Errorf("Description should contain 'Fix the bug', got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_ZeroParentIssueNum(t *testing.T) {
+	body := `Task that references #1, #2, and #3.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// With parentIssueNum=0, all references should be included
+	expectedDeps := []int{1, 2, 3}
+	if !reflect.DeepEqual(content.DependencyIssueNums, expectedDeps) {
+		t.Errorf("DependencyIssueNums = %v, want %v", content.DependencyIssueNums, expectedDeps)
+	}
+
+	if content.ParentIssueNum != 0 {
+		t.Errorf("ParentIssueNum = %d, want 0", content.ParentIssueNum)
+	}
+}
+
+func TestParseFreeformSubIssueBody_VariousFileExtensions(t *testing.T) {
+	body := "Files: " +
+		"`app.js` `style.css` `config.yaml` `data.json` " +
+		"`script.sh` `query.sql` `schema.proto` `README.md` " +
+		"`Dockerfile` `go.mod` `package.json`"
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should recognize common file extensions
+	for _, ext := range []string{"app.js", "style.css", "config.yaml", "data.json", "script.sh", "query.sql", "schema.proto", "README.md"} {
+		found := false
+		for _, f := range content.Files {
+			if f == ext {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Files should contain %q, got %v", ext, content.Files)
+		}
+	}
+}
+
+func TestParseFreeformSubIssueBody_SummaryHeader(t *testing.T) {
+	body := `## Summary
+
+Refactor the database layer to use connection pooling.
+
+## Implementation Details
+
+Technical details here.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should use Summary section as description
+	if !strings.Contains(content.Description, "connection pooling") {
+		t.Errorf("Description should contain 'connection pooling', got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_AboutHeader(t *testing.T) {
+	body := `## About
+
+This issue tracks the migration to the new API version.
+
+## Steps
+
+1. Update endpoints
+2. Migrate clients`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	if !strings.Contains(content.Description, "migration to the new API") {
+		t.Errorf("Description should contain 'migration to the new API', got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_PreservesMultilineDescription(t *testing.T) {
+	body := `First paragraph of the description.
+
+Second paragraph with more details.
+
+- Bullet point one
+- Bullet point two
+
+Third paragraph to wrap up.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should preserve paragraph structure
+	if !strings.Contains(content.Description, "First paragraph") {
+		t.Error("Description should contain 'First paragraph'")
+	}
+	if !strings.Contains(content.Description, "Second paragraph") {
+		t.Error("Description should contain 'Second paragraph'")
+	}
+	if !strings.Contains(content.Description, "Bullet point one") {
+		t.Error("Description should contain 'Bullet point one'")
+	}
+	if !strings.Contains(content.Description, "Third paragraph") {
+		t.Error("Description should contain 'Third paragraph'")
+	}
+}
+
+// =============================================================================
+// Helper Function Tests for Freeform Parser
+// =============================================================================
+
+func TestExtractFilesFromBody(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		wantFiles []string
+	}{
+		{
+			name:      "empty body",
+			body:      "",
+			wantFiles: nil,
+		},
+		{
+			name:      "no backticks",
+			body:      "No files mentioned here",
+			wantFiles: nil,
+		},
+		{
+			name:      "single file",
+			body:      "Check " + "`main.go`",
+			wantFiles: []string{"main.go"},
+		},
+		{
+			name:      "multiple files",
+			body:      "`file1.go` and `file2.js` and `file3.py`",
+			wantFiles: []string{"file1.go", "file2.js", "file3.py"},
+		},
+		{
+			name:      "path with directories",
+			body:      "`internal/pkg/handler.go`",
+			wantFiles: []string{"internal/pkg/handler.go"},
+		},
+		{
+			name:      "filters function calls",
+			body:      "`fmt.Println()` `strings.Split()` `file.go`",
+			wantFiles: []string{"file.go"},
+		},
+		{
+			name:      "filters URLs",
+			body:      "`https://example.com` `file.go`",
+			wantFiles: []string{"file.go"},
+		},
+		{
+			name:      "deduplicates",
+			body:      "`file.go` `file.go` `file.go`",
+			wantFiles: []string{"file.go"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractFilesFromBody(tt.body)
+			if !reflect.DeepEqual(got, tt.wantFiles) {
+				t.Errorf("extractFilesFromBody() = %v, want %v", got, tt.wantFiles)
+			}
+		})
+	}
+}
+
+func TestExtractIssueReferences(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		parentIssueNum int
+		wantNums       []int
+	}{
+		{
+			name:           "empty body",
+			body:           "",
+			parentIssueNum: 0,
+			wantNums:       nil,
+		},
+		{
+			name:           "no references",
+			body:           "No issue references here",
+			parentIssueNum: 0,
+			wantNums:       nil,
+		},
+		{
+			name:           "single reference",
+			body:           "See #42",
+			parentIssueNum: 0,
+			wantNums:       []int{42},
+		},
+		{
+			name:           "multiple references",
+			body:           "Depends on #1, #2, and #3",
+			parentIssueNum: 0,
+			wantNums:       []int{1, 2, 3},
+		},
+		{
+			name:           "excludes parent",
+			body:           "Part of #100, depends on #42",
+			parentIssueNum: 100,
+			wantNums:       []int{42},
+		},
+		{
+			name:           "deduplicates",
+			body:           "#42 #42 #42",
+			parentIssueNum: 0,
+			wantNums:       []int{42},
+		},
+		{
+			name:           "zero parent includes all",
+			body:           "#1 #2 #3",
+			parentIssueNum: 0,
+			wantNums:       []int{1, 2, 3},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractIssueReferences(tt.body, tt.parentIssueNum)
+			if !reflect.DeepEqual(got, tt.wantNums) {
+				t.Errorf("extractIssueReferences() = %v, want %v", got, tt.wantNums)
+			}
+		})
+	}
+}
+
+func TestExtractComplexityOrDefault(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantComplexity string
+	}{
+		{
+			name:           "empty body defaults to medium",
+			body:           "",
+			wantComplexity: "medium",
+		},
+		{
+			name:           "no complexity defaults to medium",
+			body:           "Just a description",
+			wantComplexity: "medium",
+		},
+		{
+			name:           "templated low",
+			body:           "Estimated: **low**",
+			wantComplexity: "low",
+		},
+		{
+			name:           "templated medium",
+			body:           "Estimated: **medium**",
+			wantComplexity: "medium",
+		},
+		{
+			name:           "templated high",
+			body:           "Estimated: **high**",
+			wantComplexity: "high",
+		},
+		{
+			name:           "complexity colon low",
+			body:           "Complexity: low",
+			wantComplexity: "low",
+		},
+		{
+			name:           "complexity colon high with bold",
+			body:           "Complexity: **high**",
+			wantComplexity: "high",
+		},
+		{
+			name:           "low complexity phrase",
+			body:           "This is a low complexity task",
+			wantComplexity: "low",
+		},
+		{
+			name:           "high complexity phrase",
+			body:           "This is a high complexity refactoring",
+			wantComplexity: "high",
+		},
+		{
+			name:           "case insensitive",
+			body:           "COMPLEXITY: HIGH",
+			wantComplexity: "high",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractComplexityOrDefault(tt.body)
+			if got != tt.wantComplexity {
+				t.Errorf("extractComplexityOrDefault() = %q, want %q", got, tt.wantComplexity)
+			}
+		})
+	}
+}
+
+func TestIsLikelyFilePath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		// Valid file paths
+		{"main.go", true},
+		{"src/main.go", true},
+		{"internal/pkg/handler.go", true},
+		{"README.md", true},
+		{"config.yaml", true},
+		{"package.json", true},
+		{"style.css", true},
+		{"index.html", true},
+		{"script.sh", true},
+		{"data.sql", true},
+		{"go.mod", true},
+		{"go.sum", true},
+		{".env", true},
+		{"Makefile.txt", true},
+
+		// Should reject
+		{"fmt.Println()", false},
+		{"https://example.com", false},
+		{"http://test.org", false},
+		{"no-extension", false},
+		{"function()", false},
+		{"object.method()", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := isLikelyFilePath(tt.path)
+			if got != tt.want {
+				t.Errorf("isLikelyFilePath(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractFreeformDescription_Strategies(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantContain string
+	}{
+		{
+			name:        "simple body no headers",
+			body:        "This is the whole description.",
+			wantContain: "whole description",
+		},
+		{
+			name:        "description header",
+			body:        "## Description\n\nThe actual description here.\n\n## Other",
+			wantContain: "actual description",
+		},
+		{
+			name:        "overview header",
+			body:        "## Overview\n\nOverview content here.\n\n## Details",
+			wantContain: "Overview content",
+		},
+		{
+			name:        "summary header",
+			body:        "## Summary\n\nSummary content.\n\n## Notes",
+			wantContain: "Summary content",
+		},
+		{
+			name:        "content before first header",
+			body:        "Initial content.\n\n## Section\n\nSection content.",
+			wantContain: "Initial content",
+		},
+		{
+			name:        "removes part of marker",
+			body:        "Description text.\n\n---\n*Part of #42*",
+			wantContain: "Description text",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractFreeformDescription(tt.body)
+			if !strings.Contains(got, tt.wantContain) {
+				t.Errorf("extractFreeformDescription() = %q, want to contain %q", got, tt.wantContain)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Unified Sub-Issue Parser Tests (task-4-unified-sub-parser)
+// =============================================================================
+
+func TestParseSubIssueBodyAuto_TemplatedFormat(t *testing.T) {
+	// Test that templated issues are correctly routed to ParseSubIssueBody
+	body := `## Task
+
+Implement the new authentication handler.
+
+## Files to Modify
+
+- ` + "`internal/auth/handler.go`" + `
+- ` + "`internal/auth/service.go`" + `
+
+## Dependencies
+
+- #41
+- #42
+
+## Complexity
+
+Estimated: **medium**
+
+---
+*Part of #100*
+`
+
+	content, err := ParseSubIssueBodyAuto(body, 0)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	// Verify templated parsing results
+	if content.Description != "Implement the new authentication handler." {
+		t.Errorf("Description = %q, want %q", content.Description, "Implement the new authentication handler.")
+	}
+	if len(content.Files) != 2 {
+		t.Errorf("len(Files) = %d, want 2", len(content.Files))
+	}
+	if content.Complexity != "medium" {
+		t.Errorf("Complexity = %q, want %q", content.Complexity, "medium")
+	}
+	if content.ParentIssueNum != 100 {
+		t.Errorf("ParentIssueNum = %d, want 100", content.ParentIssueNum)
+	}
+	// Templated parsing gets dependencies from the Dependencies section
+	if len(content.DependencyIssueNums) != 2 {
+		t.Errorf("len(DependencyIssueNums) = %d, want 2", len(content.DependencyIssueNums))
+	}
+}
+
+func TestParseSubIssueBodyAuto_FreeformFormat(t *testing.T) {
+	// Test that freeform issues are correctly routed to ParseFreeformSubIssueBody
+	body := `This is a simple task description written by a human.
+
+We need to update the ` + "`config.go`" + ` file to support the new settings.
+
+See also #45 for related changes.
+`
+
+	content, err := ParseSubIssueBodyAuto(body, 100)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	// Verify freeform parsing results
+	if !strings.Contains(content.Description, "simple task description") {
+		t.Errorf("Description = %q, should contain 'simple task description'", content.Description)
+	}
+	if len(content.Files) != 1 || content.Files[0] != "config.go" {
+		t.Errorf("Files = %v, want [config.go]", content.Files)
+	}
+	// Freeform defaults to medium complexity
+	if content.Complexity != "medium" {
+		t.Errorf("Complexity = %q, want %q", content.Complexity, "medium")
+	}
+	// ParentIssueNum comes from the parameter for freeform
+	if content.ParentIssueNum != 100 {
+		t.Errorf("ParentIssueNum = %d, want 100", content.ParentIssueNum)
+	}
+	// Should extract issue references (excluding parent)
+	if len(content.DependencyIssueNums) != 1 || content.DependencyIssueNums[0] != 45 {
+		t.Errorf("DependencyIssueNums = %v, want [45]", content.DependencyIssueNums)
+	}
+}
+
+func TestParseSubIssueBodyAuto_ConsistentOutput(t *testing.T) {
+	// Test that both formats produce SubIssueContent with all fields populated
+	tests := []struct {
+		name           string
+		body           string
+		parentIssueNum int
+		wantFormat     IssueFormat
+	}{
+		{
+			name: "templated with all fields",
+			body: `## Task
+
+Do the thing.
+
+## Files to Modify
+
+- ` + "`main.go`" + `
+
+## Dependencies
+
+- #10
+
+## Complexity
+
+Estimated: **low**
+
+---
+*Part of #50*
+`,
+			parentIssueNum: 0,
+			wantFormat:     IssueFormatTemplated,
+		},
+		{
+			name: "freeform with mentions",
+			body: `We need to update ` + "`handler.go`" + ` per #20.
+
+This is low complexity work.
+`,
+			parentIssueNum: 50,
+			wantFormat:     IssueFormatFreeform,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify format detection matches expected
+			gotFormat := DetectIssueFormat(tt.body)
+			if gotFormat != tt.wantFormat {
+				t.Errorf("DetectIssueFormat() = %q, want %q", gotFormat, tt.wantFormat)
+			}
+
+			// Parse and verify all fields are present
+			content, err := ParseSubIssueBodyAuto(tt.body, tt.parentIssueNum)
+			if err != nil {
+				t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+			}
+
+			// Description should never be empty
+			if content.Description == "" {
+				t.Error("Description should not be empty")
+			}
+
+			// Complexity should always be set
+			if content.Complexity == "" {
+				t.Error("Complexity should not be empty")
+			}
+			validComplexities := map[string]bool{"low": true, "medium": true, "high": true}
+			if !validComplexities[content.Complexity] {
+				t.Errorf("Complexity = %q, want one of low/medium/high", content.Complexity)
+			}
+
+			// Files can be empty but should not be nil slice with entries
+			// (just verifying no panic occurs)
+			_ = len(content.Files)
+
+			// DependencyIssueNums can be empty
+			_ = len(content.DependencyIssueNums)
+		})
+	}
+}
+
+func TestParseSubIssueBodyAuto_EmptyBody(t *testing.T) {
+	// Empty body should fail (freeform parser rejects empty bodies)
+	_, err := ParseSubIssueBodyAuto("", 0)
+	if err == nil {
+		t.Error("ParseSubIssueBodyAuto() should error on empty body")
+	}
+}
+
+func TestParseSubIssueBodyAuto_WhitespaceOnlyBody(t *testing.T) {
+	// Whitespace-only body should fail
+	_, err := ParseSubIssueBodyAuto("   \n\t\n   ", 0)
+	if err == nil {
+		t.Error("ParseSubIssueBodyAuto() should error on whitespace-only body")
+	}
+}
+
+func TestParseSubIssueBodyAuto_TemplatedMissingRequiredSections(t *testing.T) {
+	// A body that looks templated but is missing required sections should fail
+	// Note: If it has *Part of #N* and ## Task, it's detected as templated
+	// but if Task section is empty, it should fail
+	body := `## Task
+
+## Complexity
+
+Estimated: **low**
+
+---
+*Part of #42*
+`
+	_, err := ParseSubIssueBodyAuto(body, 0)
+	if err == nil {
+		t.Error("ParseSubIssueBodyAuto() should error when Task section is empty")
+	}
+}
+
+func TestParseSubIssueBodyAuto_FreeformWithComplexity(t *testing.T) {
+	// Freeform issue with explicit complexity mentioned
+	body := `Add validation to the form.
+
+This is a low complexity change.
+`
+
+	content, err := ParseSubIssueBodyAuto(body, 10)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	if content.Complexity != "low" {
+		t.Errorf("Complexity = %q, want %q", content.Complexity, "low")
+	}
+}
+
+func TestParseSubIssueBodyAuto_TemplatedParentExtraction(t *testing.T) {
+	// For templated issues, parent should be extracted from body, not parameter
+	body := `## Task
+
+Simple task.
+
+## Complexity
+
+Estimated: **high**
+
+---
+*Part of #999*
+`
+
+	// Pass different parentIssueNum - should be ignored for templated
+	content, err := ParseSubIssueBodyAuto(body, 123)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	// Should use the value from the body, not the parameter
+	if content.ParentIssueNum != 999 {
+		t.Errorf("ParentIssueNum = %d, want 999 (from body)", content.ParentIssueNum)
+	}
+}
+
+func TestParseSubIssueBodyAuto_FreeformParentFromParam(t *testing.T) {
+	// For freeform issues, parent should come from parameter
+	body := `Just a simple freeform task description.
+`
+
+	content, err := ParseSubIssueBodyAuto(body, 456)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	// Should use the parameter value
+	if content.ParentIssueNum != 456 {
+		t.Errorf("ParentIssueNum = %d, want 456 (from parameter)", content.ParentIssueNum)
+	}
+}
+
+func TestParseSubIssueBodyAuto_RealWorldTemplated(t *testing.T) {
+	// Real-world example of a Claudio-generated sub-issue
+	body := `## Task
+
+Create unified sub-issue parser that auto-detects format and delegates to the appropriate parser. This simplifies the ingestion pipeline.
+
+Implement:
+- ` + "`ParseSubIssueBodyAuto(body string, parentIssueNum int) (*SubIssueContent, error)`" + `
+- Detect format using task-1's detection function
+- Delegate to ParseSubIssueBody() for templated or ParseFreeformSubIssueBody() for freeform
+- Ensure consistent output regardless of input format
+
+## Files to Modify
+
+- ` + "`internal/plan/ingest.go`" + `
+- ` + "`internal/plan/ingest_test.go`" + `
+
+## Dependencies
+
+- #290
+- #291
+
+## Complexity
+
+Estimated: **medium**
+
+---
+*Part of #289*
+`
+
+	content, err := ParseSubIssueBodyAuto(body, 0)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	if !strings.Contains(content.Description, "unified sub-issue parser") {
+		t.Errorf("Description should contain 'unified sub-issue parser', got %q", content.Description)
+	}
+	if len(content.Files) != 2 {
+		t.Errorf("len(Files) = %d, want 2", len(content.Files))
+	}
+	if content.Complexity != "medium" {
+		t.Errorf("Complexity = %q, want medium", content.Complexity)
+	}
+	if content.ParentIssueNum != 289 {
+		t.Errorf("ParentIssueNum = %d, want 289", content.ParentIssueNum)
+	}
+	if len(content.DependencyIssueNums) != 2 {
+		t.Errorf("len(DependencyIssueNums) = %d, want 2", len(content.DependencyIssueNums))
+	}
+}
+
+func TestParseSubIssueBodyAuto_RealWorldFreeform(t *testing.T) {
+	// Real-world example of a human-authored issue
+	body := `## Description
+
+We need to add support for parsing user-written GitHub issues that don't follow our template. The current parser is too strict and rejects valid issues.
+
+## Requirements
+
+- Handle issues without structured sections
+- Extract file paths from inline code mentions
+- Detect complexity from keywords
+
+## Files
+
+- ` + "`internal/plan/ingest.go`" + ` - main parser logic
+- ` + "`internal/plan/ingest_test.go`" + ` - tests
+
+## Related
+
+See #100 for the original feature request.
+`
+
+	content, err := ParseSubIssueBodyAuto(body, 50)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto() error = %v", err)
+	}
+
+	// Should extract description from the Description section
+	if !strings.Contains(content.Description, "parsing user-written GitHub issues") {
+		t.Errorf("Description should mention parsing, got %q", content.Description)
+	}
+
+	// Should find files mentioned in backticks
+	if len(content.Files) != 2 {
+		t.Errorf("len(Files) = %d, want 2, got %v", len(content.Files), content.Files)
+	}
+
+	// Should default to medium complexity
+	if content.Complexity != "medium" {
+		t.Errorf("Complexity = %q, want medium", content.Complexity)
+	}
+
+	// Should use parent from parameter
+	if content.ParentIssueNum != 50 {
+		t.Errorf("ParentIssueNum = %d, want 50", content.ParentIssueNum)
+	}
+
+	// Should extract issue reference #100
+	if len(content.DependencyIssueNums) != 1 || content.DependencyIssueNums[0] != 100 {
+		t.Errorf("DependencyIssueNums = %v, want [100]", content.DependencyIssueNums)
+	}
+}
+
+func TestParseSubIssueBodyAuto_BothFormatsProduceSameStructure(t *testing.T) {
+	// Create equivalent content in both formats and verify structure compatibility
+	templatedBody := `## Task
+
+Update the configuration parser.
+
+## Files to Modify
+
+- ` + "`config.go`" + `
+
+## Complexity
+
+Estimated: **low**
+
+---
+*Part of #100*
+`
+
+	freeformBody := `Update the configuration parser.
+
+Files: ` + "`config.go`" + `
+
+low complexity
+`
+
+	templatedContent, err := ParseSubIssueBodyAuto(templatedBody, 0)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto(templated) error = %v", err)
+	}
+
+	freeformContent, err := ParseSubIssueBodyAuto(freeformBody, 100)
+	if err != nil {
+		t.Fatalf("ParseSubIssueBodyAuto(freeform) error = %v", err)
+	}
+
+	// Both should produce similar (though not identical) results
+	// Description should exist in both
+	if templatedContent.Description == "" || freeformContent.Description == "" {
+		t.Error("Both should have non-empty descriptions")
+	}
+
+	// Both should have files
+	if len(templatedContent.Files) != 1 || len(freeformContent.Files) != 1 {
+		t.Errorf("Both should have 1 file: templated=%v, freeform=%v",
+			templatedContent.Files, freeformContent.Files)
+	}
+
+	// Both should have complexity
+	if templatedContent.Complexity != "low" || freeformContent.Complexity != "low" {
+		t.Errorf("Both should have low complexity: templated=%q, freeform=%q",
+			templatedContent.Complexity, freeformContent.Complexity)
+	}
+
+	// Both should have parent issue number
+	if templatedContent.ParentIssueNum != 100 || freeformContent.ParentIssueNum != 100 {
+		t.Errorf("Both should have parent 100: templated=%d, freeform=%d",
+			templatedContent.ParentIssueNum, freeformContent.ParentIssueNum)
+	}
+}
+
+// =============================================================================
+// Parent Issue Auto-Detection Tests (task-5-build-plan-freeform)
+// =============================================================================
+
+func TestDetectParentIssueFormat_Templated(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want IssueFormat
+	}{
+		{
+			name: "complete templated parent issue",
+			body: `## Summary
+
+Add OAuth2 authentication support.
+
+## Analysis
+
+- Existing user table can be extended
+- JWT library available
+
+## Constraints
+
+- Must maintain backward compatibility
+
+## Sub-Issues
+
+### Group 1 (can start immediately)
+- [ ] #101 - **Setup auth models**
+- [ ] #102 - **Add JWT utilities**
+
+### Group 2 (depends on previous groups)
+- [ ] #103 - **Implement OAuth endpoints**
+
+## Execution Order
+
+Tasks grouped by dependencies.
+`,
+			want: IssueFormatTemplated,
+		},
+		{
+			name: "minimal templated with Summary and Sub-Issues",
+			body: `## Summary
+
+Simple plan.
+
+## Sub-Issues
+
+### Group 1
+- [ ] #10 - **Task**
+`,
+			want: IssueFormatTemplated,
+		},
+		{
+			name: "templated with multiple groups",
+			body: `## Summary
+
+Multi-group plan.
+
+## Sub-Issues
+
+### Group 1
+- [ ] #1
+
+### Group 2
+- [ ] #2
+
+### Group 3
+- [ ] #3
+`,
+			want: IssueFormatTemplated,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectParentIssueFormat(tt.body)
+			if got != tt.want {
+				t.Errorf("DetectParentIssueFormat() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectParentIssueFormat_Freeform(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want IssueFormat
+	}{
+		{
+			name: "human-authored epic",
+			body: `# Epic: Implement Notifications
+
+## Problem Statement
+
+Users need real-time updates.
+
+## Tasks
+
+### Phase 1
+- [ ] #100 - Setup WebSocket server
+
+### Phase 2
+- [ ] #101 - Add notification UI
+`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "simple feature request with tasks",
+			body: `Add dark mode support.
+
+Tasks:
+- #10 - Create theme context
+- #11 - Add toggle component
+`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "has Summary but no Sub-Issues section",
+			body: `## Summary
+
+Just a summary with no Sub-Issues section.
+
+## Tasks
+
+- #10
+- #11
+`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "has Sub-Issues but no Summary",
+			body: `# Feature Request
+
+## Sub-Issues
+
+### Group 1
+- #10
+`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "has Summary and Sub-Issues but no Group headers",
+			body: `## Summary
+
+A plan without groups.
+
+## Sub-Issues
+
+- #10
+- #11
+`,
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "empty body",
+			body: "",
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "whitespace only",
+			body: "   \n\t\n   ",
+			want: IssueFormatFreeform,
+		},
+		{
+			name: "overview format",
+			body: `## Overview
+
+Project overview here.
+
+## Implementation Plan
+
+### Step 1
+- #100
+
+### Step 2
+- #101
+`,
+			want: IssueFormatFreeform,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectParentIssueFormat(tt.body)
+			if got != tt.want {
+				t.Errorf("DetectParentIssueFormat() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseParentIssueBodyAuto_Templated(t *testing.T) {
+	body := `## Summary
+
+Implement user authentication.
+
+## Analysis
+
+- Existing user model can be extended
+- JWT library available
+
+## Constraints
+
+- Must maintain API compatibility
+
+## Sub-Issues
+
+### Group 1 (can start immediately)
+- [ ] #101 - **Setup auth models**
+- [ ] #102 - **Add JWT utilities**
+
+### Group 2 (depends on previous groups)
+- [ ] #103 - **Implement OAuth endpoints**
+
+## Execution Order
+
+Tasks grouped by dependencies.
+`
+
+	content, err := ParseParentIssueBodyAuto(body)
+	if err != nil {
+		t.Fatalf("ParseParentIssueBodyAuto() error = %v", err)
+	}
+
+	// Verify templated parsing results
+	if content.Summary != "Implement user authentication." {
+		t.Errorf("Summary = %q, want %q", content.Summary, "Implement user authentication.")
+	}
+
+	expectedInsights := []string{
+		"Existing user model can be extended",
+		"JWT library available",
+	}
+	if !reflect.DeepEqual(content.Insights, expectedInsights) {
+		t.Errorf("Insights = %v, want %v", content.Insights, expectedInsights)
+	}
+
+	expectedConstraints := []string{"Must maintain API compatibility"}
+	if !reflect.DeepEqual(content.Constraints, expectedConstraints) {
+		t.Errorf("Constraints = %v, want %v", content.Constraints, expectedConstraints)
+	}
+
+	expectedGroups := [][]int{{101, 102}, {103}}
+	if !reflect.DeepEqual(content.ExecutionGroups, expectedGroups) {
+		t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, expectedGroups)
+	}
+}
+
+func TestParseParentIssueBodyAuto_Freeform(t *testing.T) {
+	body := `# Epic: Dark Mode Support
+
+Add dark mode to the application.
+
+## Tasks
+
+### Phase 1 - Infrastructure
+- #200 - Create theme context
+- #201 - Add CSS variables
+
+### Phase 2 - Components
+- #202 - Update all components for theming
+- #203 - Add toggle switch
+`
+
+	content, err := ParseParentIssueBodyAuto(body)
+	if err != nil {
+		t.Fatalf("ParseParentIssueBodyAuto() error = %v", err)
+	}
+
+	// Verify freeform parsing results
+	// Summary should be the content before headers
+	if !strings.Contains(content.Summary, "Dark Mode Support") {
+		t.Errorf("Summary should contain 'Dark Mode Support', got %q", content.Summary)
+	}
+
+	// Insights and Constraints should be empty for freeform
+	if len(content.Insights) != 0 {
+		t.Errorf("Insights should be empty for freeform, got %v", content.Insights)
+	}
+	if len(content.Constraints) != 0 {
+		t.Errorf("Constraints should be empty for freeform, got %v", content.Constraints)
+	}
+
+	// Should have two groups from the Phase headers
+	expectedGroups := [][]int{{200, 201}, {202, 203}}
+	if !reflect.DeepEqual(content.ExecutionGroups, expectedGroups) {
+		t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, expectedGroups)
+	}
+}
+
+func TestParseParentIssueBodyAuto_RoundTrip(t *testing.T) {
+	// Create a plan, render it as a parent issue, then parse it back using auto
+	plan := &orchestrator.PlanSpec{
+		Objective: "Implement caching layer",
+		Summary:   "Add Redis caching to improve performance",
+		Tasks: []orchestrator.PlannedTask{
+			{ID: "task-1", Title: "Setup Redis connection"},
+			{ID: "task-2", Title: "Add cache service"},
+		},
+		ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+		Insights:       []string{"Existing code uses in-memory cache"},
+		Constraints:    []string{"Must support cluster mode"},
+	}
+
+	subIssueNumbers := map[string]int{
+		"task-1": 50,
+		"task-2": 51,
+	}
+
+	body, err := RenderParentIssueBody(plan, subIssueNumbers)
+	if err != nil {
+		t.Fatalf("RenderParentIssueBody() error = %v", err)
+	}
+
+	// Parse back using auto-detection
+	content, err := ParseParentIssueBodyAuto(body)
+	if err != nil {
+		t.Fatalf("ParseParentIssueBodyAuto() error = %v", err)
+	}
+
+	// Should detect as templated and parse correctly
+	if content.Summary != plan.Summary {
+		t.Errorf("Summary = %q, want %q", content.Summary, plan.Summary)
+	}
+	if !reflect.DeepEqual(content.Insights, plan.Insights) {
+		t.Errorf("Insights = %v, want %v", content.Insights, plan.Insights)
+	}
+	if !reflect.DeepEqual(content.Constraints, plan.Constraints) {
+		t.Errorf("Constraints = %v, want %v", content.Constraints, plan.Constraints)
+	}
+}
+
+// =============================================================================
+// Full Pipeline Integration Tests with Freeform Issues (task-5-build-plan-freeform)
+// =============================================================================
+
+func TestBuildPlanFromURL_FreeformPipeline(t *testing.T) {
+	// Test full pipeline with freeform parent and freeform sub-issues
+	parentIssueJSON := `{
+		"number": 500,
+		"title": "Epic: Add Export Feature",
+		"body": "# Add CSV Export\n\nAllow users to export their data as CSV files.\n\n## Tasks\n\n### Phase 1 - Backend\n- #501 - Create export service\n- #502 - Add CSV generator\n\n### Phase 2 - Frontend\n- #503 - Add export button\n- #504 - Show download progress\n",
+		"labels": [{"name": "epic"}],
+		"url": "https://github.com/owner/repo/issues/500",
+		"state": "open"
+	}`
+
+	subIssue501JSON := `{
+		"number": 501,
+		"title": "Create export service",
+		"body": "Create the backend service that handles export requests.\n\nFiles to modify:\n- ` + "`internal/export/service.go`" + `\n- ` + "`internal/export/handler.go`" + `\n\nThis is a medium complexity task.",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/501",
+		"state": "open"
+	}`
+
+	subIssue502JSON := `{
+		"number": 502,
+		"title": "Add CSV generator",
+		"body": "Implement CSV generation logic.\n\nDepends on #501 for the service interface.\n\nFiles: ` + "`internal/export/csv.go`" + `\n\nlow complexity",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/502",
+		"state": "open"
+	}`
+
+	subIssue503JSON := `{
+		"number": 503,
+		"title": "Add export button",
+		"body": "Add the export button to the UI.\n\nDepends on #501 and #502.\n\nFiles: ` + "`src/components/ExportButton.tsx`" + `",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/503",
+		"state": "open"
+	}`
+
+	subIssue504JSON := `{
+		"number": 504,
+		"title": "Show download progress",
+		"body": "Show progress indicator during export.\n\nRelated to #503.\n\nFiles: ` + "`src/components/Progress.tsx`" + `\n\nThis is low complexity.",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/504",
+		"state": "open"
+	}`
+
+	issueResponses := map[int]string{
+		500: parentIssueJSON,
+		501: subIssue501JSON,
+		502: subIssue502JSON,
+		503: subIssue503JSON,
+		504: subIssue504JSON,
+	}
+
+	executor := multiIssueMockExecutor(issueResponses)
+
+	plan, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/500", executor)
+	if err != nil {
+		t.Fatalf("buildPlanFromURLWithExecutor() error: %v", err)
+	}
+
+	// Verify plan metadata
+	if plan.Objective != "Epic: Add Export Feature" {
+		t.Errorf("Objective = %q", plan.Objective)
+	}
+
+	// Summary should be extracted from freeform
+	if !strings.Contains(plan.Summary, "CSV Export") {
+		t.Errorf("Summary should contain 'CSV Export', got %q", plan.Summary)
+	}
+
+	// Verify we have 4 tasks
+	if len(plan.Tasks) != 4 {
+		t.Fatalf("Expected 4 tasks, got %d", len(plan.Tasks))
+	}
+
+	// Verify execution order (2 phases)
+	if len(plan.ExecutionOrder) != 2 {
+		t.Fatalf("Expected 2 execution groups, got %d", len(plan.ExecutionOrder))
+	}
+
+	// Phase 1 should have 2 tasks (501, 502)
+	if len(plan.ExecutionOrder[0]) != 2 {
+		t.Errorf("Phase 1 should have 2 tasks, got %d", len(plan.ExecutionOrder[0]))
+	}
+
+	// Phase 2 should have 2 tasks (503, 504)
+	if len(plan.ExecutionOrder[1]) != 2 {
+		t.Errorf("Phase 2 should have 2 tasks, got %d", len(plan.ExecutionOrder[1]))
+	}
+
+	// Find task 502 and verify its dependencies
+	var task502 *orchestrator.PlannedTask
+	for i := range plan.Tasks {
+		if strings.Contains(plan.Tasks[i].ID, "502") {
+			task502 = &plan.Tasks[i]
+			break
+		}
+	}
+	if task502 == nil {
+		t.Fatal("Task 502 not found")
+	}
+
+	// Task 502 should depend on task 501 (extracted from freeform body)
+	if len(task502.DependsOn) != 1 {
+		t.Errorf("Task 502 should have 1 dependency, got %d: %v", len(task502.DependsOn), task502.DependsOn)
+	}
+
+	// Verify complexity was extracted from freeform
+	if task502.EstComplexity != orchestrator.ComplexityLow {
+		t.Errorf("Task 502 complexity = %q, want %q", task502.EstComplexity, orchestrator.ComplexityLow)
+	}
+
+	// Verify files were extracted from freeform
+	if len(task502.Files) != 1 {
+		t.Errorf("Task 502 should have 1 file, got %d: %v", len(task502.Files), task502.Files)
+	}
+}
+
+func TestBuildPlanFromURL_MixedTemplatedAndFreeform(t *testing.T) {
+	// Test pipeline with templated parent and mixed sub-issues (some templated, some freeform)
+	parentIssueJSON := `{
+		"number": 600,
+		"title": "Plan: API Refactoring",
+		"body": "## Summary\n\nRefactor the API layer for better maintainability.\n\n## Analysis\n\n- Current API has inconsistent error handling\n\n## Constraints\n\n- Must maintain backward compatibility\n\n## Sub-Issues\n\n### Group 1 (can start immediately)\n- [ ] #601 - **Add error types**\n\n### Group 2 (depends on previous groups)\n- [ ] #602 - **Update handlers**\n\n## Execution Order\n\nTasks grouped by dependencies.",
+		"labels": [{"name": "plan"}],
+		"url": "https://github.com/owner/repo/issues/600",
+		"state": "open"
+	}`
+
+	// Templated sub-issue
+	subIssue601JSON := `{
+		"number": 601,
+		"title": "Add error types",
+		"body": "## Task\n\nDefine custom error types for the API.\n\n## Files to Modify\n\n- ` + "`internal/api/errors.go`" + `\n\n## Complexity\n\nEstimated: **low**\n\n---\n*Part of #600*",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/601",
+		"state": "open"
+	}`
+
+	// Freeform sub-issue
+	subIssue602JSON := `{
+		"number": 602,
+		"title": "Update handlers",
+		"body": "Update all API handlers to use the new error types.\n\nDepends on #601.\n\nFiles:\n- ` + "`internal/api/users.go`" + `\n- ` + "`internal/api/orders.go`" + `\n\nThis is high complexity work due to many files.",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/602",
+		"state": "open"
+	}`
+
+	issueResponses := map[int]string{
+		600: parentIssueJSON,
+		601: subIssue601JSON,
+		602: subIssue602JSON,
+	}
+
+	executor := multiIssueMockExecutor(issueResponses)
+
+	plan, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/600", executor)
+	if err != nil {
+		t.Fatalf("buildPlanFromURLWithExecutor() error: %v", err)
+	}
+
+	// Verify templated parent parsing
+	if plan.Summary != "Refactor the API layer for better maintainability." {
+		t.Errorf("Summary = %q", plan.Summary)
+	}
+
+	expectedInsights := []string{"Current API has inconsistent error handling"}
+	if !reflect.DeepEqual(plan.Insights, expectedInsights) {
+		t.Errorf("Insights = %v, want %v", plan.Insights, expectedInsights)
+	}
+
+	expectedConstraints := []string{"Must maintain backward compatibility"}
+	if !reflect.DeepEqual(plan.Constraints, expectedConstraints) {
+		t.Errorf("Constraints = %v, want %v", plan.Constraints, expectedConstraints)
+	}
+
+	// Verify we have 2 tasks
+	if len(plan.Tasks) != 2 {
+		t.Fatalf("Expected 2 tasks, got %d", len(plan.Tasks))
+	}
+
+	// Find both tasks
+	var task601, task602 *orchestrator.PlannedTask
+	for i := range plan.Tasks {
+		if strings.Contains(plan.Tasks[i].ID, "601") {
+			task601 = &plan.Tasks[i]
+		}
+		if strings.Contains(plan.Tasks[i].ID, "602") {
+			task602 = &plan.Tasks[i]
+		}
+	}
+
+	if task601 == nil || task602 == nil {
+		t.Fatal("Tasks 601 and/or 602 not found")
+	}
+
+	// Task 601 (templated) should have low complexity
+	if task601.EstComplexity != orchestrator.ComplexityLow {
+		t.Errorf("Task 601 complexity = %q, want %q", task601.EstComplexity, orchestrator.ComplexityLow)
+	}
+
+	// Task 602 (freeform) should have high complexity (detected from "high complexity")
+	if task602.EstComplexity != orchestrator.ComplexityHigh {
+		t.Errorf("Task 602 complexity = %q, want %q", task602.EstComplexity, orchestrator.ComplexityHigh)
+	}
+
+	// Task 602 should depend on task 601
+	if len(task602.DependsOn) != 1 {
+		t.Errorf("Task 602 should have 1 dependency, got %d: %v", len(task602.DependsOn), task602.DependsOn)
+	}
+
+	// Task 602 should have 2 files
+	if len(task602.Files) != 2 {
+		t.Errorf("Task 602 should have 2 files, got %d: %v", len(task602.Files), task602.Files)
+	}
+}
+
+func TestBuildPlanFromURL_FreeformParentTemplatedSubs(t *testing.T) {
+	// Test with freeform parent but templated sub-issues
+	parentIssueJSON := `{
+		"number": 700,
+		"title": "Add User Profile Features",
+		"body": "Add new features to user profiles.\n\n## Implementation\n\n### Phase 1\n- #701 - Avatar upload\n\n### Phase 2\n- #702 - Bio editor\n",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/700",
+		"state": "open"
+	}`
+
+	// Templated sub-issues
+	subIssue701JSON := `{
+		"number": 701,
+		"title": "Avatar upload",
+		"body": "## Task\n\nImplement avatar image upload.\n\n## Files to Modify\n\n- ` + "`internal/user/avatar.go`" + `\n\n## Complexity\n\nEstimated: **medium**\n\n---\n*Part of #700*",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/701",
+		"state": "open"
+	}`
+
+	subIssue702JSON := `{
+		"number": 702,
+		"title": "Bio editor",
+		"body": "## Task\n\nAdd bio text editor to profile.\n\n## Files to Modify\n\n- ` + "`internal/user/bio.go`" + `\n\n## Dependencies\n\nComplete these issues first:\n- #701 - Avatar upload\n\n## Complexity\n\nEstimated: **low**\n\n---\n*Part of #700*",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/702",
+		"state": "open"
+	}`
+
+	issueResponses := map[int]string{
+		700: parentIssueJSON,
+		701: subIssue701JSON,
+		702: subIssue702JSON,
+	}
+
+	executor := multiIssueMockExecutor(issueResponses)
+
+	plan, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/700", executor)
+	if err != nil {
+		t.Fatalf("buildPlanFromURLWithExecutor() error: %v", err)
+	}
+
+	// Verify freeform parent parsing
+	if plan.Objective != "Add User Profile Features" {
+		t.Errorf("Objective = %q", plan.Objective)
+	}
+
+	// Summary from freeform
+	if !strings.Contains(plan.Summary, "user profiles") {
+		t.Errorf("Summary should contain 'user profiles', got %q", plan.Summary)
+	}
+
+	// Should have empty insights and constraints (freeform parent)
+	if len(plan.Insights) != 0 {
+		t.Errorf("Insights should be empty for freeform parent, got %v", plan.Insights)
+	}
+
+	// Verify we have 2 tasks
+	if len(plan.Tasks) != 2 {
+		t.Fatalf("Expected 2 tasks, got %d", len(plan.Tasks))
+	}
+
+	// Find task 702 and verify dependencies
+	var task702 *orchestrator.PlannedTask
+	for i := range plan.Tasks {
+		if strings.Contains(plan.Tasks[i].ID, "702") {
+			task702 = &plan.Tasks[i]
+			break
+		}
+	}
+
+	if task702 == nil {
+		t.Fatal("Task 702 not found")
+	}
+
+	// Task 702 (templated sub-issue) should have dependency on 701
+	if len(task702.DependsOn) != 1 {
+		t.Errorf("Task 702 should have 1 dependency, got %d: %v", len(task702.DependsOn), task702.DependsOn)
+	}
+
+	// Verify complexity from templated format
+	if task702.EstComplexity != orchestrator.ComplexityLow {
+		t.Errorf("Task 702 complexity = %q, want %q", task702.EstComplexity, orchestrator.ComplexityLow)
+	}
+}
+
+func TestBuildPlanFromURL_FreeformNoDependenciesSection(t *testing.T) {
+	// Test freeform sub-issues that mention dependencies inline rather than in a section
+	parentIssueJSON := `{
+		"number": 800,
+		"title": "Database Migration",
+		"body": "Migrate to new database schema.\n\n### Step 1\n- #801\n\n### Step 2\n- #802\n",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/800",
+		"state": "open"
+	}`
+
+	subIssue801JSON := `{
+		"number": 801,
+		"title": "Create new schema",
+		"body": "Create the new database schema.\n\nFile: ` + "`migrations/001_new_schema.sql`" + `",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/801",
+		"state": "open"
+	}`
+
+	subIssue802JSON := `{
+		"number": 802,
+		"title": "Migrate data",
+		"body": "Migrate existing data to new schema.\n\nThis needs #801 to be complete first.\n\nFile: ` + "`migrations/002_migrate_data.sql`" + `",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/802",
+		"state": "open"
+	}`
+
+	issueResponses := map[int]string{
+		800: parentIssueJSON,
+		801: subIssue801JSON,
+		802: subIssue802JSON,
+	}
+
+	executor := multiIssueMockExecutor(issueResponses)
+
+	plan, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/800", executor)
+	if err != nil {
+		t.Fatalf("buildPlanFromURLWithExecutor() error: %v", err)
+	}
+
+	// Find task 802
+	var task802 *orchestrator.PlannedTask
+	for i := range plan.Tasks {
+		if strings.Contains(plan.Tasks[i].ID, "802") {
+			task802 = &plan.Tasks[i]
+			break
+		}
+	}
+
+	if task802 == nil {
+		t.Fatal("Task 802 not found")
+	}
+
+	// Task 802 should have dependency on 801 (from inline mention "needs #801")
+	if len(task802.DependsOn) != 1 {
+		t.Errorf("Task 802 should have 1 dependency (inline mention), got %d: %v", len(task802.DependsOn), task802.DependsOn)
+	}
+
+	// Verify file was extracted
+	if len(task802.Files) != 1 {
+		t.Errorf("Task 802 should have 1 file, got %d: %v", len(task802.Files), task802.Files)
+	}
+}
+
+func TestBuildPlanFromURL_FreeformComplexityInference(t *testing.T) {
+	// Test that complexity is correctly inferred from freeform bodies
+	parentIssueJSON := `{
+		"number": 900,
+		"title": "Various Tasks",
+		"body": "Tasks:\n\n- #901\n- #902\n- #903\n",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/900",
+		"state": "open"
+	}`
+
+	// Low complexity
+	subIssue901JSON := `{
+		"number": 901,
+		"title": "Simple fix",
+		"body": "This is a low complexity bug fix.",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/901",
+		"state": "open"
+	}`
+
+	// High complexity
+	subIssue902JSON := `{
+		"number": 902,
+		"title": "Major refactor",
+		"body": "Complexity: high\n\nComplete rewrite of the module.",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/902",
+		"state": "open"
+	}`
+
+	// Default (medium)
+	subIssue903JSON := `{
+		"number": 903,
+		"title": "Regular task",
+		"body": "Just a regular task without complexity mentioned.",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/903",
+		"state": "open"
+	}`
+
+	issueResponses := map[int]string{
+		900: parentIssueJSON,
+		901: subIssue901JSON,
+		902: subIssue902JSON,
+		903: subIssue903JSON,
+	}
+
+	executor := multiIssueMockExecutor(issueResponses)
+
+	plan, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/900", executor)
+	if err != nil {
+		t.Fatalf("buildPlanFromURLWithExecutor() error: %v", err)
+	}
+
+	// Find all tasks
+	taskComplexities := make(map[int]orchestrator.TaskComplexity)
+	for _, task := range plan.Tasks {
+		if strings.Contains(task.ID, "901") {
+			taskComplexities[901] = task.EstComplexity
+		}
+		if strings.Contains(task.ID, "902") {
+			taskComplexities[902] = task.EstComplexity
+		}
+		if strings.Contains(task.ID, "903") {
+			taskComplexities[903] = task.EstComplexity
+		}
+	}
+
+	if taskComplexities[901] != orchestrator.ComplexityLow {
+		t.Errorf("Task 901 complexity = %q, want %q", taskComplexities[901], orchestrator.ComplexityLow)
+	}
+	if taskComplexities[902] != orchestrator.ComplexityHigh {
+		t.Errorf("Task 902 complexity = %q, want %q", taskComplexities[902], orchestrator.ComplexityHigh)
+	}
+	if taskComplexities[903] != orchestrator.ComplexityMedium {
+		t.Errorf("Task 903 complexity = %q, want %q (default)", taskComplexities[903], orchestrator.ComplexityMedium)
+	}
+}
+
+// =============================================================================
+// IngestError Tests (task-7-error-handling)
+// =============================================================================
+
+func TestIngestError_Error(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      *IngestError
+		expected string
+	}{
+		{
+			name: "message only",
+			err: &IngestError{
+				Kind:    ErrKindIssueNotFound,
+				Message: "issue not found",
+			},
+			expected: "issue not found",
+		},
+		{
+			name: "with issue number",
+			err: &IngestError{
+				Kind:     ErrKindIssueNotFound,
+				Message:  "issue not found",
+				IssueNum: 42,
+			},
+			expected: "issue not found (issue #42)",
+		},
+		{
+			name: "with repo context",
+			err: &IngestError{
+				Kind:     ErrKindIssueNotFound,
+				Message:  "issue not found",
+				IssueNum: 42,
+				Owner:    "owner",
+				Repo:     "repo",
+			},
+			expected: "issue not found (issue #42) in owner/repo",
+		},
+		{
+			name: "with cause",
+			err: &IngestError{
+				Kind:     ErrKindParsingFailed,
+				Message:  "failed to parse",
+				IssueNum: 123,
+				Cause:    errors.New("underlying error"),
+			},
+			expected: "failed to parse (issue #123): underlying error",
+		},
+		{
+			name: "full context",
+			err: &IngestError{
+				Kind:     ErrKindAuthRequired,
+				Message:  "authentication required",
+				IssueNum: 5,
+				Owner:    "acme",
+				Repo:     "widgets",
+				Cause:    errors.New("not logged in"),
+			},
+			expected: "authentication required (issue #5) in acme/widgets: not logged in",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.err.Error()
+			if got != tt.expected {
+				t.Errorf("Error() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIngestError_Is(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      *IngestError
+		target   error
+		expected bool
+	}{
+		{
+			name:     "matches ErrGHNotInstalled",
+			err:      &IngestError{Kind: ErrKindGHNotInstalled, Message: "gh not installed"},
+			target:   ErrGHNotInstalled,
+			expected: true,
+		},
+		{
+			name:     "matches ErrGHAuthRequired",
+			err:      &IngestError{Kind: ErrKindAuthRequired, Message: "auth required"},
+			target:   ErrGHAuthRequired,
+			expected: true,
+		},
+		{
+			name:     "matches ErrIssueNotFound",
+			err:      &IngestError{Kind: ErrKindIssueNotFound, Message: "not found"},
+			target:   ErrIssueNotFound,
+			expected: true,
+		},
+		{
+			name:     "matches ErrRateLimited",
+			err:      &IngestError{Kind: ErrKindRateLimited, Message: "rate limited"},
+			target:   ErrRateLimited,
+			expected: true,
+		},
+		{
+			name:     "matches ErrNoSubIssues",
+			err:      &IngestError{Kind: ErrKindNoSubIssues, Message: "no sub-issues"},
+			target:   ErrNoSubIssues,
+			expected: true,
+		},
+		{
+			name:     "matches ErrParsingFailed",
+			err:      &IngestError{Kind: ErrKindParsingFailed, Message: "parsing failed"},
+			target:   ErrParsingFailed,
+			expected: true,
+		},
+		{
+			name:     "matches ErrCircularDependency",
+			err:      &IngestError{Kind: ErrKindCircularDependency, Message: "circular"},
+			target:   ErrCircularDependency,
+			expected: true,
+		},
+		{
+			name:     "matches ErrUnsupportedProvider",
+			err:      &IngestError{Kind: ErrKindUnsupportedProvider, Message: "unsupported"},
+			target:   ErrUnsupportedProvider,
+			expected: true,
+		},
+		{
+			name:     "matches ErrRepoNotFound",
+			err:      &IngestError{Kind: ErrKindRepoNotFound, Message: "repo not found"},
+			target:   ErrRepoNotFound,
+			expected: true,
+		},
+		{
+			name:     "does not match wrong sentinel",
+			err:      &IngestError{Kind: ErrKindIssueNotFound, Message: "not found"},
+			target:   ErrGHAuthRequired,
+			expected: false,
+		},
+		{
+			name:     "does not match random error",
+			err:      &IngestError{Kind: ErrKindIssueNotFound, Message: "not found"},
+			target:   errors.New("some error"),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := errors.Is(tt.err, tt.target); got != tt.expected {
+				t.Errorf("errors.Is() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIngestError_Unwrap(t *testing.T) {
+	cause := errors.New("underlying cause")
+	err := &IngestError{
+		Kind:    ErrKindParsingFailed,
+		Message: "parsing failed",
+		Cause:   cause,
+	}
+
+	// Test Unwrap returns the cause
+	if got := err.Unwrap(); got != cause {
+		t.Errorf("Unwrap() = %v, want %v", got, cause)
+	}
+
+	// Test errors.Unwrap works
+	if got := errors.Unwrap(err); got != cause {
+		t.Errorf("errors.Unwrap() = %v, want %v", got, cause)
+	}
+
+	// Test error without cause
+	errNoCause := &IngestError{Kind: ErrKindIssueNotFound, Message: "not found"}
+	if got := errNoCause.Unwrap(); got != nil {
+		t.Errorf("Unwrap() with no cause = %v, want nil", got)
+	}
+}
+
+func TestIngestError_FormatForTerminal(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      *IngestError
+		contains []string
+	}{
+		{
+			name: "simple error",
+			err: &IngestError{
+				Kind:    ErrKindIssueNotFound,
+				Message: "issue not found",
+			},
+			contains: []string{"Error:", "issue not found"},
+		},
+		{
+			name: "with suggestion",
+			err: &IngestError{
+				Kind:       ErrKindAuthRequired,
+				Message:    "authentication required",
+				Suggestion: "Run 'gh auth login'",
+			},
+			contains: []string{"Error:", "authentication required", "Suggestion:", "gh auth login"},
+		},
+		{
+			name: "with full context",
+			err: &IngestError{
+				Kind:       ErrKindNoSubIssues,
+				Message:    "no sub-issues found",
+				IssueNum:   100,
+				Owner:      "myorg",
+				Repo:       "myrepo",
+				Suggestion: "Add sub-issues using #N syntax",
+			},
+			contains: []string{
+				"Error:", "no sub-issues found",
+				"#100", "myorg/myrepo",
+				"Suggestion:", "Add sub-issues",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.err.FormatForTerminal()
+			for _, want := range tt.contains {
+				if !strings.Contains(got, want) {
+					t.Errorf("FormatForTerminal() = %q, want to contain %q", got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestIngestError_BuilderPattern(t *testing.T) {
+	err := NewIngestError(ErrKindIssueNotFound, "issue not found").
+		WithIssue(42).
+		WithRepo("owner", "repo").
+		WithSuggestion("Check the issue number").
+		WithCause(errors.New("404"))
+
+	if err.Kind != ErrKindIssueNotFound {
+		t.Errorf("Kind = %q, want %q", err.Kind, ErrKindIssueNotFound)
+	}
+	if err.Message != "issue not found" {
+		t.Errorf("Message = %q, want %q", err.Message, "issue not found")
+	}
+	if err.IssueNum != 42 {
+		t.Errorf("IssueNum = %d, want %d", err.IssueNum, 42)
+	}
+	if err.Owner != "owner" {
+		t.Errorf("Owner = %q, want %q", err.Owner, "owner")
+	}
+	if err.Repo != "repo" {
+		t.Errorf("Repo = %q, want %q", err.Repo, "repo")
+	}
+	if err.Suggestion != "Check the issue number" {
+		t.Errorf("Suggestion = %q, want %q", err.Suggestion, "Check the issue number")
+	}
+	if err.Cause == nil || err.Cause.Error() != "404" {
+		t.Errorf("Cause = %v, want error with message '404'", err.Cause)
+	}
+}
+
+func TestClassifyGHError_RateLimited(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{"rate limit message", "API rate limit exceeded for user ID 12345"},
+		{"secondary rate limit", "You have exceeded a secondary rate limit"},
+		{"abuse detection", "abuse detection mechanism was triggered"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := classifyGHError(errors.New("exit status 1"), []byte(tt.output), 123)
+			if !errors.Is(err, ErrRateLimited) {
+				t.Errorf("classifyGHError() = %v, want ErrRateLimited", err)
+			}
+
+			// Verify it's an IngestError with suggestion
+			var ingestErr *IngestError
+			if !errors.As(err, &ingestErr) {
+				t.Fatalf("error is not *IngestError")
+			}
+			if ingestErr.Suggestion == "" {
+				t.Error("IngestError.Suggestion should not be empty for rate limit errors")
+			}
+			if ingestErr.IssueNum != 123 {
+				t.Errorf("IngestError.IssueNum = %d, want 123", ingestErr.IssueNum)
+			}
+		})
+	}
+}
+
+func TestClassifyGHError_WithIngestErrorTypes(t *testing.T) {
+	tests := []struct {
+		name           string
+		output         string
+		execErr        error
+		issueNum       int
+		wantKind       IngestErrorKind
+		wantSuggestion bool
+	}{
+		{
+			name:           "gh not installed",
+			output:         "",
+			execErr:        &exec.Error{Name: "gh", Err: errors.New("not found")},
+			issueNum:       1,
+			wantKind:       ErrKindGHNotInstalled,
+			wantSuggestion: true,
+		},
+		{
+			name:           "auth required",
+			output:         "To authenticate, please run `gh auth login`",
+			execErr:        errors.New("exit status 1"),
+			issueNum:       42,
+			wantKind:       ErrKindAuthRequired,
+			wantSuggestion: true,
+		},
+		{
+			name:           "issue not found",
+			output:         "GraphQL: Could not find issue #9999",
+			execErr:        errors.New("exit status 1"),
+			issueNum:       9999,
+			wantKind:       ErrKindIssueNotFound,
+			wantSuggestion: true,
+		},
+		{
+			name:           "repo not found",
+			output:         "GraphQL: Could not resolve to a Repository",
+			execErr:        errors.New("exit status 1"),
+			issueNum:       1,
+			wantKind:       ErrKindRepoNotFound,
+			wantSuggestion: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := classifyGHError(tt.execErr, []byte(tt.output), tt.issueNum)
+
+			var ingestErr *IngestError
+			if !errors.As(err, &ingestErr) {
+				t.Fatalf("error is not *IngestError: %v", err)
+			}
+
+			if ingestErr.Kind != tt.wantKind {
+				t.Errorf("Kind = %q, want %q", ingestErr.Kind, tt.wantKind)
+			}
+
+			if tt.wantSuggestion && ingestErr.Suggestion == "" {
+				t.Error("expected non-empty Suggestion")
+			}
+		})
+	}
+}
+
+func TestDetectCircularDependencies(t *testing.T) {
+	tests := []struct {
+		name      string
+		tasks     []orchestrator.PlannedTask
+		wantCycle bool
+	}{
+		{
+			name: "no cycle",
+			tasks: []orchestrator.PlannedTask{
+				{ID: "task-1", DependsOn: nil},
+				{ID: "task-2", DependsOn: []string{"task-1"}},
+				{ID: "task-3", DependsOn: []string{"task-2"}},
+			},
+			wantCycle: false,
+		},
+		{
+			name: "simple cycle",
+			tasks: []orchestrator.PlannedTask{
+				{ID: "task-1", DependsOn: []string{"task-2"}},
+				{ID: "task-2", DependsOn: []string{"task-1"}},
+			},
+			wantCycle: true,
+		},
+		{
+			name: "self-reference",
+			tasks: []orchestrator.PlannedTask{
+				{ID: "task-1", DependsOn: []string{"task-1"}},
+			},
+			wantCycle: true,
+		},
+		{
+			name: "complex cycle",
+			tasks: []orchestrator.PlannedTask{
+				{ID: "task-1", DependsOn: nil},
+				{ID: "task-2", DependsOn: []string{"task-1"}},
+				{ID: "task-3", DependsOn: []string{"task-2"}},
+				{ID: "task-4", DependsOn: []string{"task-3"}},
+				{ID: "task-5", DependsOn: []string{"task-4", "task-2"}},
+			},
+			wantCycle: false,
+		},
+		{
+			name: "cycle in middle",
+			tasks: []orchestrator.PlannedTask{
+				{ID: "task-1", DependsOn: nil},
+				{ID: "task-2", DependsOn: []string{"task-1", "task-4"}},
+				{ID: "task-3", DependsOn: []string{"task-2"}},
+				{ID: "task-4", DependsOn: []string{"task-3"}},
+			},
+			wantCycle: true,
+		},
+		{
+			name: "dependency on non-existent task (ignored)",
+			tasks: []orchestrator.PlannedTask{
+				{ID: "task-1", DependsOn: []string{"task-999"}},
+				{ID: "task-2", DependsOn: []string{"task-1"}},
+			},
+			wantCycle: false,
+		},
+		{
+			name:      "empty tasks",
+			tasks:     []orchestrator.PlannedTask{},
+			wantCycle: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cycle := detectCircularDependencies(tt.tasks)
+			if tt.wantCycle && cycle == nil {
+				t.Error("expected cycle to be detected, got nil")
+			}
+			if !tt.wantCycle && cycle != nil {
+				t.Errorf("expected no cycle, got %v", cycle)
+			}
+		})
+	}
+}
+
+func TestFormatDependencyCycle(t *testing.T) {
+	tests := []struct {
+		name     string
+		cycle    []string
+		expected string
+	}{
+		{
+			name:     "simple cycle",
+			cycle:    []string{"task-1", "task-2", "task-1"},
+			expected: "task-1 -> task-2 -> task-1",
+		},
+		{
+			name:     "longer cycle",
+			cycle:    []string{"a", "b", "c", "d", "a"},
+			expected: "a -> b -> c -> d -> a",
+		},
+		{
+			name:     "empty",
+			cycle:    []string{},
+			expected: "",
+		},
+		{
+			name:     "single element",
+			cycle:    []string{"task-1"},
+			expected: "task-1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatDependencyCycle(tt.cycle)
+			if got != tt.expected {
+				t.Errorf("formatDependencyCycle() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildPlanFromURL_CircularDependency(t *testing.T) {
+	// Create parent issue with two sub-issues
+	parentJSON := `{
+		"number": 100,
+		"title": "Parent Issue",
+		"body": "## Summary\nTest\n\n## Sub-Issues\n### Group 1\n- [ ] #101 - Task A\n- [ ] #102 - Task B",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/100",
+		"state": "open"
+	}`
+
+	// Sub-issues have circular dependency: 101 depends on 102, 102 depends on 101
+	// Using the proper ## Dependencies section for templated format
+	subIssue101JSON := `{
+		"number": 101,
+		"title": "Task A",
+		"body": "## Task\nDo A\n\n## Dependencies\n- #102\n\n## Complexity\nEstimated: **low**\n\n*Part of #100*",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/101",
+		"state": "open"
+	}`
+
+	subIssue102JSON := `{
+		"number": 102,
+		"title": "Task B",
+		"body": "## Task\nDo B\n\n## Dependencies\n- #101\n\n## Complexity\nEstimated: **low**\n\n*Part of #100*",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/102",
+		"state": "open"
+	}`
+
+	issueResponses := map[int]string{
+		100: parentJSON,
+		101: subIssue101JSON,
+		102: subIssue102JSON,
+	}
+
+	executor := multiIssueMockExecutor(issueResponses)
+
+	_, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/100", executor)
+	if err == nil {
+		t.Fatal("expected error for circular dependency, got nil")
+	}
+
+	if !errors.Is(err, ErrCircularDependency) {
+		t.Errorf("expected ErrCircularDependency, got: %v", err)
+	}
+
+	// Verify it's an IngestError with suggestion
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) {
+		if ingestErr.Suggestion == "" {
+			t.Error("expected suggestion for circular dependency error")
+		}
+	}
+}
+
+func TestBuildPlanFromURL_NoSubIssues_ReturnsIngestError(t *testing.T) {
+	parentJSON := `{
+		"number": 200,
+		"title": "Empty Parent",
+		"body": "## Summary\nNo sub-issues here\n\n## Sub-Issues\nNone defined",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/200",
+		"state": "open"
+	}`
+
+	executor := mockExecutor([]byte(parentJSON), nil)
+
+	_, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/200", executor)
+	if err == nil {
+		t.Fatal("expected error for no sub-issues, got nil")
+	}
+
+	if !errors.Is(err, ErrNoSubIssues) {
+		t.Errorf("expected ErrNoSubIssues, got: %v", err)
+	}
+
+	// Verify it's an IngestError with proper context
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) {
+		if ingestErr.IssueNum != 200 {
+			t.Errorf("IssueNum = %d, want 200", ingestErr.IssueNum)
+		}
+		if ingestErr.Owner != "owner" {
+			t.Errorf("Owner = %q, want 'owner'", ingestErr.Owner)
+		}
+		if ingestErr.Repo != "repo" {
+			t.Errorf("Repo = %q, want 'repo'", ingestErr.Repo)
+		}
+		if ingestErr.Suggestion == "" {
+			t.Error("expected suggestion for no sub-issues error")
+		}
+	} else {
+		t.Error("expected error to be *IngestError")
+	}
+}
+
+func TestBuildPlanFromURL_SubIssueFetchFails_ReturnsIngestError(t *testing.T) {
+	// Parent issue that references sub-issue #201
+	parentJSON := `{
+		"number": 300,
+		"title": "Parent with missing sub-issue",
+		"body": "## Summary\nTest\n\n## Sub-Issues\n### Group 1\n- [ ] #301 - Missing task",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/300",
+		"state": "open"
+	}`
+
+	// Sub-issue fetch will fail with "not found"
+	callCount := 0
+	executor := func(name string, args ...string) ([]byte, error) {
+		callCount++
+		if callCount == 1 {
+			// First call: parent issue
+			return []byte(parentJSON), nil
+		}
+		// Second call: sub-issue - simulate not found
+		return []byte("Could not find issue #301"), errors.New("exit status 1")
+	}
+
+	_, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/300", executor)
+	if err == nil {
+		t.Fatal("expected error for missing sub-issue, got nil")
+	}
+
+	// Should be wrapped with context about which sub-issue failed
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) {
+		if ingestErr.IssueNum != 301 {
+			t.Errorf("IssueNum = %d, want 301 (the failing sub-issue)", ingestErr.IssueNum)
+		}
+	}
+}
+
+func TestBuildPlanFromURL_ParsingFailed_ReturnsIngestError(t *testing.T) {
+	// Parent issue with valid structure
+	parentJSON := `{
+		"number": 400,
+		"title": "Parent Issue",
+		"body": "## Summary\nTest\n\n## Sub-Issues\n### Group 1\n- [ ] #401 - Task",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/400",
+		"state": "open"
+	}`
+
+	// Sub-issue with empty body (will fail parsing)
+	subIssueJSON := `{
+		"number": 401,
+		"title": "Task with empty body",
+		"body": "",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/401",
+		"state": "open"
+	}`
+
+	issueResponses := map[int]string{
+		400: parentJSON,
+		401: subIssueJSON,
+	}
+
+	executor := multiIssueMockExecutor(issueResponses)
+
+	_, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/400", executor)
+	if err == nil {
+		t.Fatal("expected error for parsing failure, got nil")
+	}
+
+	if !errors.Is(err, ErrParsingFailed) {
+		t.Errorf("expected ErrParsingFailed, got: %v", err)
+	}
+
+	// Verify it's an IngestError with proper context
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) {
+		if ingestErr.IssueNum != 401 {
+			t.Errorf("IssueNum = %d, want 401", ingestErr.IssueNum)
+		}
+		if ingestErr.Suggestion == "" {
+			t.Error("expected suggestion for parsing failure")
+		}
 	}
 }

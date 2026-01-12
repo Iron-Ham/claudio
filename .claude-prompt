@@ -1,2 +1,66 @@
-The terminal doesn't clearly display user input, nor does it clearly display command output. 
-We should have a fully functional terminal there. It should also be taller; it's currently too short to be useful. 
+# Task: Add --issue flag to ultraplan command
+
+## Part of Ultra-Plan: Enable ingesting GitHub Issues as UltraPlan execution plans via a new --issue CLI flag. This requires extending the existing ingestion pipeline to support human-authored (freeform) issue formats in addition to the current templated format, plus CLI integration to wire the feature end-to-end.
+
+## Your Task
+
+Add a new --issue flag to the ultraplan CLI command that accepts a GitHub issue URL or shorthand (owner/repo#123). When provided, the plan is loaded from the GitHub issue instead of being generated.
+
+Modify internal/cmd/ultraplan.go:
+- Add `ultraplanIssueURL string` variable
+- Add flag: `--issue` with description 'Load plan from GitHub issue URL'
+- In runUltraplan():
+  - If --issue is set, call plan.BuildPlanFromURL()
+  - Use the returned PlanSpec instead of generating one
+  - Set objective from parent issue title
+  - Skip planning phase (jump to PhaseRefresh)
+- Add validation that --issue and --plan are mutually exclusive
+
+Update command help text with examples.
+
+## Expected Files
+
+You are expected to work with these files:
+- internal/cmd/ultraplan.go
+
+## Context from Previous Group
+
+This task builds on work consolidated from Group 4.
+
+**Consolidator Notes**: Successfully consolidated task-5-build-plan-freeform which completes the auto-detection support for the ingestion pipeline. The commit adds DetectParentIssueFormat() and ParseParentIssueBodyAuto() functions that mirror the sub-issue auto-detection pattern from group-3. The buildPlanFromGitHubIssue() and convertSubIssuesToTasks() functions now use auto-detection, enabling full support for all combinations of templated and freeform parent/sub-issues. Cherry-pick applied cleanly with no conflicts.
+
+**Important**: The previous group's consolidator flagged these issues:
+- The freeform parser infers complexity (defaults to medium) when not explicitly specified - document this behavior for users
+- Dependency extraction from freeform bodies finds all #N references inline - could document that users can mention dependencies naturally in prose
+- Consider adding CLI documentation for the --issue flag to explain that both templated (Claudio-generated) and freeform (human-authored) issues are supported
+- With Groups 1-4 complete, the ingestion pipeline is fully functional - next steps would be CLI integration to expose the --issue flag to users
+
+The consolidated code from the previous group has been verified (build/lint/tests passed).
+
+## Guidelines
+
+- Focus only on this specific task
+- Do not modify files outside of your assigned scope unless necessary
+- Commit your changes before writing the completion file
+
+## Completion Protocol
+
+When your task is complete, you MUST write a completion file to signal the orchestrator:
+
+1. Use Write tool to create `.claudio-task-complete.json` in your worktree root
+2. Include this JSON structure:
+```json
+{
+  "task_id": "task-6-cli-issue-flag",
+  "status": "complete",
+  "summary": "Brief description of what you accomplished",
+  "files_modified": ["list", "of", "files", "you", "changed"],
+  "notes": "Any implementation notes for the consolidation phase",
+  "issues": ["Any concerns or blocking issues found"],
+  "suggestions": ["Suggestions for integration with other tasks"],
+  "dependencies": ["Any new runtime dependencies added"]
+}
+```
+
+3. Use status "blocked" if you cannot complete (explain in issues), or "failed" if something broke
+4. This file signals that your work is done and provides context for consolidation

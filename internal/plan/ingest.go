@@ -50,6 +50,173 @@ var defaultExecutor CommandExecutor = func(name string, args ...string) ([]byte,
 	return cmd.CombinedOutput()
 }
 
+// =============================================================================
+// Error Types for GitHub Issue Ingestion
+// =============================================================================
+
+// IngestErrorKind categorizes the type of ingestion error.
+type IngestErrorKind string
+
+const (
+	// ErrKindGHNotInstalled indicates gh CLI is not installed or not in PATH.
+	ErrKindGHNotInstalled IngestErrorKind = "gh_not_installed"
+	// ErrKindAuthRequired indicates GitHub authentication is required.
+	ErrKindAuthRequired IngestErrorKind = "auth_required"
+	// ErrKindIssueNotFound indicates the requested issue does not exist (404).
+	ErrKindIssueNotFound IngestErrorKind = "issue_not_found"
+	// ErrKindRateLimited indicates the request was rate limited by GitHub.
+	ErrKindRateLimited IngestErrorKind = "rate_limited"
+	// ErrKindNoSubIssues indicates the parent issue has no sub-issues.
+	ErrKindNoSubIssues IngestErrorKind = "no_sub_issues"
+	// ErrKindParsingFailed indicates parsing the issue content failed.
+	ErrKindParsingFailed IngestErrorKind = "parsing_failed"
+	// ErrKindCircularDependency indicates a circular dependency was detected.
+	ErrKindCircularDependency IngestErrorKind = "circular_dependency"
+	// ErrKindUnsupportedProvider indicates the URL provider is not supported.
+	ErrKindUnsupportedProvider IngestErrorKind = "unsupported_provider"
+	// ErrKindRepoNotFound indicates the repository was not found or not accessible.
+	ErrKindRepoNotFound IngestErrorKind = "repo_not_found"
+)
+
+// IngestError is a structured error type for issue ingestion failures.
+// It provides context about which issue failed and suggestions for resolution.
+type IngestError struct {
+	// Kind categorizes the error type for programmatic handling.
+	Kind IngestErrorKind
+
+	// Message is the human-readable error description.
+	Message string
+
+	// IssueNum is the issue number that caused the error (0 if not applicable).
+	IssueNum int
+
+	// Owner is the repository owner (empty if not applicable).
+	Owner string
+
+	// Repo is the repository name (empty if not applicable).
+	Repo string
+
+	// Suggestion provides actionable advice for resolving the error.
+	Suggestion string
+
+	// Cause is the underlying error, if any.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *IngestError) Error() string {
+	var sb strings.Builder
+
+	sb.WriteString(e.Message)
+
+	if e.IssueNum > 0 {
+		sb.WriteString(fmt.Sprintf(" (issue #%d)", e.IssueNum))
+	}
+
+	if e.Owner != "" && e.Repo != "" {
+		sb.WriteString(fmt.Sprintf(" in %s/%s", e.Owner, e.Repo))
+	}
+
+	if e.Cause != nil {
+		sb.WriteString(fmt.Sprintf(": %v", e.Cause))
+	}
+
+	return sb.String()
+}
+
+// Unwrap returns the underlying error for use with errors.Is and errors.As.
+func (e *IngestError) Unwrap() error {
+	return e.Cause
+}
+
+// Is implements error matching for errors.Is().
+// It matches based on the Kind field when comparing with sentinel errors.
+func (e *IngestError) Is(target error) bool {
+	switch target {
+	case ErrGHNotInstalled:
+		return e.Kind == ErrKindGHNotInstalled
+	case ErrGHAuthRequired:
+		return e.Kind == ErrKindAuthRequired
+	case ErrIssueNotFound:
+		return e.Kind == ErrKindIssueNotFound
+	case ErrRateLimited:
+		return e.Kind == ErrKindRateLimited
+	case ErrNoSubIssues:
+		return e.Kind == ErrKindNoSubIssues
+	case ErrParsingFailed:
+		return e.Kind == ErrKindParsingFailed
+	case ErrCircularDependency:
+		return e.Kind == ErrKindCircularDependency
+	case ErrUnsupportedProvider:
+		return e.Kind == ErrKindUnsupportedProvider
+	case ErrRepoNotFound:
+		return e.Kind == ErrKindRepoNotFound
+	}
+	return false
+}
+
+// FormatForTerminal returns a user-friendly formatted string suitable for terminal output.
+// It includes the error message and suggestion (if any) formatted for CLI display.
+func (e *IngestError) FormatForTerminal() string {
+	var sb strings.Builder
+
+	// Error message with context
+	sb.WriteString("Error: ")
+	sb.WriteString(e.Message)
+
+	if e.IssueNum > 0 {
+		sb.WriteString(fmt.Sprintf(" (issue #%d)", e.IssueNum))
+	}
+
+	if e.Owner != "" && e.Repo != "" {
+		sb.WriteString(fmt.Sprintf(" in %s/%s", e.Owner, e.Repo))
+	}
+
+	// Add suggestion if available
+	if e.Suggestion != "" {
+		sb.WriteString("\n\nSuggestion: ")
+		sb.WriteString(e.Suggestion)
+	}
+
+	return sb.String()
+}
+
+// NewIngestError creates a new IngestError with the given parameters.
+func NewIngestError(kind IngestErrorKind, message string) *IngestError {
+	return &IngestError{
+		Kind:    kind,
+		Message: message,
+	}
+}
+
+// WithIssue adds issue context to the error.
+func (e *IngestError) WithIssue(issueNum int) *IngestError {
+	e.IssueNum = issueNum
+	return e
+}
+
+// WithRepo adds repository context to the error.
+func (e *IngestError) WithRepo(owner, repo string) *IngestError {
+	e.Owner = owner
+	e.Repo = repo
+	return e
+}
+
+// WithSuggestion adds a suggestion for resolving the error.
+func (e *IngestError) WithSuggestion(suggestion string) *IngestError {
+	e.Suggestion = suggestion
+	return e
+}
+
+// WithCause adds an underlying error.
+func (e *IngestError) WithCause(cause error) *IngestError {
+	e.Cause = cause
+	return e
+}
+
+// Sentinel errors for backward compatibility and errors.Is() matching.
+// These are kept for compatibility with existing code that uses errors.Is().
+
 // ErrGHNotInstalled indicates that the gh CLI tool is not installed or not in PATH.
 var ErrGHNotInstalled = errors.New("gh CLI is not installed or not in PATH")
 
@@ -58,6 +225,15 @@ var ErrGHAuthRequired = errors.New("gh CLI requires authentication (run 'gh auth
 
 // ErrIssueNotFound indicates that the requested issue does not exist.
 var ErrIssueNotFound = errors.New("issue not found")
+
+// ErrRateLimited indicates that the request was rate limited by GitHub.
+var ErrRateLimited = errors.New("rate limited by GitHub")
+
+// ErrCircularDependency indicates that a circular dependency was detected in sub-issues.
+var ErrCircularDependency = errors.New("circular dependency detected")
+
+// ErrRepoNotFound indicates that the repository was not found or not accessible.
+var ErrRepoNotFound = errors.New("repository not found")
 
 // FetchIssue fetches a GitHub issue by owner, repo, and issue number using the gh CLI.
 // It returns a GitHubIssue struct containing the issue data, or an error if the fetch fails.
@@ -119,13 +295,15 @@ func fetchIssueWithExecutor(owner, repo string, issueNum int, executor CommandEx
 
 // classifyGHError analyzes the error and output from a gh command
 // and returns a more specific error type when possible.
+// It returns *IngestError with appropriate context and suggestions.
 func classifyGHError(err error, output []byte, issueNum int) error {
 	outStr := strings.ToLower(string(output))
 
 	// Check for "executable file not found" which indicates gh is not installed
 	var execErr *exec.Error
 	if errors.As(err, &execErr) {
-		return ErrGHNotInstalled
+		return NewIngestError(ErrKindGHNotInstalled, "GitHub CLI (gh) is not installed or not in PATH").
+			WithSuggestion("Install the GitHub CLI: https://cli.github.com/")
 	}
 
 	// Check for common error patterns in output
@@ -133,19 +311,40 @@ func classifyGHError(err error, output []byte, issueNum int) error {
 	case strings.Contains(outStr, "not logged in") ||
 		strings.Contains(outStr, "authentication required") ||
 		strings.Contains(outStr, "gh auth login"):
-		return ErrGHAuthRequired
+		return NewIngestError(ErrKindAuthRequired, "GitHub authentication required").
+			WithIssue(issueNum).
+			WithSuggestion("Run 'gh auth login' to authenticate with GitHub")
+
+	case strings.Contains(outStr, "rate limit") ||
+		strings.Contains(outStr, "api rate limit") ||
+		strings.Contains(outStr, "secondary rate limit") ||
+		strings.Contains(outStr, "abuse detection"):
+		return NewIngestError(ErrKindRateLimited, "GitHub API rate limit exceeded").
+			WithIssue(issueNum).
+			WithSuggestion("Wait a few minutes and try again. If using a token, ensure it has sufficient rate limits.")
 
 	case strings.Contains(outStr, "could not find issue") ||
-		strings.Contains(outStr, "issue not found") ||
-		strings.Contains(outStr, "not found"):
-		return fmt.Errorf("%w: #%d", ErrIssueNotFound, issueNum)
+		strings.Contains(outStr, "issue not found"):
+		return NewIngestError(ErrKindIssueNotFound, "issue not found").
+			WithIssue(issueNum).
+			WithSuggestion("Verify the issue number exists and you have access to the repository")
 
 	case strings.Contains(outStr, "could not resolve to a repository"):
-		return fmt.Errorf("repository not found or not accessible")
+		return NewIngestError(ErrKindRepoNotFound, "repository not found or not accessible").
+			WithIssue(issueNum).
+			WithSuggestion("Check the repository name and ensure you have access. For private repos, run 'gh auth login'")
+
+	case strings.Contains(outStr, "not found"):
+		// Generic "not found" - could be issue or repo
+		return NewIngestError(ErrKindIssueNotFound, "resource not found").
+			WithIssue(issueNum).
+			WithSuggestion("Verify the issue number and repository are correct")
 	}
 
 	// Return the original error with output for debugging
-	return fmt.Errorf("gh command failed: %w\n%s", err, string(output))
+	return NewIngestError(ErrKindParsingFailed, "gh command failed").
+		WithIssue(issueNum).
+		WithCause(fmt.Errorf("%w\n%s", err, string(output)))
 }
 
 // GitHub issue URL patterns
@@ -809,31 +1008,56 @@ func buildPlanFromGitHubIssue(url string, executor CommandExecutor) (*orchestrat
 	// Step 2: Fetch the parent issue
 	parentIssue, err := fetchIssueWithExecutor(owner, repo, issueNum, executor)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch parent issue #%d: %w", issueNum, err)
+		// Enhance error with repo context if not already present
+		if ingestErr, ok := err.(*IngestError); ok {
+			return nil, ingestErr.WithRepo(owner, repo)
+		}
+		return nil, NewIngestError(ErrKindParsingFailed, "failed to fetch parent issue").
+			WithIssue(issueNum).
+			WithRepo(owner, repo).
+			WithCause(err)
 	}
 
-	// Step 3: Parse the parent issue body to extract structure
-	parentContent, err := ParseParentIssueBody(parentIssue.Body)
+	// Step 3: Detect format and parse the parent issue body to extract structure
+	// This supports both templated (Claudio-generated) and freeform (human-authored) issues
+	parentContent, err := ParseParentIssueBodyAuto(parentIssue.Body)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to parse parent issue body: %v", ErrParsingFailed, err)
+		return nil, NewIngestError(ErrKindParsingFailed, "failed to parse parent issue body").
+			WithIssue(issueNum).
+			WithRepo(owner, repo).
+			WithCause(err).
+			WithSuggestion("Ensure the issue follows a supported format with sub-issues listed as #N references")
 	}
 
 	// Step 4: Collect all sub-issue numbers from execution groups
 	subIssueNums := collectSubIssueNumbers(parentContent.ExecutionGroups)
 	if len(subIssueNums) == 0 {
-		return nil, fmt.Errorf("%w: no sub-issues found in parent issue #%d", ErrNoSubIssues, issueNum)
+		return nil, NewIngestError(ErrKindNoSubIssues, "no sub-issues found in parent issue").
+			WithIssue(issueNum).
+			WithRepo(owner, repo).
+			WithSuggestion("The parent issue must reference sub-issues using #N syntax (e.g., '- [ ] #123 - Task title')")
 	}
 
 	// Step 5: Fetch all sub-issues and build the issue number to task ID mapping
-	subIssues, issueNumToTaskID, err := fetchSubIssuesWithMapping(owner, repo, subIssueNums, executor)
+	subIssues, issueNumToTaskID, err := fetchSubIssuesWithMappingEnhanced(owner, repo, subIssueNums, executor)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch sub-issues: %w", err)
+		// Error already has context from fetchSubIssuesWithMappingEnhanced
+		return nil, err
 	}
 
 	// Step 6: Convert each sub-issue to a PlannedTask
-	tasks, err := convertSubIssuesToTasks(subIssues, issueNumToTaskID)
+	// Pass the parent issue number for freeform sub-issues to exclude from dependencies
+	tasks, err := convertSubIssuesToTasksEnhanced(subIssues, issueNumToTaskID, issueNum, owner, repo)
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert issues to tasks: %w", err)
+		// Error already has context from convertSubIssuesToTasksEnhanced
+		return nil, err
+	}
+
+	// Step 6.5: Check for circular dependencies
+	if cycle := detectCircularDependencies(tasks); cycle != nil {
+		return nil, NewIngestError(ErrKindCircularDependency, "circular dependency detected in sub-issues").
+			WithRepo(owner, repo).
+			WithSuggestion(fmt.Sprintf("Review the dependency chain: %s", formatDependencyCycle(cycle)))
 	}
 
 	// Step 7: Build execution order from parent's execution groups
@@ -879,16 +1103,24 @@ func collectSubIssueNumbers(executionGroups [][]int) []int {
 	return nums
 }
 
-// fetchSubIssuesWithMapping fetches all sub-issues and builds a mapping from
-// issue numbers to task IDs (which are generated from issue number and title)
-func fetchSubIssuesWithMapping(owner, repo string, issueNums []int, executor CommandExecutor) (map[int]*GitHubIssue, map[int]string, error) {
+// fetchSubIssuesWithMappingEnhanced fetches all sub-issues and builds a mapping from
+// issue numbers to task IDs (which are generated from issue number and title).
+// Returns *IngestError with detailed context for each failure.
+func fetchSubIssuesWithMappingEnhanced(owner, repo string, issueNums []int, executor CommandExecutor) (map[int]*GitHubIssue, map[int]string, error) {
 	issues := make(map[int]*GitHubIssue)
 	issueNumToTaskID := make(map[int]string)
 
 	for _, num := range issueNums {
 		issue, err := fetchIssueWithExecutor(owner, repo, num, executor)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to fetch sub-issue #%d: %w", num, err)
+			// Enhance error with repo context if not already present
+			if ingestErr, ok := err.(*IngestError); ok {
+				return nil, nil, ingestErr.WithRepo(owner, repo)
+			}
+			return nil, nil, NewIngestError(ErrKindParsingFailed, "failed to fetch sub-issue").
+				WithIssue(num).
+				WithRepo(owner, repo).
+				WithCause(err)
 		}
 		issues[num] = issue
 		// Generate task ID immediately so we can use it for dependency resolution
@@ -898,27 +1130,107 @@ func fetchSubIssuesWithMapping(owner, repo string, issueNums []int, executor Com
 	return issues, issueNumToTaskID, nil
 }
 
-// convertSubIssuesToTasks converts all fetched sub-issues to PlannedTasks
-func convertSubIssuesToTasks(subIssues map[int]*GitHubIssue, issueNumToTaskID map[int]string) ([]orchestrator.PlannedTask, error) {
+// convertSubIssuesToTasksEnhanced converts all fetched sub-issues to PlannedTasks.
+// The parentIssueNum is used for freeform issues to exclude the parent from dependencies.
+// Returns *IngestError with detailed context for each failure.
+func convertSubIssuesToTasksEnhanced(subIssues map[int]*GitHubIssue, issueNumToTaskID map[int]string, parentIssueNum int, owner, repo string) ([]orchestrator.PlannedTask, error) {
 	var tasks []orchestrator.PlannedTask
 
 	for num, issue := range subIssues {
-		// Parse the sub-issue body
-		content, err := ParseSubIssueBody(issue.Body)
+		// Parse the sub-issue body using auto-detection
+		// This supports both templated (Claudio-generated) and freeform (human-authored) sub-issues
+		content, err := ParseSubIssueBodyAuto(issue.Body, parentIssueNum)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse sub-issue #%d body: %w", num, err)
+			return nil, NewIngestError(ErrKindParsingFailed, "failed to parse sub-issue body").
+				WithIssue(num).
+				WithRepo(owner, repo).
+				WithCause(err).
+				WithSuggestion("Check that the sub-issue body contains a valid description")
 		}
 
 		// Convert to PlannedTask
 		task, err := ConvertToPlannedTask(*issue, *content, issueNumToTaskID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to convert sub-issue #%d to task: %w", num, err)
+			return nil, NewIngestError(ErrKindParsingFailed, "failed to convert sub-issue to task").
+				WithIssue(num).
+				WithRepo(owner, repo).
+				WithCause(err).
+				WithSuggestion("Ensure the sub-issue has a title and valid content")
 		}
 
 		tasks = append(tasks, task)
 	}
 
 	return tasks, nil
+}
+
+// detectCircularDependencies checks for circular dependencies in a list of tasks.
+// Returns the cycle as a slice of task IDs if found, or nil if no cycle exists.
+func detectCircularDependencies(tasks []orchestrator.PlannedTask) []string {
+	// Build adjacency list from task dependencies
+	deps := make(map[string][]string)
+	taskExists := make(map[string]bool)
+	for _, task := range tasks {
+		deps[task.ID] = task.DependsOn
+		taskExists[task.ID] = true
+	}
+
+	// Track visit state: 0=unvisited, 1=visiting (in current path), 2=visited (complete)
+	state := make(map[string]int)
+	var cyclePath []string
+
+	// DFS to detect cycles
+	var visit func(taskID string, path []string) bool
+	visit = func(taskID string, path []string) bool {
+		if state[taskID] == 1 {
+			// Found a cycle - extract just the cycle portion
+			for i, id := range path {
+				if id == taskID {
+					cyclePath = append(path[i:], taskID)
+					return true
+				}
+			}
+			cyclePath = append(path, taskID)
+			return true
+		}
+		if state[taskID] == 2 {
+			return false
+		}
+
+		state[taskID] = 1
+		path = append(path, taskID)
+
+		for _, depID := range deps[taskID] {
+			// Only check dependencies that exist in our task set
+			if taskExists[depID] && visit(depID, path) {
+				return true
+			}
+		}
+
+		state[taskID] = 2
+		return false
+	}
+
+	// Check all tasks
+	for _, task := range tasks {
+		if state[task.ID] == 0 {
+			if visit(task.ID, nil) {
+				return cyclePath
+			}
+		}
+	}
+
+	return nil
+}
+
+// formatDependencyCycle formats a cycle path for display.
+// Input: ["task-1", "task-2", "task-3", "task-1"]
+// Output: "task-1 -> task-2 -> task-3 -> task-1"
+func formatDependencyCycle(cycle []string) string {
+	if len(cycle) == 0 {
+		return ""
+	}
+	return strings.Join(cycle, " -> ")
 }
 
 // buildExecutionOrder converts issue number groups to task ID groups
@@ -954,6 +1266,491 @@ func assignPriorities(tasks []orchestrator.PlannedTask, executionOrder [][]strin
 			tasks[i].Priority = priority
 		}
 	}
+}
+
+// =============================================================================
+// Freeform Parent Issue Parsing
+// =============================================================================
+
+// Regex patterns for parsing freeform parent issues
+var (
+	// freeformGroupHeaderRe matches group headers like "### Group 1", "### Phase 1", "### Step 1"
+	// or numbered headers like "### 1. First Group", "### 1) First Task"
+	freeformGroupHeaderRe = regexp.MustCompile(`(?i)^###\s*(?:Group|Phase|Step|Stage)?\s*(\d+)`)
+
+	// numberedGroupRe matches numbered list headers like "1. ", "1) ", "1: "
+	numberedGroupRe = regexp.MustCompile(`^(\d+)[.):]\s+`)
+
+	// freeformIssueRefRe matches issue references in various formats:
+	// - "- [ ] #123 - Title" or "- [x] #123 - Title" (checkbox format)
+	// - "- #123 - Title" or "- #123" (simple bullet with issue)
+	// - "#123" (just the issue number)
+	freeformIssueRefRe = regexp.MustCompile(`#(\d+)`)
+
+	// h2HeaderRe matches any H2 header (## Something)
+	h2HeaderRe = regexp.MustCompile(`^##\s+(.+)$`)
+
+	// h3HeaderRe matches any H3 header (### Something)
+	h3HeaderRe = regexp.MustCompile(`^###\s+(.+)$`)
+)
+
+// ParseFreeformParentIssueBody parses a human-authored (freeform) parent issue body
+// and extracts structured content. Unlike templated issues, freeform issues don't
+// follow the strict Claudio template but typically have:
+//   - A title/summary section at the top (first paragraph(s) before any headers)
+//   - Grouped tasks with headers like "### Group 1" or just bullet lists
+//   - Issue references like "- [ ] #123 - Title" or "- #123"
+//
+// The function attempts to extract:
+//   - Summary: Text from the beginning until the first H2/H3 header or issue list
+//   - ExecutionGroups: Issues grouped by "### Group N" headers, or all issues in a single group
+//   - Insights and Constraints are left empty (not typically in freeform issues)
+func ParseFreeformParentIssueBody(body string) (*ParentIssueContent, error) {
+	content := &ParentIssueContent{
+		Insights:        []string{},
+		Constraints:     []string{},
+		ExecutionGroups: [][]int{},
+	}
+
+	if strings.TrimSpace(body) == "" {
+		return content, nil
+	}
+
+	lines := strings.Split(body, "\n")
+
+	// Phase 1: Extract summary from the beginning of the body
+	// Summary is everything before the first H2/H3 header or before issue references start
+	var summaryLines []string
+	summaryEnded := false
+	issueListStarted := false
+
+	// Phase 2: Track groups and their issues
+	type groupInfo struct {
+		groupNum int
+		issues   []int
+	}
+	var groups []groupInfo
+	var currentGroup *groupInfo
+	var ungroupedIssues []int
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Check for H2 header - ends summary section
+		if h2HeaderRe.MatchString(trimmed) {
+			summaryEnded = true
+			continue
+		}
+
+		// Check for H3 group header (### Group N or similar)
+		if matches := freeformGroupHeaderRe.FindStringSubmatch(trimmed); len(matches) > 1 {
+			summaryEnded = true
+
+			// Save any previous group
+			if currentGroup != nil && len(currentGroup.issues) > 0 {
+				groups = append(groups, *currentGroup)
+			}
+
+			// Start new group
+			groupNum, _ := strconv.Atoi(matches[1])
+			currentGroup = &groupInfo{groupNum: groupNum, issues: []int{}}
+			continue
+		}
+
+		// Check for any H3 header (might indicate a new section/group)
+		if h3HeaderRe.MatchString(trimmed) {
+			summaryEnded = true
+
+			// Save any previous group
+			if currentGroup != nil && len(currentGroup.issues) > 0 {
+				groups = append(groups, *currentGroup)
+			}
+
+			// Start a new implicit group
+			currentGroup = &groupInfo{groupNum: len(groups) + 1, issues: []int{}}
+			continue
+		}
+
+		// Check for issue references in bullet points or checklists
+		if strings.HasPrefix(trimmed, "-") || strings.HasPrefix(trimmed, "*") {
+			if matches := freeformIssueRefRe.FindAllStringSubmatch(line, -1); len(matches) > 0 {
+				summaryEnded = true
+				issueListStarted = true
+
+				for _, match := range matches {
+					if len(match) > 1 {
+						issueNum, err := strconv.Atoi(match[1])
+						if err == nil {
+							if currentGroup != nil {
+								currentGroup.issues = append(currentGroup.issues, issueNum)
+							} else {
+								ungroupedIssues = append(ungroupedIssues, issueNum)
+							}
+						}
+					}
+				}
+				continue
+			}
+		}
+
+		// Check for numbered list items with issues (e.g., "1. #123 - Title")
+		if numberedGroupRe.MatchString(trimmed) {
+			if matches := freeformIssueRefRe.FindAllStringSubmatch(line, -1); len(matches) > 0 {
+				summaryEnded = true
+				issueListStarted = true
+
+				for _, match := range matches {
+					if len(match) > 1 {
+						issueNum, err := strconv.Atoi(match[1])
+						if err == nil {
+							if currentGroup != nil {
+								currentGroup.issues = append(currentGroup.issues, issueNum)
+							} else {
+								ungroupedIssues = append(ungroupedIssues, issueNum)
+							}
+						}
+					}
+				}
+				continue
+			}
+		}
+
+		// Collect summary lines before any headers or issue lists
+		if !summaryEnded && !issueListStarted {
+			// Skip empty lines at the very beginning
+			if len(summaryLines) == 0 && trimmed == "" {
+				continue
+			}
+			summaryLines = append(summaryLines, line)
+		}
+	}
+
+	// Save any remaining group
+	if currentGroup != nil && len(currentGroup.issues) > 0 {
+		groups = append(groups, *currentGroup)
+	}
+
+	// Build execution groups
+	if len(groups) > 0 {
+		// Sort groups by group number and extract issues
+		// Note: groups should already be in order based on parsing order
+		for _, g := range groups {
+			if len(g.issues) > 0 {
+				content.ExecutionGroups = append(content.ExecutionGroups, deduplicateIssues(g.issues))
+			}
+		}
+	}
+
+	// Add any ungrouped issues as a single group
+	if len(ungroupedIssues) > 0 {
+		// If we have grouped issues, append ungrouped as a new group
+		// Otherwise, ungrouped issues form the first (and only) group
+		content.ExecutionGroups = append(content.ExecutionGroups, deduplicateIssues(ungroupedIssues))
+	}
+
+	// Process summary: trim trailing empty lines and join
+	for len(summaryLines) > 0 && strings.TrimSpace(summaryLines[len(summaryLines)-1]) == "" {
+		summaryLines = summaryLines[:len(summaryLines)-1]
+	}
+	content.Summary = strings.TrimSpace(strings.Join(summaryLines, "\n"))
+
+	return content, nil
+}
+
+// deduplicateIssues removes duplicate issue numbers while preserving order
+func deduplicateIssues(issues []int) []int {
+	seen := make(map[int]bool)
+	result := make([]int, 0, len(issues))
+	for _, num := range issues {
+		if !seen[num] {
+			seen[num] = true
+			result = append(result, num)
+		}
+	}
+	return result
+}
+
+// =============================================================================
+// Freeform Sub-Issue Parser
+// =============================================================================
+
+// ParseFreeformSubIssueBody parses a freeform sub-issue body that doesn't follow
+// the Claudio template structure. This parser is more lenient and extracts what
+// it can from human-authored issues.
+//
+// The function:
+//   - Uses the entire body as description if no "## Task" section is found
+//   - Extracts file paths from backticks anywhere in the body
+//   - Looks for issue references (#N) anywhere for dependencies
+//   - Defaults complexity to "medium" if not specified
+//   - parentIssueNum is optional (pass 0 if unknown)
+//
+// This is designed to handle issues that might have:
+//   - Description anywhere in the body (not necessarily under '## Task')
+//   - File references in various formats (code blocks, bullet lists, inline)
+//   - Dependencies mentioned as issue references anywhere
+//   - No explicit complexity section
+func ParseFreeformSubIssueBody(body string, parentIssueNum int) (*SubIssueContent, error) {
+	if strings.TrimSpace(body) == "" {
+		return nil, fmt.Errorf("sub-issue body is empty")
+	}
+
+	content := &SubIssueContent{
+		ParentIssueNum: parentIssueNum,
+	}
+
+	// Try to extract description from "## Task" section first
+	description, err := parseTaskSection(body)
+	if err != nil {
+		// No "## Task" section found - use the entire body as description
+		description = extractFreeformDescription(body)
+	}
+
+	if description == "" {
+		return nil, fmt.Errorf("could not extract description from issue body")
+	}
+	content.Description = description
+
+	// Extract file paths from backticks anywhere in the body
+	content.Files = extractFilesFromBody(body)
+
+	// Extract issue references (#N) from anywhere in the body, excluding the parent
+	content.DependencyIssueNums = extractIssueReferences(body, parentIssueNum)
+
+	// Try to extract complexity, default to "medium" if not found
+	content.Complexity = extractComplexityOrDefault(body)
+
+	return content, nil
+}
+
+// extractFreeformDescription extracts a description from a freeform issue body.
+// It tries several strategies:
+//  1. If there are markdown headers (## or ###), use content before the first header
+//     or after a "Description" header if one exists
+//  2. Otherwise, use the entire body (with some cleanup)
+func extractFreeformDescription(body string) string {
+	lines := strings.Split(body, "\n")
+
+	// Check if there's a "Description" or similar header
+	descriptionHeaderRe := regexp.MustCompile(`(?i)^##?\s*(Description|Overview|Summary|About)\s*$`)
+
+	var descriptionLines []string
+	inDescriptionSection := false
+	hasHeaders := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Check for any markdown header
+		if strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "### ") {
+			hasHeaders = true
+
+			// Check if this is a description header
+			if descriptionHeaderRe.MatchString(trimmed) {
+				inDescriptionSection = true
+				continue
+			}
+
+			// If we were in a description section, stop
+			if inDescriptionSection {
+				break
+			}
+			continue
+		}
+
+		// If we found a description header, collect lines
+		if inDescriptionSection {
+			descriptionLines = append(descriptionLines, line)
+			continue
+		}
+	}
+
+	// If we found a description section, use it
+	if len(descriptionLines) > 0 {
+		return strings.TrimSpace(strings.Join(descriptionLines, "\n"))
+	}
+
+	// If there are no headers, use the entire body (cleaned up)
+	if !hasHeaders {
+		return cleanDescription(body)
+	}
+
+	// If there are headers but no description section, use content before the first header
+	var beforeHeaders []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "### ") {
+			break
+		}
+		beforeHeaders = append(beforeHeaders, line)
+	}
+
+	result := strings.TrimSpace(strings.Join(beforeHeaders, "\n"))
+	if result != "" {
+		return result
+	}
+
+	// Fallback: use the entire body cleaned up
+	return cleanDescription(body)
+}
+
+// cleanDescription cleans up a description by removing certain patterns
+// that are clearly not part of the main description
+func cleanDescription(body string) string {
+	// Remove "*Part of #N*" patterns
+	cleanPartOfRe := regexp.MustCompile(`\*Part\s+of\s+#\d+\*`)
+	cleaned := cleanPartOfRe.ReplaceAllString(body, "")
+
+	// Remove horizontal rules
+	hrRe := regexp.MustCompile(`(?m)^---+\s*$`)
+	cleaned = hrRe.ReplaceAllString(cleaned, "")
+
+	// Collapse multiple newlines
+	multiNewlineRe := regexp.MustCompile(`\n{3,}`)
+	cleaned = multiNewlineRe.ReplaceAllString(cleaned, "\n\n")
+
+	return strings.TrimSpace(cleaned)
+}
+
+// filePathRe matches potential file paths in backticks
+// Matches patterns like `path/to/file.ext` or `file.ext`
+var filePathRe = regexp.MustCompile("`([^`]+\\.[a-zA-Z0-9]+)`")
+
+// extractFilesFromBody extracts file paths from backticks anywhere in the body.
+// It looks for patterns that look like file paths (contain a dot and extension).
+func extractFilesFromBody(body string) []string {
+	matches := filePathRe.FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	var files []string
+	seen := make(map[string]bool)
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		path := strings.TrimSpace(match[1])
+		if path == "" || seen[path] {
+			continue
+		}
+		// Additional validation: should look like a file path
+		// (contains path separator or is a simple filename with extension)
+		if isLikelyFilePath(path) {
+			files = append(files, path)
+			seen[path] = true
+		}
+	}
+
+	return files
+}
+
+// isLikelyFilePath checks if a string looks like a file path rather than
+// other code that might be in backticks (like function names or commands)
+func isLikelyFilePath(s string) bool {
+	// Must contain a dot (for extension)
+	if !strings.Contains(s, ".") {
+		return false
+	}
+
+	// Should not look like a function call
+	if strings.Contains(s, "(") {
+		return false
+	}
+
+	// Should not be a URL
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		return false
+	}
+
+	// Common file extensions we expect
+	commonExts := []string{
+		".go", ".js", ".ts", ".tsx", ".jsx", ".py", ".rb", ".java",
+		".md", ".json", ".yaml", ".yml", ".toml", ".xml", ".html", ".css",
+		".sh", ".bash", ".zsh", ".sql", ".proto", ".graphql",
+		".txt", ".env", ".mod", ".sum", ".lock",
+	}
+
+	lowerS := strings.ToLower(s)
+	for _, ext := range commonExts {
+		if strings.HasSuffix(lowerS, ext) {
+			return true
+		}
+	}
+
+	// Also accept paths with common directory patterns
+	if strings.Contains(s, "/") {
+		parts := strings.Split(s, "/")
+		lastPart := parts[len(parts)-1]
+		// If the last part has an extension-like suffix, it's likely a file
+		if strings.Contains(lastPart, ".") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// issueRefRe matches issue references like #123
+var issueRefRe = regexp.MustCompile(`#(\d+)`)
+
+// extractIssueReferences extracts issue numbers from #N patterns anywhere in the body.
+// It excludes the parent issue number to avoid circular dependencies.
+func extractIssueReferences(body string, parentIssueNum int) []int {
+	matches := issueRefRe.FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	var issueNums []int
+	seen := make(map[int]bool)
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		num, err := strconv.Atoi(match[1])
+		if err != nil || num <= 0 {
+			continue
+		}
+		// Skip the parent issue number
+		if num == parentIssueNum {
+			continue
+		}
+		if !seen[num] {
+			issueNums = append(issueNums, num)
+			seen[num] = true
+		}
+	}
+
+	return issueNums
+}
+
+// extractComplexityOrDefault tries to extract complexity from the body.
+// Returns "medium" if no complexity is found.
+func extractComplexityOrDefault(body string) string {
+	// Try the templated format first: Estimated: **low/medium/high**
+	complexity, err := parseComplexitySection(body)
+	if err == nil {
+		return complexity
+	}
+
+	// Try alternate patterns
+	// Pattern: "complexity: low/medium/high" (case-insensitive)
+	complexityAltRe := regexp.MustCompile(`(?i)complexity[:\s]+\*?\*?(low|medium|high)\*?\*?`)
+	if matches := complexityAltRe.FindStringSubmatch(body); len(matches) >= 2 {
+		return strings.ToLower(matches[1])
+	}
+
+	// Pattern: just "low/medium/high complexity" in text
+	complexityWordRe := regexp.MustCompile(`(?i)\b(low|medium|high)\s+complexity\b`)
+	if matches := complexityWordRe.FindStringSubmatch(body); len(matches) >= 2 {
+		return strings.ToLower(matches[1])
+	}
+
+	// Default to medium
+	return "medium"
 }
 
 // =============================================================================
@@ -1015,4 +1812,96 @@ func DetectIssueFormat(body string) IssueFormat {
 
 	// Everything else is considered freeform
 	return IssueFormatFreeform
+}
+
+// ParseSubIssueBodyAuto is a unified entry point that auto-detects the issue format
+// and delegates to the appropriate parser. This simplifies the ingestion pipeline
+// by providing a single function that handles both templated and freeform sub-issues.
+//
+// Parameters:
+//   - body: The markdown body of the sub-issue to parse
+//   - parentIssueNum: The parent issue number (used for freeform parsing to exclude
+//     the parent from dependencies; pass 0 if unknown)
+//
+// The function:
+//   - Detects the format using DetectIssueFormat
+//   - Delegates to ParseSubIssueBody for templated issues
+//   - Delegates to ParseFreeformSubIssueBody for freeform issues
+//
+// Returns a SubIssueContent struct with consistent fields regardless of input format.
+// For templated issues, the ParentIssueNum is extracted from the body.
+// For freeform issues, the parentIssueNum parameter is used.
+func ParseSubIssueBodyAuto(body string, parentIssueNum int) (*SubIssueContent, error) {
+	format := DetectIssueFormat(body)
+
+	switch format {
+	case IssueFormatTemplated:
+		return ParseSubIssueBody(body)
+	case IssueFormatFreeform:
+		return ParseFreeformSubIssueBody(body, parentIssueNum)
+	default:
+		// This should never happen given the current implementation,
+		// but we handle it gracefully by defaulting to freeform parsing
+		return ParseFreeformSubIssueBody(body, parentIssueNum)
+	}
+}
+
+// DetectParentIssueFormat determines whether a parent issue body is templated or freeform.
+// Parent issues are templated if they have:
+//   - "## Summary" section AND "## Sub-Issues" section with "### Group N" headers
+//
+// Parent issues are considered freeform if they:
+//   - Use human-authored structure (e.g., "## Overview", "## Tasks", generic headers)
+//   - Don't follow the strict Claudio parent template format
+func DetectParentIssueFormat(body string) IssueFormat {
+	if strings.TrimSpace(body) == "" {
+		return IssueFormatFreeform
+	}
+
+	// Check for templated parent issue markers by scanning each line
+	// (the regex patterns are line-anchored with ^)
+	var hasSummarySection, hasSubIssuesSection, hasGroupHeaders bool
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if summaryHeaderRe.MatchString(trimmed) {
+			hasSummarySection = true
+		}
+		if subIssuesHeaderRe.MatchString(trimmed) {
+			hasSubIssuesSection = true
+		}
+		if groupHeaderRe.MatchString(trimmed) {
+			hasGroupHeaders = true
+		}
+	}
+
+	// A parent issue is templated if it has Summary + Sub-Issues sections with Group headers
+	if hasSummarySection && hasSubIssuesSection && hasGroupHeaders {
+		return IssueFormatTemplated
+	}
+
+	return IssueFormatFreeform
+}
+
+// ParseParentIssueBodyAuto is a unified entry point that auto-detects the parent issue
+// format and delegates to the appropriate parser. This simplifies the ingestion pipeline
+// by providing a single function that handles both templated and freeform parent issues.
+//
+// The function:
+//   - Detects the format using DetectParentIssueFormat
+//   - Delegates to ParseParentIssueBody for templated issues
+//   - Delegates to ParseFreeformParentIssueBody for freeform issues
+//
+// Returns a ParentIssueContent struct with consistent fields regardless of input format.
+func ParseParentIssueBodyAuto(body string) (*ParentIssueContent, error) {
+	format := DetectParentIssueFormat(body)
+
+	switch format {
+	case IssueFormatTemplated:
+		return ParseParentIssueBody(body)
+	case IssueFormatFreeform:
+		return ParseFreeformParentIssueBody(body)
+	default:
+		// Default to freeform parsing for robustness
+		return ParseFreeformParentIssueBody(body)
+	}
 }
