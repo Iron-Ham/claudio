@@ -812,8 +812,9 @@ func buildPlanFromGitHubIssue(url string, executor CommandExecutor) (*orchestrat
 		return nil, fmt.Errorf("failed to fetch parent issue #%d: %w", issueNum, err)
 	}
 
-	// Step 3: Parse the parent issue body to extract structure
-	parentContent, err := ParseParentIssueBody(parentIssue.Body)
+	// Step 3: Detect format and parse the parent issue body to extract structure
+	// This supports both templated (Claudio-generated) and freeform (human-authored) issues
+	parentContent, err := ParseParentIssueBodyAuto(parentIssue.Body)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to parse parent issue body: %v", ErrParsingFailed, err)
 	}
@@ -831,7 +832,8 @@ func buildPlanFromGitHubIssue(url string, executor CommandExecutor) (*orchestrat
 	}
 
 	// Step 6: Convert each sub-issue to a PlannedTask
-	tasks, err := convertSubIssuesToTasks(subIssues, issueNumToTaskID)
+	// Pass the parent issue number for freeform sub-issues to exclude from dependencies
+	tasks, err := convertSubIssuesToTasks(subIssues, issueNumToTaskID, issueNum)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert issues to tasks: %w", err)
 	}
@@ -898,13 +900,15 @@ func fetchSubIssuesWithMapping(owner, repo string, issueNums []int, executor Com
 	return issues, issueNumToTaskID, nil
 }
 
-// convertSubIssuesToTasks converts all fetched sub-issues to PlannedTasks
-func convertSubIssuesToTasks(subIssues map[int]*GitHubIssue, issueNumToTaskID map[int]string) ([]orchestrator.PlannedTask, error) {
+// convertSubIssuesToTasks converts all fetched sub-issues to PlannedTasks.
+// The parentIssueNum is used for freeform issues to exclude the parent from dependencies.
+func convertSubIssuesToTasks(subIssues map[int]*GitHubIssue, issueNumToTaskID map[int]string, parentIssueNum int) ([]orchestrator.PlannedTask, error) {
 	var tasks []orchestrator.PlannedTask
 
 	for num, issue := range subIssues {
-		// Parse the sub-issue body
-		content, err := ParseSubIssueBody(issue.Body)
+		// Parse the sub-issue body using auto-detection
+		// This supports both templated (Claudio-generated) and freeform (human-authored) sub-issues
+		content, err := ParseSubIssueBodyAuto(issue.Body, parentIssueNum)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse sub-issue #%d body: %w", num, err)
 		}
@@ -1531,5 +1535,65 @@ func ParseSubIssueBodyAuto(body string, parentIssueNum int) (*SubIssueContent, e
 		// This should never happen given the current implementation,
 		// but we handle it gracefully by defaulting to freeform parsing
 		return ParseFreeformSubIssueBody(body, parentIssueNum)
+	}
+}
+
+// DetectParentIssueFormat determines whether a parent issue body is templated or freeform.
+// Parent issues are templated if they have:
+//   - "## Summary" section AND "## Sub-Issues" section with "### Group N" headers
+//
+// Parent issues are considered freeform if they:
+//   - Use human-authored structure (e.g., "## Overview", "## Tasks", generic headers)
+//   - Don't follow the strict Claudio parent template format
+func DetectParentIssueFormat(body string) IssueFormat {
+	if strings.TrimSpace(body) == "" {
+		return IssueFormatFreeform
+	}
+
+	// Check for templated parent issue markers by scanning each line
+	// (the regex patterns are line-anchored with ^)
+	var hasSummarySection, hasSubIssuesSection, hasGroupHeaders bool
+	for _, line := range strings.Split(body, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if summaryHeaderRe.MatchString(trimmed) {
+			hasSummarySection = true
+		}
+		if subIssuesHeaderRe.MatchString(trimmed) {
+			hasSubIssuesSection = true
+		}
+		if groupHeaderRe.MatchString(trimmed) {
+			hasGroupHeaders = true
+		}
+	}
+
+	// A parent issue is templated if it has Summary + Sub-Issues sections with Group headers
+	if hasSummarySection && hasSubIssuesSection && hasGroupHeaders {
+		return IssueFormatTemplated
+	}
+
+	return IssueFormatFreeform
+}
+
+// ParseParentIssueBodyAuto is a unified entry point that auto-detects the parent issue
+// format and delegates to the appropriate parser. This simplifies the ingestion pipeline
+// by providing a single function that handles both templated and freeform parent issues.
+//
+// The function:
+//   - Detects the format using DetectParentIssueFormat
+//   - Delegates to ParseParentIssueBody for templated issues
+//   - Delegates to ParseFreeformParentIssueBody for freeform issues
+//
+// Returns a ParentIssueContent struct with consistent fields regardless of input format.
+func ParseParentIssueBodyAuto(body string) (*ParentIssueContent, error) {
+	format := DetectParentIssueFormat(body)
+
+	switch format {
+	case IssueFormatTemplated:
+		return ParseParentIssueBody(body)
+	case IssueFormatFreeform:
+		return ParseFreeformParentIssueBody(body)
+	default:
+		// Default to freeform parsing for robustness
+		return ParseFreeformParentIssueBody(body)
 	}
 }
