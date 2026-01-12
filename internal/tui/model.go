@@ -7,6 +7,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/tui/command"
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 )
 
@@ -57,10 +58,11 @@ type PlanEditorState struct {
 // Model holds the TUI application state
 type Model struct {
 	// Core components
-	orchestrator *orchestrator.Orchestrator
-	session      *orchestrator.Session
-	logger       *logging.Logger
-	startTime    time.Time // Time when the TUI session started
+	orchestrator   *orchestrator.Orchestrator
+	session        *orchestrator.Session
+	logger         *logging.Logger
+	startTime      time.Time        // Time when the TUI session started
+	commandHandler *command.Handler // Handler for vim-style commands
 
 	// Ultra-plan mode (nil if not in ultra-plan mode)
 	ultraPlan *UltraPlanState
@@ -242,6 +244,7 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 		session:          session,
 		logger:           tuiLogger,
 		startTime:        time.Now(),
+		commandHandler:   command.New(),
 		outputs:          make(map[string]string),
 		outputScrolls:    make(map[string]int),
 		outputAutoScroll: make(map[string]bool),
@@ -782,4 +785,63 @@ func (m Model) TerminalHeight() int {
 // IsAddingTask returns whether the user is currently adding a new task
 func (m Model) IsAddingTask() bool {
 	return m.addingTask
+}
+
+// -----------------------------------------------------------------------------
+// command.Dependencies interface implementation
+// These methods implement the command.Dependencies interface, allowing the Model
+// to be passed to the CommandHandler for command execution.
+// -----------------------------------------------------------------------------
+
+// GetOrchestrator returns the orchestrator instance.
+func (m Model) GetOrchestrator() *orchestrator.Orchestrator {
+	return m.orchestrator
+}
+
+// GetSession returns the current session.
+func (m Model) GetSession() *orchestrator.Session {
+	return m.session
+}
+
+// ActiveInstance returns the currently focused instance.
+func (m Model) ActiveInstance() *orchestrator.Instance {
+	return m.activeInstance()
+}
+
+// InstanceCount returns the number of instances.
+func (m Model) InstanceCount() int {
+	return m.instanceCount()
+}
+
+// GetConflicts returns the number of file conflicts.
+func (m Model) GetConflicts() int {
+	return len(m.conflicts)
+}
+
+// IsDiffVisible returns true if the diff panel is visible.
+func (m Model) IsDiffVisible() bool {
+	return m.showDiff
+}
+
+// GetDiffContent returns the current diff content.
+func (m Model) GetDiffContent() string {
+	return m.diffContent
+}
+
+// GetUltraPlanCoordinator returns the ultraplan coordinator if in ultraplan mode.
+func (m Model) GetUltraPlanCoordinator() *orchestrator.Coordinator {
+	if m.ultraPlan == nil {
+		return nil
+	}
+	return m.ultraPlan.Coordinator
+}
+
+// GetLogger returns the logger instance.
+func (m Model) GetLogger() *logging.Logger {
+	return m.logger
+}
+
+// GetStartTime returns the TUI session start time.
+func (m Model) GetStartTime() time.Time {
+	return m.startTime
 }
