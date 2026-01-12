@@ -3430,3 +3430,772 @@ func TestIssueFormat_StringValues(t *testing.T) {
 		t.Errorf("IssueFormatFreeform = %q, want %q", IssueFormatFreeform, "freeform")
 	}
 }
+
+// =============================================================================
+// Freeform Parent Issue Parser Tests (task-2-parse-freeform-parent)
+// =============================================================================
+
+func TestParseFreeformParentIssueBody_BasicStructure(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantSummary    string
+		wantGroups     [][]int
+		wantInsights   []string
+		wantConstraint []string
+	}{
+		{
+			name: "simple summary with bullet list of issues",
+			body: `Add dark mode support to the application.
+
+This should include a toggle in settings and theme switching.
+
+- #10 - Create theme context
+- #11 - Add toggle component
+- #12 - Apply theme to all components
+`,
+			wantSummary: `Add dark mode support to the application.
+
+This should include a toggle in settings and theme switching.`,
+			wantGroups:     [][]int{{10, 11, 12}},
+			wantInsights:   []string{},
+			wantConstraint: []string{},
+		},
+		{
+			name: "grouped issues with ### Group N headers",
+			body: `Implement new authentication system.
+
+### Group 1
+- #20 - Setup auth models
+- #21 - Create token service
+
+### Group 2
+- #22 - Implement login endpoint
+- #23 - Add logout functionality
+
+### Group 3
+- #24 - Add OAuth providers
+`,
+			wantSummary:    "Implement new authentication system.",
+			wantGroups:     [][]int{{20, 21}, {22, 23}, {24}},
+			wantInsights:   []string{},
+			wantConstraint: []string{},
+		},
+		{
+			name: "checkbox format issue references",
+			body: `Refactor the database layer.
+
+Tasks:
+- [ ] #30 - Abstract database interface
+- [x] #31 - Implement PostgreSQL adapter
+- [ ] #32 - Add connection pooling
+`,
+			wantSummary:    "Refactor the database layer.\n\nTasks:",
+			wantGroups:     [][]int{{30, 31, 32}},
+			wantInsights:   []string{},
+			wantConstraint: []string{},
+		},
+		{
+			name:           "empty body",
+			body:           "",
+			wantSummary:    "",
+			wantGroups:     [][]int{},
+			wantInsights:   []string{},
+			wantConstraint: []string{},
+		},
+		{
+			name:           "whitespace only body",
+			body:           "   \n\t\n   ",
+			wantSummary:    "",
+			wantGroups:     [][]int{},
+			wantInsights:   []string{},
+			wantConstraint: []string{},
+		},
+		{
+			name: "no issues referenced",
+			body: `This is a feature request.
+
+It describes what we want to build but doesn't reference any sub-issues yet.
+`,
+			wantSummary: `This is a feature request.
+
+It describes what we want to build but doesn't reference any sub-issues yet.`,
+			wantGroups:     [][]int{},
+			wantInsights:   []string{},
+			wantConstraint: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ParseFreeformParentIssueBody(tt.body)
+			if err != nil {
+				t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+			}
+
+			if content.Summary != tt.wantSummary {
+				t.Errorf("Summary = %q, want %q", content.Summary, tt.wantSummary)
+			}
+
+			if !reflect.DeepEqual(content.ExecutionGroups, tt.wantGroups) {
+				t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, tt.wantGroups)
+			}
+
+			if !reflect.DeepEqual(content.Insights, tt.wantInsights) {
+				t.Errorf("Insights = %v, want %v", content.Insights, tt.wantInsights)
+			}
+
+			if !reflect.DeepEqual(content.Constraints, tt.wantConstraint) {
+				t.Errorf("Constraints = %v, want %v", content.Constraints, tt.wantConstraint)
+			}
+		})
+	}
+}
+
+func TestParseFreeformParentIssueBody_RealWorldExamples(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantSummary string
+		wantGroups  [][]int
+	}{
+		{
+			name: "GitHub-style epic with overview and tasks",
+			body: `## Overview
+
+We need to implement a complete CI/CD pipeline for the project.
+
+## Tasks
+
+### Phase 1 - Setup
+- #100 - Configure GitHub Actions workflow
+- #101 - Add linting step
+
+### Phase 2 - Testing
+- #102 - Add unit test runner
+- #103 - Add integration tests
+- #104 - Setup code coverage
+
+### Phase 3 - Deployment
+- #105 - Add staging deployment
+- #106 - Add production deployment
+`,
+			wantSummary: "",
+			wantGroups:  [][]int{{100, 101}, {102, 103, 104}, {105, 106}},
+		},
+		{
+			name: "simple feature request with sub-issues",
+			body: `Add user profile customization features.
+
+Users should be able to:
+1. Upload a profile picture
+2. Set a custom bio
+3. Choose theme preferences
+
+Related issues:
+- #200 - Image upload component
+- #201 - Bio text editor
+- #202 - Theme selector
+`,
+			wantSummary: `Add user profile customization features.
+
+Users should be able to:
+1. Upload a profile picture
+2. Set a custom bio
+3. Choose theme preferences
+
+Related issues:`,
+			wantGroups: [][]int{{200, 201, 202}},
+		},
+		{
+			name: "bug fix tracking issue",
+			body: `# Critical Bug Fixes for v2.0 Release
+
+These bugs need to be fixed before we can release version 2.0.
+
+## High Priority
+- [ ] #301 - Fix memory leak in WebSocket handler
+- [ ] #302 - Resolve race condition in cache
+
+## Medium Priority
+- [ ] #303 - Fix pagination offset bug
+- [ ] #304 - Correct timezone handling
+`,
+			// H1 headers don't end summary, H2 does - so summary includes the H1 and first paragraph
+			wantSummary: "# Critical Bug Fixes for v2.0 Release\n\nThese bugs need to be fixed before we can release version 2.0.",
+			// H2 headers don't create separate groups, only H3 headers do
+			wantGroups: [][]int{{301, 302, 303, 304}},
+		},
+		{
+			name: "numbered list format",
+			body: `API Migration Plan
+
+Steps to migrate from v1 to v2 API:
+
+1. #400 - Create v2 endpoint structure
+2. #401 - Migrate user endpoints
+3. #402 - Migrate product endpoints
+4. #403 - Add deprecation warnings to v1
+`,
+			wantSummary: `API Migration Plan
+
+Steps to migrate from v1 to v2 API:`,
+			wantGroups: [][]int{{400, 401, 402, 403}},
+		},
+		{
+			name: "mixed format with inline issue references",
+			body: `Dashboard Redesign Project
+
+We're redesigning the dashboard. See #500 for mockups.
+
+### Backend Tasks
+- #501 - New dashboard API endpoint
+- #502 - Add caching layer
+
+### Frontend Tasks
+- #503 - Implement new dashboard component
+- #504 - Add drag-and-drop widgets
+`,
+			// The second paragraph mentions #500, but it's not in a bullet - so it's part of summary
+			wantSummary: "Dashboard Redesign Project\n\nWe're redesigning the dashboard. See #500 for mockups.",
+			wantGroups:  [][]int{{501, 502}, {503, 504}},
+		},
+		{
+			name: "epic with dependencies noted",
+			body: `Search Feature Implementation
+
+Implement full-text search across the application.
+
+### Group 1 (Infrastructure)
+- [ ] #600 - Setup Elasticsearch cluster
+- [ ] #601 - Create indexing service
+
+### Group 2 (Backend)
+Depends on Group 1
+- [ ] #602 - Search API endpoint
+- [ ] #603 - Result ranking algorithm
+
+### Group 3 (Frontend)
+Depends on Group 2
+- [ ] #604 - Search UI component
+- [ ] #605 - Search results page
+`,
+			// Summary includes all text before the first ### header
+			wantSummary: "Search Feature Implementation\n\nImplement full-text search across the application.",
+			wantGroups:  [][]int{{600, 601}, {602, 603}, {604, 605}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ParseFreeformParentIssueBody(tt.body)
+			if err != nil {
+				t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+			}
+
+			if content.Summary != tt.wantSummary {
+				t.Errorf("Summary = %q, want %q", content.Summary, tt.wantSummary)
+			}
+
+			if !reflect.DeepEqual(content.ExecutionGroups, tt.wantGroups) {
+				t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, tt.wantGroups)
+			}
+		})
+	}
+}
+
+func TestParseFreeformParentIssueBody_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantGroups [][]int
+	}{
+		{
+			name: "duplicate issue numbers are deduplicated",
+			body: `Tasks:
+- #10 - First mention
+- #11 - Another task
+- #10 - Duplicate mention
+- #12 - Last task
+`,
+			wantGroups: [][]int{{10, 11, 12}},
+		},
+		{
+			name: "high issue numbers",
+			body: `- #99999 - Very high number
+- #12345 - Another high number
+`,
+			wantGroups: [][]int{{99999, 12345}},
+		},
+		{
+			name: "issue number 1",
+			body: `- #1 - First issue ever
+`,
+			wantGroups: [][]int{{1}},
+		},
+		{
+			name: "multiple issues on same line",
+			body: `- #10 depends on #11 and #12
+- #13 - Separate issue
+`,
+			wantGroups: [][]int{{10, 11, 12, 13}},
+		},
+		{
+			name: "asterisk bullets",
+			body: `Tasks:
+* #20 - First task
+* #21 - Second task
+`,
+			wantGroups: [][]int{{20, 21}},
+		},
+		{
+			name: "mixed bullet styles",
+			body: `Tasks:
+- #30 - Dash bullet
+* #31 - Asterisk bullet
+- #32 - Back to dash
+`,
+			wantGroups: [][]int{{30, 31, 32}},
+		},
+		{
+			name: "Phase headers instead of Group",
+			body: `### Phase 1
+- #40 - First phase task
+
+### Phase 2
+- #41 - Second phase task
+`,
+			wantGroups: [][]int{{40}, {41}},
+		},
+		{
+			name: "Step headers",
+			body: `### Step 1
+- #50 - First step
+
+### Step 2
+- #51 - Second step
+`,
+			wantGroups: [][]int{{50}, {51}},
+		},
+		{
+			name: "Stage headers",
+			body: `### Stage 1
+- #60 - Stage one task
+
+### Stage 2
+- #61 - Stage two task
+`,
+			wantGroups: [][]int{{60}, {61}},
+		},
+		{
+			name: "case insensitive group headers",
+			body: `### GROUP 1
+- #70 - Uppercase group
+
+### group 2
+- #71 - Lowercase group
+`,
+			wantGroups: [][]int{{70}, {71}},
+		},
+		{
+			name: "numbered H3 headers",
+			body: `### 1 Setup
+- #80 - Setup task
+
+### 2 Implementation
+- #81 - Implementation task
+`,
+			wantGroups: [][]int{{80}, {81}},
+		},
+		{
+			name: "generic H3 headers create implicit groups",
+			body: `### Backend
+- #90 - Backend task
+
+### Frontend
+- #91 - Frontend task
+`,
+			wantGroups: [][]int{{90}, {91}},
+		},
+		{
+			name: "H2 headers end summary but don't create groups",
+			body: `Summary text here.
+
+## Section One
+
+Some text.
+
+## Tasks
+
+- #100 - A task
+- #101 - Another task
+`,
+			wantGroups: [][]int{{100, 101}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ParseFreeformParentIssueBody(tt.body)
+			if err != nil {
+				t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+			}
+
+			if !reflect.DeepEqual(content.ExecutionGroups, tt.wantGroups) {
+				t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, tt.wantGroups)
+			}
+		})
+	}
+}
+
+func TestParseFreeformParentIssueBody_SummaryExtraction(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantSummary string
+	}{
+		{
+			name: "summary ends at first H2",
+			body: `This is the summary.
+
+It has multiple paragraphs.
+
+## Section
+
+More content here.
+`,
+			wantSummary: `This is the summary.
+
+It has multiple paragraphs.`,
+		},
+		{
+			name: "summary ends at first H3",
+			body: `Summary text.
+
+### Group 1
+- #10 - Task
+`,
+			wantSummary: "Summary text.",
+		},
+		{
+			name: "summary ends at first issue list",
+			body: `Summary before issues.
+
+- #10 - This starts the issue list
+- #11 - More issues
+`,
+			wantSummary: "Summary before issues.",
+		},
+		{
+			name: "leading whitespace is trimmed",
+			body: `
+
+
+
+This is the actual summary.
+
+- #10 - Task
+`,
+			wantSummary: "This is the actual summary.",
+		},
+		{
+			name: "trailing whitespace in summary is trimmed",
+			body: `Summary with trailing spaces.
+
+## Section
+`,
+			wantSummary: "Summary with trailing spaces.",
+		},
+		{
+			name: "multiline summary preserves internal structure",
+			body: `First paragraph of the summary.
+
+Second paragraph with more details.
+
+- Bullet point one
+- Bullet point two (no issues)
+
+Third paragraph.
+
+## Tasks
+- #10 - Actual task
+`,
+			wantSummary: `First paragraph of the summary.
+
+Second paragraph with more details.
+
+- Bullet point one
+- Bullet point two (no issues)
+
+Third paragraph.`,
+		},
+		{
+			name: "summary with markdown formatting",
+			body: `# Project Title
+
+**Bold text** and *italic text* in the summary.
+
+` + "```go" + `
+code block
+` + "```" + `
+
+## Implementation
+- #10 - Task
+`,
+			wantSummary: `# Project Title
+
+**Bold text** and *italic text* in the summary.
+
+` + "```go" + `
+code block
+` + "```",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ParseFreeformParentIssueBody(tt.body)
+			if err != nil {
+				t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+			}
+
+			if content.Summary != tt.wantSummary {
+				t.Errorf("Summary = %q, want %q", content.Summary, tt.wantSummary)
+			}
+		})
+	}
+}
+
+func TestParseFreeformParentIssueBody_IssueReferenceFormats(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantGroups [][]int
+	}{
+		{
+			name: "checkbox unchecked format",
+			body: `- [ ] #10 - Task title
+- [ ] #11 - Another task
+`,
+			wantGroups: [][]int{{10, 11}},
+		},
+		{
+			name: "checkbox checked format",
+			body: `- [x] #20 - Completed task
+- [X] #21 - Also completed (uppercase X)
+`,
+			wantGroups: [][]int{{20, 21}},
+		},
+		{
+			name: "simple bullet with issue",
+			body: `- #30 - Task title
+- #31
+`,
+			wantGroups: [][]int{{30, 31}},
+		},
+		{
+			name: "issue with full URL text",
+			body: `- #40 https://github.com/org/repo/issues/40
+- #41 - Standard format
+`,
+			wantGroups: [][]int{{40, 41}},
+		},
+		{
+			name: "numbered list with issues",
+			body: `1. #50 - First
+2. #51 - Second
+3. #52 - Third
+`,
+			wantGroups: [][]int{{50, 51, 52}},
+		},
+		{
+			name: "issue references with bold titles",
+			body: `- [ ] #60 - **Bold Title**
+- [ ] #61 - **Another Bold**
+`,
+			wantGroups: [][]int{{60, 61}},
+		},
+		{
+			name: "issue references with labels",
+			body: `- #70 - Task title [bug]
+- #71 - Another task [enhancement]
+`,
+			wantGroups: [][]int{{70, 71}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ParseFreeformParentIssueBody(tt.body)
+			if err != nil {
+				t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+			}
+
+			if !reflect.DeepEqual(content.ExecutionGroups, tt.wantGroups) {
+				t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, tt.wantGroups)
+			}
+		})
+	}
+}
+
+func TestParseFreeformParentIssueBody_ComplexRealWorld(t *testing.T) {
+	// Test with a complex real-world issue body that mimics actual GitHub usage
+	body := `# Epic: Implement Real-time Notifications
+
+## Problem Statement
+
+Users currently have no way to receive real-time updates about activity
+in the application. They must manually refresh to see new content.
+
+## Proposed Solution
+
+Implement a WebSocket-based notification system that pushes updates
+to connected clients in real-time.
+
+## Technical Approach
+
+We'll use a pub/sub model with Redis for message distribution across
+multiple server instances.
+
+## Sub-tasks
+
+### Phase 1: Infrastructure
+These can be done in parallel:
+- [ ] #1001 - Setup Redis pub/sub infrastructure
+- [ ] #1002 - Create WebSocket server module
+- [ ] #1003 - Add connection management
+
+### Phase 2: Backend Integration
+Requires Phase 1 completion:
+- [ ] #1004 - Integrate notifications with user events
+- [ ] #1005 - Add notification persistence layer
+- [ ] #1006 - Create notification preferences API
+
+### Phase 3: Frontend
+Requires Phase 2 completion:
+- [ ] #1007 - Build notification bell component
+- [ ] #1008 - Create notification dropdown
+- [ ] #1009 - Add notification settings page
+
+## Acceptance Criteria
+
+- [ ] Users receive notifications within 500ms
+- [ ] System handles 10k concurrent connections
+- [ ] Notifications persist for offline users
+
+## Notes
+
+See #999 for the original feature request.
+`
+
+	content, err := ParseFreeformParentIssueBody(body)
+	if err != nil {
+		t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+	}
+
+	// H1 headers are kept in summary, H2 headers end the summary section
+	expectedSummary := "# Epic: Implement Real-time Notifications"
+	if content.Summary != expectedSummary {
+		t.Errorf("Summary = %q, want %q", content.Summary, expectedSummary)
+	}
+
+	// Verify we extracted all three phases with correct grouping
+	expectedGroups := [][]int{
+		{1001, 1002, 1003}, // Phase 1
+		{1004, 1005, 1006}, // Phase 2
+		{1007, 1008, 1009}, // Phase 3
+	}
+	if !reflect.DeepEqual(content.ExecutionGroups, expectedGroups) {
+		t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, expectedGroups)
+	}
+
+	// Verify insights and constraints are empty (not in freeform format)
+	if len(content.Insights) != 0 {
+		t.Errorf("Insights should be empty, got %v", content.Insights)
+	}
+	if len(content.Constraints) != 0 {
+		t.Errorf("Constraints should be empty, got %v", content.Constraints)
+	}
+}
+
+func TestParseFreeformParentIssueBody_NoGroups(t *testing.T) {
+	// Test body with issues but no explicit grouping
+	body := `Feature: Add CSV Export
+
+Users want to export their data as CSV files.
+
+Tasks:
+- #200 - Add export button to UI
+- #201 - Create CSV generator service
+- #202 - Add file download endpoint
+- #203 - Write tests for export feature
+`
+
+	content, err := ParseFreeformParentIssueBody(body)
+	if err != nil {
+		t.Fatalf("ParseFreeformParentIssueBody() error = %v", err)
+	}
+
+	// All issues should be in a single group
+	expectedGroups := [][]int{{200, 201, 202, 203}}
+	if !reflect.DeepEqual(content.ExecutionGroups, expectedGroups) {
+		t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, expectedGroups)
+	}
+
+	expectedSummary := `Feature: Add CSV Export
+
+Users want to export their data as CSV files.
+
+Tasks:`
+	if content.Summary != expectedSummary {
+		t.Errorf("Summary = %q, want %q", content.Summary, expectedSummary)
+	}
+}
+
+func TestDeduplicateIssues(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  []int
+		output []int
+	}{
+		{
+			name:   "no duplicates",
+			input:  []int{1, 2, 3, 4},
+			output: []int{1, 2, 3, 4},
+		},
+		{
+			name:   "with duplicates",
+			input:  []int{1, 2, 1, 3, 2, 4},
+			output: []int{1, 2, 3, 4},
+		},
+		{
+			name:   "all duplicates",
+			input:  []int{5, 5, 5, 5},
+			output: []int{5},
+		},
+		{
+			name:   "empty slice",
+			input:  []int{},
+			output: []int{},
+		},
+		{
+			name:   "single element",
+			input:  []int{42},
+			output: []int{42},
+		},
+		{
+			name:   "preserves order",
+			input:  []int{3, 1, 4, 1, 5, 9, 2, 6, 5, 3},
+			output: []int{3, 1, 4, 5, 9, 2, 6},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deduplicateIssues(tt.input)
+			if !reflect.DeepEqual(got, tt.output) {
+				t.Errorf("deduplicateIssues(%v) = %v, want %v", tt.input, got, tt.output)
+			}
+		})
+	}
+}

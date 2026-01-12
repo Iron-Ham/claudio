@@ -957,6 +957,208 @@ func assignPriorities(tasks []orchestrator.PlannedTask, executionOrder [][]strin
 }
 
 // =============================================================================
+// Freeform Parent Issue Parsing
+// =============================================================================
+
+// Regex patterns for parsing freeform parent issues
+var (
+	// freeformGroupHeaderRe matches group headers like "### Group 1", "### Phase 1", "### Step 1"
+	// or numbered headers like "### 1. First Group", "### 1) First Task"
+	freeformGroupHeaderRe = regexp.MustCompile(`(?i)^###\s*(?:Group|Phase|Step|Stage)?\s*(\d+)`)
+
+	// numberedGroupRe matches numbered list headers like "1. ", "1) ", "1: "
+	numberedGroupRe = regexp.MustCompile(`^(\d+)[.):]\s+`)
+
+	// freeformIssueRefRe matches issue references in various formats:
+	// - "- [ ] #123 - Title" or "- [x] #123 - Title" (checkbox format)
+	// - "- #123 - Title" or "- #123" (simple bullet with issue)
+	// - "#123" (just the issue number)
+	freeformIssueRefRe = regexp.MustCompile(`#(\d+)`)
+
+	// h2HeaderRe matches any H2 header (## Something)
+	h2HeaderRe = regexp.MustCompile(`^##\s+(.+)$`)
+
+	// h3HeaderRe matches any H3 header (### Something)
+	h3HeaderRe = regexp.MustCompile(`^###\s+(.+)$`)
+)
+
+// ParseFreeformParentIssueBody parses a human-authored (freeform) parent issue body
+// and extracts structured content. Unlike templated issues, freeform issues don't
+// follow the strict Claudio template but typically have:
+//   - A title/summary section at the top (first paragraph(s) before any headers)
+//   - Grouped tasks with headers like "### Group 1" or just bullet lists
+//   - Issue references like "- [ ] #123 - Title" or "- #123"
+//
+// The function attempts to extract:
+//   - Summary: Text from the beginning until the first H2/H3 header or issue list
+//   - ExecutionGroups: Issues grouped by "### Group N" headers, or all issues in a single group
+//   - Insights and Constraints are left empty (not typically in freeform issues)
+func ParseFreeformParentIssueBody(body string) (*ParentIssueContent, error) {
+	content := &ParentIssueContent{
+		Insights:        []string{},
+		Constraints:     []string{},
+		ExecutionGroups: [][]int{},
+	}
+
+	if strings.TrimSpace(body) == "" {
+		return content, nil
+	}
+
+	lines := strings.Split(body, "\n")
+
+	// Phase 1: Extract summary from the beginning of the body
+	// Summary is everything before the first H2/H3 header or before issue references start
+	var summaryLines []string
+	summaryEnded := false
+	issueListStarted := false
+
+	// Phase 2: Track groups and their issues
+	type groupInfo struct {
+		groupNum int
+		issues   []int
+	}
+	var groups []groupInfo
+	var currentGroup *groupInfo
+	var ungroupedIssues []int
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Check for H2 header - ends summary section
+		if h2HeaderRe.MatchString(trimmed) {
+			summaryEnded = true
+			continue
+		}
+
+		// Check for H3 group header (### Group N or similar)
+		if matches := freeformGroupHeaderRe.FindStringSubmatch(trimmed); len(matches) > 1 {
+			summaryEnded = true
+
+			// Save any previous group
+			if currentGroup != nil && len(currentGroup.issues) > 0 {
+				groups = append(groups, *currentGroup)
+			}
+
+			// Start new group
+			groupNum, _ := strconv.Atoi(matches[1])
+			currentGroup = &groupInfo{groupNum: groupNum, issues: []int{}}
+			continue
+		}
+
+		// Check for any H3 header (might indicate a new section/group)
+		if h3HeaderRe.MatchString(trimmed) {
+			summaryEnded = true
+
+			// Save any previous group
+			if currentGroup != nil && len(currentGroup.issues) > 0 {
+				groups = append(groups, *currentGroup)
+			}
+
+			// Start a new implicit group
+			currentGroup = &groupInfo{groupNum: len(groups) + 1, issues: []int{}}
+			continue
+		}
+
+		// Check for issue references in bullet points or checklists
+		if strings.HasPrefix(trimmed, "-") || strings.HasPrefix(trimmed, "*") {
+			if matches := freeformIssueRefRe.FindAllStringSubmatch(line, -1); len(matches) > 0 {
+				summaryEnded = true
+				issueListStarted = true
+
+				for _, match := range matches {
+					if len(match) > 1 {
+						issueNum, err := strconv.Atoi(match[1])
+						if err == nil {
+							if currentGroup != nil {
+								currentGroup.issues = append(currentGroup.issues, issueNum)
+							} else {
+								ungroupedIssues = append(ungroupedIssues, issueNum)
+							}
+						}
+					}
+				}
+				continue
+			}
+		}
+
+		// Check for numbered list items with issues (e.g., "1. #123 - Title")
+		if numberedGroupRe.MatchString(trimmed) {
+			if matches := freeformIssueRefRe.FindAllStringSubmatch(line, -1); len(matches) > 0 {
+				summaryEnded = true
+				issueListStarted = true
+
+				for _, match := range matches {
+					if len(match) > 1 {
+						issueNum, err := strconv.Atoi(match[1])
+						if err == nil {
+							if currentGroup != nil {
+								currentGroup.issues = append(currentGroup.issues, issueNum)
+							} else {
+								ungroupedIssues = append(ungroupedIssues, issueNum)
+							}
+						}
+					}
+				}
+				continue
+			}
+		}
+
+		// Collect summary lines before any headers or issue lists
+		if !summaryEnded && !issueListStarted {
+			// Skip empty lines at the very beginning
+			if len(summaryLines) == 0 && trimmed == "" {
+				continue
+			}
+			summaryLines = append(summaryLines, line)
+		}
+	}
+
+	// Save any remaining group
+	if currentGroup != nil && len(currentGroup.issues) > 0 {
+		groups = append(groups, *currentGroup)
+	}
+
+	// Build execution groups
+	if len(groups) > 0 {
+		// Sort groups by group number and extract issues
+		// Note: groups should already be in order based on parsing order
+		for _, g := range groups {
+			if len(g.issues) > 0 {
+				content.ExecutionGroups = append(content.ExecutionGroups, deduplicateIssues(g.issues))
+			}
+		}
+	}
+
+	// Add any ungrouped issues as a single group
+	if len(ungroupedIssues) > 0 {
+		// If we have grouped issues, append ungrouped as a new group
+		// Otherwise, ungrouped issues form the first (and only) group
+		content.ExecutionGroups = append(content.ExecutionGroups, deduplicateIssues(ungroupedIssues))
+	}
+
+	// Process summary: trim trailing empty lines and join
+	for len(summaryLines) > 0 && strings.TrimSpace(summaryLines[len(summaryLines)-1]) == "" {
+		summaryLines = summaryLines[:len(summaryLines)-1]
+	}
+	content.Summary = strings.TrimSpace(strings.Join(summaryLines, "\n"))
+
+	return content, nil
+}
+
+// deduplicateIssues removes duplicate issue numbers while preserving order
+func deduplicateIssues(issues []int) []int {
+	seen := make(map[int]bool)
+	result := make([]int, 0, len(issues))
+	for _, num := range issues {
+		if !seen[num] {
+			seen[num] = true
+			result = append(result, num)
+		}
+	}
+	return result
+}
+
+// =============================================================================
 // Issue Format Detection
 // =============================================================================
 
