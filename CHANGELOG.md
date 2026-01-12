@@ -5,6 +5,97 @@ All notable changes to Claudio will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-01-12
+
+This release brings **deep GitHub Issues integration**, **plan import from URLs**, **a persistent terminal pane**, major **architecture improvements**, and numerous reliability enhancements across the board.
+
+### Added
+
+#### GitHub Issues Integration
+- **Hierarchical Issue Creation** (#284) - Generate GitHub issues from your plan with proper parent/child relationships using GitHub's native sub-issues API
+- **Issue Tracker Abstraction** (#293) - Clean interface allows future support for other issue trackers (Jira, Linear, etc.)
+- **Auto-close Linked Issues** (#213) - When a task completes, its linked GitHub issue is automatically closed
+- **Plan-only Mode** (#155) - Use `/plan` to create structured GitHub issues without executing
+- **Plan Config Support** (#156, #160) - Configure plan templates and settings in your config file
+
+#### Plan Import & URL Ingestion
+- **URL-to-Plan Pipeline** (#226) - Import plans directly from URLs - paste a GitHub issue, gist, or any URL containing a plan spec
+- **Plan File Import Fix** (#303) - Correctly compute execution order when importing existing plan files
+
+#### Terminal Pane
+- **Persistent Terminal Pane** (#233) - A dedicated terminal pane at the bottom of the TUI for direct shell access
+- **ANSI Color Support** (#305) - Terminal output preserves colors
+- **Width & Resize Fixes** (#308) - Terminal pane correctly handles resizing and dimension changes
+
+#### Task Chaining
+- **Normal Mode Chaining** (#228) - Chain tasks together in regular Claudio mode for sequential workflows
+
+#### UltraPlan Enhancements
+- **Step Restart & Universal Input** (#306) - Restart failed steps and send input to any task
+- **Group Re-trigger & Session Resume** (#227) - Resume sessions and re-trigger groups
+- **Multi-pass Planning** (#148) - Planning phase can iterate with Claude for complex breakdowns
+- **Synthesis Approval Gate** (#149) - Pause for user approval before advancing from synthesis
+- **Plan Editor** (#139, #131) - Interactive plan editor with validation and `--review` flag
+- **Small Task Preference** (#143) - Planner prefers smaller, session-completable tasks
+
+#### Configuration
+- **Worktree Directory** (#231) - Configurable worktree directory path
+- **Max Parallel Config** (#140) - Configure maximum parallel tasks in config file
+- **Interactive Config** (#141) - Added missing options to interactive config UI
+
+#### Session Management
+- **:exit Command** (#217) - New `:exit` command for cleaner session management
+- **Empty Session Cleanup** (#287) - Session cleanup now removes empty sessions
+
+### Fixed
+
+#### TUI Reliability
+- **Command Mode for Quit** (#234) - Require command mode to quit, removing accidental exits
+- **Command Mode for Terminal Focus** (#243) - Terminal focus now requires command mode
+- **Command Mode Prompt Display** (#302) - Show command mode prompt in ultra-plan and plan editor modes
+- **Cancel Safety** (#295) - UltraPlan cancel moved to command mode
+- **Color Contrast** (#137) - Improved color contrast meets WCAG AA accessibility standards
+- **Help Bar Shortcuts** (#229) - Command mode help bar shows all available shortcuts
+- **Duplicate Title Fix** (#235) - Fixed duplicate sidebar title rendering in empty state
+- **New Task Highlight** (#232) - "New Task" entry highlights in sidebar when adding a task
+
+#### UltraPlan Reliability
+- **Duplicate Task Completion** (#225) - Prevent duplicate completions from triggering premature synthesis
+- **Partial Failure Handling** (#144) - Next group no longer starts after partial failure
+- **Fallback Polling** (#154) - Added fallback polling for robust task completion detection
+- **Parse Error Handling** (#153) - Gracefully handle parse errors during group consolidation
+- **WaitingInput Detection** (#152) - Correctly detect completion for instances in WaitingInput
+- **File-based Detection** (#150, #151) - Improved file-based detection for plan manager completion
+
+#### Core Fixes
+- **Git Subdirectory Detection** (#142) - Correctly detect git repository from subdirectories
+- **Non-blocking Key Sending** (#146) - tmux key sending no longer blocks the event loop
+- **Non-blocking Task Addition** (#145) - Adding tasks is now non-blocking
+
+### Performance
+- **Batch Character Input** (#307) - Consecutive characters batched to reduce subprocess calls
+- **Differential Capture** (#292) - tmux output capture uses differential mode
+
+### Changed
+
+#### Architecture Refresh
+- **Component Extraction** (#304) - Extracted focused components from "god objects"
+- **Foundational Packages** (#214) - Extracted foundational packages and TUI view components
+- **Event Bus Integration** (#221) - TUI uses event bus for decoupled communication
+- **Session Subpackage** (#222) - Orchestrator session logic moved to dedicated subpackage
+- **Multi-instance Infrastructure** (#215) - Core infrastructure for multi-instance execution
+- **Group 3 Extraction** (#218, #219) - UltraPlan packages extracted with comprehensive tests
+
+#### Testing & Quality
+- **gofmt Enforcement** (#224) - Test enforces gofmt compliance
+- **golangci-lint Compliance** (#294) - Test ensures golangci-lint passes
+- **Integration Tests** (#223) - Added integration tests and package documentation
+- **Lint Fixes** (#216) - Resolved all golangci-lint issues
+
+### Documentation
+- **CLAUDE.md Guidelines** (#237, #238) - Added Go development guidelines and architecture principles
+- **AGENTS.md Rename** (#288) - Renamed CLAUDE.md to AGENTS.md with symlink
+
 ## [0.2.0] - 2026-01-09
 
 First release featuring **UltraPlan mode** - an experimental planning and execution orchestration system for complex multi-task projects. While still having some rough edges, UltraPlan enables Claude to break down large projects into coordinated tasks, execute them in parallel across isolated worktrees, and consolidate the results into stacked PRs.
@@ -133,5 +224,6 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.3.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.1.0
