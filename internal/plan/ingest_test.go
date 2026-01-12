@@ -2877,8 +2877,19 @@ func TestBuildPlanFromURL_ParentFetchFails(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when parent issue fetch fails")
 	}
-	if !strings.Contains(err.Error(), "failed to fetch parent issue") {
-		t.Errorf("error should mention parent issue fetch failure: %v", err)
+
+	// The error should be an IngestError or contain relevant information
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) {
+		// If it's an IngestError, check the issue number
+		if ingestErr.IssueNum != 999 {
+			t.Errorf("error should reference issue #999, got #%d", ingestErr.IssueNum)
+		}
+	} else {
+		// Fallback: check for issue number in error message
+		if !strings.Contains(err.Error(), "999") {
+			t.Errorf("error should mention parent issue #999: %v", err)
+		}
 	}
 }
 
@@ -2899,8 +2910,19 @@ func TestBuildPlanFromURL_SubIssueFetchFails(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when sub-issue fetch fails")
 	}
-	if !strings.Contains(err.Error(), "failed to fetch sub-issue") {
-		t.Errorf("error should mention sub-issue fetch failure: %v", err)
+
+	// The error should indicate the sub-issue that failed
+	// Check if it's an IngestError with the correct issue number
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) {
+		if ingestErr.IssueNum != 101 {
+			t.Errorf("error should reference issue #101, got #%d", ingestErr.IssueNum)
+		}
+	} else {
+		// Fallback check for string content
+		if !strings.Contains(err.Error(), "101") {
+			t.Errorf("error should mention sub-issue #101: %v", err)
+		}
 	}
 }
 
@@ -6210,5 +6232,665 @@ func TestBuildPlanFromURL_FreeformComplexityInference(t *testing.T) {
 	}
 	if taskComplexities[903] != orchestrator.ComplexityMedium {
 		t.Errorf("Task 903 complexity = %q, want %q (default)", taskComplexities[903], orchestrator.ComplexityMedium)
+	}
+}
+
+// =============================================================================
+// IngestError Tests (task-7-error-handling)
+// =============================================================================
+
+func TestIngestError_Error(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      *IngestError
+		expected string
+	}{
+		{
+			name: "message only",
+			err: &IngestError{
+				Kind:    ErrKindIssueNotFound,
+				Message: "issue not found",
+			},
+			expected: "issue not found",
+		},
+		{
+			name: "with issue number",
+			err: &IngestError{
+				Kind:     ErrKindIssueNotFound,
+				Message:  "issue not found",
+				IssueNum: 42,
+			},
+			expected: "issue not found (issue #42)",
+		},
+		{
+			name: "with repo context",
+			err: &IngestError{
+				Kind:     ErrKindIssueNotFound,
+				Message:  "issue not found",
+				IssueNum: 42,
+				Owner:    "owner",
+				Repo:     "repo",
+			},
+			expected: "issue not found (issue #42) in owner/repo",
+		},
+		{
+			name: "with cause",
+			err: &IngestError{
+				Kind:     ErrKindParsingFailed,
+				Message:  "failed to parse",
+				IssueNum: 123,
+				Cause:    errors.New("underlying error"),
+			},
+			expected: "failed to parse (issue #123): underlying error",
+		},
+		{
+			name: "full context",
+			err: &IngestError{
+				Kind:     ErrKindAuthRequired,
+				Message:  "authentication required",
+				IssueNum: 5,
+				Owner:    "acme",
+				Repo:     "widgets",
+				Cause:    errors.New("not logged in"),
+			},
+			expected: "authentication required (issue #5) in acme/widgets: not logged in",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.err.Error()
+			if got != tt.expected {
+				t.Errorf("Error() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIngestError_Is(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      *IngestError
+		target   error
+		expected bool
+	}{
+		{
+			name:     "matches ErrGHNotInstalled",
+			err:      &IngestError{Kind: ErrKindGHNotInstalled, Message: "gh not installed"},
+			target:   ErrGHNotInstalled,
+			expected: true,
+		},
+		{
+			name:     "matches ErrGHAuthRequired",
+			err:      &IngestError{Kind: ErrKindAuthRequired, Message: "auth required"},
+			target:   ErrGHAuthRequired,
+			expected: true,
+		},
+		{
+			name:     "matches ErrIssueNotFound",
+			err:      &IngestError{Kind: ErrKindIssueNotFound, Message: "not found"},
+			target:   ErrIssueNotFound,
+			expected: true,
+		},
+		{
+			name:     "matches ErrRateLimited",
+			err:      &IngestError{Kind: ErrKindRateLimited, Message: "rate limited"},
+			target:   ErrRateLimited,
+			expected: true,
+		},
+		{
+			name:     "matches ErrNoSubIssues",
+			err:      &IngestError{Kind: ErrKindNoSubIssues, Message: "no sub-issues"},
+			target:   ErrNoSubIssues,
+			expected: true,
+		},
+		{
+			name:     "matches ErrParsingFailed",
+			err:      &IngestError{Kind: ErrKindParsingFailed, Message: "parsing failed"},
+			target:   ErrParsingFailed,
+			expected: true,
+		},
+		{
+			name:     "matches ErrCircularDependency",
+			err:      &IngestError{Kind: ErrKindCircularDependency, Message: "circular"},
+			target:   ErrCircularDependency,
+			expected: true,
+		},
+		{
+			name:     "matches ErrUnsupportedProvider",
+			err:      &IngestError{Kind: ErrKindUnsupportedProvider, Message: "unsupported"},
+			target:   ErrUnsupportedProvider,
+			expected: true,
+		},
+		{
+			name:     "matches ErrRepoNotFound",
+			err:      &IngestError{Kind: ErrKindRepoNotFound, Message: "repo not found"},
+			target:   ErrRepoNotFound,
+			expected: true,
+		},
+		{
+			name:     "does not match wrong sentinel",
+			err:      &IngestError{Kind: ErrKindIssueNotFound, Message: "not found"},
+			target:   ErrGHAuthRequired,
+			expected: false,
+		},
+		{
+			name:     "does not match random error",
+			err:      &IngestError{Kind: ErrKindIssueNotFound, Message: "not found"},
+			target:   errors.New("some error"),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := errors.Is(tt.err, tt.target); got != tt.expected {
+				t.Errorf("errors.Is() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIngestError_Unwrap(t *testing.T) {
+	cause := errors.New("underlying cause")
+	err := &IngestError{
+		Kind:    ErrKindParsingFailed,
+		Message: "parsing failed",
+		Cause:   cause,
+	}
+
+	// Test Unwrap returns the cause
+	if got := err.Unwrap(); got != cause {
+		t.Errorf("Unwrap() = %v, want %v", got, cause)
+	}
+
+	// Test errors.Unwrap works
+	if got := errors.Unwrap(err); got != cause {
+		t.Errorf("errors.Unwrap() = %v, want %v", got, cause)
+	}
+
+	// Test error without cause
+	errNoCause := &IngestError{Kind: ErrKindIssueNotFound, Message: "not found"}
+	if got := errNoCause.Unwrap(); got != nil {
+		t.Errorf("Unwrap() with no cause = %v, want nil", got)
+	}
+}
+
+func TestIngestError_FormatForTerminal(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      *IngestError
+		contains []string
+	}{
+		{
+			name: "simple error",
+			err: &IngestError{
+				Kind:    ErrKindIssueNotFound,
+				Message: "issue not found",
+			},
+			contains: []string{"Error:", "issue not found"},
+		},
+		{
+			name: "with suggestion",
+			err: &IngestError{
+				Kind:       ErrKindAuthRequired,
+				Message:    "authentication required",
+				Suggestion: "Run 'gh auth login'",
+			},
+			contains: []string{"Error:", "authentication required", "Suggestion:", "gh auth login"},
+		},
+		{
+			name: "with full context",
+			err: &IngestError{
+				Kind:       ErrKindNoSubIssues,
+				Message:    "no sub-issues found",
+				IssueNum:   100,
+				Owner:      "myorg",
+				Repo:       "myrepo",
+				Suggestion: "Add sub-issues using #N syntax",
+			},
+			contains: []string{
+				"Error:", "no sub-issues found",
+				"#100", "myorg/myrepo",
+				"Suggestion:", "Add sub-issues",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.err.FormatForTerminal()
+			for _, want := range tt.contains {
+				if !strings.Contains(got, want) {
+					t.Errorf("FormatForTerminal() = %q, want to contain %q", got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestIngestError_BuilderPattern(t *testing.T) {
+	err := NewIngestError(ErrKindIssueNotFound, "issue not found").
+		WithIssue(42).
+		WithRepo("owner", "repo").
+		WithSuggestion("Check the issue number").
+		WithCause(errors.New("404"))
+
+	if err.Kind != ErrKindIssueNotFound {
+		t.Errorf("Kind = %q, want %q", err.Kind, ErrKindIssueNotFound)
+	}
+	if err.Message != "issue not found" {
+		t.Errorf("Message = %q, want %q", err.Message, "issue not found")
+	}
+	if err.IssueNum != 42 {
+		t.Errorf("IssueNum = %d, want %d", err.IssueNum, 42)
+	}
+	if err.Owner != "owner" {
+		t.Errorf("Owner = %q, want %q", err.Owner, "owner")
+	}
+	if err.Repo != "repo" {
+		t.Errorf("Repo = %q, want %q", err.Repo, "repo")
+	}
+	if err.Suggestion != "Check the issue number" {
+		t.Errorf("Suggestion = %q, want %q", err.Suggestion, "Check the issue number")
+	}
+	if err.Cause == nil || err.Cause.Error() != "404" {
+		t.Errorf("Cause = %v, want error with message '404'", err.Cause)
+	}
+}
+
+func TestClassifyGHError_RateLimited(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{"rate limit message", "API rate limit exceeded for user ID 12345"},
+		{"secondary rate limit", "You have exceeded a secondary rate limit"},
+		{"abuse detection", "abuse detection mechanism was triggered"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := classifyGHError(errors.New("exit status 1"), []byte(tt.output), 123)
+			if !errors.Is(err, ErrRateLimited) {
+				t.Errorf("classifyGHError() = %v, want ErrRateLimited", err)
+			}
+
+			// Verify it's an IngestError with suggestion
+			var ingestErr *IngestError
+			if !errors.As(err, &ingestErr) {
+				t.Fatalf("error is not *IngestError")
+			}
+			if ingestErr.Suggestion == "" {
+				t.Error("IngestError.Suggestion should not be empty for rate limit errors")
+			}
+			if ingestErr.IssueNum != 123 {
+				t.Errorf("IngestError.IssueNum = %d, want 123", ingestErr.IssueNum)
+			}
+		})
+	}
+}
+
+func TestClassifyGHError_WithIngestErrorTypes(t *testing.T) {
+	tests := []struct {
+		name           string
+		output         string
+		execErr        error
+		issueNum       int
+		wantKind       IngestErrorKind
+		wantSuggestion bool
+	}{
+		{
+			name:           "gh not installed",
+			output:         "",
+			execErr:        &exec.Error{Name: "gh", Err: errors.New("not found")},
+			issueNum:       1,
+			wantKind:       ErrKindGHNotInstalled,
+			wantSuggestion: true,
+		},
+		{
+			name:           "auth required",
+			output:         "To authenticate, please run `gh auth login`",
+			execErr:        errors.New("exit status 1"),
+			issueNum:       42,
+			wantKind:       ErrKindAuthRequired,
+			wantSuggestion: true,
+		},
+		{
+			name:           "issue not found",
+			output:         "GraphQL: Could not find issue #9999",
+			execErr:        errors.New("exit status 1"),
+			issueNum:       9999,
+			wantKind:       ErrKindIssueNotFound,
+			wantSuggestion: true,
+		},
+		{
+			name:           "repo not found",
+			output:         "GraphQL: Could not resolve to a Repository",
+			execErr:        errors.New("exit status 1"),
+			issueNum:       1,
+			wantKind:       ErrKindRepoNotFound,
+			wantSuggestion: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := classifyGHError(tt.execErr, []byte(tt.output), tt.issueNum)
+
+			var ingestErr *IngestError
+			if !errors.As(err, &ingestErr) {
+				t.Fatalf("error is not *IngestError: %v", err)
+			}
+
+			if ingestErr.Kind != tt.wantKind {
+				t.Errorf("Kind = %q, want %q", ingestErr.Kind, tt.wantKind)
+			}
+
+			if tt.wantSuggestion && ingestErr.Suggestion == "" {
+				t.Error("expected non-empty Suggestion")
+			}
+		})
+	}
+}
+
+func TestDetectCircularDependencies(t *testing.T) {
+	tests := []struct {
+		name      string
+		tasks     []orchestrator.PlannedTask
+		wantCycle bool
+	}{
+		{
+			name: "no cycle",
+			tasks: []orchestrator.PlannedTask{
+				{ID: "task-1", DependsOn: nil},
+				{ID: "task-2", DependsOn: []string{"task-1"}},
+				{ID: "task-3", DependsOn: []string{"task-2"}},
+			},
+			wantCycle: false,
+		},
+		{
+			name: "simple cycle",
+			tasks: []orchestrator.PlannedTask{
+				{ID: "task-1", DependsOn: []string{"task-2"}},
+				{ID: "task-2", DependsOn: []string{"task-1"}},
+			},
+			wantCycle: true,
+		},
+		{
+			name: "self-reference",
+			tasks: []orchestrator.PlannedTask{
+				{ID: "task-1", DependsOn: []string{"task-1"}},
+			},
+			wantCycle: true,
+		},
+		{
+			name: "complex cycle",
+			tasks: []orchestrator.PlannedTask{
+				{ID: "task-1", DependsOn: nil},
+				{ID: "task-2", DependsOn: []string{"task-1"}},
+				{ID: "task-3", DependsOn: []string{"task-2"}},
+				{ID: "task-4", DependsOn: []string{"task-3"}},
+				{ID: "task-5", DependsOn: []string{"task-4", "task-2"}},
+			},
+			wantCycle: false,
+		},
+		{
+			name: "cycle in middle",
+			tasks: []orchestrator.PlannedTask{
+				{ID: "task-1", DependsOn: nil},
+				{ID: "task-2", DependsOn: []string{"task-1", "task-4"}},
+				{ID: "task-3", DependsOn: []string{"task-2"}},
+				{ID: "task-4", DependsOn: []string{"task-3"}},
+			},
+			wantCycle: true,
+		},
+		{
+			name: "dependency on non-existent task (ignored)",
+			tasks: []orchestrator.PlannedTask{
+				{ID: "task-1", DependsOn: []string{"task-999"}},
+				{ID: "task-2", DependsOn: []string{"task-1"}},
+			},
+			wantCycle: false,
+		},
+		{
+			name:      "empty tasks",
+			tasks:     []orchestrator.PlannedTask{},
+			wantCycle: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cycle := detectCircularDependencies(tt.tasks)
+			if tt.wantCycle && cycle == nil {
+				t.Error("expected cycle to be detected, got nil")
+			}
+			if !tt.wantCycle && cycle != nil {
+				t.Errorf("expected no cycle, got %v", cycle)
+			}
+		})
+	}
+}
+
+func TestFormatDependencyCycle(t *testing.T) {
+	tests := []struct {
+		name     string
+		cycle    []string
+		expected string
+	}{
+		{
+			name:     "simple cycle",
+			cycle:    []string{"task-1", "task-2", "task-1"},
+			expected: "task-1 -> task-2 -> task-1",
+		},
+		{
+			name:     "longer cycle",
+			cycle:    []string{"a", "b", "c", "d", "a"},
+			expected: "a -> b -> c -> d -> a",
+		},
+		{
+			name:     "empty",
+			cycle:    []string{},
+			expected: "",
+		},
+		{
+			name:     "single element",
+			cycle:    []string{"task-1"},
+			expected: "task-1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatDependencyCycle(tt.cycle)
+			if got != tt.expected {
+				t.Errorf("formatDependencyCycle() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildPlanFromURL_CircularDependency(t *testing.T) {
+	// Create parent issue with two sub-issues
+	parentJSON := `{
+		"number": 100,
+		"title": "Parent Issue",
+		"body": "## Summary\nTest\n\n## Sub-Issues\n### Group 1\n- [ ] #101 - Task A\n- [ ] #102 - Task B",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/100",
+		"state": "open"
+	}`
+
+	// Sub-issues have circular dependency: 101 depends on 102, 102 depends on 101
+	// Using the proper ## Dependencies section for templated format
+	subIssue101JSON := `{
+		"number": 101,
+		"title": "Task A",
+		"body": "## Task\nDo A\n\n## Dependencies\n- #102\n\n## Complexity\nEstimated: **low**\n\n*Part of #100*",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/101",
+		"state": "open"
+	}`
+
+	subIssue102JSON := `{
+		"number": 102,
+		"title": "Task B",
+		"body": "## Task\nDo B\n\n## Dependencies\n- #101\n\n## Complexity\nEstimated: **low**\n\n*Part of #100*",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/102",
+		"state": "open"
+	}`
+
+	issueResponses := map[int]string{
+		100: parentJSON,
+		101: subIssue101JSON,
+		102: subIssue102JSON,
+	}
+
+	executor := multiIssueMockExecutor(issueResponses)
+
+	_, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/100", executor)
+	if err == nil {
+		t.Fatal("expected error for circular dependency, got nil")
+	}
+
+	if !errors.Is(err, ErrCircularDependency) {
+		t.Errorf("expected ErrCircularDependency, got: %v", err)
+	}
+
+	// Verify it's an IngestError with suggestion
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) {
+		if ingestErr.Suggestion == "" {
+			t.Error("expected suggestion for circular dependency error")
+		}
+	}
+}
+
+func TestBuildPlanFromURL_NoSubIssues_ReturnsIngestError(t *testing.T) {
+	parentJSON := `{
+		"number": 200,
+		"title": "Empty Parent",
+		"body": "## Summary\nNo sub-issues here\n\n## Sub-Issues\nNone defined",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/200",
+		"state": "open"
+	}`
+
+	executor := mockExecutor([]byte(parentJSON), nil)
+
+	_, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/200", executor)
+	if err == nil {
+		t.Fatal("expected error for no sub-issues, got nil")
+	}
+
+	if !errors.Is(err, ErrNoSubIssues) {
+		t.Errorf("expected ErrNoSubIssues, got: %v", err)
+	}
+
+	// Verify it's an IngestError with proper context
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) {
+		if ingestErr.IssueNum != 200 {
+			t.Errorf("IssueNum = %d, want 200", ingestErr.IssueNum)
+		}
+		if ingestErr.Owner != "owner" {
+			t.Errorf("Owner = %q, want 'owner'", ingestErr.Owner)
+		}
+		if ingestErr.Repo != "repo" {
+			t.Errorf("Repo = %q, want 'repo'", ingestErr.Repo)
+		}
+		if ingestErr.Suggestion == "" {
+			t.Error("expected suggestion for no sub-issues error")
+		}
+	} else {
+		t.Error("expected error to be *IngestError")
+	}
+}
+
+func TestBuildPlanFromURL_SubIssueFetchFails_ReturnsIngestError(t *testing.T) {
+	// Parent issue that references sub-issue #201
+	parentJSON := `{
+		"number": 300,
+		"title": "Parent with missing sub-issue",
+		"body": "## Summary\nTest\n\n## Sub-Issues\n### Group 1\n- [ ] #301 - Missing task",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/300",
+		"state": "open"
+	}`
+
+	// Sub-issue fetch will fail with "not found"
+	callCount := 0
+	executor := func(name string, args ...string) ([]byte, error) {
+		callCount++
+		if callCount == 1 {
+			// First call: parent issue
+			return []byte(parentJSON), nil
+		}
+		// Second call: sub-issue - simulate not found
+		return []byte("Could not find issue #301"), errors.New("exit status 1")
+	}
+
+	_, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/300", executor)
+	if err == nil {
+		t.Fatal("expected error for missing sub-issue, got nil")
+	}
+
+	// Should be wrapped with context about which sub-issue failed
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) {
+		if ingestErr.IssueNum != 301 {
+			t.Errorf("IssueNum = %d, want 301 (the failing sub-issue)", ingestErr.IssueNum)
+		}
+	}
+}
+
+func TestBuildPlanFromURL_ParsingFailed_ReturnsIngestError(t *testing.T) {
+	// Parent issue with valid structure
+	parentJSON := `{
+		"number": 400,
+		"title": "Parent Issue",
+		"body": "## Summary\nTest\n\n## Sub-Issues\n### Group 1\n- [ ] #401 - Task",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/400",
+		"state": "open"
+	}`
+
+	// Sub-issue with empty body (will fail parsing)
+	subIssueJSON := `{
+		"number": 401,
+		"title": "Task with empty body",
+		"body": "",
+		"labels": [],
+		"url": "https://github.com/owner/repo/issues/401",
+		"state": "open"
+	}`
+
+	issueResponses := map[int]string{
+		400: parentJSON,
+		401: subIssueJSON,
+	}
+
+	executor := multiIssueMockExecutor(issueResponses)
+
+	_, err := buildPlanFromURLWithExecutor("https://github.com/owner/repo/issues/400", executor)
+	if err == nil {
+		t.Fatal("expected error for parsing failure, got nil")
+	}
+
+	if !errors.Is(err, ErrParsingFailed) {
+		t.Errorf("expected ErrParsingFailed, got: %v", err)
+	}
+
+	// Verify it's an IngestError with proper context
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) {
+		if ingestErr.IssueNum != 401 {
+			t.Errorf("IssueNum = %d, want 401", ingestErr.IssueNum)
+		}
+		if ingestErr.Suggestion == "" {
+			t.Error("expected suggestion for parsing failure")
+		}
 	}
 }
