@@ -670,3 +670,92 @@ func (m *Manager) IsCherryPickInProgress(path string) bool {
 	_, err := os.Stat(cherryPickHead)
 	return err == nil
 }
+
+// localClaudeFiles lists the gitignored Claude configuration files that should be
+// copied from the main repo to worktrees. These files are typically used for local
+// settings that users want available in all worktrees.
+var localClaudeFiles = []string{
+	"CLAUDE.local.md",
+}
+
+// CopyLocalClaudeFiles copies gitignored Claude configuration files from the main
+// repository to the specified worktree. This ensures that local settings like
+// CLAUDE.local.md are available in worktrees even though they're not tracked by git.
+//
+// Files that don't exist in the source are silently skipped.
+// Errors during individual file copies are logged but don't fail the operation.
+func (m *Manager) CopyLocalClaudeFiles(worktreePath string) error {
+	var lastErr error
+
+	for _, filename := range localClaudeFiles {
+		srcPath := filepath.Join(m.repoDir, filename)
+		dstPath := filepath.Join(worktreePath, filename)
+
+		if err := copyFile(srcPath, dstPath); err != nil {
+			if !os.IsNotExist(err) {
+				// Log non-existence errors but continue with other files
+				if m.logger != nil {
+					m.logger.Warn("failed to copy local Claude file",
+						"file", filename,
+						"src", srcPath,
+						"dst", dstPath,
+						"error", err,
+					)
+				}
+				lastErr = err
+			}
+			// File doesn't exist - that's expected and fine
+			continue
+		}
+
+		if m.logger != nil {
+			m.logger.Debug("copied local Claude file to worktree",
+				"file", filename,
+				"worktree", worktreePath,
+			)
+		}
+	}
+
+	return lastErr
+}
+
+// copyFile copies a file from src to dst, preserving permissions.
+// Returns os.ErrNotExist if the source file doesn't exist.
+// If copying fails partway through, the incomplete destination file is removed.
+func copyFile(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = srcFile.Close() }()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+
+	// Track success to determine if cleanup is needed
+	success := false
+	defer func() {
+		_ = dstFile.Close()
+		if !success {
+			_ = os.Remove(dst) // Clean up incomplete file on failure
+		}
+	}()
+
+	if _, err := dstFile.ReadFrom(srcFile); err != nil {
+		return err
+	}
+
+	if err := os.Chmod(dst, srcInfo.Mode()); err != nil {
+		return err
+	}
+
+	success = true
+	return nil
+}
