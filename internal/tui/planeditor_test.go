@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -171,12 +172,13 @@ func TestPlanEditorMoveSelection(t *testing.T) {
 			}
 
 			m := Model{
+				terminalManager: terminal.NewManager(),
 				planEditor: &PlanEditorState{
 					active:          true,
 					selectedTaskIdx: tt.initialIdx,
 				},
-				height: 50, // Set height for scroll calculations
 			}
+			m.terminalManager.SetSize(80, 50) // Set height for scroll calculations
 
 			m.planEditorMoveSelection(tt.delta, plan)
 
@@ -224,13 +226,14 @@ func TestPlanEditorEnsureVisible(t *testing.T) {
 			}
 
 			m := Model{
+				terminalManager: terminal.NewManager(),
 				planEditor: &PlanEditorState{
 					active:          true,
 					selectedTaskIdx: tt.selectedIdx,
 					scrollOffset:    tt.initialScroll,
 				},
-				height: tt.height,
 			}
+			m.terminalManager.SetSize(80, tt.height)
 
 			m.planEditorEnsureVisible(plan)
 

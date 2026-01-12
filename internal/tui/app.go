@@ -18,6 +18,8 @@ import (
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/tui/command"
+	"github.com/Iron-Ham/claudio/internal/tui/input"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
@@ -293,18 +295,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		wasReady := m.ready
-		m.width = msg.Width
-		m.height = msg.Height
+		m.terminalManager.SetSize(msg.Width, msg.Height)
 		m.ready = true
 
 		// Calculate the content area dimensions and resize tmux sessions
-		contentWidth, contentHeight := CalculateContentDimensions(m.width, m.height)
+		contentWidth, contentHeight := CalculateContentDimensions(m.terminalManager.Width(), m.terminalManager.Height())
 		if m.orchestrator != nil && contentWidth > 0 && contentHeight > 0 {
 			m.orchestrator.ResizeAllInstances(contentWidth, contentHeight)
 		}
 
 		// Resize terminal pane if visible
-		if m.terminalVisible {
+		if m.terminalManager.IsVisible() {
 			m.resizeTerminal()
 		}
 
@@ -328,7 +329,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update outputs from instances
 		m.updateOutputs()
 		// Update terminal pane output if visible
-		if m.terminalVisible {
+		if m.terminalManager.IsVisible() {
 			m.updateTerminalOutput()
 		}
 		// Check for plan file during planning phase (proactive detection)
@@ -371,10 +372,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case outputMsg:
-		if m.outputs == nil {
-			m.outputs = make(map[string]string)
-		}
-		m.outputs[msg.instanceID] += string(msg.data)
+		m.outputManager.AddOutput(msg.instanceID, string(msg.data))
 		return m, nil
 
 	case errMsg:
@@ -446,6 +444,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeypress processes keyboard input
 func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Sync router state for mode tracking
+	m.syncRouterState()
+
 	// Handle search mode - typing search pattern
 	if m.searchMode {
 		return m.handleSearchInput(msg)
@@ -483,7 +484,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle terminal mode - forward keys to the terminal pane's tmux session
-	if m.terminalMode {
+	if m.terminalManager.IsFocused() {
 		// Ctrl+] exits terminal mode (same escape as input mode)
 		if msg.Type == tea.KeyCtrlCloseBracket {
 			m.exitTerminalMode()
@@ -751,7 +752,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+shift+t":
 		// Switch terminal directory mode (worktree <-> invocation)
-		if m.terminalVisible {
+		if m.terminalManager.IsVisible() {
 			m.switchTerminalDir()
 		}
 		return m, nil
@@ -915,7 +916,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Go to bottom of diff or output (re-enables auto-scroll)
 		if m.showDiff {
 			lines := strings.Split(m.diffContent, "\n")
-			maxLines := m.height - 14
+			maxLines := m.terminalManager.Height() - 14
 			if maxLines < 5 {
 				maxLines = 5
 			}
@@ -937,23 +938,21 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		// Enter search mode
 		m.searchMode = true
-		m.searchPattern = ""
-		m.searchMatches = nil
-		m.searchCurrent = 0
+		m.searchEngine.Clear()
 		return m, nil
 
 	case "n":
 		// Next search match
-		if m.searchPattern != "" && len(m.searchMatches) > 0 {
-			m.searchCurrent = (m.searchCurrent + 1) % len(m.searchMatches)
+		if m.searchEngine.HasMatches() {
+			m.searchEngine.Next()
 			m.scrollToMatch()
 		}
 		return m, nil
 
 	case "N":
 		// Previous search match
-		if m.searchPattern != "" && len(m.searchMatches) > 0 {
-			m.searchCurrent = (m.searchCurrent - 1 + len(m.searchMatches)) % len(m.searchMatches)
+		if m.searchEngine.HasMatches() {
+			m.searchEngine.Previous()
 			m.scrollToMatch()
 		}
 		return m, nil
@@ -965,6 +964,31 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// CurrentInputMode returns the current input mode based on the model's state.
+// This is useful for status line displays and debugging.
+func (m Model) CurrentInputMode() input.Mode {
+	if m.inputRouter != nil {
+		return m.inputRouter.Mode()
+	}
+	// Fallback if router not initialized
+	switch {
+	case m.searchMode:
+		return input.ModeSearch
+	case m.filterMode:
+		return input.ModeFilter
+	case m.inputMode:
+		return input.ModeInput
+	case m.terminalManager.IsFocused():
+		return input.ModeTerminal
+	case m.addingTask:
+		return input.ModeTaskInput
+	case m.commandMode:
+		return input.ModeCommand
+	default:
+		return input.ModeNormal
+	}
 }
 
 // handleCommandInput handles keystrokes when in command mode (after pressing ':')
@@ -1009,490 +1033,130 @@ func (m Model) handleCommandInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // executeCommand parses and executes a vim-style command
 func (m Model) executeCommand(cmd string) (tea.Model, tea.Cmd) {
-	// Trim whitespace
-	cmd = strings.TrimSpace(cmd)
-	if cmd == "" {
-		return m, nil
-	}
-
 	// Clear messages before executing
 	m.infoMessage = ""
 	m.errorMessage = ""
 
-	// Parse command (support both short and long forms)
-	switch cmd {
-	// Instance control commands
-	case "s", "start":
-		return m.cmdStart()
-	case "x", "stop":
-		return m.cmdStop()
-	case "e", "exit":
-		return m.cmdExit()
-	case "p", "pause":
-		return m.cmdPause()
-	case "R", "reconnect":
-		return m.cmdReconnect()
-	case "restart":
-		return m.cmdRestart()
+	// Delegate to command handler
+	result := m.commandHandler.Execute(cmd, &m)
 
-	// Instance management commands
-	case "a", "add":
-		return m.cmdAdd()
-	case "D", "remove":
-		return m.cmdRemove()
-	case "kill":
-		return m.cmdKill()
-	case "C", "clear":
-		return m.cmdClearCompleted()
+	// Apply result to model state
+	m.applyCommandResult(result)
 
-	// View toggle commands
-	case "d", "diff":
-		return m.cmdDiff()
-	case "m", "metrics", "stats":
-		return m.cmdStats()
-	case "c", "conflicts":
-		return m.cmdConflicts()
-	case "f", "F", "filter":
-		return m.cmdFilter()
+	return m, result.TeaCmd
+}
 
-	// Utility commands
-	case "tmux":
-		return m.cmdTmux()
-	case "r", "pr":
-		return m.cmdPR()
+// applyCommandResult applies the result of a command execution to the model state.
+// This method modifies the model based on the Result struct returned by the handler.
+func (m *Model) applyCommandResult(result command.Result) {
+	// Apply messages
+	if result.InfoMessage != "" {
+		m.infoMessage = result.InfoMessage
+	}
+	if result.ErrorMessage != "" {
+		m.errorMessage = result.ErrorMessage
+	}
 
-	// Terminal pane commands
-	case "t":
-		// Enter terminal mode (focus terminal for typing)
-		if m.terminalVisible {
-			m.enterTerminalMode()
-			m.infoMessage = "Terminal focused. Press Ctrl+] to exit."
-		} else {
-			m.errorMessage = "Terminal not visible. Use :term to open it first."
-		}
-		return m, nil
-	case "term", "terminal":
-		return m.cmdTerminal()
-	case "termdir worktree", "termdir wt":
-		return m.cmdTerminalDirWorktree()
-	case "termdir invoke", "termdir invocation":
-		return m.cmdTerminalDirInvocation()
-
-	// Ultraplan commands (require command mode for safety)
-	case "cancel":
-		return m.cmdUltraPlanCancel()
-
-	// Help commands
-	case "h", "help":
+	// Apply state changes (only if pointer is non-nil, meaning the value was set)
+	if result.ShowHelp != nil {
+		// Toggle help (handler sets to true, we toggle)
 		m.showHelp = !m.showHelp
-		return m, nil
-	case "q", "quit":
-		m.quitting = true
+	}
+	if result.ShowStats != nil {
+		// Toggle stats
+		m.showStats = !m.showStats
+	}
+	if result.ShowDiff != nil {
+		m.showDiff = *result.ShowDiff
+	}
+	if result.DiffContent != nil {
+		m.diffContent = *result.DiffContent
+	}
+	if result.DiffScroll != nil {
+		m.diffScroll = *result.DiffScroll
+	}
+	if result.ShowConflicts != nil {
+		// Toggle conflicts
+		m.showConflicts = !m.showConflicts
+	}
+	if result.Quitting != nil {
+		m.quitting = *result.Quitting
 		// Cleanup terminal pane if running
 		m.cleanupTerminal()
-		// Log session end with duration
-		if m.logger != nil {
-			duration := time.Since(m.startTime)
-			m.logger.Info("TUI session ended", "duration_ms", duration.Milliseconds())
+	}
+	if result.AddingTask != nil {
+		m.addingTask = *result.AddingTask
+		m.taskInput = ""
+		m.taskInputCursor = 0
+	}
+	if result.FilterMode != nil {
+		m.filterMode = *result.FilterMode
+	}
+
+	// Handle terminal-related state changes
+	if result.EnterTerminalMode {
+		m.enterTerminalMode()
+	}
+	if result.ToggleTerminal {
+		sessionID := ""
+		if m.orchestrator != nil {
+			sessionID = m.orchestrator.SessionID()
 		}
-		return m, tea.Quit
-
-	default:
-		m.errorMessage = fmt.Sprintf("Unknown command: %s (type :h for help)", cmd)
-		return m, nil
+		m.toggleTerminalVisibility(sessionID)
+		if m.terminalManager.IsVisible() {
+			m.infoMessage = "Terminal pane opened. Press [:t] to focus, [`] to hide."
+		} else {
+			m.infoMessage = "Terminal pane closed."
+		}
 	}
-}
-
-// Command implementations
-
-func (m Model) cmdStart() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	// Guard against starting already-running instances
-	if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
-		m.infoMessage = "Instance is already running. Use :p to pause/resume or :x to stop."
-		return m, nil
-	}
-	if inst.Status == orchestrator.StatusCreatingPR {
-		m.infoMessage = "Instance is creating PR. Wait for it to complete."
-		return m, nil
-	}
-
-	if err := m.orchestrator.StartInstance(inst); err != nil {
-		m.errorMessage = err.Error()
-	} else {
-		m.infoMessage = fmt.Sprintf("Started instance %s", inst.ID)
-	}
-	return m, nil
-}
-
-func (m Model) cmdStop() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	// Log user stopping instance
-	if m.logger != nil {
-		m.logger.Info("user stopped instance", "instance_id", inst.ID)
+	if result.TerminalDirMode != nil {
+		newMode := TerminalDirMode(*result.TerminalDirMode)
+		if newMode == TerminalDirWorktree && m.terminalDirMode != TerminalDirWorktree {
+			m.terminalDirMode = TerminalDirWorktree
+			if m.terminalProcess != nil && m.terminalProcess.IsRunning() {
+				targetDir := m.getTerminalDir()
+				if err := m.terminalProcess.ChangeDirectory(targetDir); err != nil {
+					m.errorMessage = "Failed to change directory: " + err.Error()
+				} else {
+					m.infoMessage = "Terminal: switched to worktree"
+				}
+			} else {
+				m.infoMessage = "Terminal will use worktree when opened."
+			}
+		} else if newMode == TerminalDirInvocation && m.terminalDirMode != TerminalDirInvocation {
+			m.terminalDirMode = TerminalDirInvocation
+			if m.terminalProcess != nil && m.terminalProcess.IsRunning() {
+				targetDir := m.getTerminalDir()
+				if err := m.terminalProcess.ChangeDirectory(targetDir); err != nil {
+					m.errorMessage = "Failed to change directory: " + err.Error()
+				} else {
+					m.infoMessage = "Terminal: switched to invocation directory"
+				}
+			} else {
+				m.infoMessage = "Terminal will use invocation directory when opened."
+			}
+		} else {
+			// Already in the requested mode
+			if newMode == TerminalDirWorktree {
+				m.infoMessage = "Terminal is already in worktree mode."
+			} else {
+				m.infoMessage = "Terminal is already in invocation directory mode."
+			}
+		}
 	}
 
-	prStarted, err := m.orchestrator.StopInstanceWithAutoPR(inst)
-	if err != nil {
-		m.errorMessage = err.Error()
-	} else if prStarted {
-		m.infoMessage = fmt.Sprintf("Instance stopped. Creating PR for %s...", inst.ID)
-	} else {
-		m.infoMessage = fmt.Sprintf("Instance stopped. Create PR with: claudio pr %s", inst.ID)
-	}
-	return m, nil
-}
-
-func (m Model) cmdExit() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	// Log user exiting instance
-	if m.logger != nil {
-		m.logger.Info("user exited instance (no auto-PR)", "instance_id", inst.ID)
-	}
-
-	// Stop without auto-PR workflow
-	if err := m.orchestrator.StopInstance(inst); err != nil {
-		m.errorMessage = err.Error()
-	} else {
-		m.infoMessage = fmt.Sprintf("Instance %s stopped (no PR workflow). Create PR manually with: claudio pr %s", inst.ID, inst.ID)
-	}
-	return m, nil
-}
-
-func (m Model) cmdPause() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	mgr := m.orchestrator.GetInstanceManager(inst.ID)
-	if mgr == nil {
-		m.infoMessage = "Instance has no manager"
-		return m, nil
-	}
-
-	switch inst.Status {
-	case orchestrator.StatusPaused:
-		_ = mgr.Resume()
-		inst.Status = orchestrator.StatusWorking
-		m.infoMessage = fmt.Sprintf("Resumed instance %s", inst.ID)
-	case orchestrator.StatusWorking:
-		_ = mgr.Pause()
-		inst.Status = orchestrator.StatusPaused
-		m.infoMessage = fmt.Sprintf("Paused instance %s", inst.ID)
-	default:
-		m.infoMessage = "Instance is not in a pausable state"
-	}
-	return m, nil
-}
-
-func (m Model) cmdReconnect() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	// Only allow reconnecting to non-running instances
-	if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
-		m.infoMessage = "Instance is already running. Use :p to pause/resume or :x to stop."
-		return m, nil
-	}
-	if inst.Status == orchestrator.StatusCreatingPR {
-		m.infoMessage = "Instance is creating PR. Wait for it to complete."
-		return m, nil
-	}
-
-	if err := m.orchestrator.ReconnectInstance(inst); err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to reconnect: %v", err)
-	} else {
-		m.infoMessage = fmt.Sprintf("Reconnected to instance %s", inst.ID)
-	}
-	return m, nil
-}
-
-func (m Model) cmdRestart() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	// Only allow restarting non-running instances
-	switch inst.Status {
-	case orchestrator.StatusWorking, orchestrator.StatusWaitingInput:
-		m.infoMessage = "Instance is running. Use :x to stop it first, or :p to pause."
-		return m, nil
-	case orchestrator.StatusCreatingPR:
-		m.infoMessage = "Instance is creating PR. Wait for it to complete."
-		return m, nil
-	}
-
-	// Stop the instance if it's still running in tmux
-	mgr := m.orchestrator.GetInstanceManager(inst.ID)
-	if mgr != nil {
-		_ = mgr.Stop()
-		mgr.ClearTimeout() // Reset timeout state
-	}
-
-	// Restart with same task
-	if err := m.orchestrator.ReconnectInstance(inst); err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to restart instance: %v", err)
-	} else {
-		m.infoMessage = fmt.Sprintf("Instance %s restarted with same task", inst.ID)
-	}
-	return m, nil
-}
-
-func (m Model) cmdAdd() (tea.Model, tea.Cmd) {
-	m.addingTask = true
-	m.taskInput = ""
-	m.taskInputCursor = 0
-	return m, nil
-}
-
-func (m Model) cmdRemove() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	instanceID := inst.ID
-	if err := m.orchestrator.RemoveInstance(m.session, instanceID, true); err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to remove instance: %v", err)
-	} else {
-		m.infoMessage = fmt.Sprintf("Removed instance %s", instanceID)
-		// Adjust active tab if needed
+	// Handle active tab adjustment after instance removal
+	if result.ActiveTabAdjustment != 0 {
 		if m.activeTab >= m.instanceCount() {
 			m.activeTab = m.instanceCount() - 1
 			if m.activeTab < 0 {
 				m.activeTab = 0
 			}
 		}
+	}
+	if result.EnsureActiveVisible {
 		m.ensureActiveVisible()
 	}
-	return m, nil
-}
-
-func (m Model) cmdKill() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	// Stop the instance first
-	mgr := m.orchestrator.GetInstanceManager(inst.ID)
-	if mgr != nil {
-		_ = mgr.Stop()
-	}
-
-	// Remove the instance
-	if err := m.orchestrator.RemoveInstance(m.session, inst.ID, true); err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to remove instance: %v", err)
-	} else {
-		m.infoMessage = fmt.Sprintf("Instance %s killed and removed", inst.ID)
-		// Adjust active tab if needed
-		if m.activeTab >= len(m.session.Instances) && m.activeTab > 0 {
-			m.activeTab--
-		}
-	}
-	return m, nil
-}
-
-func (m Model) cmdClearCompleted() (tea.Model, tea.Cmd) {
-	removed, err := m.orchestrator.ClearCompletedInstances(m.session)
-	if err != nil {
-		m.errorMessage = err.Error()
-	} else if removed == 0 {
-		m.infoMessage = "No completed instances to clear"
-	} else {
-		m.infoMessage = fmt.Sprintf("Cleared %d completed instance(s)", removed)
-		// Adjust active tab if needed
-		if m.activeTab >= m.instanceCount() {
-			m.activeTab = m.instanceCount() - 1
-			if m.activeTab < 0 {
-				m.activeTab = 0
-			}
-		}
-		m.ensureActiveVisible()
-	}
-	return m, nil
-}
-
-func (m Model) cmdDiff() (tea.Model, tea.Cmd) {
-	if m.showDiff {
-		m.showDiff = false
-		m.diffContent = ""
-		m.diffScroll = 0
-		return m, nil
-	}
-
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	diff, err := m.orchestrator.GetInstanceDiff(inst.WorktreePath)
-	if err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to get diff: %v", err)
-	} else if diff == "" {
-		m.infoMessage = "No changes to show"
-	} else {
-		m.diffContent = diff
-		m.showDiff = true
-		m.diffScroll = 0
-	}
-	return m, nil
-}
-
-func (m Model) cmdStats() (tea.Model, tea.Cmd) {
-	m.showStats = !m.showStats
-	return m, nil
-}
-
-func (m Model) cmdConflicts() (tea.Model, tea.Cmd) {
-	if len(m.conflicts) > 0 {
-		m.showConflicts = !m.showConflicts
-	} else {
-		m.infoMessage = "No conflicts detected"
-	}
-	return m, nil
-}
-
-func (m Model) cmdFilter() (tea.Model, tea.Cmd) {
-	m.filterMode = true
-	return m, nil
-}
-
-func (m Model) cmdTerminal() (tea.Model, tea.Cmd) {
-	sessionID := ""
-	if m.orchestrator != nil {
-		sessionID = m.orchestrator.SessionID()
-	}
-	m.toggleTerminalVisibility(sessionID)
-	if m.terminalVisible {
-		m.infoMessage = "Terminal pane opened. Press [:t] to focus, [`] to hide."
-	} else {
-		m.infoMessage = "Terminal pane closed."
-	}
-	return m, nil
-}
-
-func (m Model) cmdTerminalDirWorktree() (tea.Model, tea.Cmd) {
-	if m.terminalDirMode == TerminalDirWorktree {
-		m.infoMessage = "Terminal is already in worktree mode."
-		return m, nil
-	}
-	m.terminalDirMode = TerminalDirWorktree
-	if m.terminalProcess != nil && m.terminalProcess.IsRunning() {
-		targetDir := m.getTerminalDir()
-		if err := m.terminalProcess.ChangeDirectory(targetDir); err != nil {
-			m.errorMessage = "Failed to change directory: " + err.Error()
-		} else {
-			m.infoMessage = "Terminal: switched to worktree"
-		}
-	} else {
-		m.infoMessage = "Terminal will use worktree when opened."
-	}
-	return m, nil
-}
-
-func (m Model) cmdTerminalDirInvocation() (tea.Model, tea.Cmd) {
-	if m.terminalDirMode == TerminalDirInvocation {
-		m.infoMessage = "Terminal is already in invocation directory mode."
-		return m, nil
-	}
-	m.terminalDirMode = TerminalDirInvocation
-	if m.terminalProcess != nil && m.terminalProcess.IsRunning() {
-		targetDir := m.getTerminalDir()
-		if err := m.terminalProcess.ChangeDirectory(targetDir); err != nil {
-			m.errorMessage = "Failed to change directory: " + err.Error()
-		} else {
-			m.infoMessage = "Terminal: switched to invocation directory"
-		}
-	} else {
-		m.infoMessage = "Terminal will use invocation directory when opened."
-	}
-	return m, nil
-}
-
-// Ultraplan command implementations
-
-func (m Model) cmdUltraPlanCancel() (tea.Model, tea.Cmd) {
-	// Check if we're in ultraplan mode
-	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
-		m.errorMessage = "Not in ultraplan mode"
-		return m, nil
-	}
-
-	session := m.ultraPlan.Coordinator.Session()
-	if session == nil {
-		m.errorMessage = "No active ultraplan session"
-		return m, nil
-	}
-
-	// Only allow cancellation during executing phase
-	if session.Phase != orchestrator.PhaseExecuting {
-		m.errorMessage = "Can only cancel during execution phase"
-		return m, nil
-	}
-
-	m.ultraPlan.Coordinator.Cancel()
-	m.infoMessage = "Execution cancelled"
-
-	// Log user decision
-	if m.logger != nil {
-		m.logger.Info("user cancelled ultraplan execution via command mode")
-	}
-
-	return m, nil
-}
-
-func (m Model) cmdTmux() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	mgr := m.orchestrator.GetInstanceManager(inst.ID)
-	if mgr == nil {
-		m.infoMessage = "Instance has no manager"
-		return m, nil
-	}
-
-	m.infoMessage = "Attach with: " + mgr.AttachCommand()
-	return m, nil
-}
-
-func (m Model) cmdPR() (tea.Model, tea.Cmd) {
-	inst := m.activeInstance()
-	if inst == nil {
-		m.infoMessage = "No instance selected"
-		return m, nil
-	}
-
-	m.infoMessage = fmt.Sprintf("Create PR: claudio pr %s  (add --draft for draft PR)", inst.ID)
-	return m, nil
 }
 
 // sendKeyToTmux sends a key event to the tmux session
@@ -1996,21 +1660,21 @@ func (m Model) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyBackspace:
-		if len(m.searchPattern) > 0 {
-			m.searchPattern = m.searchPattern[:len(m.searchPattern)-1]
+		if len(m.searchInput) > 0 {
+			m.searchInput = m.searchInput[:len(m.searchInput)-1]
 			// Live search as user types
 			m.executeSearch()
 		}
 		return m, nil
 
 	case tea.KeyRunes:
-		m.searchPattern += string(msg.Runes)
+		m.searchInput += string(msg.Runes)
 		// Live search as user types
 		m.executeSearch()
 		return m, nil
 
 	case tea.KeySpace:
-		m.searchPattern += " "
+		m.searchInput += " "
 		m.executeSearch()
 		return m, nil
 	}
@@ -2093,11 +1757,10 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// executeSearch compiles the search pattern and finds all matches
+// executeSearch uses the search engine to find all matches in the output
 func (m *Model) executeSearch() {
-	if m.searchPattern == "" {
-		m.searchMatches = nil
-		m.searchRegex = nil
+	if m.searchInput == "" {
+		m.searchEngine.Clear()
 		return
 	}
 
@@ -2106,59 +1769,36 @@ func (m *Model) executeSearch() {
 		return
 	}
 
-	output := m.outputs[inst.ID]
+	output := m.outputManager.GetOutput(inst.ID)
 	if output == "" {
 		return
 	}
 
-	// Try to compile as regex if it starts with r:
-	if strings.HasPrefix(m.searchPattern, "r:") {
-		pattern := m.searchPattern[2:]
-		re, err := regexp.Compile("(?i)" + pattern)
-		if err != nil {
-			m.searchRegex = nil
-			m.searchMatches = nil
-			return
-		}
-		m.searchRegex = re
-	} else {
-		// Literal search (case-insensitive)
-		m.searchRegex = regexp.MustCompile("(?i)" + regexp.QuoteMeta(m.searchPattern))
-	}
+	// Execute search using the search engine
+	m.searchEngine.Search(m.searchInput, output)
 
-	// Find all matching lines
-	lines := strings.Split(output, "\n")
-	m.searchMatches = nil
-	for i, line := range lines {
-		if m.searchRegex.MatchString(line) {
-			m.searchMatches = append(m.searchMatches, i)
-		}
-	}
-
-	// Set current match
-	if len(m.searchMatches) > 0 {
-		m.searchCurrent = 0
+	// Scroll to first match if any
+	if m.searchEngine.HasMatches() {
 		m.scrollToMatch()
 	}
 }
 
-// clearSearch clears the current search
+// clearSearch clears the current search state
 func (m *Model) clearSearch() {
-	m.searchPattern = ""
-	m.searchRegex = nil
-	m.searchMatches = nil
-	m.searchCurrent = 0
+	m.searchInput = ""
+	m.searchEngine.Clear()
 	m.outputScroll = 0
 }
 
 // scrollToMatch adjusts output scroll to show the current match
 func (m *Model) scrollToMatch() {
-	if len(m.searchMatches) == 0 || m.searchCurrent >= len(m.searchMatches) {
+	current := m.searchEngine.Current()
+	if current == nil {
 		return
 	}
 
-	matchLine := m.searchMatches[m.searchCurrent]
-	maxLines := m.height - 12
+	matchLine := current.LineNumber
+	maxLines := m.terminalManager.Height() - 12
 	if maxLines < 5 {
 		maxLines = 5
 	}
@@ -2273,7 +1913,7 @@ func (m *Model) updateOutputs() {
 			if workflow != nil {
 				output := workflow.GetOutput()
 				if len(output) > 0 {
-					m.outputs[inst.ID] = string(output)
+					m.outputManager.SetOutput(inst.ID, string(output))
 				}
 			}
 			continue
@@ -2283,7 +1923,7 @@ func (m *Model) updateOutputs() {
 		if mgr != nil {
 			output := mgr.GetOutput()
 			if len(output) > 0 {
-				m.outputs[inst.ID] = string(output)
+				m.outputManager.SetOutput(inst.ID, string(output))
 				// Update scroll position (auto-scroll if enabled)
 				m.updateOutputScroll(inst.ID)
 			}
@@ -2372,22 +2012,17 @@ func (m Model) View() string {
 	b.WriteString("\n")
 
 	// Calculate widths for sidebar and main content
+	// Get pane dimensions from terminal manager
+	dims := m.terminalManager.GetPaneDimensions()
 	effectiveSidebarWidth := SidebarWidth
-	if m.width < 80 {
+	if dims.TerminalWidth < 80 {
 		effectiveSidebarWidth = SidebarMinWidth
 	}
-	mainContentWidth := m.width - effectiveSidebarWidth - 3 // 3 for gap between panels
+	mainContentWidth := dims.TerminalWidth - effectiveSidebarWidth - 3 // 3 for gap between panels
 
-	// Calculate available height for the main area
-	// Reduce height when terminal pane is visible
-	terminalHeight := m.TerminalPaneHeight()
-	mainAreaHeight := m.height - 6 // Header + help bar + margins
-	if m.terminalVisible && terminalHeight > 0 {
-		mainAreaHeight -= terminalHeight + 1 // +1 for spacing
-	}
-	if mainAreaHeight < 10 {
-		mainAreaHeight = 10 // Minimum height for main area
-	}
+	// Main area height is pre-calculated by terminal manager
+	// (accounts for header, footer, and terminal pane)
+	mainAreaHeight := dims.MainAreaHeight
 
 	// Sidebar + Content area (horizontal layout)
 	// Use ultra-plan specific rendering if in ultra-plan mode
@@ -2420,7 +2055,7 @@ func (m Model) View() string {
 	b.WriteString(mainArea)
 
 	// Terminal pane (if visible)
-	if m.terminalVisible {
+	if m.terminalManager.IsVisible() {
 		b.WriteString("\n")
 		b.WriteString(m.renderTerminalPane())
 	}
@@ -2463,20 +2098,20 @@ func (m Model) renderHeader() string {
 		title = fmt.Sprintf("Claudio: %s", m.session.Name)
 	}
 
-	return styles.Header.Width(m.width).Render(title)
+	return styles.Header.Width(m.terminalManager.Width()).Render(title)
 }
 
 // renderTerminalPane renders the terminal pane at the bottom of the screen.
 func (m Model) renderTerminalPane() string {
-	terminalHeight := m.TerminalPaneHeight()
-	if terminalHeight == 0 {
+	dims := m.terminalManager.GetPaneDimensions()
+	if dims.TerminalPaneHeight == 0 {
 		return ""
 	}
 
 	// Build the terminal state for the view
 	state := view.TerminalState{
 		Output:         m.terminalOutput,
-		TerminalMode:   m.terminalMode,
+		TerminalMode:   m.terminalManager.IsFocused(),
 		InvocationDir:  m.invocationDir,
 		IsWorktreeMode: m.terminalDirMode == TerminalDirWorktree,
 	}
@@ -2495,7 +2130,7 @@ func (m Model) renderTerminalPane() string {
 		}
 	}
 
-	termView := view.NewTerminalView(m.width, terminalHeight)
+	termView := view.NewTerminalView(dims.TerminalWidth, dims.TerminalPaneHeight)
 	return termView.Render(state)
 }
 
@@ -2542,7 +2177,7 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	isRunning := mgr != nil && mgr.Running()
 
 	// Apply filters to output
-	output := m.outputs[inst.ID]
+	output := m.outputManager.GetOutput(inst.ID)
 	if output != "" {
 		output = m.filterOutput(output)
 	}
@@ -2551,13 +2186,13 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 		Output:            output,
 		IsRunning:         isRunning,
 		InputMode:         m.inputMode,
-		ScrollOffset:      m.outputScrolls[inst.ID],
+		ScrollOffset:      m.outputManager.GetScrollOffset(inst.ID),
 		AutoScrollEnabled: m.isOutputAutoScroll(inst.ID),
 		HasNewOutput:      m.hasNewOutput(inst.ID),
-		SearchPattern:     m.searchPattern,
-		SearchRegex:       m.searchRegex,
-		SearchMatches:     m.searchMatches,
-		SearchCurrent:     m.searchCurrent,
+		SearchPattern:     m.searchInput,
+		SearchRegex:       m.searchEngine.Regex(),
+		SearchMatches:     m.searchEngine.MatchingLines(),
+		SearchCurrent:     m.searchEngine.CurrentIndex(),
 		SearchMode:        m.searchMode,
 	}
 
@@ -2769,7 +2404,7 @@ func (m Model) renderDiffPanel(width int) string {
 	}
 
 	// Calculate available height for diff content
-	maxLines := m.height - 14
+	maxLines := m.terminalManager.Height() - 14
 	if maxLines < 5 {
 		maxLines = 5
 	}
@@ -2892,7 +2527,7 @@ func (m Model) renderHelp() string {
 		)
 	}
 
-	if m.terminalMode {
+	if m.terminalManager.IsFocused() {
 		dirMode := "invoke"
 		if m.terminalDirMode == TerminalDirWorktree {
 			dirMode = "worktree"
@@ -2946,7 +2581,7 @@ func (m Model) renderHelp() string {
 	}
 
 	// Add terminal key based on visibility
-	if m.terminalVisible {
+	if m.terminalManager.IsVisible() {
 		keys = append(keys, styles.HelpKey.Render("[:t]")+" term "+styles.HelpKey.Render("[`]")+" hide")
 	} else {
 		keys = append(keys, styles.HelpKey.Render("[`]")+" term")
@@ -2959,8 +2594,8 @@ func (m Model) renderHelp() string {
 	}
 
 	// Add search status indicator if search is active
-	if m.searchPattern != "" && len(m.searchMatches) > 0 {
-		searchStatus := styles.Secondary.Render(fmt.Sprintf("[%d/%d]", m.searchCurrent+1, len(m.searchMatches)))
+	if m.searchEngine.HasMatches() {
+		searchStatus := styles.Secondary.Render(fmt.Sprintf("[%d/%d]", m.searchEngine.CurrentIndex()+1, m.searchEngine.MatchCount()))
 		keys = append(keys, searchStatus+" "+styles.HelpKey.Render("[n/N]")+" match")
 	}
 

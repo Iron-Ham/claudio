@@ -70,6 +70,18 @@ type Instance struct {
 	AutoStart  bool     `json:"auto_start,omitempty"` // If true, auto-start when dependencies complete
 }
 
+// GetID returns the instance ID (satisfies prworkflow.InstanceInfo).
+func (i *Instance) GetID() string { return i.ID }
+
+// GetWorktreePath returns the worktree path (satisfies prworkflow.InstanceInfo).
+func (i *Instance) GetWorktreePath() string { return i.WorktreePath }
+
+// GetBranch returns the branch name (satisfies prworkflow.InstanceInfo).
+func (i *Instance) GetBranch() string { return i.Branch }
+
+// GetTask returns the task description (satisfies prworkflow.InstanceInfo).
+func (i *Instance) GetTask() string { return i.Task }
+
 // Session represents a Claudio work session
 type Session struct {
 	ID        string      `json:"id"`

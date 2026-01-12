@@ -7,6 +7,10 @@ import (
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/tui/command"
+	"github.com/Iron-Ham/claudio/internal/tui/input"
+	"github.com/Iron-Ham/claudio/internal/tui/output"
+	"github.com/Iron-Ham/claudio/internal/tui/search"
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 )
 
@@ -57,10 +61,17 @@ type PlanEditorState struct {
 // Model holds the TUI application state
 type Model struct {
 	// Core components
-	orchestrator *orchestrator.Orchestrator
-	session      *orchestrator.Session
-	logger       *logging.Logger
-	startTime    time.Time // Time when the TUI session started
+	orchestrator   *orchestrator.Orchestrator
+	session        *orchestrator.Session
+	logger         *logging.Logger
+	startTime      time.Time        // Time when the TUI session started
+	commandHandler *command.Handler // Handler for vim-style commands
+
+	// Input routing
+	inputRouter *input.Router
+
+	// Terminal pane manager (owns dimensions and layout calculations)
+	terminalManager *terminal.Manager
 
 	// Ultra-plan mode (nil if not in ultra-plan mode)
 	ultraPlan *UltraPlanState
@@ -70,8 +81,6 @@ type Model struct {
 
 	// UI state
 	activeTab       int
-	width           int
-	height          int
 	ready           bool
 	quitting        bool
 	showHelp        bool
@@ -96,18 +105,13 @@ type Model struct {
 	// File conflict tracking
 	conflicts []conflict.FileConflict
 
-	// Instance outputs (instance ID -> output string)
-	outputs map[string]string
+	// Output management (handles per-instance output buffers, scrolling, and auto-scroll)
+	outputManager *output.Manager
 
 	// Diff preview state
 	showDiff    bool   // Whether the diff panel is visible
 	diffContent string // Cached diff content for the active instance
 	diffScroll  int    // Scroll offset for navigating the diff
-
-	// Output scroll state (per instance)
-	outputScrolls    map[string]int  // Instance ID -> scroll offset
-	outputAutoScroll map[string]bool // Instance ID -> auto-scroll enabled (follows new output)
-	outputLineCount  map[string]int  // Instance ID -> previous line count (to detect new output)
 
 	// Sidebar pagination
 	sidebarScrollOffset int // Index of the first visible instance in sidebar
@@ -116,11 +120,9 @@ type Model struct {
 	showStats bool // When true, show the stats panel
 
 	// Search state
-	searchMode    bool           // Whether search mode is active (typing pattern)
-	searchPattern string         // Current search pattern
-	searchRegex   *regexp.Regexp // Compiled regex (nil for literal search)
-	searchMatches []int          // Line numbers containing matches
-	searchCurrent int            // Current match index (for n/N navigation)
+	searchMode   bool           // Whether search mode is active (typing pattern)
+	searchInput  string         // Current search input being typed (live updated)
+	searchEngine *search.Engine // Search engine for output buffer searching
 
 	// Filter state
 	filterMode       bool            // Whether filter mode is active
@@ -129,13 +131,10 @@ type Model struct {
 	filterRegex      *regexp.Regexp  // Compiled custom filter regex
 	outputScroll     int             // Scroll position in output (for search navigation)
 
-	// Terminal pane state
-	terminalVisible bool              // Whether the terminal pane is shown
-	terminalMode    bool              // Whether keys are forwarded to the terminal pane
+	// Terminal pane state (dimension management delegated to terminalManager)
 	terminalProcess *terminal.Process // Manages the terminal tmux session (nil until first toggle)
 	terminalDirMode TerminalDirMode   // Which directory the terminal is in
 	terminalOutput  string            // Cached terminal output
-	terminalHeight  int               // Height of the terminal pane in lines
 	invocationDir   string            // Directory where Claudio was invoked (for terminal)
 }
 
@@ -238,14 +237,15 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 	}
 
 	return Model{
-		orchestrator:     orch,
-		session:          session,
-		logger:           tuiLogger,
-		startTime:        time.Now(),
-		outputs:          make(map[string]string),
-		outputScrolls:    make(map[string]int),
-		outputAutoScroll: make(map[string]bool),
-		outputLineCount:  make(map[string]int),
+		orchestrator:    orch,
+		session:         session,
+		logger:          tuiLogger,
+		startTime:       time.Now(),
+		commandHandler:  command.New(),
+		inputRouter:     input.NewRouter(),
+		outputManager:   output.NewManager(),
+		searchEngine:    search.NewEngine(),
+		terminalManager: terminal.NewManager(),
 		filterCategories: map[string]bool{
 			"errors":   true,
 			"warnings": true,
@@ -254,9 +254,61 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 			"progress": true,
 		},
 		// Terminal pane defaults
-		invocationDir:  invocationDir,
-		terminalHeight: DefaultTerminalHeight,
+		invocationDir: invocationDir,
 	}
+}
+
+// InputRouter returns the input router for this model.
+func (m Model) InputRouter() *input.Router {
+	return m.inputRouter
+}
+
+// syncRouterState synchronizes the InputRouter state with the Model's mode flags.
+// This ensures the router reflects the current mode based on the existing boolean flags.
+func (m *Model) syncRouterState() {
+	if m.inputRouter == nil {
+		return
+	}
+
+	// Sync mode based on priority order (matching handleKeypress)
+	switch {
+	case m.searchMode:
+		m.inputRouter.SetMode(input.ModeSearch)
+	case m.filterMode:
+		m.inputRouter.SetMode(input.ModeFilter)
+	case m.inputMode:
+		m.inputRouter.SetMode(input.ModeInput)
+	case m.terminalManager.IsFocused():
+		m.inputRouter.SetMode(input.ModeTerminal)
+	case m.addingTask:
+		m.inputRouter.SetMode(input.ModeTaskInput)
+	case m.commandMode:
+		m.inputRouter.SetMode(input.ModeCommand)
+	default:
+		m.inputRouter.SetMode(input.ModeNormal)
+	}
+
+	// Sync submode states
+	m.inputRouter.SetUltraPlanActive(m.ultraPlan != nil)
+	m.inputRouter.SetPlanEditorActive(m.IsPlanEditorActive())
+	m.inputRouter.SetTemplateDropdown(m.showTemplates)
+
+	// Sync group decision and retrigger modes from ultra-plan state
+	if m.ultraPlan != nil && m.ultraPlan.Coordinator != nil {
+		session := m.ultraPlan.Coordinator.Session()
+		if session != nil && session.GroupDecision != nil {
+			m.inputRouter.SetGroupDecisionMode(session.GroupDecision.AwaitingDecision)
+		} else {
+			m.inputRouter.SetGroupDecisionMode(false)
+		}
+		m.inputRouter.SetRetriggerMode(m.ultraPlan.RetriggerMode)
+	} else {
+		m.inputRouter.SetGroupDecisionMode(false)
+		m.inputRouter.SetRetriggerMode(false)
+	}
+
+	// Sync command buffer
+	m.inputRouter.Buffer = m.commandBuffer
 }
 
 // activeInstance returns the currently focused instance
@@ -285,8 +337,8 @@ func (m *Model) ensureActiveVisible() {
 	// Calculate visible slots (same calculation as in renderSidebar)
 	// Reserve: 1 for title, 1 for blank line, 1 for add hint, 2 for scroll indicators, plus border padding
 	reservedLines := 6
-	mainAreaHeight := m.height - 6 // Same as in View()
-	availableSlots := mainAreaHeight - reservedLines
+	dims := m.terminalManager.GetPaneDimensions()
+	availableSlots := dims.MainAreaHeight - reservedLines
 	if availableSlots < 3 {
 		availableSlots = 3
 	}
@@ -314,114 +366,56 @@ func (m *Model) ensureActiveVisible() {
 }
 
 // Output scroll helper methods
+// These methods delegate to the OutputManager for output buffer management.
 
 // getOutputMaxLines returns the maximum number of lines visible in the output area
 func (m Model) getOutputMaxLines() int {
-	maxLines := m.height - 12
+	dims := m.terminalManager.GetPaneDimensions()
+	// Output area is within main area, minus some reserved lines for header/status
+	maxLines := dims.MainAreaHeight - 6
 	if maxLines < 5 {
 		maxLines = 5
 	}
 	return maxLines
 }
 
-// getOutputLineCount returns the total number of lines in the output for an instance
-// This counts lines after filtering is applied to match what the user sees
-func (m *Model) getOutputLineCount(instanceID string) int {
-	output := m.outputs[instanceID]
-	if output == "" {
-		return 0
-	}
-	// Apply filters to match what's displayed
-	output = m.filterOutput(output)
-	if output == "" {
-		return 0
-	}
-	// Count newlines + 1 for last line
-	count := 1
-	for _, c := range output {
-		if c == '\n' {
-			count++
-		}
-	}
-	return count
-}
-
-// getOutputMaxScroll returns the maximum scroll offset for an instance
-func (m *Model) getOutputMaxScroll(instanceID string) int {
-	totalLines := m.getOutputLineCount(instanceID)
-	maxLines := m.getOutputMaxLines()
-	maxScroll := totalLines - maxLines
-	if maxScroll < 0 {
-		return 0
-	}
-	return maxScroll
-}
-
 // isOutputAutoScroll returns whether auto-scroll is enabled for an instance (defaults to true)
 func (m Model) isOutputAutoScroll(instanceID string) bool {
-	if autoScroll, exists := m.outputAutoScroll[instanceID]; exists {
-		return autoScroll
-	}
-	return true // Default to auto-scroll enabled
+	return m.outputManager.IsAutoScroll(instanceID)
 }
 
 // scrollOutputUp scrolls the output up by n lines and disables auto-scroll
 func (m *Model) scrollOutputUp(instanceID string, n int) {
-	currentScroll := m.outputScrolls[instanceID]
-	newScroll := currentScroll - n
-	if newScroll < 0 {
-		newScroll = 0
-	}
-	m.outputScrolls[instanceID] = newScroll
-	// Disable auto-scroll when user scrolls up
-	m.outputAutoScroll[instanceID] = false
+	m.outputManager.SetFilterFunc(m.filterOutput)
+	m.outputManager.Scroll(instanceID, -n, m.getOutputMaxLines())
 }
 
 // scrollOutputDown scrolls the output down by n lines
 func (m *Model) scrollOutputDown(instanceID string, n int) {
-	currentScroll := m.outputScrolls[instanceID]
-	maxScroll := m.getOutputMaxScroll(instanceID)
-	newScroll := currentScroll + n
-	if newScroll > maxScroll {
-		newScroll = maxScroll
-	}
-	m.outputScrolls[instanceID] = newScroll
-	// If at bottom, re-enable auto-scroll
-	if newScroll >= maxScroll {
-		m.outputAutoScroll[instanceID] = true
-	}
+	m.outputManager.SetFilterFunc(m.filterOutput)
+	m.outputManager.Scroll(instanceID, n, m.getOutputMaxLines())
 }
 
 // scrollOutputToTop scrolls to the top of the output and disables auto-scroll
 func (m *Model) scrollOutputToTop(instanceID string) {
-	m.outputScrolls[instanceID] = 0
-	m.outputAutoScroll[instanceID] = false
+	m.outputManager.ScrollToTop(instanceID)
 }
 
 // scrollOutputToBottom scrolls to the bottom and re-enables auto-scroll
 func (m *Model) scrollOutputToBottom(instanceID string) {
-	m.outputScrolls[instanceID] = m.getOutputMaxScroll(instanceID)
-	m.outputAutoScroll[instanceID] = true
+	m.outputManager.SetFilterFunc(m.filterOutput)
+	m.outputManager.ScrollToBottom(instanceID, m.getOutputMaxLines())
 }
 
 // updateOutputScroll updates scroll position based on new output (if auto-scroll is enabled)
 func (m *Model) updateOutputScroll(instanceID string) {
-	if m.isOutputAutoScroll(instanceID) {
-		// Auto-scroll to bottom
-		m.outputScrolls[instanceID] = m.getOutputMaxScroll(instanceID)
-	}
-	// Update line count for detecting new output
-	m.outputLineCount[instanceID] = m.getOutputLineCount(instanceID)
+	m.outputManager.SetFilterFunc(m.filterOutput)
+	m.outputManager.UpdateScroll(instanceID, m.getOutputMaxLines())
 }
 
 // hasNewOutput returns true if there's new output since last update
 func (m Model) hasNewOutput(instanceID string) bool {
-	currentLines := m.getOutputLineCount(instanceID)
-	previousLines, exists := m.outputLineCount[instanceID]
-	if !exists {
-		return false
-	}
-	return currentLines > previousLines
+	return m.outputManager.HasNewOutput(instanceID)
 }
 
 // Task input cursor helper methods
@@ -543,33 +537,31 @@ func isWordChar(r rune) bool {
 // DefaultTerminalHeight is the default height of the terminal pane in lines.
 // Set to 15 to provide a more useful terminal display showing adequate
 // command output and shell history.
-const DefaultTerminalHeight = 15
+// Deprecated: Use terminal.DefaultPaneHeight instead.
+const DefaultTerminalHeight = terminal.DefaultPaneHeight
 
 // MinTerminalHeight is the minimum height of the terminal pane.
-const MinTerminalHeight = 5
+// Deprecated: Use terminal.MinPaneHeight instead.
+const MinTerminalHeight = terminal.MinPaneHeight
 
 // MaxTerminalHeightRatio is the maximum ratio of terminal height to total height.
-const MaxTerminalHeightRatio = 0.5
+// Deprecated: Use terminal.MaxPaneHeightRatio instead.
+const MaxTerminalHeightRatio = terminal.MaxPaneHeightRatio
 
 // IsTerminalMode returns true if the terminal pane has input focus.
 func (m Model) IsTerminalMode() bool {
-	return m.terminalMode
+	return m.terminalManager.IsFocused()
 }
 
 // IsTerminalVisible returns true if the terminal pane is visible.
 func (m Model) IsTerminalVisible() bool {
-	return m.terminalVisible
+	return m.terminalManager.IsVisible()
 }
 
 // TerminalPaneHeight returns the current terminal pane height (0 if hidden).
 func (m Model) TerminalPaneHeight() int {
-	if !m.terminalVisible {
-		return 0
-	}
-	if m.terminalHeight == 0 {
-		return DefaultTerminalHeight
-	}
-	return m.terminalHeight
+	dims := m.terminalManager.GetPaneDimensions()
+	return dims.TerminalPaneHeight
 }
 
 // getTerminalDir returns the directory path for the terminal based on current mode.
@@ -588,30 +580,21 @@ func (m Model) getTerminalDir() string {
 // toggleTerminalVisibility toggles the terminal pane on or off.
 // If turning on and process doesn't exist, it will be created lazily.
 func (m *Model) toggleTerminalVisibility(sessionID string) {
-	m.terminalVisible = !m.terminalVisible
+	nowVisible := m.terminalManager.ToggleVisibility()
 
-	if m.terminalVisible {
+	if nowVisible {
 		// Initialize terminal process if needed (lazy initialization)
 		if m.terminalProcess == nil {
-			// Account for border (2 lines) and header (1 line) when setting tmux dimensions
-			paneHeight := m.TerminalPaneHeight()
-			contentHeight := paneHeight - 3
-			if contentHeight < 3 {
-				contentHeight = 3
-			}
-			// Width accounts for border (2 chars) and padding (2 chars)
-			contentWidth := m.width - 4
-			if contentWidth < 20 {
-				contentWidth = 20
-			}
-			m.terminalProcess = terminal.NewProcess(sessionID, m.invocationDir, contentWidth, contentHeight)
+			// Get content dimensions from manager
+			dims := m.terminalManager.GetPaneDimensions()
+			m.terminalProcess = terminal.NewProcess(sessionID, m.invocationDir, dims.TerminalPaneContentWidth, dims.TerminalPaneContentHeight)
 		}
 
 		// Start the process if not running
 		if !m.terminalProcess.IsRunning() {
 			if err := m.terminalProcess.Start(); err != nil {
 				m.errorMessage = "Failed to start terminal: " + err.Error()
-				m.terminalVisible = false
+				m.terminalManager.SetLayout(terminal.LayoutHidden)
 				return
 			}
 		}
@@ -626,25 +609,20 @@ func (m *Model) toggleTerminalVisibility(sessionID string) {
 				m.infoMessage = "Terminal opened but could not change to target directory"
 			}
 		}
-
-		// Set default height if not set
-		if m.terminalHeight == 0 {
-			m.terminalHeight = DefaultTerminalHeight
-		}
 	}
 }
 
 // enterTerminalMode enters terminal input mode (keys go to terminal).
 func (m *Model) enterTerminalMode() {
-	if !m.terminalVisible || m.terminalProcess == nil || !m.terminalProcess.IsRunning() {
+	if !m.terminalManager.IsVisible() || m.terminalProcess == nil || !m.terminalProcess.IsRunning() {
 		return
 	}
-	m.terminalMode = true
+	m.terminalManager.SetFocused(true)
 }
 
 // exitTerminalMode exits terminal input mode.
 func (m *Model) exitTerminalMode() {
-	m.terminalMode = false
+	m.terminalManager.SetFocused(false)
 }
 
 // switchTerminalDir toggles between worktree and invocation directory modes.
@@ -692,24 +670,12 @@ func (m *Model) resizeTerminal() {
 		return
 	}
 
-	// Account for the border (2 lines: top and bottom) and header (1 line)
-	// when calculating the tmux pane dimensions. The terminal pane height is
-	// the total visible height, but tmux needs the content area dimensions.
-	paneHeight := m.TerminalPaneHeight()
-	contentHeight := paneHeight - 3 // 2 for border, 1 for header
-	if contentHeight < 3 {
-		contentHeight = 3
-	}
+	// Get content dimensions from manager (accounts for borders, padding, header)
+	dims := m.terminalManager.GetPaneDimensions()
 
-	// Width also needs adjustment for border (2 chars) and padding (2 chars)
-	contentWidth := m.width - 4
-	if contentWidth < 20 {
-		contentWidth = 20
-	}
-
-	if err := m.terminalProcess.Resize(contentWidth, contentHeight); err != nil {
+	if err := m.terminalProcess.Resize(dims.TerminalPaneContentWidth, dims.TerminalPaneContentHeight); err != nil {
 		if m.logger != nil {
-			m.logger.Warn("failed to resize terminal", "width", contentWidth, "height", contentHeight, "error", err)
+			m.logger.Warn("failed to resize terminal", "width", dims.TerminalPaneContentWidth, "height", dims.TerminalPaneContentHeight, "error", err)
 		}
 	}
 }
@@ -771,15 +737,74 @@ func (m Model) Conflicts() []conflict.FileConflict {
 
 // TerminalWidth returns the terminal width.
 func (m Model) TerminalWidth() int {
-	return m.width
+	return m.terminalManager.Width()
 }
 
 // TerminalHeight returns the terminal height.
 func (m Model) TerminalHeight() int {
-	return m.height
+	return m.terminalManager.Height()
 }
 
 // IsAddingTask returns whether the user is currently adding a new task
 func (m Model) IsAddingTask() bool {
 	return m.addingTask
+}
+
+// -----------------------------------------------------------------------------
+// command.Dependencies interface implementation
+// These methods implement the command.Dependencies interface, allowing the Model
+// to be passed to the CommandHandler for command execution.
+// -----------------------------------------------------------------------------
+
+// GetOrchestrator returns the orchestrator instance.
+func (m Model) GetOrchestrator() *orchestrator.Orchestrator {
+	return m.orchestrator
+}
+
+// GetSession returns the current session.
+func (m Model) GetSession() *orchestrator.Session {
+	return m.session
+}
+
+// ActiveInstance returns the currently focused instance.
+func (m Model) ActiveInstance() *orchestrator.Instance {
+	return m.activeInstance()
+}
+
+// InstanceCount returns the number of instances.
+func (m Model) InstanceCount() int {
+	return m.instanceCount()
+}
+
+// GetConflicts returns the number of file conflicts.
+func (m Model) GetConflicts() int {
+	return len(m.conflicts)
+}
+
+// IsDiffVisible returns true if the diff panel is visible.
+func (m Model) IsDiffVisible() bool {
+	return m.showDiff
+}
+
+// GetDiffContent returns the current diff content.
+func (m Model) GetDiffContent() string {
+	return m.diffContent
+}
+
+// GetUltraPlanCoordinator returns the ultraplan coordinator if in ultraplan mode.
+func (m Model) GetUltraPlanCoordinator() *orchestrator.Coordinator {
+	if m.ultraPlan == nil {
+		return nil
+	}
+	return m.ultraPlan.Coordinator
+}
+
+// GetLogger returns the logger instance.
+func (m Model) GetLogger() *logging.Logger {
+	return m.logger
+}
+
+// GetStartTime returns the TUI session start time.
+func (m Model) GetStartTime() time.Time {
+	return m.startTime
 }

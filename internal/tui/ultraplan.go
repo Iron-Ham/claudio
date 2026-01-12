@@ -76,9 +76,9 @@ func (m *Model) createUltraplanView() *view.UltraplanView {
 		Session:      m.session,
 		UltraPlan:    m.ultraPlan,
 		ActiveTab:    m.activeTab,
-		Width:        m.width,
-		Height:       m.height,
-		Outputs:      m.outputs,
+		Width:        m.terminalManager.Width(),
+		Height:       m.terminalManager.Height(),
+		Outputs:      m.outputManager.GetAllOutputs(),
 		GetInstance: func(id string) *orchestrator.Instance {
 			return m.orchestrator.GetInstance(id)
 		},
@@ -640,7 +640,7 @@ func (m *Model) handlePlanManagerCompletion(inst *orchestrator.Instance) bool {
 	}
 
 	// Parse the plan decision from the output
-	output := m.outputs[inst.ID]
+	output := m.outputManager.GetOutput(inst.ID)
 	decision, err := orchestrator.ParsePlanDecisionFromOutput(output)
 	if err != nil {
 		m.errorMessage = fmt.Sprintf("Plan selection completed but failed to parse decision: %v", err)
@@ -906,7 +906,7 @@ func (m *Model) tryParsePlan(inst *orchestrator.Instance, session *orchestrator.
 	}
 
 	// Fall back to output parsing (for backwards compatibility)
-	output := m.outputs[inst.ID]
+	output := m.outputManager.GetOutput(inst.ID)
 	if output == "" {
 		return nil, fmt.Errorf("no plan file found and no output available")
 	}
@@ -1114,7 +1114,7 @@ func (m *Model) checkForPlanManagerPlanFile() bool {
 
 	// Try to parse the plan decision from the output (for display purposes)
 	// This is optional - the plan file is the ground truth
-	output := m.outputs[inst.ID]
+	output := m.outputManager.GetOutput(inst.ID)
 	decision, _ := orchestrator.ParsePlanDecisionFromOutput(output)
 	if decision != nil {
 		session.SelectedPlanIndex = decision.SelectedIndex

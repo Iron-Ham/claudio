@@ -4,15 +4,25 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Iron-Ham/claudio/internal/tui/command"
+	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// testModel creates a Model with the commandHandler and terminalManager initialized for testing.
+// This is necessary because tests construct Model directly instead of using NewModel.
+func testModel() Model {
+	return Model{
+		commandHandler:  command.New(),
+		terminalManager: terminal.NewManager(),
+	}
+}
+
 func TestHandleCommandInput(t *testing.T) {
 	t.Run("escape exits command mode", func(t *testing.T) {
-		m := Model{
-			commandMode:   true,
-			commandBuffer: "test",
-		}
+		m := testModel()
+		m.commandMode = true
+		m.commandBuffer = "test"
 
 		msg := tea.KeyMsg{Type: tea.KeyEsc}
 		result, _ := m.handleCommandInput(msg)
@@ -27,10 +37,9 @@ func TestHandleCommandInput(t *testing.T) {
 	})
 
 	t.Run("enter executes command and exits command mode", func(t *testing.T) {
-		m := Model{
-			commandMode:   true,
-			commandBuffer: "help",
-		}
+		m := testModel()
+		m.commandMode = true
+		m.commandBuffer = "help"
 
 		msg := tea.KeyMsg{Type: tea.KeyEnter}
 		result, _ := m.handleCommandInput(msg)
@@ -49,10 +58,9 @@ func TestHandleCommandInput(t *testing.T) {
 	})
 
 	t.Run("backspace removes last character", func(t *testing.T) {
-		m := Model{
-			commandMode:   true,
-			commandBuffer: "test",
-		}
+		m := testModel()
+		m.commandMode = true
+		m.commandBuffer = "test"
 
 		msg := tea.KeyMsg{Type: tea.KeyBackspace}
 		result, _ := m.handleCommandInput(msg)
@@ -67,10 +75,9 @@ func TestHandleCommandInput(t *testing.T) {
 	})
 
 	t.Run("backspace on empty buffer exits command mode", func(t *testing.T) {
-		m := Model{
-			commandMode:   true,
-			commandBuffer: "a",
-		}
+		m := testModel()
+		m.commandMode = true
+		m.commandBuffer = "a"
 
 		msg := tea.KeyMsg{Type: tea.KeyBackspace}
 		result, _ := m.handleCommandInput(msg)
@@ -85,10 +92,9 @@ func TestHandleCommandInput(t *testing.T) {
 	})
 
 	t.Run("typing adds to buffer", func(t *testing.T) {
-		m := Model{
-			commandMode:   true,
-			commandBuffer: "te",
-		}
+		m := testModel()
+		m.commandMode = true
+		m.commandBuffer = "te"
 
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s', 't'}}
 		result, _ := m.handleCommandInput(msg)
@@ -100,10 +106,9 @@ func TestHandleCommandInput(t *testing.T) {
 	})
 
 	t.Run("space adds to buffer", func(t *testing.T) {
-		m := Model{
-			commandMode:   true,
-			commandBuffer: "add",
-		}
+		m := testModel()
+		m.commandMode = true
+		m.commandBuffer = "add"
 
 		msg := tea.KeyMsg{Type: tea.KeySpace}
 		result, _ := m.handleCommandInput(msg)
@@ -117,11 +122,10 @@ func TestHandleCommandInput(t *testing.T) {
 
 func TestTaskInputEnter(t *testing.T) {
 	t.Run("enter key exits task input mode without task", func(t *testing.T) {
-		m := Model{
-			addingTask:      true,
-			taskInput:       "",
-			taskInputCursor: 0,
-		}
+		m := testModel()
+		m.addingTask = true
+		m.taskInput = ""
+		m.taskInputCursor = 0
 
 		msg := tea.KeyMsg{Type: tea.KeyEnter}
 		result, _ := m.handleKeypress(msg)
@@ -141,12 +145,11 @@ func TestTaskInputEnter(t *testing.T) {
 		// The important test is the empty task one which confirms Enter is detected
 		t.Skip("skipping - requires mock orchestrator")
 
-		m := Model{
-			addingTask:      true,
-			taskInput:       "test task",
-			taskInputCursor: 9,
-			// orchestrator is nil - AddInstance will fail but mode should still exit
-		}
+		m := testModel()
+		m.addingTask = true
+		m.taskInput = "test task"
+		m.taskInputCursor = 9
+		// orchestrator is nil - AddInstance will fail but mode should still exit
 
 		msg := tea.KeyMsg{Type: tea.KeyEnter}
 		result, _ := m.handleKeypress(msg)
@@ -163,11 +166,10 @@ func TestTaskInputEnter(t *testing.T) {
 	t.Run("enter string also submits task", func(t *testing.T) {
 		// Test that msg.String() == "enter" would also be detected
 		// This is to check if the terminal might be sending Enter differently
-		m := Model{
-			addingTask:      true,
-			taskInput:       "",
-			taskInputCursor: 0,
-		}
+		m := testModel()
+		m.addingTask = true
+		m.taskInput = ""
+		m.taskInputCursor = 0
 
 		// Simulate what some terminals might send
 		msg := tea.KeyMsg{Type: tea.KeyEnter}
@@ -183,11 +185,10 @@ func TestTaskInputEnter(t *testing.T) {
 	})
 
 	t.Run("alt+enter inserts newline instead of submitting", func(t *testing.T) {
-		m := Model{
-			addingTask:      true,
-			taskInput:       "test",
-			taskInputCursor: 4,
-		}
+		m := testModel()
+		m.addingTask = true
+		m.taskInput = "test"
+		m.taskInputCursor = 4
 
 		msg := tea.KeyMsg{Type: tea.KeyEnter, Alt: true}
 		result, _ := m.handleKeypress(msg)
@@ -202,11 +203,10 @@ func TestTaskInputEnter(t *testing.T) {
 	})
 
 	t.Run("ctrl+j inserts newline instead of submitting", func(t *testing.T) {
-		m := Model{
-			addingTask:      true,
-			taskInput:       "test",
-			taskInputCursor: 4,
-		}
+		m := testModel()
+		m.addingTask = true
+		m.taskInput = "test"
+		m.taskInputCursor = 4
 
 		msg := tea.KeyMsg{Type: tea.KeyCtrlJ}
 		result, _ := m.handleKeypress(msg)
@@ -221,11 +221,10 @@ func TestTaskInputEnter(t *testing.T) {
 	})
 
 	t.Run("typing adds to task input", func(t *testing.T) {
-		m := Model{
-			addingTask:      true,
-			taskInput:       "te",
-			taskInputCursor: 2,
-		}
+		m := testModel()
+		m.addingTask = true
+		m.taskInput = "te"
+		m.taskInputCursor = 2
 
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s', 't'}}
 		result, _ := m.handleKeypress(msg)
@@ -242,11 +241,10 @@ func TestTaskInputEnter(t *testing.T) {
 	t.Run("newline rune submits task (terminal compat)", func(t *testing.T) {
 		// Some terminals/input methods send Enter as KeyRunes with \n
 		// This should submit the task, not insert a newline
-		m := Model{
-			addingTask:      true,
-			taskInput:       "",
-			taskInputCursor: 0,
-		}
+		m := testModel()
+		m.addingTask = true
+		m.taskInput = ""
+		m.taskInputCursor = 0
 
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\n'}}
 		result, _ := m.handleKeypress(msg)
@@ -263,11 +261,10 @@ func TestTaskInputEnter(t *testing.T) {
 	t.Run("carriage return rune submits task (terminal compat)", func(t *testing.T) {
 		// Some terminals send Enter as KeyRunes with \r
 		// This should submit the task, not insert a carriage return
-		m := Model{
-			addingTask:      true,
-			taskInput:       "",
-			taskInputCursor: 0,
-		}
+		m := testModel()
+		m.addingTask = true
+		m.taskInput = ""
+		m.taskInputCursor = 0
 
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\r'}}
 		result, _ := m.handleKeypress(msg)
@@ -284,7 +281,7 @@ func TestTaskInputEnter(t *testing.T) {
 
 func TestExecuteCommand(t *testing.T) {
 	t.Run("empty command does nothing", func(t *testing.T) {
-		m := Model{}
+		m := testModel()
 		result, _ := m.executeCommand("")
 		model := result.(Model)
 
@@ -294,7 +291,7 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("whitespace-only command does nothing", func(t *testing.T) {
-		m := Model{}
+		m := testModel()
 		result, _ := m.executeCommand("   ")
 		model := result.(Model)
 
@@ -304,7 +301,7 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("unknown command sets error", func(t *testing.T) {
-		m := Model{}
+		m := testModel()
 		result, _ := m.executeCommand("unknowncommand")
 		model := result.(Model)
 
@@ -314,7 +311,8 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("help command toggles help", func(t *testing.T) {
-		m := Model{showHelp: false}
+		m := testModel()
+		m.showHelp = false
 		result, _ := m.executeCommand("help")
 		model := result.(Model)
 
@@ -332,7 +330,8 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("h command is alias for help", func(t *testing.T) {
-		m := Model{showHelp: false}
+		m := testModel()
+		m.showHelp = false
 		result, _ := m.executeCommand("h")
 		model := result.(Model)
 
@@ -342,7 +341,7 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("quit command sets quitting", func(t *testing.T) {
-		m := Model{}
+		m := testModel()
 		result, cmd := m.executeCommand("quit")
 		model := result.(Model)
 
@@ -355,7 +354,7 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("q command is alias for quit", func(t *testing.T) {
-		m := Model{}
+		m := testModel()
 		result, cmd := m.executeCommand("q")
 		model := result.(Model)
 
@@ -368,7 +367,8 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("add command starts task input", func(t *testing.T) {
-		m := Model{addingTask: false}
+		m := testModel()
+		m.addingTask = false
 		result, _ := m.executeCommand("add")
 		model := result.(Model)
 
@@ -378,7 +378,8 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("a command is alias for add", func(t *testing.T) {
-		m := Model{addingTask: false}
+		m := testModel()
+		m.addingTask = false
 		result, _ := m.executeCommand("a")
 		model := result.(Model)
 
@@ -388,7 +389,8 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("stats command toggles stats panel", func(t *testing.T) {
-		m := Model{showStats: false}
+		m := testModel()
+		m.showStats = false
 		result, _ := m.executeCommand("stats")
 		model := result.(Model)
 
@@ -398,7 +400,8 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("m command is alias for stats", func(t *testing.T) {
-		m := Model{showStats: false}
+		m := testModel()
+		m.showStats = false
 		result, _ := m.executeCommand("m")
 		model := result.(Model)
 
@@ -408,7 +411,8 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("metrics command is alias for stats", func(t *testing.T) {
-		m := Model{showStats: false}
+		m := testModel()
+		m.showStats = false
 		result, _ := m.executeCommand("metrics")
 		model := result.(Model)
 
@@ -418,7 +422,8 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("filter command starts filter mode", func(t *testing.T) {
-		m := Model{filterMode: false}
+		m := testModel()
+		m.filterMode = false
 		result, _ := m.executeCommand("filter")
 		model := result.(Model)
 
@@ -428,7 +433,8 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("f command is alias for filter", func(t *testing.T) {
-		m := Model{filterMode: false}
+		m := testModel()
+		m.filterMode = false
 		result, _ := m.executeCommand("f")
 		model := result.(Model)
 
@@ -438,7 +444,8 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("F command is alias for filter", func(t *testing.T) {
-		m := Model{filterMode: false}
+		m := testModel()
+		m.filterMode = false
 		result, _ := m.executeCommand("F")
 		model := result.(Model)
 
@@ -448,7 +455,9 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("diff command toggles diff panel when no instance", func(t *testing.T) {
-		m := Model{showDiff: true, diffContent: "some diff"}
+		m := testModel()
+		m.showDiff = true
+		m.diffContent = "some diff"
 		result, _ := m.executeCommand("diff")
 		model := result.(Model)
 
@@ -461,7 +470,9 @@ func TestExecuteCommand(t *testing.T) {
 	})
 
 	t.Run("d command is alias for diff", func(t *testing.T) {
-		m := Model{showDiff: true, diffContent: "some diff"}
+		m := testModel()
+		m.showDiff = true
+		m.diffContent = "some diff"
 		result, _ := m.executeCommand("d")
 		model := result.(Model)
 
@@ -488,7 +499,7 @@ func TestCommandAliases(t *testing.T) {
 
 	for _, cmd := range commands {
 		t.Run(cmd, func(t *testing.T) {
-			m := Model{}
+			m := testModel()
 			result, _ := m.executeCommand(cmd)
 			model := result.(Model)
 
@@ -521,9 +532,8 @@ func TestCommandAliasesRequiringInstance(t *testing.T) {
 
 	for _, cmd := range commands {
 		t.Run(cmd, func(t *testing.T) {
-			m := Model{
-				session: nil, // No session means no instances
-			}
+			m := testModel()
+			m.session = nil // No session means no instances
 			result, _ := m.executeCommand(cmd)
 			model := result.(Model)
 
@@ -542,9 +552,8 @@ func TestCommandAliasesRequiringInstance(t *testing.T) {
 
 func TestConflictsCommandRequiresConflicts(t *testing.T) {
 	t.Run("shows message when no conflicts", func(t *testing.T) {
-		m := Model{
-			conflicts: nil,
-		}
+		m := testModel()
+		m.conflicts = nil
 		result, _ := m.executeCommand("conflicts")
 		model := result.(Model)
 
@@ -554,9 +563,8 @@ func TestConflictsCommandRequiresConflicts(t *testing.T) {
 	})
 
 	t.Run("c alias shows message when no conflicts", func(t *testing.T) {
-		m := Model{
-			conflicts: nil,
-		}
+		m := testModel()
+		m.conflicts = nil
 		result, _ := m.executeCommand("c")
 		model := result.(Model)
 
@@ -569,11 +577,9 @@ func TestConflictsCommandRequiresConflicts(t *testing.T) {
 func TestTerminalFocusCommand(t *testing.T) {
 	t.Run("t command attempts focus when terminal visible", func(t *testing.T) {
 		// Note: enterTerminalMode() requires a running terminal process to actually
-		// set terminalMode=true. This test verifies the command path is correct.
-		m := Model{
-			terminalVisible: true,
-			terminalMode:    false,
-		}
+		// set focused=true. This test verifies the command path is correct.
+		m := testModel()
+		m.terminalManager.SetLayout(terminal.LayoutVisible)
 		result, _ := m.executeCommand("t")
 		model := result.(Model)
 
@@ -587,15 +593,13 @@ func TestTerminalFocusCommand(t *testing.T) {
 	})
 
 	t.Run("t command shows error when terminal not visible", func(t *testing.T) {
-		m := Model{
-			terminalVisible: false,
-			terminalMode:    false,
-		}
+		m := testModel()
+		// Terminal manager starts with LayoutHidden by default
 		result, _ := m.executeCommand("t")
 		model := result.(Model)
 
-		if model.terminalMode {
-			t.Error("expected terminalMode to remain false when terminal not visible")
+		if model.terminalManager.IsFocused() {
+			t.Error("expected focused to remain false when terminal not visible")
 		}
 		if model.errorMessage == "" {
 			t.Error("expected error message when terminal not visible")
@@ -605,23 +609,21 @@ func TestTerminalFocusCommand(t *testing.T) {
 	t.Run("t key in normal mode does NOT enter terminal mode", func(t *testing.T) {
 		// This is a regression test to ensure 't' key doesn't trigger terminal mode
 		// directly - it should only work via command mode (:t)
-		m := Model{
-			terminalVisible: true,
-			terminalMode:    false,
-			commandMode:     false,
-		}
+		m := testModel()
+		m.terminalManager.SetLayout(terminal.LayoutVisible)
+		m.commandMode = false
 
 		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}}
 		result, _ := m.handleKeypress(msg)
 		model := result.(Model)
 
-		if model.terminalMode {
-			t.Error("expected terminalMode to remain false - 't' key should not trigger terminal mode in normal mode")
+		if model.terminalManager.IsFocused() {
+			t.Error("expected focused to remain false - 't' key should not trigger terminal mode in normal mode")
 		}
 	})
 
 	t.Run("t command is recognized as valid command", func(t *testing.T) {
-		m := Model{}
+		m := testModel()
 		result, _ := m.executeCommand("t")
 		model := result.(Model)
 
