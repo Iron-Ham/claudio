@@ -1078,6 +1078,10 @@ func (m Model) executeCommand(cmd string) (tea.Model, tea.Cmd) {
 	case "termdir invoke", "termdir invocation":
 		return m.cmdTerminalDirInvocation()
 
+	// Ultraplan commands (require command mode for safety)
+	case "cancel":
+		return m.cmdUltraPlanCancel()
+
 	// Help commands
 	case "h", "help":
 		m.showHelp = !m.showHelp
@@ -1428,6 +1432,38 @@ func (m Model) cmdTerminalDirInvocation() (tea.Model, tea.Cmd) {
 	} else {
 		m.infoMessage = "Terminal will use invocation directory when opened."
 	}
+	return m, nil
+}
+
+// Ultraplan command implementations
+
+func (m Model) cmdUltraPlanCancel() (tea.Model, tea.Cmd) {
+	// Check if we're in ultraplan mode
+	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
+		m.errorMessage = "Not in ultraplan mode"
+		return m, nil
+	}
+
+	session := m.ultraPlan.Coordinator.Session()
+	if session == nil {
+		m.errorMessage = "No active ultraplan session"
+		return m, nil
+	}
+
+	// Only allow cancellation during executing phase
+	if session.Phase != orchestrator.PhaseExecuting {
+		m.errorMessage = "Can only cancel during execution phase"
+		return m, nil
+	}
+
+	m.ultraPlan.Coordinator.Cancel()
+	m.infoMessage = "Execution cancelled"
+
+	// Log user decision
+	if m.logger != nil {
+		m.logger.Info("user cancelled ultraplan execution via command mode")
+	}
+
 	return m, nil
 }
 
