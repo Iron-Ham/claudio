@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Persistent Tmux Connection** - Input mode now uses tmux control mode to maintain a persistent connection, eliminating subprocess spawn overhead (~50-200ms per character) for dramatically faster typing
 
+### Fixed
+
+- **Idle Tmux Connection Recovery** - Persistent tmux connection now auto-reconnects after becoming unresponsive during idle periods, preventing UI freezes when returning to a long-idle session
+
 ## [0.3.0] - 2026-01-12
 
 This release brings **deep GitHub Issues integration**, **plan import from URLs**, **a persistent terminal pane**, major **architecture improvements**, and numerous reliability enhancements across the board.

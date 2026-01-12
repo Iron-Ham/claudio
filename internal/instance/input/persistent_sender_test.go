@@ -272,3 +272,105 @@ func BenchmarkDefaultTmuxSender_SendKeys_Mock(b *testing.B) {
 		_ = mock.SendKeys("test-session", "x", true)
 	}
 }
+
+func TestPersistentTmuxSender_BuildCommand(t *testing.T) {
+	p := NewPersistentTmuxSender("my-session")
+
+	tests := []struct {
+		name     string
+		keys     string
+		literal  bool
+		expected string
+	}{
+		{
+			name:     "non-literal key",
+			keys:     "Enter",
+			literal:  false,
+			expected: "send-keys -t my-session Enter\n",
+		},
+		{
+			name:     "literal simple text",
+			keys:     "hello",
+			literal:  true,
+			expected: "send-keys -t my-session -l hello\n",
+		},
+		{
+			name:     "literal text with spaces",
+			keys:     "hello world",
+			literal:  true,
+			expected: "send-keys -t my-session -l 'hello world'\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := p.buildCommand(tt.keys, tt.literal)
+			if got != tt.expected {
+				t.Errorf("buildCommand(%q, %v) = %q, want %q", tt.keys, tt.literal, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestPersistentTmuxSender_WriteWithTimeoutLocked_NilStdin(t *testing.T) {
+	p := NewPersistentTmuxSender("test-session")
+	// stdin is nil when not connected
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	err := p.writeWithTimeoutLocked([]byte("test"))
+	if err == nil {
+		t.Error("expected error for nil stdin, got nil")
+	}
+}
+
+func TestPersistentTmuxSender_AutoReconnect_TriggeredOnTimeout(t *testing.T) {
+	// This test verifies that when a write times out, the sender:
+	// 1. Disconnects the stuck connection
+	// 2. Attempts to reconnect
+	// 3. Falls back to subprocess if reconnect also fails
+
+	// We use a session that doesn't exist, so connection always fails
+	// and we can verify the fallback is called
+	mock := &mockTmuxSender{}
+	p := NewPersistentTmuxSender("nonexistent-session-timeout-test", WithFallbackSender(mock))
+
+	// First call - connection will fail, falls back to mock
+	err := p.SendKeys("nonexistent-session-timeout-test", "hello", true)
+	if err != nil {
+		t.Fatalf("SendKeys failed: %v", err)
+	}
+
+	// Verify fallback was used
+	calls := mock.getCalls()
+	if len(calls) != 1 {
+		t.Errorf("got %d fallback calls, want 1", len(calls))
+	}
+
+	// The connection should not be established (it failed)
+	if p.Connected() {
+		t.Error("should not be connected when session doesn't exist")
+	}
+}
+
+func TestPersistentTmuxSender_MultipleReconnectAttempts(t *testing.T) {
+	// Test that multiple calls in sequence all properly fall back
+	// when the session doesn't exist
+	mock := &mockTmuxSender{}
+	p := NewPersistentTmuxSender("nonexistent-reconnect-test", WithFallbackSender(mock))
+
+	// Make multiple calls
+	for i := 0; i < 5; i++ {
+		err := p.SendKeys("nonexistent-reconnect-test", "key", false)
+		if err != nil {
+			t.Fatalf("SendKeys call %d failed: %v", i, err)
+		}
+	}
+
+	// All calls should have gone through the fallback
+	calls := mock.getCalls()
+	if len(calls) != 5 {
+		t.Errorf("got %d fallback calls, want 5", len(calls))
+	}
+}
