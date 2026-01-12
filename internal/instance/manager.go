@@ -11,6 +11,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/instance/capture"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
+	"github.com/Iron-Ham/claudio/internal/instance/lifecycle"
 	"github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/logging"
 )
@@ -122,6 +123,10 @@ type Manager struct {
 
 	// Logger for structured logging
 	logger *logging.Logger
+
+	// lifecycleManager is an optional lifecycle manager for coordinated lifecycle operations.
+	// When set, certain operations may delegate to this manager for better separation of concerns.
+	lifecycleManager *lifecycle.Manager
 }
 
 // NewManager creates a new instance manager with default configuration
@@ -1056,6 +1061,111 @@ func ListSessionTmuxSessions(sessionID string) ([]string, error) {
 	return sessions, nil
 }
 
+// SetLifecycleManager sets an optional lifecycle manager for coordinated operations.
+// When set, the Manager can participate in lifecycle operations coordinated by the
+// LifecycleManager. This is optional for backward compatibility.
+func (m *Manager) SetLifecycleManager(lm *lifecycle.Manager) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lifecycleManager = lm
+}
+
+// LifecycleManager returns the configured lifecycle manager, if any.
+func (m *Manager) LifecycleManager() *lifecycle.Manager {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lifecycleManager
+}
+
+// WorkDir returns the working directory for this instance.
+// Implements lifecycle.Instance interface.
+func (m *Manager) WorkDir() string {
+	return m.workdir
+}
+
+// Task returns the task/prompt to execute.
+// Implements lifecycle.Instance interface.
+func (m *Manager) Task() string {
+	return m.task
+}
+
+// LifecycleConfig returns the configuration needed for lifecycle operations.
+// Implements lifecycle.Instance interface.
+func (m *Manager) LifecycleConfig() lifecycle.InstanceConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return lifecycle.InstanceConfig{
+		TmuxWidth:  m.config.TmuxWidth,
+		TmuxHeight: m.config.TmuxHeight,
+	}
+}
+
+// Config returns the lifecycle instance configuration.
+// Implements lifecycle.Instance interface.
+func (m *Manager) Config() lifecycle.InstanceConfig {
+	return m.LifecycleConfig()
+}
+
+// SetRunning sets the running state of the instance.
+// Implements lifecycle.Instance interface.
+func (m *Manager) SetRunning(running bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.running = running
+}
+
+// IsRunning returns whether the instance is currently running.
+// Implements lifecycle.Instance interface.
+func (m *Manager) IsRunning() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.running
+}
+
+// SetStartTime sets the start time of the instance.
+// Implements lifecycle.Instance interface.
+func (m *Manager) SetStartTime(t time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.startTime = &t
+}
+
+// OnStarted is called when the instance has been started by the lifecycle manager.
+// Implements lifecycle.Instance interface.
+func (m *Manager) OnStarted() {
+	m.mu.Lock()
+	m.paused = false
+	m.timedOut = false
+	m.repeatedOutputCount = 0
+	m.lastActivityTime = time.Now()
+
+	// Start background goroutine to capture output periodically
+	m.doneChan = make(chan struct{})
+	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)
+	m.mu.Unlock()
+
+	go m.captureLoop()
+}
+
+// OnStopped is called when the instance has been stopped by the lifecycle manager.
+// Implements lifecycle.Instance interface.
+func (m *Manager) OnStopped() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Signal stop to capture loop
+	select {
+	case <-m.doneChan:
+	default:
+		close(m.doneChan)
+	}
+
+	// Stop the ticker
+	if m.captureTick != nil {
+		m.captureTick.Stop()
+	}
+}
+
 // Resize changes the tmux pane dimensions
 // This is useful when the display area changes (e.g., sidebar added/removed)
 func (m *Manager) Resize(width, height int) error {
@@ -1084,3 +1194,6 @@ func (m *Manager) Resize(width, height int) error {
 
 	return nil
 }
+
+// Verify Manager implements lifecycle.Instance at compile time.
+var _ lifecycle.Instance = (*Manager)(nil)
