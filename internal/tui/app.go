@@ -323,7 +323,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		return m, nil
+		// Force a full screen redraw after resize to prevent display artifacts
+		// This helps with terminal emulators that don't properly clear stale content
+		return m, tea.ClearScreen
 
 	case tickMsg:
 		// Update outputs from instances
