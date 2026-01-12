@@ -6,58 +6,8 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 )
 
-func TestParseIssueNumber(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		want    int
-		wantErr bool
-	}{
-		{
-			name:    "standard github url",
-			input:   "https://github.com/owner/repo/issues/123",
-			want:    123,
-			wantErr: false,
-		},
-		{
-			name:    "url with trailing newline",
-			input:   "https://github.com/owner/repo/issues/456\n",
-			want:    456,
-			wantErr: false,
-		},
-		{
-			name:    "url with extra path",
-			input:   "https://github.com/owner/repo/issues/789/comments",
-			want:    789,
-			wantErr: false,
-		},
-		{
-			name:    "invalid url - no issues path",
-			input:   "https://github.com/owner/repo/pull/123",
-			want:    0,
-			wantErr: true,
-		},
-		{
-			name:    "invalid url - no number",
-			input:   "https://github.com/owner/repo/issues/",
-			want:    0,
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseIssueNumber(tt.input)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("parseIssueNumber() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if got != tt.want {
-				t.Errorf("parseIssueNumber() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
+// NOTE: TestParseIssueNumber has been moved to internal/plan/tracker/github_test.go
+// since parseIssueNumber is now part of the tracker package.
 
 func TestCalculateExecutionOrder(t *testing.T) {
 	tests := []struct {
