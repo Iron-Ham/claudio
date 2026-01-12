@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -45,6 +46,32 @@ Multi-Pass Planning:
   into a canonical execution plan. This produces higher-quality plans through
   diverse strategic perspectives.
 
+GitHub Issue Ingestion:
+  Use --issue to load an execution plan directly from a GitHub issue. This allows
+  you to manage plans as GitHub issues, enabling collaboration and tracking through
+  GitHub's interface. The parent issue becomes the plan objective, and linked
+  sub-issues become individual tasks.
+
+  Two issue formats are supported:
+
+    • Templated format: Issues created by Claudio with structured YAML metadata
+      blocks containing task IDs, dependencies, and complexity ratings. These
+      are automatically generated when exporting plans to GitHub.
+
+    • Freeform format: Human-authored issues written in natural prose. These
+      are parsed intelligently - dependencies are extracted from #N references
+      mentioned inline in the issue body, and complexity defaults to "medium"
+      when not explicitly specified. This allows you to write issues naturally
+      without conforming to a strict template.
+
+  The --issue flag accepts two formats:
+    • Full URL: https://github.com/owner/repo/issues/123
+    • Shorthand: owner/repo#123
+
+  Requirements:
+    • The GitHub CLI (gh) must be installed and authenticated
+    • You must have read access to the repository containing the issue
+
 Plan Editor:
   When the plan is ready, an interactive editor opens allowing you to:
   - Review task dependencies and execution order
@@ -67,6 +94,9 @@ Examples:
 
   # Load plan from a GitHub issue (shorthand format)
   claudio ultraplan --issue owner/repo#123
+
+  # Validate a GitHub issue plan without executing (dry-run)
+  claudio ultraplan --issue owner/repo#123 --dry-run
 
   # Review and edit a plan before execution
   claudio ultraplan --plan plan.json --review
@@ -304,7 +334,7 @@ func loadPlanFile(path string) (*orchestrator.PlanSpec, error) {
 func loadPlanFromIssue(issueURL string) (*orchestrator.PlanSpec, error) {
 	planSpec, err := plan.BuildPlanFromURL(issueURL)
 	if err != nil {
-		return nil, err
+		return nil, formatIngestError(err)
 	}
 
 	if err := orchestrator.ValidatePlan(planSpec); err != nil {
@@ -312,6 +342,17 @@ func loadPlanFromIssue(issueURL string) (*orchestrator.PlanSpec, error) {
 	}
 
 	return planSpec, nil
+}
+
+// formatIngestError formats an IngestError for user-friendly terminal output.
+// If the error is not an IngestError, it returns the error unchanged.
+func formatIngestError(err error) error {
+	var ingestErr *plan.IngestError
+	if errors.As(err, &ingestErr) {
+		// Return a new error with the formatted terminal output
+		return fmt.Errorf("%s", ingestErr.FormatForTerminal())
+	}
+	return err
 }
 
 // slugifyWords creates a slug from words
