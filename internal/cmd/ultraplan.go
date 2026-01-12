@@ -262,6 +262,10 @@ func loadPlanFile(path string) (*orchestrator.PlanSpec, error) {
 		return nil, fmt.Errorf("failed to parse plan JSON: %w", err)
 	}
 
+	// Compute DependencyGraph and ExecutionOrder if they weren't in the JSON
+	// (e.g., plan files that only have tasks with depends_on fields)
+	orchestrator.EnsurePlanComputed(&plan)
+
 	if err := orchestrator.ValidatePlan(&plan); err != nil {
 		return nil, err
 	}
