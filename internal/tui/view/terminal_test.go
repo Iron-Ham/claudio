@@ -337,6 +337,31 @@ func TestTruncateString(t *testing.T) {
 			maxWidth: 2,
 			want:     "...",
 		},
+		// ANSI escape sequence test cases
+		{
+			name:     "ANSI colored string shorter than max",
+			input:    "\x1b[34mhello\x1b[0m",
+			maxWidth: 10,
+			want:     "\x1b[34mhello\x1b[0m",
+		},
+		{
+			name:     "ANSI colored string equal to max",
+			input:    "\x1b[34mhello\x1b[0m",
+			maxWidth: 5,
+			want:     "\x1b[34mhello\x1b[0m",
+		},
+		{
+			name:     "ANSI colored string truncated",
+			input:    "\x1b[34mhello world\x1b[0m",
+			maxWidth: 8,
+			want:     "\x1b[34mhello...\x1b[0m", // reset comes after ellipsis
+		},
+		{
+			name:     "multiple ANSI codes preserved",
+			input:    "\x1b[1m\x1b[34mbold blue text\x1b[0m",
+			maxWidth: 10,
+			want:     "\x1b[1m\x1b[34mbold bl...\x1b[0m", // reset comes after ellipsis
+		},
 	}
 
 	for _, tt := range tests {
