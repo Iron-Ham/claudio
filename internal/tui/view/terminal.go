@@ -69,7 +69,7 @@ func (v *TerminalView) Render(state TerminalState) string {
 	}
 
 	return borderStyle.
-		Width(v.Width - 2). // Account for border only (padding is inside)
+		Width(v.Width). // Full width - lipgloss Width() sets outer width including border/padding
 		Height(v.Height).
 		MaxHeight(v.Height).
 		Render(b.String())
