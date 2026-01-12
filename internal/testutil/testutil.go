@@ -224,6 +224,15 @@ func SkipIfNoTmux(t *testing.T) {
 	}
 }
 
+// SkipIfNoGolangciLint skips the test if golangci-lint is not installed.
+func SkipIfNoGolangciLint(t *testing.T) {
+	t.Helper()
+
+	if _, err := exec.LookPath("golangci-lint"); err != nil {
+		t.Skip("golangci-lint not found in PATH, skipping test")
+	}
+}
+
 // runGit runs a git command in the specified directory.
 func runGit(dir string, args ...string) error {
 	cmd := exec.Command("git", args...)
