@@ -122,7 +122,7 @@ func TestHandleCommandInput(t *testing.T) {
 
 func TestTaskInputEnter(t *testing.T) {
 	t.Run("enter key exits task input mode without task", func(t *testing.T) {
-		m := newTestModel()
+		m := testModel()
 		m.addingTask = true
 		m.taskInput = ""
 		m.taskInputCursor = 0
@@ -145,7 +145,7 @@ func TestTaskInputEnter(t *testing.T) {
 		// The important test is the empty task one which confirms Enter is detected
 		t.Skip("skipping - requires mock orchestrator")
 
-		m := newTestModel()
+		m := testModel()
 		m.addingTask = true
 		m.taskInput = "test task"
 		m.taskInputCursor = 9
@@ -166,7 +166,7 @@ func TestTaskInputEnter(t *testing.T) {
 	t.Run("enter string also submits task", func(t *testing.T) {
 		// Test that msg.String() == "enter" would also be detected
 		// This is to check if the terminal might be sending Enter differently
-		m := newTestModel()
+		m := testModel()
 		m.addingTask = true
 		m.taskInput = ""
 		m.taskInputCursor = 0
@@ -185,7 +185,7 @@ func TestTaskInputEnter(t *testing.T) {
 	})
 
 	t.Run("alt+enter inserts newline instead of submitting", func(t *testing.T) {
-		m := newTestModel()
+		m := testModel()
 		m.addingTask = true
 		m.taskInput = "test"
 		m.taskInputCursor = 4
@@ -203,7 +203,7 @@ func TestTaskInputEnter(t *testing.T) {
 	})
 
 	t.Run("ctrl+j inserts newline instead of submitting", func(t *testing.T) {
-		m := newTestModel()
+		m := testModel()
 		m.addingTask = true
 		m.taskInput = "test"
 		m.taskInputCursor = 4
@@ -221,7 +221,7 @@ func TestTaskInputEnter(t *testing.T) {
 	})
 
 	t.Run("typing adds to task input", func(t *testing.T) {
-		m := newTestModel()
+		m := testModel()
 		m.addingTask = true
 		m.taskInput = "te"
 		m.taskInputCursor = 2
@@ -241,7 +241,7 @@ func TestTaskInputEnter(t *testing.T) {
 	t.Run("newline rune submits task (terminal compat)", func(t *testing.T) {
 		// Some terminals/input methods send Enter as KeyRunes with \n
 		// This should submit the task, not insert a newline
-		m := newTestModel()
+		m := testModel()
 		m.addingTask = true
 		m.taskInput = ""
 		m.taskInputCursor = 0
@@ -261,7 +261,7 @@ func TestTaskInputEnter(t *testing.T) {
 	t.Run("carriage return rune submits task (terminal compat)", func(t *testing.T) {
 		// Some terminals send Enter as KeyRunes with \r
 		// This should submit the task, not insert a carriage return
-		m := newTestModel()
+		m := testModel()
 		m.addingTask = true
 		m.taskInput = ""
 		m.taskInputCursor = 0

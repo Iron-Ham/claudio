@@ -237,15 +237,15 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 	}
 
 	return Model{
-		orchestrator:     orch,
-		session:          session,
-		logger:           tuiLogger,
-		startTime:        time.Now(),
-		commandHandler:   command.New(),
-		inputRouter:      input.NewRouter(),
-		outputManager:    output.NewManager(),
-		searchEngine:     search.NewEngine(),
-		terminalManager:  terminal.NewManager(),
+		orchestrator:    orch,
+		session:         session,
+		logger:          tuiLogger,
+		startTime:       time.Now(),
+		commandHandler:  command.New(),
+		inputRouter:     input.NewRouter(),
+		outputManager:   output.NewManager(),
+		searchEngine:    search.NewEngine(),
+		terminalManager: terminal.NewManager(),
 		filterCategories: map[string]bool{
 			"errors":   true,
 			"warnings": true,
