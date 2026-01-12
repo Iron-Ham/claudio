@@ -4199,3 +4199,798 @@ func TestDeduplicateIssues(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// Freeform Sub-Issue Parser Tests (task-3-parse-freeform-sub)
+// =============================================================================
+
+func TestParseFreeformSubIssueBody_SimpleBody(t *testing.T) {
+	body := `This is a simple task description without any special formatting.
+
+It spans multiple lines and describes what needs to be done.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should use entire body as description
+	if !strings.Contains(content.Description, "simple task description") {
+		t.Errorf("Description should contain 'simple task description', got %q", content.Description)
+	}
+
+	// Default complexity
+	if content.Complexity != "medium" {
+		t.Errorf("Complexity = %q, want %q", content.Complexity, "medium")
+	}
+
+	// No files or dependencies
+	if len(content.Files) != 0 {
+		t.Errorf("Files should be empty, got %v", content.Files)
+	}
+	if len(content.DependencyIssueNums) != 0 {
+		t.Errorf("DependencyIssueNums should be empty, got %v", content.DependencyIssueNums)
+	}
+}
+
+func TestParseFreeformSubIssueBody_WithFilePaths(t *testing.T) {
+	body := `Fix the authentication bug.
+
+The issue is in ` + "`auth/handler.go`" + ` and ` + "`auth/middleware.go`" + `.
+
+Also check ` + "`config.yaml`" + ` for settings.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	expectedFiles := []string{"auth/handler.go", "auth/middleware.go", "config.yaml"}
+	if !reflect.DeepEqual(content.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", content.Files, expectedFiles)
+	}
+}
+
+func TestParseFreeformSubIssueBody_WithDependencies(t *testing.T) {
+	body := `This task depends on #42 and #43 being completed first.
+
+After those are done, we can implement this feature.
+
+Also related to #100.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	expectedDeps := []int{42, 43, 100}
+	if !reflect.DeepEqual(content.DependencyIssueNums, expectedDeps) {
+		t.Errorf("DependencyIssueNums = %v, want %v", content.DependencyIssueNums, expectedDeps)
+	}
+}
+
+func TestParseFreeformSubIssueBody_ExcludesParentIssue(t *testing.T) {
+	body := `Part of the epic #50.
+
+This task also depends on #42 and #43.`
+
+	content, err := ParseFreeformSubIssueBody(body, 50)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should not include parent issue #50
+	expectedDeps := []int{42, 43}
+	if !reflect.DeepEqual(content.DependencyIssueNums, expectedDeps) {
+		t.Errorf("DependencyIssueNums = %v, want %v", content.DependencyIssueNums, expectedDeps)
+	}
+
+	if content.ParentIssueNum != 50 {
+		t.Errorf("ParentIssueNum = %d, want 50", content.ParentIssueNum)
+	}
+}
+
+func TestParseFreeformSubIssueBody_WithDescriptionHeader(t *testing.T) {
+	body := `## Description
+
+This is the actual task description that should be extracted.
+
+It has multiple paragraphs.
+
+## Files
+
+Some files listed here.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	if !strings.Contains(content.Description, "actual task description") {
+		t.Errorf("Description should contain 'actual task description', got %q", content.Description)
+	}
+	if !strings.Contains(content.Description, "multiple paragraphs") {
+		t.Errorf("Description should contain 'multiple paragraphs', got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_WithOverviewHeader(t *testing.T) {
+	body := `## Overview
+
+This task covers implementing the new API endpoint.
+
+## Implementation Notes
+
+Additional details here.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	if !strings.Contains(content.Description, "new API endpoint") {
+		t.Errorf("Description should contain 'new API endpoint', got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_ContentBeforeFirstHeader(t *testing.T) {
+	body := `This content comes before any headers and should be the description.
+
+## Files Changed
+
+- ` + "`file1.go`" + `
+- ` + "`file2.go`" + ``
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	if !strings.Contains(content.Description, "before any headers") {
+		t.Errorf("Description should contain 'before any headers', got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_ComplexityVariations(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantComplexity string
+	}{
+		{
+			name:           "templated format",
+			body:           "Task description.\n\nEstimated: **low**",
+			wantComplexity: "low",
+		},
+		{
+			name:           "complexity colon format",
+			body:           "Task description.\n\nComplexity: high",
+			wantComplexity: "high",
+		},
+		{
+			name:           "complexity word format",
+			body:           "This is a low complexity task.",
+			wantComplexity: "low",
+		},
+		{
+			name:           "complexity with bold",
+			body:           "Task description.\n\nComplexity: **medium**",
+			wantComplexity: "medium",
+		},
+		{
+			name:           "high complexity phrase",
+			body:           "This is a high complexity refactoring effort.",
+			wantComplexity: "high",
+		},
+		{
+			name:           "no complexity defaults to medium",
+			body:           "Simple task without any complexity mentioned.",
+			wantComplexity: "medium",
+		},
+		{
+			name:           "case insensitive",
+			body:           "Task description.\n\nCOMPLEXITY: LOW",
+			wantComplexity: "low",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content, err := ParseFreeformSubIssueBody(tt.body, 0)
+			if err != nil {
+				t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+			}
+			if content.Complexity != tt.wantComplexity {
+				t.Errorf("Complexity = %q, want %q", content.Complexity, tt.wantComplexity)
+			}
+		})
+	}
+}
+
+func TestParseFreeformSubIssueBody_FilePathFiltering(t *testing.T) {
+	body := `Check the code in ` + "`auth/service.go`" + `.
+
+Don't confuse with ` + "`fmt.Println()`" + ` or ` + "`https://example.com`" + `.
+
+Also update ` + "`config.json`" + ` and ` + "`README.md`" + `.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should include file paths but not function calls or URLs
+	expectedFiles := []string{"auth/service.go", "config.json", "README.md"}
+	if !reflect.DeepEqual(content.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", content.Files, expectedFiles)
+	}
+}
+
+func TestParseFreeformSubIssueBody_DeduplicatesFiles(t *testing.T) {
+	body := `Fix ` + "`file.go`" + ` here.
+
+Then update ` + "`file.go`" + ` again.
+
+And ` + "`file.go`" + ` one more time.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should only have one entry for file.go
+	expectedFiles := []string{"file.go"}
+	if !reflect.DeepEqual(content.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", content.Files, expectedFiles)
+	}
+}
+
+func TestParseFreeformSubIssueBody_DeduplicatesDependencies(t *testing.T) {
+	body := `Depends on #42 for the base implementation.
+
+Also see #42 for context.
+
+And #42 again.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should only have one entry for #42
+	expectedDeps := []int{42}
+	if !reflect.DeepEqual(content.DependencyIssueNums, expectedDeps) {
+		t.Errorf("DependencyIssueNums = %v, want %v", content.DependencyIssueNums, expectedDeps)
+	}
+}
+
+func TestParseFreeformSubIssueBody_EmptyBody(t *testing.T) {
+	_, err := ParseFreeformSubIssueBody("", 0)
+	if err == nil {
+		t.Error("Expected error for empty body, got nil")
+	}
+}
+
+func TestParseFreeformSubIssueBody_WhitespaceOnlyBody(t *testing.T) {
+	_, err := ParseFreeformSubIssueBody("   \n\t\n  ", 0)
+	if err == nil {
+		t.Error("Expected error for whitespace-only body, got nil")
+	}
+}
+
+func TestParseFreeformSubIssueBody_WithTaskSection(t *testing.T) {
+	// If the body has a ## Task section, it should be used (like templated format)
+	body := `Some intro text.
+
+## Task
+
+This is the actual task from the Task section.
+
+## Other
+
+Other content.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should use the Task section content
+	if !strings.Contains(content.Description, "actual task from the Task section") {
+		t.Errorf("Description should contain Task section content, got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_BulletListFiles(t *testing.T) {
+	body := `Update these files:
+
+- ` + "`src/main.go`" + `
+- ` + "`src/utils.go`" + `
+- ` + "`tests/main_test.go`" + ``
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	expectedFiles := []string{"src/main.go", "src/utils.go", "tests/main_test.go"}
+	if !reflect.DeepEqual(content.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", content.Files, expectedFiles)
+	}
+}
+
+func TestParseFreeformSubIssueBody_CodeBlockFiles(t *testing.T) {
+	body := "Update the configuration file:\n\n" +
+		"The file " + "`config/settings.yaml`" + " needs to be updated.\n\n" +
+		"Also check " + "`internal/app.go`" + "."
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	expectedFiles := []string{"config/settings.yaml", "internal/app.go"}
+	if !reflect.DeepEqual(content.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", content.Files, expectedFiles)
+	}
+}
+
+func TestParseFreeformSubIssueBody_MixedContent(t *testing.T) {
+	body := `Implement the new authentication flow.
+
+This depends on #10 (user model) and #11 (session handling).
+
+Files to modify:
+- ` + "`internal/auth/handler.go`" + `
+- ` + "`internal/auth/middleware.go`" + `
+
+This is a high complexity task.
+
+Related: #12 (monitoring)`
+
+	content, err := ParseFreeformSubIssueBody(body, 100)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Check description
+	if !strings.Contains(content.Description, "new authentication flow") {
+		t.Errorf("Description should contain 'new authentication flow', got %q", content.Description)
+	}
+
+	// Check files
+	expectedFiles := []string{"internal/auth/handler.go", "internal/auth/middleware.go"}
+	if !reflect.DeepEqual(content.Files, expectedFiles) {
+		t.Errorf("Files = %v, want %v", content.Files, expectedFiles)
+	}
+
+	// Check dependencies (should not include parent 100)
+	expectedDeps := []int{10, 11, 12}
+	if !reflect.DeepEqual(content.DependencyIssueNums, expectedDeps) {
+		t.Errorf("DependencyIssueNums = %v, want %v", content.DependencyIssueNums, expectedDeps)
+	}
+
+	// Check complexity
+	if content.Complexity != "high" {
+		t.Errorf("Complexity = %q, want %q", content.Complexity, "high")
+	}
+
+	// Check parent
+	if content.ParentIssueNum != 100 {
+		t.Errorf("ParentIssueNum = %d, want 100", content.ParentIssueNum)
+	}
+}
+
+func TestParseFreeformSubIssueBody_RemovesPartOfMarker(t *testing.T) {
+	body := `Fix the bug in the parser.
+
+---
+*Part of #99*`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Description should not contain the "*Part of #99*" marker
+	if strings.Contains(content.Description, "*Part of") {
+		t.Errorf("Description should not contain '*Part of', got %q", content.Description)
+	}
+	if !strings.Contains(content.Description, "Fix the bug") {
+		t.Errorf("Description should contain 'Fix the bug', got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_ZeroParentIssueNum(t *testing.T) {
+	body := `Task that references #1, #2, and #3.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// With parentIssueNum=0, all references should be included
+	expectedDeps := []int{1, 2, 3}
+	if !reflect.DeepEqual(content.DependencyIssueNums, expectedDeps) {
+		t.Errorf("DependencyIssueNums = %v, want %v", content.DependencyIssueNums, expectedDeps)
+	}
+
+	if content.ParentIssueNum != 0 {
+		t.Errorf("ParentIssueNum = %d, want 0", content.ParentIssueNum)
+	}
+}
+
+func TestParseFreeformSubIssueBody_VariousFileExtensions(t *testing.T) {
+	body := "Files: " +
+		"`app.js` `style.css` `config.yaml` `data.json` " +
+		"`script.sh` `query.sql` `schema.proto` `README.md` " +
+		"`Dockerfile` `go.mod` `package.json`"
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should recognize common file extensions
+	for _, ext := range []string{"app.js", "style.css", "config.yaml", "data.json", "script.sh", "query.sql", "schema.proto", "README.md"} {
+		found := false
+		for _, f := range content.Files {
+			if f == ext {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Files should contain %q, got %v", ext, content.Files)
+		}
+	}
+}
+
+func TestParseFreeformSubIssueBody_SummaryHeader(t *testing.T) {
+	body := `## Summary
+
+Refactor the database layer to use connection pooling.
+
+## Implementation Details
+
+Technical details here.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should use Summary section as description
+	if !strings.Contains(content.Description, "connection pooling") {
+		t.Errorf("Description should contain 'connection pooling', got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_AboutHeader(t *testing.T) {
+	body := `## About
+
+This issue tracks the migration to the new API version.
+
+## Steps
+
+1. Update endpoints
+2. Migrate clients`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	if !strings.Contains(content.Description, "migration to the new API") {
+		t.Errorf("Description should contain 'migration to the new API', got %q", content.Description)
+	}
+}
+
+func TestParseFreeformSubIssueBody_PreservesMultilineDescription(t *testing.T) {
+	body := `First paragraph of the description.
+
+Second paragraph with more details.
+
+- Bullet point one
+- Bullet point two
+
+Third paragraph to wrap up.`
+
+	content, err := ParseFreeformSubIssueBody(body, 0)
+	if err != nil {
+		t.Fatalf("ParseFreeformSubIssueBody() error = %v", err)
+	}
+
+	// Should preserve paragraph structure
+	if !strings.Contains(content.Description, "First paragraph") {
+		t.Error("Description should contain 'First paragraph'")
+	}
+	if !strings.Contains(content.Description, "Second paragraph") {
+		t.Error("Description should contain 'Second paragraph'")
+	}
+	if !strings.Contains(content.Description, "Bullet point one") {
+		t.Error("Description should contain 'Bullet point one'")
+	}
+	if !strings.Contains(content.Description, "Third paragraph") {
+		t.Error("Description should contain 'Third paragraph'")
+	}
+}
+
+// =============================================================================
+// Helper Function Tests for Freeform Parser
+// =============================================================================
+
+func TestExtractFilesFromBody(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		wantFiles []string
+	}{
+		{
+			name:      "empty body",
+			body:      "",
+			wantFiles: nil,
+		},
+		{
+			name:      "no backticks",
+			body:      "No files mentioned here",
+			wantFiles: nil,
+		},
+		{
+			name:      "single file",
+			body:      "Check " + "`main.go`",
+			wantFiles: []string{"main.go"},
+		},
+		{
+			name:      "multiple files",
+			body:      "`file1.go` and `file2.js` and `file3.py`",
+			wantFiles: []string{"file1.go", "file2.js", "file3.py"},
+		},
+		{
+			name:      "path with directories",
+			body:      "`internal/pkg/handler.go`",
+			wantFiles: []string{"internal/pkg/handler.go"},
+		},
+		{
+			name:      "filters function calls",
+			body:      "`fmt.Println()` `strings.Split()` `file.go`",
+			wantFiles: []string{"file.go"},
+		},
+		{
+			name:      "filters URLs",
+			body:      "`https://example.com` `file.go`",
+			wantFiles: []string{"file.go"},
+		},
+		{
+			name:      "deduplicates",
+			body:      "`file.go` `file.go` `file.go`",
+			wantFiles: []string{"file.go"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractFilesFromBody(tt.body)
+			if !reflect.DeepEqual(got, tt.wantFiles) {
+				t.Errorf("extractFilesFromBody() = %v, want %v", got, tt.wantFiles)
+			}
+		})
+	}
+}
+
+func TestExtractIssueReferences(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		parentIssueNum int
+		wantNums       []int
+	}{
+		{
+			name:           "empty body",
+			body:           "",
+			parentIssueNum: 0,
+			wantNums:       nil,
+		},
+		{
+			name:           "no references",
+			body:           "No issue references here",
+			parentIssueNum: 0,
+			wantNums:       nil,
+		},
+		{
+			name:           "single reference",
+			body:           "See #42",
+			parentIssueNum: 0,
+			wantNums:       []int{42},
+		},
+		{
+			name:           "multiple references",
+			body:           "Depends on #1, #2, and #3",
+			parentIssueNum: 0,
+			wantNums:       []int{1, 2, 3},
+		},
+		{
+			name:           "excludes parent",
+			body:           "Part of #100, depends on #42",
+			parentIssueNum: 100,
+			wantNums:       []int{42},
+		},
+		{
+			name:           "deduplicates",
+			body:           "#42 #42 #42",
+			parentIssueNum: 0,
+			wantNums:       []int{42},
+		},
+		{
+			name:           "zero parent includes all",
+			body:           "#1 #2 #3",
+			parentIssueNum: 0,
+			wantNums:       []int{1, 2, 3},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractIssueReferences(tt.body, tt.parentIssueNum)
+			if !reflect.DeepEqual(got, tt.wantNums) {
+				t.Errorf("extractIssueReferences() = %v, want %v", got, tt.wantNums)
+			}
+		})
+	}
+}
+
+func TestExtractComplexityOrDefault(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		wantComplexity string
+	}{
+		{
+			name:           "empty body defaults to medium",
+			body:           "",
+			wantComplexity: "medium",
+		},
+		{
+			name:           "no complexity defaults to medium",
+			body:           "Just a description",
+			wantComplexity: "medium",
+		},
+		{
+			name:           "templated low",
+			body:           "Estimated: **low**",
+			wantComplexity: "low",
+		},
+		{
+			name:           "templated medium",
+			body:           "Estimated: **medium**",
+			wantComplexity: "medium",
+		},
+		{
+			name:           "templated high",
+			body:           "Estimated: **high**",
+			wantComplexity: "high",
+		},
+		{
+			name:           "complexity colon low",
+			body:           "Complexity: low",
+			wantComplexity: "low",
+		},
+		{
+			name:           "complexity colon high with bold",
+			body:           "Complexity: **high**",
+			wantComplexity: "high",
+		},
+		{
+			name:           "low complexity phrase",
+			body:           "This is a low complexity task",
+			wantComplexity: "low",
+		},
+		{
+			name:           "high complexity phrase",
+			body:           "This is a high complexity refactoring",
+			wantComplexity: "high",
+		},
+		{
+			name:           "case insensitive",
+			body:           "COMPLEXITY: HIGH",
+			wantComplexity: "high",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractComplexityOrDefault(tt.body)
+			if got != tt.wantComplexity {
+				t.Errorf("extractComplexityOrDefault() = %q, want %q", got, tt.wantComplexity)
+			}
+		})
+	}
+}
+
+func TestIsLikelyFilePath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		// Valid file paths
+		{"main.go", true},
+		{"src/main.go", true},
+		{"internal/pkg/handler.go", true},
+		{"README.md", true},
+		{"config.yaml", true},
+		{"package.json", true},
+		{"style.css", true},
+		{"index.html", true},
+		{"script.sh", true},
+		{"data.sql", true},
+		{"go.mod", true},
+		{"go.sum", true},
+		{".env", true},
+		{"Makefile.txt", true},
+
+		// Should reject
+		{"fmt.Println()", false},
+		{"https://example.com", false},
+		{"http://test.org", false},
+		{"no-extension", false},
+		{"function()", false},
+		{"object.method()", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := isLikelyFilePath(tt.path)
+			if got != tt.want {
+				t.Errorf("isLikelyFilePath(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractFreeformDescription_Strategies(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		wantContain string
+	}{
+		{
+			name:        "simple body no headers",
+			body:        "This is the whole description.",
+			wantContain: "whole description",
+		},
+		{
+			name:        "description header",
+			body:        "## Description\n\nThe actual description here.\n\n## Other",
+			wantContain: "actual description",
+		},
+		{
+			name:        "overview header",
+			body:        "## Overview\n\nOverview content here.\n\n## Details",
+			wantContain: "Overview content",
+		},
+		{
+			name:        "summary header",
+			body:        "## Summary\n\nSummary content.\n\n## Notes",
+			wantContain: "Summary content",
+		},
+		{
+			name:        "content before first header",
+			body:        "Initial content.\n\n## Section\n\nSection content.",
+			wantContain: "Initial content",
+		},
+		{
+			name:        "removes part of marker",
+			body:        "Description text.\n\n---\n*Part of #42*",
+			wantContain: "Description text",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractFreeformDescription(tt.body)
+			if !strings.Contains(got, tt.wantContain) {
+				t.Errorf("extractFreeformDescription() = %q, want to contain %q", got, tt.wantContain)
+			}
+		})
+	}
+}

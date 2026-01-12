@@ -1159,6 +1159,289 @@ func deduplicateIssues(issues []int) []int {
 }
 
 // =============================================================================
+// Freeform Sub-Issue Parser
+// =============================================================================
+
+// ParseFreeformSubIssueBody parses a freeform sub-issue body that doesn't follow
+// the Claudio template structure. This parser is more lenient and extracts what
+// it can from human-authored issues.
+//
+// The function:
+//   - Uses the entire body as description if no "## Task" section is found
+//   - Extracts file paths from backticks anywhere in the body
+//   - Looks for issue references (#N) anywhere for dependencies
+//   - Defaults complexity to "medium" if not specified
+//   - parentIssueNum is optional (pass 0 if unknown)
+//
+// This is designed to handle issues that might have:
+//   - Description anywhere in the body (not necessarily under '## Task')
+//   - File references in various formats (code blocks, bullet lists, inline)
+//   - Dependencies mentioned as issue references anywhere
+//   - No explicit complexity section
+func ParseFreeformSubIssueBody(body string, parentIssueNum int) (*SubIssueContent, error) {
+	if strings.TrimSpace(body) == "" {
+		return nil, fmt.Errorf("sub-issue body is empty")
+	}
+
+	content := &SubIssueContent{
+		ParentIssueNum: parentIssueNum,
+	}
+
+	// Try to extract description from "## Task" section first
+	description, err := parseTaskSection(body)
+	if err != nil {
+		// No "## Task" section found - use the entire body as description
+		description = extractFreeformDescription(body)
+	}
+
+	if description == "" {
+		return nil, fmt.Errorf("could not extract description from issue body")
+	}
+	content.Description = description
+
+	// Extract file paths from backticks anywhere in the body
+	content.Files = extractFilesFromBody(body)
+
+	// Extract issue references (#N) from anywhere in the body, excluding the parent
+	content.DependencyIssueNums = extractIssueReferences(body, parentIssueNum)
+
+	// Try to extract complexity, default to "medium" if not found
+	content.Complexity = extractComplexityOrDefault(body)
+
+	return content, nil
+}
+
+// extractFreeformDescription extracts a description from a freeform issue body.
+// It tries several strategies:
+//  1. If there are markdown headers (## or ###), use content before the first header
+//     or after a "Description" header if one exists
+//  2. Otherwise, use the entire body (with some cleanup)
+func extractFreeformDescription(body string) string {
+	lines := strings.Split(body, "\n")
+
+	// Check if there's a "Description" or similar header
+	descriptionHeaderRe := regexp.MustCompile(`(?i)^##?\s*(Description|Overview|Summary|About)\s*$`)
+
+	var descriptionLines []string
+	inDescriptionSection := false
+	hasHeaders := false
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Check for any markdown header
+		if strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "### ") {
+			hasHeaders = true
+
+			// Check if this is a description header
+			if descriptionHeaderRe.MatchString(trimmed) {
+				inDescriptionSection = true
+				continue
+			}
+
+			// If we were in a description section, stop
+			if inDescriptionSection {
+				break
+			}
+			continue
+		}
+
+		// If we found a description header, collect lines
+		if inDescriptionSection {
+			descriptionLines = append(descriptionLines, line)
+			continue
+		}
+	}
+
+	// If we found a description section, use it
+	if len(descriptionLines) > 0 {
+		return strings.TrimSpace(strings.Join(descriptionLines, "\n"))
+	}
+
+	// If there are no headers, use the entire body (cleaned up)
+	if !hasHeaders {
+		return cleanDescription(body)
+	}
+
+	// If there are headers but no description section, use content before the first header
+	var beforeHeaders []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "### ") {
+			break
+		}
+		beforeHeaders = append(beforeHeaders, line)
+	}
+
+	result := strings.TrimSpace(strings.Join(beforeHeaders, "\n"))
+	if result != "" {
+		return result
+	}
+
+	// Fallback: use the entire body cleaned up
+	return cleanDescription(body)
+}
+
+// cleanDescription cleans up a description by removing certain patterns
+// that are clearly not part of the main description
+func cleanDescription(body string) string {
+	// Remove "*Part of #N*" patterns
+	cleanPartOfRe := regexp.MustCompile(`\*Part\s+of\s+#\d+\*`)
+	cleaned := cleanPartOfRe.ReplaceAllString(body, "")
+
+	// Remove horizontal rules
+	hrRe := regexp.MustCompile(`(?m)^---+\s*$`)
+	cleaned = hrRe.ReplaceAllString(cleaned, "")
+
+	// Collapse multiple newlines
+	multiNewlineRe := regexp.MustCompile(`\n{3,}`)
+	cleaned = multiNewlineRe.ReplaceAllString(cleaned, "\n\n")
+
+	return strings.TrimSpace(cleaned)
+}
+
+// filePathRe matches potential file paths in backticks
+// Matches patterns like `path/to/file.ext` or `file.ext`
+var filePathRe = regexp.MustCompile("`([^`]+\\.[a-zA-Z0-9]+)`")
+
+// extractFilesFromBody extracts file paths from backticks anywhere in the body.
+// It looks for patterns that look like file paths (contain a dot and extension).
+func extractFilesFromBody(body string) []string {
+	matches := filePathRe.FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	var files []string
+	seen := make(map[string]bool)
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		path := strings.TrimSpace(match[1])
+		if path == "" || seen[path] {
+			continue
+		}
+		// Additional validation: should look like a file path
+		// (contains path separator or is a simple filename with extension)
+		if isLikelyFilePath(path) {
+			files = append(files, path)
+			seen[path] = true
+		}
+	}
+
+	return files
+}
+
+// isLikelyFilePath checks if a string looks like a file path rather than
+// other code that might be in backticks (like function names or commands)
+func isLikelyFilePath(s string) bool {
+	// Must contain a dot (for extension)
+	if !strings.Contains(s, ".") {
+		return false
+	}
+
+	// Should not look like a function call
+	if strings.Contains(s, "(") {
+		return false
+	}
+
+	// Should not be a URL
+	if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+		return false
+	}
+
+	// Common file extensions we expect
+	commonExts := []string{
+		".go", ".js", ".ts", ".tsx", ".jsx", ".py", ".rb", ".java",
+		".md", ".json", ".yaml", ".yml", ".toml", ".xml", ".html", ".css",
+		".sh", ".bash", ".zsh", ".sql", ".proto", ".graphql",
+		".txt", ".env", ".mod", ".sum", ".lock",
+	}
+
+	lowerS := strings.ToLower(s)
+	for _, ext := range commonExts {
+		if strings.HasSuffix(lowerS, ext) {
+			return true
+		}
+	}
+
+	// Also accept paths with common directory patterns
+	if strings.Contains(s, "/") {
+		parts := strings.Split(s, "/")
+		lastPart := parts[len(parts)-1]
+		// If the last part has an extension-like suffix, it's likely a file
+		if strings.Contains(lastPart, ".") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// issueRefRe matches issue references like #123
+var issueRefRe = regexp.MustCompile(`#(\d+)`)
+
+// extractIssueReferences extracts issue numbers from #N patterns anywhere in the body.
+// It excludes the parent issue number to avoid circular dependencies.
+func extractIssueReferences(body string, parentIssueNum int) []int {
+	matches := issueRefRe.FindAllStringSubmatch(body, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	var issueNums []int
+	seen := make(map[int]bool)
+
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		num, err := strconv.Atoi(match[1])
+		if err != nil || num <= 0 {
+			continue
+		}
+		// Skip the parent issue number
+		if num == parentIssueNum {
+			continue
+		}
+		if !seen[num] {
+			issueNums = append(issueNums, num)
+			seen[num] = true
+		}
+	}
+
+	return issueNums
+}
+
+// extractComplexityOrDefault tries to extract complexity from the body.
+// Returns "medium" if no complexity is found.
+func extractComplexityOrDefault(body string) string {
+	// Try the templated format first: Estimated: **low/medium/high**
+	complexity, err := parseComplexitySection(body)
+	if err == nil {
+		return complexity
+	}
+
+	// Try alternate patterns
+	// Pattern: "complexity: low/medium/high" (case-insensitive)
+	complexityAltRe := regexp.MustCompile(`(?i)complexity[:\s]+\*?\*?(low|medium|high)\*?\*?`)
+	if matches := complexityAltRe.FindStringSubmatch(body); len(matches) >= 2 {
+		return strings.ToLower(matches[1])
+	}
+
+	// Pattern: just "low/medium/high complexity" in text
+	complexityWordRe := regexp.MustCompile(`(?i)\b(low|medium|high)\s+complexity\b`)
+	if matches := complexityWordRe.FindStringSubmatch(body); len(matches) >= 2 {
+		return strings.ToLower(matches[1])
+	}
+
+	// Default to medium
+	return "medium"
+}
+
+// =============================================================================
 // Issue Format Detection
 // =============================================================================
 
