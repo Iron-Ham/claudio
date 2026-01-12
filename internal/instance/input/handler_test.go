@@ -2,6 +2,7 @@ package input
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -94,69 +95,77 @@ func TestHandler_SendInput(t *testing.T) {
 	}
 
 	calls := mock.getCalls()
-	if len(calls) != 5 { // 5 characters in "hello"
-		t.Errorf("got %d calls, want 5", len(calls))
+	// With batching, "hello" (all regular chars) should be sent in a single call
+	if len(calls) != 1 {
+		t.Errorf("got %d calls, want 1 (batched)", len(calls))
 	}
 
-	expected := []string{"h", "e", "l", "l", "o"}
-	for i, exp := range expected {
-		if calls[i].keys != exp {
-			t.Errorf("call[%d].keys = %q, want %q", i, calls[i].keys, exp)
-		}
-		if calls[i].sessionName != "test-session" {
-			t.Errorf("call[%d].sessionName = %q, want %q", i, calls[i].sessionName, "test-session")
-		}
-		if !calls[i].literal {
-			t.Errorf("call[%d].literal = false, want true", i)
-		}
+	if calls[0].keys != "hello" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "hello")
+	}
+	if calls[0].sessionName != "test-session" {
+		t.Errorf("call[0].sessionName = %q, want %q", calls[0].sessionName, "test-session")
+	}
+	if !calls[0].literal {
+		t.Errorf("call[0].literal = false, want true")
 	}
 }
 
 func TestHandler_SendInput_SpecialCharacters(t *testing.T) {
+	type expectedCall struct {
+		keys    string
+		literal bool
+	}
 	tests := []struct {
 		name     string
 		input    string
-		expected []string
+		expected []expectedCall
 	}{
 		{
 			name:     "newline",
 			input:    "\n",
-			expected: []string{"Enter"},
+			expected: []expectedCall{{keys: "Enter", literal: false}},
 		},
 		{
 			name:     "carriage return",
 			input:    "\r",
-			expected: []string{"Enter"},
+			expected: []expectedCall{{keys: "Enter", literal: false}},
 		},
 		{
 			name:     "tab",
 			input:    "\t",
-			expected: []string{"Tab"},
+			expected: []expectedCall{{keys: "Tab", literal: false}},
 		},
 		{
 			name:     "backspace",
 			input:    "\x7f",
-			expected: []string{"BSpace"},
+			expected: []expectedCall{{keys: "BSpace", literal: false}},
 		},
 		{
 			name:     "escape",
 			input:    "\x1b",
-			expected: []string{"Escape"},
+			expected: []expectedCall{{keys: "Escape", literal: false}},
 		},
 		{
 			name:     "space",
 			input:    " ",
-			expected: []string{"Space"},
+			expected: []expectedCall{{keys: "Space", literal: false}},
 		},
 		{
 			name:     "control character (ctrl-a)",
 			input:    "\x01",
-			expected: []string{"C-a"},
+			expected: []expectedCall{{keys: "C-a", literal: false}},
 		},
 		{
-			name:     "mixed input",
-			input:    "a\nb",
-			expected: []string{"a", "Enter", "b"},
+			// With batching: "a" is batched (literal), "\n" flushes and sends Enter
+			// then "b" is batched (literal)
+			name:  "mixed input",
+			input: "a\nb",
+			expected: []expectedCall{
+				{keys: "a", literal: true},
+				{keys: "Enter", literal: false},
+				{keys: "b", literal: true},
+			},
 		},
 	}
 
@@ -172,12 +181,15 @@ func TestHandler_SendInput_SpecialCharacters(t *testing.T) {
 
 			calls := mock.getCalls()
 			if len(calls) != len(tt.expected) {
-				t.Fatalf("got %d calls, want %d", len(calls), len(tt.expected))
+				t.Fatalf("got %d calls, want %d: %+v", len(calls), len(tt.expected), calls)
 			}
 
 			for i, exp := range tt.expected {
-				if calls[i].keys != exp {
-					t.Errorf("call[%d].keys = %q, want %q", i, calls[i].keys, exp)
+				if calls[i].keys != exp.keys {
+					t.Errorf("call[%d].keys = %q, want %q", i, calls[i].keys, exp.keys)
+				}
+				if calls[i].literal != exp.literal {
+					t.Errorf("call[%d].literal = %v, want %v", i, calls[i].literal, exp.literal)
 				}
 			}
 		})
@@ -420,8 +432,13 @@ func TestHandler_FlushBuffer(t *testing.T) {
 	}
 
 	calls := mock.getCalls()
-	if len(calls) != 3 { // 3 characters
-		t.Errorf("got %d calls, want 3", len(calls))
+	// With batching, "abc" (all regular chars) is sent as a single call
+	if len(calls) != 1 {
+		t.Errorf("got %d calls, want 1 (batched)", len(calls))
+	}
+
+	if calls[0].keys != "abc" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "abc")
 	}
 }
 
@@ -592,5 +609,306 @@ func TestDefaultTmuxSender_SendKeys(t *testing.T) {
 	err := sender.SendKeys("nonexistent-session", "test", true)
 	if err == nil {
 		t.Error("Expected error for nonexistent session")
+	}
+}
+
+// TestHandler_SendInput_Batching tests the batching optimization that reduces
+// subprocess calls by grouping consecutive regular characters.
+func TestHandler_SendInput_Batching(t *testing.T) {
+	type expectedCall struct {
+		keys    string
+		literal bool
+	}
+	tests := []struct {
+		name     string
+		input    string
+		expected []expectedCall
+	}{
+		{
+			name:  "single character",
+			input: "a",
+			expected: []expectedCall{
+				{keys: "a", literal: true},
+			},
+		},
+		{
+			name:  "multiple regular characters batched",
+			input: "hello world!",
+			expected: []expectedCall{
+				{keys: "hello", literal: true},
+				{keys: "Space", literal: false},
+				{keys: "world!", literal: true},
+			},
+		},
+		{
+			name:  "unicode characters batched",
+			input: "hello中文world",
+			expected: []expectedCall{
+				{keys: "hello中文world", literal: true},
+			},
+		},
+		{
+			name:  "multiple special characters in a row",
+			input: "\n\n\t",
+			expected: []expectedCall{
+				{keys: "Enter", literal: false},
+				{keys: "Enter", literal: false},
+				{keys: "Tab", literal: false},
+			},
+		},
+		{
+			name:  "special at start",
+			input: "\nhello",
+			expected: []expectedCall{
+				{keys: "Enter", literal: false},
+				{keys: "hello", literal: true},
+			},
+		},
+		{
+			name:  "special at end",
+			input: "hello\n",
+			expected: []expectedCall{
+				{keys: "hello", literal: true},
+				{keys: "Enter", literal: false},
+			},
+		},
+		{
+			name:  "alternating regular and special",
+			input: "a b c",
+			expected: []expectedCall{
+				{keys: "a", literal: true},
+				{keys: "Space", literal: false},
+				{keys: "b", literal: true},
+				{keys: "Space", literal: false},
+				{keys: "c", literal: true},
+			},
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: []expectedCall{
+				// No calls for empty input
+			},
+		},
+		{
+			name:  "typical sentence",
+			input: "Hello, World!",
+			expected: []expectedCall{
+				{keys: "Hello,", literal: true},
+				{keys: "Space", literal: false},
+				{keys: "World!", literal: true},
+			},
+		},
+		{
+			name:  "command with enter",
+			input: "ls -la\n",
+			expected: []expectedCall{
+				{keys: "ls", literal: true},
+				{keys: "Space", literal: false},
+				{keys: "-la", literal: true},
+				{keys: "Enter", literal: false},
+			},
+		},
+		{
+			name:  "only special characters",
+			input: " \t\n",
+			expected: []expectedCall{
+				{keys: "Space", literal: false},
+				{keys: "Tab", literal: false},
+				{keys: "Enter", literal: false},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockTmuxSender{}
+			h := NewHandler(WithTmuxSender(mock))
+
+			err := h.SendInput("test-session", tt.input)
+			if err != nil {
+				t.Fatalf("SendInput failed: %v", err)
+			}
+
+			calls := mock.getCalls()
+			if len(calls) != len(tt.expected) {
+				t.Fatalf("got %d calls, want %d\ncalls: %+v\nexpected: %+v",
+					len(calls), len(tt.expected), calls, tt.expected)
+			}
+
+			for i, exp := range tt.expected {
+				if calls[i].keys != exp.keys {
+					t.Errorf("call[%d].keys = %q, want %q", i, calls[i].keys, exp.keys)
+				}
+				if calls[i].literal != exp.literal {
+					t.Errorf("call[%d].literal = %v, want %v", i, calls[i].literal, exp.literal)
+				}
+			}
+		})
+	}
+}
+
+// TestHandler_SendInput_BatchingEfficiency verifies that batching reduces
+// the number of subprocess calls compared to character-by-character sending.
+func TestHandler_SendInput_BatchingEfficiency(t *testing.T) {
+	tests := []struct {
+		name              string
+		input             string
+		maxExpectedCalls  int
+		unbatchedCalls    int // How many calls would be made without batching
+		reductionExpected float64
+	}{
+		{
+			name:              "typical typing",
+			input:             "Hello, World!",
+			maxExpectedCalls:  3,  // "Hello,", Space, "World!"
+			unbatchedCalls:    13, // 13 characters
+			reductionExpected: 0.76,
+		},
+		{
+			name:              "long text no specials",
+			input:             "abcdefghijklmnopqrstuvwxyz",
+			maxExpectedCalls:  1,  // One batched call
+			unbatchedCalls:    26, // 26 characters
+			reductionExpected: 0.96,
+		},
+		{
+			name:              "many words",
+			input:             "the quick brown fox jumps",
+			maxExpectedCalls:  9,  // 5 words + 4 spaces
+			unbatchedCalls:    25, // 25 characters
+			reductionExpected: 0.64,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockTmuxSender{}
+			h := NewHandler(WithTmuxSender(mock))
+
+			err := h.SendInput("test-session", tt.input)
+			if err != nil {
+				t.Fatalf("SendInput failed: %v", err)
+			}
+
+			calls := mock.getCalls()
+			if len(calls) > tt.maxExpectedCalls {
+				t.Errorf("got %d calls, want at most %d (batching should reduce calls)",
+					len(calls), tt.maxExpectedCalls)
+			}
+
+			reduction := 1.0 - float64(len(calls))/float64(tt.unbatchedCalls)
+			if reduction < tt.reductionExpected {
+				t.Errorf("reduction = %.2f, want at least %.2f (got %d calls, unbatched would be %d)",
+					reduction, tt.reductionExpected, len(calls), tt.unbatchedCalls)
+			}
+		})
+	}
+}
+
+func TestHandler_isSpecialRune(t *testing.T) {
+	h := NewHandler()
+
+	tests := []struct {
+		name     string
+		r        rune
+		expected bool
+	}{
+		{"regular lowercase", 'a', false},
+		{"regular uppercase", 'Z', false},
+		{"regular digit", '5', false},
+		{"regular punctuation", '!', false},
+		{"regular unicode", '中', false},
+		{"newline", '\n', true},
+		{"carriage return", '\r', true},
+		{"tab", '\t', true},
+		{"space", ' ', true},
+		{"backspace 0x7f", '\x7f', true},
+		{"backspace 0x08", '\b', true},
+		{"escape", '\x1b', true},
+		{"ctrl-a", '\x01', true},
+		{"ctrl-c", '\x03', true},
+		{"null", '\x00', true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := h.isSpecialRune(tt.r)
+			if got != tt.expected {
+				t.Errorf("isSpecialRune(%q) = %v, want %v", tt.r, got, tt.expected)
+			}
+		})
+	}
+}
+
+// TestHandler_SendInput_ErrorInBatch verifies error handling during batched sends.
+func TestHandler_SendInput_ErrorInBatch(t *testing.T) {
+	t.Run("error on batch send", func(t *testing.T) {
+		mock := &mockTmuxSender{}
+		h := NewHandler(WithTmuxSender(mock))
+
+		// Fail on first call (the batched regular chars)
+		mock.setFailNext(fmt.Errorf("batch send error"))
+
+		err := h.SendInput("test-session", "hello")
+		if err == nil {
+			t.Error("expected error when batch send fails")
+		}
+		if !strings.Contains(err.Error(), "batch send error") {
+			t.Errorf("error should contain original error, got: %v", err)
+		}
+	})
+
+	t.Run("error on special key send", func(t *testing.T) {
+		mock := &mockTmuxSender{}
+		h := NewHandler(WithTmuxSender(mock))
+
+		// First call (batch) succeeds, second call (special key) fails
+		err := h.SendInput("test-session", "a")
+		if err != nil {
+			t.Fatalf("first send failed: %v", err)
+		}
+
+		// Now set up to fail on special key
+		mock.setFailNext(fmt.Errorf("special key error"))
+		err = h.SendInput("test-session", "\n")
+		if err == nil {
+			t.Error("expected error when special key send fails")
+		}
+	})
+}
+
+// countingTmuxSender counts calls and fails at a specific call number.
+type countingTmuxSender struct {
+	mu        sync.Mutex
+	calls     []sendCall
+	callCount int
+	failAt    int // Fail on this call number (1-indexed)
+}
+
+func (c *countingTmuxSender) SendKeys(sessionName string, keys string, literal bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.callCount++
+	c.calls = append(c.calls, sendCall{sessionName: sessionName, keys: keys, literal: literal})
+	if c.callCount == c.failAt {
+		return fmt.Errorf("mid-batch error at call %d", c.callCount)
+	}
+	return nil
+}
+
+// TestHandler_SendInput_ErrorMidBatch tests error handling when a batch is partially sent.
+func TestHandler_SendInput_ErrorMidBatch(t *testing.T) {
+	// First call succeeds (batch "hello"), then fail on special key (Enter)
+	// The input "hello\nworld" should: send "hello", fail on Enter
+	counter := &countingTmuxSender{failAt: 2}
+	h := NewHandler(WithTmuxSender(counter))
+
+	err := h.SendInput("test-session", "hello\nworld")
+	if err == nil {
+		t.Error("expected error when send fails mid-batch")
+	}
+	if !strings.Contains(err.Error(), "mid-batch error") {
+		t.Errorf("error should contain 'mid-batch error', got: %v", err)
 	}
 }

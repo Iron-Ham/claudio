@@ -8,6 +8,7 @@ package input
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"sync"
 )
 
@@ -125,16 +126,40 @@ func NewHandler(opts ...Option) *Handler {
 }
 
 // SendInput sends text input to the tmux session, handling special characters.
-// Each character is processed and converted to the appropriate tmux key sequence.
+// Characters are batched to minimize subprocess calls: consecutive regular characters
+// are accumulated and sent in a single tmux command, while special characters
+// (Enter, Tab, etc.) flush the batch and are sent individually.
 // This method is synchronous and blocks until all input is sent.
 func (h *Handler) SendInput(sessionName string, input string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	var batch strings.Builder
+
 	for _, r := range input {
-		key := h.encodeRune(r)
-		if err := h.sender.SendKeys(sessionName, key, true); err != nil {
-			return fmt.Errorf("failed to send key %q: %w", key, err)
+		if h.isSpecialRune(r) {
+			// Flush any accumulated regular characters first
+			if batch.Len() > 0 {
+				if err := h.sender.SendKeys(sessionName, batch.String(), true); err != nil {
+					return fmt.Errorf("failed to send batch %q: %w", batch.String(), err)
+				}
+				batch.Reset()
+			}
+			// Send the special key
+			key := h.encodeRune(r)
+			if err := h.sender.SendKeys(sessionName, key, false); err != nil {
+				return fmt.Errorf("failed to send key %q: %w", key, err)
+			}
+		} else {
+			// Accumulate regular characters
+			batch.WriteRune(r)
+		}
+	}
+
+	// Flush any remaining regular characters
+	if batch.Len() > 0 {
+		if err := h.sender.SendKeys(sessionName, batch.String(), true); err != nil {
+			return fmt.Errorf("failed to send batch %q: %w", batch.String(), err)
 		}
 	}
 
@@ -206,7 +231,22 @@ func (h *Handler) SendPaste(sessionName string, text string) error {
 	return nil
 }
 
+// isSpecialRune returns true if the rune requires special handling by tmux
+// and cannot be batched with regular characters. Special runes include
+// newlines, tabs, backspace, escape, space, and control characters.
+func (h *Handler) isSpecialRune(r rune) bool {
+	switch r {
+	case '\r', '\n', '\t', '\x7f', '\b', '\x1b', ' ':
+		return true
+	default:
+		// Control characters (0x00-0x1F) require special handling
+		return r < 32
+	}
+}
+
 // encodeRune converts a rune to the appropriate tmux key sequence.
+// For special runes (newline, tab, etc.), returns the tmux key name.
+// For regular characters, returns the character literally.
 func (h *Handler) encodeRune(r rune) string {
 	switch r {
 	case '\r', '\n':
