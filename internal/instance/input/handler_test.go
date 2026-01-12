@@ -912,3 +912,73 @@ func TestHandler_SendInput_ErrorMidBatch(t *testing.T) {
 		t.Errorf("error should contain 'mid-batch error', got: %v", err)
 	}
 }
+
+func TestNewHandler_WithPersistentSender(t *testing.T) {
+	// WithPersistentSender should set up a persistent sender
+	h := NewHandler(WithPersistentSender("test-session"))
+
+	if h == nil {
+		t.Fatal("NewHandler returned nil")
+	}
+
+	if h.sender == nil {
+		t.Error("sender should not be nil")
+	}
+
+	// The sender should be a PersistentTmuxSender
+	_, ok := h.sender.(*PersistentTmuxSender)
+	if !ok {
+		t.Errorf("sender should be *PersistentTmuxSender, got %T", h.sender)
+	}
+
+	// Clean up
+	_ = h.Close()
+}
+
+func TestHandler_Close(t *testing.T) {
+	t.Run("with default sender", func(t *testing.T) {
+		h := NewHandler()
+
+		// Close should be safe to call with default sender (not a Closer)
+		err := h.Close()
+		if err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	})
+
+	t.Run("with mock sender", func(t *testing.T) {
+		mock := &mockTmuxSender{}
+		h := NewHandler(WithTmuxSender(mock))
+
+		// Close should be safe to call with mock (not a Closer)
+		err := h.Close()
+		if err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	})
+
+	t.Run("with persistent sender", func(t *testing.T) {
+		h := NewHandler(WithPersistentSender("test-session"))
+
+		// Close should work with persistent sender
+		err := h.Close()
+		if err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	})
+}
+
+func TestHandler_Close_Multiple(t *testing.T) {
+	h := NewHandler(WithPersistentSender("test-session"))
+
+	// Multiple closes should be safe
+	err := h.Close()
+	if err != nil {
+		t.Fatalf("First Close failed: %v", err)
+	}
+
+	err = h.Close()
+	if err != nil {
+		t.Fatalf("Second Close failed: %v", err)
+	}
+}

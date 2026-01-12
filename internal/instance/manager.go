@@ -145,18 +145,19 @@ func NewManager(id, workdir, task string) *Manager {
 // NewManagerWithConfig creates a new instance manager with the given configuration.
 // Uses legacy tmux naming (claudio-{instanceID}) for backwards compatibility.
 func NewManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager {
+	sessionName := fmt.Sprintf("claudio-%s", id)
 	return &Manager{
 		id:            id,
 		workdir:       workdir,
 		task:          task,
-		sessionName:   fmt.Sprintf("claudio-%s", id),
+		sessionName:   sessionName,
 		outputBuf:     capture.NewRingBuffer(cfg.OutputBufferSize),
 		doneChan:      make(chan struct{}),
 		config:        cfg,
 		detector:      detect.NewDetector(),
 		currentState:  detect.StateWorking,
 		metricsParser: metrics.NewMetricsParser(),
-		inputHandler:  input.NewHandler(),
+		inputHandler:  input.NewHandler(input.WithPersistentSender(sessionName)),
 	}
 }
 
@@ -184,7 +185,7 @@ func NewManagerWithSession(sessionID, id, workdir, task string, cfg ManagerConfi
 		detector:      detect.NewDetector(),
 		currentState:  detect.StateWorking,
 		metricsParser: metrics.NewMetricsParser(),
-		inputHandler:  input.NewHandler(),
+		inputHandler:  input.NewHandler(input.WithPersistentSender(sessionName)),
 	}
 }
 
@@ -789,6 +790,11 @@ func (m *Manager) Stop() error {
 	// Stop the ticker
 	if m.captureTick != nil {
 		m.captureTick.Stop()
+	}
+
+	// Close the input handler to release persistent tmux connection
+	if m.inputHandler != nil {
+		_ = m.inputHandler.Close()
 	}
 
 	// Send Ctrl+C to gracefully stop Claude first
