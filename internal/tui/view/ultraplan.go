@@ -27,6 +27,11 @@ type UltraPlanState struct {
 
 	// Group re-trigger mode
 	RetriggerMode bool // When true, next digit key triggers group re-trigger
+
+	// Collapsible group state
+	CollapsedGroups  map[int]bool // Track which groups are collapsed (true = collapsed)
+	SelectedGroupIdx int          // Currently selected group index for group-level navigation (0 = first group)
+	GroupNavMode     bool         // When true, arrow keys navigate groups instead of tasks
 }
 
 // RenderContext provides the necessary context for rendering ultraplan views.
@@ -290,44 +295,74 @@ func (v *UltraplanView) RenderSidebar(width int, height int) string {
 				break
 			}
 
-			groupStatus := v.getGroupStatus(session, group)
-			groupHeader := fmt.Sprintf("  Group %d %s", groupIdx+1, groupStatus)
-			if !executionStarted {
-				b.WriteString(styles.Muted.Render(groupHeader))
-			} else {
-				b.WriteString(groupHeader)
+			// Check if this group is collapsed
+			isCollapsed := v.ctx.UltraPlan.CollapsedGroups != nil && v.ctx.UltraPlan.CollapsedGroups[groupIdx]
+			isGroupSelected := v.ctx.UltraPlan.GroupNavMode && v.ctx.UltraPlan.SelectedGroupIdx == groupIdx
+
+			// Determine collapse indicator
+			collapseIcon := "▼"
+			if isCollapsed {
+				collapseIcon = "▶"
 			}
+
+			// Build group header with collapse indicator and status
+			groupStatus := v.getGroupStatus(session, group)
+			var groupHeader string
+			if isCollapsed {
+				// Show summary stats when collapsed
+				stats := v.calculateGroupStats(session, group)
+				summary := v.formatGroupSummary(stats)
+				groupHeader = fmt.Sprintf("  %s Group %d %s %s", collapseIcon, groupIdx+1, groupStatus, summary)
+			} else {
+				groupHeader = fmt.Sprintf("  %s Group %d %s", collapseIcon, groupIdx+1, groupStatus)
+			}
+
+			// Apply styling based on state
+			if isGroupSelected {
+				// Highlight selected group
+				groupHeader = lipgloss.NewStyle().
+					Background(styles.PrimaryColor).
+					Foreground(styles.TextColor).
+					Render(groupHeader)
+			} else if !executionStarted {
+				groupHeader = styles.Muted.Render(groupHeader)
+			}
+
+			b.WriteString(groupHeader)
 			b.WriteString("\n")
 			lineCount++
 
-			for _, taskID := range group {
-				if lineCount >= availableLines-4 {
-					break
+			// Only render tasks if group is expanded
+			if !isCollapsed {
+				for _, taskID := range group {
+					if lineCount >= availableLines-4 {
+						break
+					}
+
+					task := session.GetTask(taskID)
+					if task == nil {
+						continue
+					}
+
+					instID := v.findInstanceIDForTask(session, taskID)
+					selected := v.ctx.IsSelected(instID)
+					navigable := instID != ""
+					taskLine := v.renderExecutionTaskLine(session, task, instID, selected, navigable, width-6)
+					b.WriteString(taskLine)
+					b.WriteString("\n")
+					lineCount++
 				}
 
-				task := session.GetTask(taskID)
-				if task == nil {
-					continue
+				if groupIdx < len(session.GroupConsolidatorIDs) && session.GroupConsolidatorIDs[groupIdx] != "" {
+					consolidatorID := session.GroupConsolidatorIDs[groupIdx]
+					inst := v.ctx.GetInstance(consolidatorID)
+					selected := v.ctx.IsSelected(consolidatorID)
+					navigable := true
+					consolidatorLine := v.renderGroupConsolidatorLine(inst, groupIdx, selected, navigable, width-6)
+					b.WriteString(consolidatorLine)
+					b.WriteString("\n")
+					lineCount++
 				}
-
-				instID := v.findInstanceIDForTask(session, taskID)
-				selected := v.ctx.IsSelected(instID)
-				navigable := instID != ""
-				taskLine := v.renderExecutionTaskLine(session, task, instID, selected, navigable, width-6)
-				b.WriteString(taskLine)
-				b.WriteString("\n")
-				lineCount++
-			}
-
-			if groupIdx < len(session.GroupConsolidatorIDs) && session.GroupConsolidatorIDs[groupIdx] != "" {
-				consolidatorID := session.GroupConsolidatorIDs[groupIdx]
-				inst := v.ctx.GetInstance(consolidatorID)
-				selected := v.ctx.IsSelected(consolidatorID)
-				navigable := true
-				consolidatorLine := v.renderGroupConsolidatorLine(inst, groupIdx, selected, navigable, width-6)
-				b.WriteString(consolidatorLine)
-				b.WriteString("\n")
-				lineCount++
 			}
 		}
 		b.WriteString("\n")
@@ -731,6 +766,77 @@ func (v *UltraplanView) getGroupStatus(session *orchestrator.UltraPlanSession, g
 	return "○"
 }
 
+// GroupStats holds statistics about a task group for collapsed display
+type GroupStats struct {
+	Total     int  // Total number of tasks in group
+	Completed int  // Number of completed tasks
+	Failed    int  // Number of failed tasks
+	Running   int  // Number of currently running tasks
+	HasFailed bool // Whether any task has failed
+}
+
+// calculateGroupStats calculates statistics for a task group
+func (v *UltraplanView) calculateGroupStats(session *orchestrator.UltraPlanSession, group []string) GroupStats {
+	stats := GroupStats{Total: len(group)}
+
+	for _, taskID := range group {
+		// Check if completed
+		for _, ct := range session.CompletedTasks {
+			if ct == taskID {
+				stats.Completed++
+				break
+			}
+		}
+
+		// Check if failed
+		for _, ft := range session.FailedTasks {
+			if ft == taskID {
+				stats.Failed++
+				stats.HasFailed = true
+				break
+			}
+		}
+
+		// Check if running (has instance but not completed/failed)
+		if _, running := session.TaskToInstance[taskID]; running {
+			// Only count as running if not already counted as completed/failed
+			isCompleted := false
+			for _, ct := range session.CompletedTasks {
+				if ct == taskID {
+					isCompleted = true
+					break
+				}
+			}
+			isFailed := false
+			for _, ft := range session.FailedTasks {
+				if ft == taskID {
+					isFailed = true
+					break
+				}
+			}
+			if !isCompleted && !isFailed {
+				stats.Running++
+			}
+		}
+	}
+
+	return stats
+}
+
+// formatGroupSummary formats the summary statistics for a collapsed group
+func (v *UltraplanView) formatGroupSummary(stats GroupStats) string {
+	if stats.Running > 0 {
+		return fmt.Sprintf("[⟳ %d/%d]", stats.Completed, stats.Total)
+	}
+	if stats.HasFailed {
+		return fmt.Sprintf("[✗ %d/%d]", stats.Completed, stats.Total)
+	}
+	if stats.Completed == stats.Total {
+		return fmt.Sprintf("[✓ %d/%d]", stats.Completed, stats.Total)
+	}
+	return fmt.Sprintf("[%d/%d]", stats.Completed, stats.Total)
+}
+
 // getPhaseSectionStatus returns a status indicator for a phase section header
 func (v *UltraplanView) getPhaseSectionStatus(phase orchestrator.UltraPlanPhase, session *orchestrator.UltraPlanSession) string {
 	switch phase {
@@ -1056,6 +1162,17 @@ func (v *UltraplanView) RenderHelp() string {
 
 	var keys []string
 
+	// Group navigation mode takes highest priority (when active)
+	if v.ctx.UltraPlan.GroupNavMode && session.Plan != nil {
+		keys = append(keys, "[↑↓/jk] select group")
+		keys = append(keys, "[enter/space] toggle")
+		keys = append(keys, "[←→/hl] collapse/expand")
+		keys = append(keys, "[e] expand all")
+		keys = append(keys, "[c] collapse all")
+		keys = append(keys, "[g/esc] exit")
+		return styles.HelpBar.Width(v.ctx.Width).Render(strings.Join(keys, "  "))
+	}
+
 	// Group decision mode takes priority
 	if session.GroupDecision != nil && session.GroupDecision.AwaitingDecision {
 		keys = append(keys, "[c] continue partial")
@@ -1084,10 +1201,12 @@ func (v *UltraplanView) RenderHelp() string {
 	case orchestrator.PhaseRefresh:
 		keys = append(keys, "[e] start execution")
 		keys = append(keys, "[E] edit plan")
+		keys = append(keys, "[g] group nav")
 
 	case orchestrator.PhaseExecuting:
 		keys = append(keys, "[tab] next task")
 		keys = append(keys, "[1-9] select task")
+		keys = append(keys, "[g] group nav")
 		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
 		keys = append(keys, "[:restart] restart task")
@@ -1096,6 +1215,7 @@ func (v *UltraplanView) RenderHelp() string {
 	case orchestrator.PhaseSynthesis:
 		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
+		keys = append(keys, "[g] group nav")
 		keys = append(keys, "[:restart] restart synthesis")
 		if session.SynthesisAwaitingApproval {
 			keys = append(keys, "[s] approve → proceed")
@@ -1107,6 +1227,7 @@ func (v *UltraplanView) RenderHelp() string {
 		keys = append(keys, "[tab] next instance")
 		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
+		keys = append(keys, "[g] group nav")
 		keys = append(keys, "[:restart] restart revision")
 		if session.Revision != nil {
 			keys = append(keys, fmt.Sprintf("round %d/%d", session.Revision.RevisionRound, session.Revision.MaxRevisions))
@@ -1115,6 +1236,7 @@ func (v *UltraplanView) RenderHelp() string {
 	case orchestrator.PhaseConsolidating:
 		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
+		keys = append(keys, "[g] group nav")
 		keys = append(keys, "[:restart] restart consolidation")
 		if session.Consolidation != nil && session.Consolidation.Phase == orchestrator.ConsolidationPaused {
 			keys = append(keys, "[r] resume")
@@ -1122,6 +1244,7 @@ func (v *UltraplanView) RenderHelp() string {
 
 	case orchestrator.PhaseComplete, orchestrator.PhaseFailed:
 		keys = append(keys, "[v] view plan")
+		keys = append(keys, "[g] group nav")
 		if len(session.PRUrls) > 0 {
 			keys = append(keys, "[o] open PR")
 		}
