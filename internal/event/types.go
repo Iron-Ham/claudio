@@ -303,3 +303,61 @@ func NewPROpenedEvent(instanceID string, prURL string) PROpenedEvent {
 		PRURL:      prURL,
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Group Phase Events (Group-Aware Lifecycle)
+// -----------------------------------------------------------------------------
+
+// GroupPhase represents the phase of an instance group.
+// Mirrors orchestrator.GroupPhase for decoupling.
+type GroupPhase string
+
+const (
+	GroupPhasePending   GroupPhase = "pending"
+	GroupPhaseExecuting GroupPhase = "executing"
+	GroupPhaseCompleted GroupPhase = "completed"
+	GroupPhaseFailed    GroupPhase = "failed"
+)
+
+// GroupPhaseChangeEvent is emitted when a group's phase changes.
+// This enables TUI reactivity to group state transitions.
+type GroupPhaseChangeEvent struct {
+	baseEvent
+	GroupID       string     // Unique identifier for the group
+	GroupName     string     // Human-readable group name
+	PreviousPhase GroupPhase // Previous phase
+	CurrentPhase  GroupPhase // New current phase
+}
+
+// NewGroupPhaseChangeEvent creates a GroupPhaseChangeEvent.
+func NewGroupPhaseChangeEvent(groupID, groupName string, previousPhase, currentPhase GroupPhase) GroupPhaseChangeEvent {
+	return GroupPhaseChangeEvent{
+		baseEvent:     newBaseEvent("group.phase_changed"),
+		GroupID:       groupID,
+		GroupName:     groupName,
+		PreviousPhase: previousPhase,
+		CurrentPhase:  currentPhase,
+	}
+}
+
+// GroupCompletionEvent is emitted when a group completes (all instances finished).
+type GroupCompletionEvent struct {
+	baseEvent
+	GroupID      string // Unique identifier for the group
+	GroupName    string // Human-readable group name
+	Success      bool   // True if all instances completed successfully
+	FailedCount  int    // Number of instances that failed
+	SuccessCount int    // Number of instances that succeeded
+}
+
+// NewGroupCompletionEvent creates a GroupCompletionEvent.
+func NewGroupCompletionEvent(groupID, groupName string, success bool, failedCount, successCount int) GroupCompletionEvent {
+	return GroupCompletionEvent{
+		baseEvent:    newBaseEvent("group.completed"),
+		GroupID:      groupID,
+		GroupName:    groupName,
+		Success:      success,
+		FailedCount:  failedCount,
+		SuccessCount: successCount,
+	}
+}

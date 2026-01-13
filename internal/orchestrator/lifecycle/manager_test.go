@@ -671,3 +671,1040 @@ func TestManager_TmuxSessionName(t *testing.T) {
 		t.Errorf("Expected TmuxSession %q, got %q", expected, inst.TmuxSession)
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Group-Aware Lifecycle Tests
+// -----------------------------------------------------------------------------
+
+// mockGroupProvider implements GroupProvider for testing.
+type mockGroupProvider struct {
+	groups         map[string]*GroupInfo
+	instanceGroups map[string]string // instanceID -> groupID
+	mu             sync.RWMutex
+}
+
+func newMockGroupProvider() *mockGroupProvider {
+	return &mockGroupProvider{
+		groups:         make(map[string]*GroupInfo),
+		instanceGroups: make(map[string]string),
+	}
+}
+
+func (p *mockGroupProvider) AddGroup(group *GroupInfo) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.groups[group.ID] = group
+	for _, instID := range group.InstanceIDs {
+		p.instanceGroups[instID] = group.ID
+	}
+}
+
+func (p *mockGroupProvider) GetGroupForInstance(instanceID string) *GroupInfo {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	groupID, exists := p.instanceGroups[instanceID]
+	if !exists {
+		return nil
+	}
+	return p.groups[groupID]
+}
+
+func (p *mockGroupProvider) GetGroup(groupID string) *GroupInfo {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.groups[groupID]
+}
+
+func (p *mockGroupProvider) GetAllGroups() []*GroupInfo {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	result := make([]*GroupInfo, 0, len(p.groups))
+	for _, g := range p.groups {
+		result = append(result, g)
+	}
+	// Sort by execution order
+	for i := 1; i < len(result); i++ {
+		key := result[i]
+		j := i - 1
+		for j >= 0 && result[j].ExecutionOrder > key.ExecutionOrder {
+			result[j+1] = result[j]
+			j--
+		}
+		result[j+1] = key
+	}
+	return result
+}
+
+func (p *mockGroupProvider) AreGroupDependenciesMet(groupID string) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	group := p.groups[groupID]
+	if group == nil {
+		return false
+	}
+	for _, depID := range group.DependsOn {
+		dep := p.groups[depID]
+		if dep == nil || dep.Phase != GroupPhaseCompleted {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *mockGroupProvider) AdvanceGroupPhase(groupID string, phase GroupPhase) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if group := p.groups[groupID]; group != nil {
+		group.Phase = phase
+	}
+}
+
+func TestGroupPhase_Constants(t *testing.T) {
+	tests := []struct {
+		phase GroupPhase
+		want  string
+	}{
+		{GroupPhasePending, "pending"},
+		{GroupPhaseExecuting, "executing"},
+		{GroupPhaseCompleted, "completed"},
+		{GroupPhaseFailed, "failed"},
+	}
+
+	for _, tc := range tests {
+		if string(tc.phase) != tc.want {
+			t.Errorf("GroupPhase %q != %q", tc.phase, tc.want)
+		}
+	}
+}
+
+func TestGroupCompletionState_IsComplete(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    GroupCompletionState
+		expected bool
+	}{
+		{
+			name:     "all completed",
+			state:    GroupCompletionState{TotalCount: 3, SuccessCount: 3},
+			expected: true,
+		},
+		{
+			name:     "all failed",
+			state:    GroupCompletionState{TotalCount: 3, FailedCount: 3},
+			expected: true,
+		},
+		{
+			name:     "mixed success/failure",
+			state:    GroupCompletionState{TotalCount: 3, SuccessCount: 2, FailedCount: 1},
+			expected: true,
+		},
+		{
+			name:     "some pending",
+			state:    GroupCompletionState{TotalCount: 3, SuccessCount: 2, PendingCount: 1},
+			expected: false,
+		},
+		{
+			name:     "some running",
+			state:    GroupCompletionState{TotalCount: 3, SuccessCount: 1, RunningCount: 2},
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.state.IsComplete(); got != tc.expected {
+				t.Errorf("IsComplete() = %v, want %v", got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestGroupCompletionState_AllSucceeded(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    GroupCompletionState
+		expected bool
+	}{
+		{
+			name:     "all succeeded",
+			state:    GroupCompletionState{TotalCount: 3, SuccessCount: 3},
+			expected: true,
+		},
+		{
+			name:     "mixed success/failure",
+			state:    GroupCompletionState{TotalCount: 3, SuccessCount: 2, FailedCount: 1},
+			expected: false,
+		},
+		{
+			name:     "all failed",
+			state:    GroupCompletionState{TotalCount: 3, FailedCount: 3},
+			expected: false,
+		},
+		{
+			name:     "some still pending",
+			state:    GroupCompletionState{TotalCount: 3, SuccessCount: 2, PendingCount: 1},
+			expected: false,
+		},
+		{
+			name:     "empty group",
+			state:    GroupCompletionState{TotalCount: 0},
+			expected: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.state.AllSucceeded(); got != tc.expected {
+				t.Errorf("AllSucceeded() = %v, want %v", got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestGroupCompletionState_HasFailures(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    GroupCompletionState
+		expected bool
+	}{
+		{
+			name:     "no failures",
+			state:    GroupCompletionState{TotalCount: 3, SuccessCount: 3},
+			expected: false,
+		},
+		{
+			name:     "one failure",
+			state:    GroupCompletionState{TotalCount: 3, SuccessCount: 2, FailedCount: 1},
+			expected: true,
+		},
+		{
+			name:     "all failed",
+			state:    GroupCompletionState{TotalCount: 3, FailedCount: 3},
+			expected: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.state.HasFailures(); got != tc.expected {
+				t.Errorf("HasFailures() = %v, want %v", got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestManager_SetGroupProvider(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+
+	m.SetGroupProvider(provider)
+
+	// Provider should be set (verify by checking CanStartInstance behavior)
+	_, _ = m.CreateInstance("test-1", "/tmp/wt", "branch", "task")
+
+	// Without a group, should be able to start
+	canStart, _ := m.CanStartInstance("test-1")
+	if !canStart {
+		t.Error("Expected to be able to start instance without group")
+	}
+}
+
+func TestManager_CanStartInstance_NoProvider(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	_, _ = m.CreateInstance("test-1", "/tmp/wt", "branch", "task")
+
+	canStart, reason := m.CanStartInstance("test-1")
+	if !canStart {
+		t.Errorf("Expected to start without provider, got reason: %s", reason)
+	}
+}
+
+func TestManager_CanStartInstance_NotFound(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+
+	canStart, reason := m.CanStartInstance("nonexistent")
+	if canStart {
+		t.Error("Expected false for non-existent instance")
+	}
+	if reason != "instance not found" {
+		t.Errorf("Expected 'instance not found', got %q", reason)
+	}
+}
+
+func TestManager_CanStartInstance_NotPending(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	_, _ = m.CreateInstance("test-1", "/tmp/wt", "branch", "task")
+	_ = m.StartInstance(context.Background(), "test-1")
+
+	canStart, reason := m.CanStartInstance("test-1")
+	if canStart {
+		t.Error("Expected false for non-pending instance")
+	}
+	if reason == "" {
+		t.Error("Expected a reason for non-pending instance")
+	}
+}
+
+func TestManager_CanStartInstance_UngroupedInstance(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("test-1", "/tmp/wt", "branch", "task")
+
+	canStart, reason := m.CanStartInstance("test-1")
+	if !canStart {
+		t.Errorf("Expected to start ungrouped instance, got reason: %s", reason)
+	}
+}
+
+func TestManager_CanStartInstance_GroupDependenciesMet(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+
+	// Create two groups, group 2 depends on group 1
+	group1 := &GroupInfo{
+		ID:             "group1",
+		Name:           "Group 1",
+		Phase:          GroupPhaseCompleted, // Already completed
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{},
+	}
+	group2 := &GroupInfo{
+		ID:             "group2",
+		Name:           "Group 2",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 1,
+		InstanceIDs:    []string{"test-1"},
+		DependsOn:      []string{"group1"},
+	}
+
+	provider.AddGroup(group1)
+	provider.AddGroup(group2)
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("test-1", "/tmp/wt", "branch", "task")
+
+	canStart, reason := m.CanStartInstance("test-1")
+	if !canStart {
+		t.Errorf("Expected to start when dependencies met, got reason: %s", reason)
+	}
+}
+
+func TestManager_CanStartInstance_GroupDependenciesNotMet(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+
+	// Create two groups, group 2 depends on group 1 which is still pending
+	group1 := &GroupInfo{
+		ID:             "group1",
+		Name:           "Group 1",
+		Phase:          GroupPhasePending, // Not yet completed
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{"group1-inst"},
+	}
+	group2 := &GroupInfo{
+		ID:             "group2",
+		Name:           "Group 2",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 1,
+		InstanceIDs:    []string{"test-1"},
+		DependsOn:      []string{"group1"},
+	}
+
+	provider.AddGroup(group1)
+	provider.AddGroup(group2)
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("test-1", "/tmp/wt", "branch", "task")
+
+	canStart, reason := m.CanStartInstance("test-1")
+	if canStart {
+		t.Error("Expected cannot start when dependencies not met")
+	}
+	if reason == "" {
+		t.Error("Expected a reason when dependencies not met")
+	}
+}
+
+func TestManager_StartInstanceIfReady(t *testing.T) {
+	var phaseChangeCalled bool
+	var mu sync.Mutex
+
+	callbacks := Callbacks{
+		OnGroupPhaseChange: func(groupID, groupName string, oldPhase, newPhase GroupPhase) {
+			mu.Lock()
+			phaseChangeCalled = true
+			mu.Unlock()
+		},
+	}
+
+	m := NewManager(DefaultConfig(), callbacks, nil)
+	provider := newMockGroupProvider()
+
+	group := &GroupInfo{
+		ID:             "group1",
+		Name:           "Test Group",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{"test-1"},
+	}
+	provider.AddGroup(group)
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("test-1", "/tmp/wt", "branch", "task")
+
+	err := m.StartInstanceIfReady(context.Background(), "test-1")
+	if err != nil {
+		t.Fatalf("StartInstanceIfReady failed: %v", err)
+	}
+
+	// Verify instance is now working
+	inst, _ := m.GetInstance("test-1")
+	if inst.Status != StatusWorking {
+		t.Errorf("Expected status %q, got %q", StatusWorking, inst.Status)
+	}
+
+	// Verify group phase changed
+	mu.Lock()
+	called := phaseChangeCalled
+	mu.Unlock()
+
+	if !called {
+		t.Error("Expected OnGroupPhaseChange callback to be called")
+	}
+
+	// Verify group phase in provider
+	updatedGroup := provider.GetGroup("group1")
+	if updatedGroup.Phase != GroupPhaseExecuting {
+		t.Errorf("Expected group phase %q, got %q", GroupPhaseExecuting, updatedGroup.Phase)
+	}
+}
+
+func TestManager_StartInstanceIfReady_DependenciesNotMet(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+
+	group1 := &GroupInfo{
+		ID:             "group1",
+		Name:           "Group 1",
+		Phase:          GroupPhaseExecuting, // Still executing
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{},
+	}
+	group2 := &GroupInfo{
+		ID:             "group2",
+		Name:           "Group 2",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 1,
+		InstanceIDs:    []string{"test-1"},
+		DependsOn:      []string{"group1"},
+	}
+
+	provider.AddGroup(group1)
+	provider.AddGroup(group2)
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("test-1", "/tmp/wt", "branch", "task")
+
+	err := m.StartInstanceIfReady(context.Background(), "test-1")
+	if err == nil {
+		t.Error("Expected error when dependencies not met")
+	}
+
+	// Instance should still be pending
+	inst, _ := m.GetInstance("test-1")
+	if inst.Status != StatusPending {
+		t.Errorf("Expected status %q, got %q", StatusPending, inst.Status)
+	}
+}
+
+func TestManager_GetGroupCompletionState(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+
+	group := &GroupInfo{
+		ID:             "group1",
+		Name:           "Test Group",
+		Phase:          GroupPhaseExecuting,
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{"inst-1", "inst-2", "inst-3", "inst-4"},
+	}
+	provider.AddGroup(group)
+	m.SetGroupProvider(provider)
+
+	// Create instances in various states
+	_, _ = m.CreateInstance("inst-1", "/tmp/wt1", "branch1", "task1")
+	_, _ = m.CreateInstance("inst-2", "/tmp/wt2", "branch2", "task2")
+	_, _ = m.CreateInstance("inst-3", "/tmp/wt3", "branch3", "task3")
+	_, _ = m.CreateInstance("inst-4", "/tmp/wt4", "branch4", "task4")
+
+	_ = m.UpdateStatus("inst-1", StatusWorking)
+	_ = m.UpdateStatus("inst-2", StatusCompleted)
+	_ = m.UpdateStatus("inst-3", StatusError)
+	// inst-4 remains pending
+
+	state := m.GetGroupCompletionState("group1")
+	if state == nil {
+		t.Fatal("Expected non-nil state")
+	}
+
+	if state.TotalCount != 4 {
+		t.Errorf("Expected TotalCount 4, got %d", state.TotalCount)
+	}
+	if state.RunningCount != 1 {
+		t.Errorf("Expected RunningCount 1, got %d", state.RunningCount)
+	}
+	if state.SuccessCount != 1 {
+		t.Errorf("Expected SuccessCount 1, got %d", state.SuccessCount)
+	}
+	if state.FailedCount != 1 {
+		t.Errorf("Expected FailedCount 1, got %d", state.FailedCount)
+	}
+	if state.PendingCount != 1 {
+		t.Errorf("Expected PendingCount 1, got %d", state.PendingCount)
+	}
+}
+
+func TestManager_GetGroupCompletionState_NoProvider(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+
+	state := m.GetGroupCompletionState("group1")
+	if state != nil {
+		t.Error("Expected nil state when no provider")
+	}
+}
+
+func TestManager_GetGroupCompletionState_NonexistentGroup(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+	m.SetGroupProvider(provider)
+
+	state := m.GetGroupCompletionState("nonexistent")
+	if state != nil {
+		t.Error("Expected nil state for nonexistent group")
+	}
+}
+
+func TestManager_CheckGroupCompletion_Success(t *testing.T) {
+	var completeCalled bool
+	var receivedSuccess bool
+	var mu sync.Mutex
+
+	callbacks := Callbacks{
+		OnGroupComplete: func(groupID, groupName string, success bool, failedCount, successCount int) {
+			mu.Lock()
+			completeCalled = true
+			receivedSuccess = success
+			mu.Unlock()
+		},
+	}
+
+	m := NewManager(DefaultConfig(), callbacks, nil)
+	provider := newMockGroupProvider()
+
+	group := &GroupInfo{
+		ID:             "group1",
+		Name:           "Test Group",
+		Phase:          GroupPhaseExecuting,
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{"inst-1", "inst-2"},
+	}
+	provider.AddGroup(group)
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("inst-1", "/tmp/wt1", "branch1", "task1")
+	_, _ = m.CreateInstance("inst-2", "/tmp/wt2", "branch2", "task2")
+
+	// Both complete successfully
+	_ = m.UpdateStatus("inst-1", StatusCompleted)
+	_ = m.UpdateStatus("inst-2", StatusCompleted)
+
+	state := m.CheckGroupCompletion("inst-1")
+	if state == nil {
+		t.Fatal("Expected non-nil state")
+	}
+
+	if !state.AllSucceeded() {
+		t.Error("Expected AllSucceeded to be true")
+	}
+
+	mu.Lock()
+	called := completeCalled
+	success := receivedSuccess
+	mu.Unlock()
+
+	if !called {
+		t.Error("Expected OnGroupComplete callback to be called")
+	}
+	if !success {
+		t.Error("Expected success=true in callback")
+	}
+
+	// Verify group phase
+	updatedGroup := provider.GetGroup("group1")
+	if updatedGroup.Phase != GroupPhaseCompleted {
+		t.Errorf("Expected group phase %q, got %q", GroupPhaseCompleted, updatedGroup.Phase)
+	}
+}
+
+func TestManager_CheckGroupCompletion_Failure(t *testing.T) {
+	var receivedSuccess bool
+	var mu sync.Mutex
+
+	callbacks := Callbacks{
+		OnGroupComplete: func(groupID, groupName string, success bool, failedCount, successCount int) {
+			mu.Lock()
+			receivedSuccess = success
+			mu.Unlock()
+		},
+	}
+
+	m := NewManager(DefaultConfig(), callbacks, nil)
+	provider := newMockGroupProvider()
+
+	group := &GroupInfo{
+		ID:             "group1",
+		Name:           "Test Group",
+		Phase:          GroupPhaseExecuting,
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{"inst-1", "inst-2"},
+	}
+	provider.AddGroup(group)
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("inst-1", "/tmp/wt1", "branch1", "task1")
+	_, _ = m.CreateInstance("inst-2", "/tmp/wt2", "branch2", "task2")
+
+	// One succeeds, one fails
+	_ = m.UpdateStatus("inst-1", StatusCompleted)
+	_ = m.UpdateStatus("inst-2", StatusError)
+
+	state := m.CheckGroupCompletion("inst-1")
+	if state == nil {
+		t.Fatal("Expected non-nil state")
+	}
+
+	if state.AllSucceeded() {
+		t.Error("Expected AllSucceeded to be false")
+	}
+
+	mu.Lock()
+	success := receivedSuccess
+	mu.Unlock()
+
+	if success {
+		t.Error("Expected success=false in callback")
+	}
+
+	// Verify group phase
+	updatedGroup := provider.GetGroup("group1")
+	if updatedGroup.Phase != GroupPhaseFailed {
+		t.Errorf("Expected group phase %q, got %q", GroupPhaseFailed, updatedGroup.Phase)
+	}
+}
+
+func TestManager_CheckGroupCompletion_NotComplete(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+
+	group := &GroupInfo{
+		ID:             "group1",
+		Name:           "Test Group",
+		Phase:          GroupPhaseExecuting,
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{"inst-1", "inst-2"},
+	}
+	provider.AddGroup(group)
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("inst-1", "/tmp/wt1", "branch1", "task1")
+	_, _ = m.CreateInstance("inst-2", "/tmp/wt2", "branch2", "task2")
+
+	// Only one is completed
+	_ = m.UpdateStatus("inst-1", StatusCompleted)
+	// inst-2 is still pending
+
+	state := m.CheckGroupCompletion("inst-1")
+	if state != nil {
+		t.Error("Expected nil state when group not complete")
+	}
+}
+
+func TestManager_GetReadyGroups(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+
+	// Group 1: completed
+	group1 := &GroupInfo{
+		ID:             "group1",
+		Name:           "Group 1",
+		Phase:          GroupPhaseCompleted,
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{},
+	}
+	// Group 2: pending, depends on group1 (should be ready)
+	group2 := &GroupInfo{
+		ID:             "group2",
+		Name:           "Group 2",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 1,
+		InstanceIDs:    []string{"inst-1"},
+		DependsOn:      []string{"group1"},
+	}
+	// Group 3: pending, depends on group2 (should NOT be ready)
+	group3 := &GroupInfo{
+		ID:             "group3",
+		Name:           "Group 3",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 2,
+		InstanceIDs:    []string{"inst-2"},
+		DependsOn:      []string{"group2"},
+	}
+	// Group 4: pending, no dependencies (should be ready)
+	group4 := &GroupInfo{
+		ID:             "group4",
+		Name:           "Group 4",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 3,
+		InstanceIDs:    []string{"inst-3"},
+	}
+
+	provider.AddGroup(group1)
+	provider.AddGroup(group2)
+	provider.AddGroup(group3)
+	provider.AddGroup(group4)
+	m.SetGroupProvider(provider)
+
+	ready := m.GetReadyGroups()
+	if len(ready) != 2 {
+		t.Errorf("Expected 2 ready groups, got %d", len(ready))
+	}
+
+	// Verify group2 and group4 are ready
+	readyIDs := make(map[string]bool)
+	for _, g := range ready {
+		readyIDs[g.ID] = true
+	}
+
+	if !readyIDs["group2"] {
+		t.Error("Expected group2 to be ready")
+	}
+	if !readyIDs["group4"] {
+		t.Error("Expected group4 to be ready")
+	}
+}
+
+func TestManager_GetReadyGroups_NoProvider(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+
+	ready := m.GetReadyGroups()
+	if ready != nil {
+		t.Error("Expected nil when no provider")
+	}
+}
+
+func TestManager_StartNextGroup(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+
+	group := &GroupInfo{
+		ID:             "group1",
+		Name:           "Test Group",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{"inst-1", "inst-2"},
+	}
+	provider.AddGroup(group)
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("inst-1", "/tmp/wt1", "branch1", "task1")
+	_, _ = m.CreateInstance("inst-2", "/tmp/wt2", "branch2", "task2")
+
+	started, err := m.StartNextGroup(context.Background())
+	if err != nil {
+		t.Fatalf("StartNextGroup failed: %v", err)
+	}
+
+	if started != 2 {
+		t.Errorf("Expected 2 instances started, got %d", started)
+	}
+
+	// Verify both instances are working
+	inst1, _ := m.GetInstance("inst-1")
+	inst2, _ := m.GetInstance("inst-2")
+	if inst1.Status != StatusWorking {
+		t.Errorf("Expected inst-1 status %q, got %q", StatusWorking, inst1.Status)
+	}
+	if inst2.Status != StatusWorking {
+		t.Errorf("Expected inst-2 status %q, got %q", StatusWorking, inst2.Status)
+	}
+}
+
+func TestManager_StartNextGroup_NoReadyGroups(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+
+	// No pending groups
+	group := &GroupInfo{
+		ID:             "group1",
+		Name:           "Test Group",
+		Phase:          GroupPhaseExecuting, // Already executing
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{"inst-1"},
+	}
+	provider.AddGroup(group)
+	m.SetGroupProvider(provider)
+
+	started, err := m.StartNextGroup(context.Background())
+	if err != nil {
+		t.Fatalf("StartNextGroup failed: %v", err)
+	}
+
+	if started != 0 {
+		t.Errorf("Expected 0 instances started, got %d", started)
+	}
+}
+
+func TestManager_StartAllReadyInstances(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+
+	// Two groups, both pending with no dependencies
+	group1 := &GroupInfo{
+		ID:             "group1",
+		Name:           "Group 1",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{"inst-1"},
+	}
+	group2 := &GroupInfo{
+		ID:             "group2",
+		Name:           "Group 2",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 1,
+		InstanceIDs:    []string{"inst-2", "inst-3"},
+	}
+
+	provider.AddGroup(group1)
+	provider.AddGroup(group2)
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("inst-1", "/tmp/wt1", "branch1", "task1")
+	_, _ = m.CreateInstance("inst-2", "/tmp/wt2", "branch2", "task2")
+	_, _ = m.CreateInstance("inst-3", "/tmp/wt3", "branch3", "task3")
+
+	started, err := m.StartAllReadyInstances(context.Background())
+	if err != nil {
+		t.Fatalf("StartAllReadyInstances failed: %v", err)
+	}
+
+	if started != 3 {
+		t.Errorf("Expected 3 instances started, got %d", started)
+	}
+}
+
+func TestManager_OnInstanceComplete_AutoStart(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+
+	// Group 1: will complete
+	group1 := &GroupInfo{
+		ID:             "group1",
+		Name:           "Group 1",
+		Phase:          GroupPhaseExecuting,
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{"inst-1"},
+	}
+	// Group 2: pending, depends on group1
+	group2 := &GroupInfo{
+		ID:             "group2",
+		Name:           "Group 2",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 1,
+		InstanceIDs:    []string{"inst-2"},
+		DependsOn:      []string{"group1"},
+	}
+
+	provider.AddGroup(group1)
+	provider.AddGroup(group2)
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("inst-1", "/tmp/wt1", "branch1", "task1")
+	_, _ = m.CreateInstance("inst-2", "/tmp/wt2", "branch2", "task2")
+
+	// Complete inst-1
+	_ = m.UpdateStatus("inst-1", StatusCompleted)
+
+	// Trigger OnInstanceComplete
+	startedIDs := m.OnInstanceComplete(context.Background(), "inst-1")
+
+	if len(startedIDs) != 1 {
+		t.Errorf("Expected 1 auto-started instance, got %d", len(startedIDs))
+	}
+	if len(startedIDs) > 0 && startedIDs[0] != "inst-2" {
+		t.Errorf("Expected inst-2 to be auto-started, got %s", startedIDs[0])
+	}
+
+	// Verify inst-2 is now working
+	inst2, _ := m.GetInstance("inst-2")
+	if inst2.Status != StatusWorking {
+		t.Errorf("Expected inst-2 status %q, got %q", StatusWorking, inst2.Status)
+	}
+}
+
+func TestManager_OnInstanceComplete_NoAutoStartOnFailure(t *testing.T) {
+	m := NewManager(DefaultConfig(), Callbacks{}, nil)
+	provider := newMockGroupProvider()
+
+	// Group 1: one instance fails
+	group1 := &GroupInfo{
+		ID:             "group1",
+		Name:           "Group 1",
+		Phase:          GroupPhaseExecuting,
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{"inst-1"},
+	}
+	// Group 2: depends on group1
+	group2 := &GroupInfo{
+		ID:             "group2",
+		Name:           "Group 2",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 1,
+		InstanceIDs:    []string{"inst-2"},
+		DependsOn:      []string{"group1"},
+	}
+
+	provider.AddGroup(group1)
+	provider.AddGroup(group2)
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("inst-1", "/tmp/wt1", "branch1", "task1")
+	_, _ = m.CreateInstance("inst-2", "/tmp/wt2", "branch2", "task2")
+
+	// inst-1 fails
+	_ = m.UpdateStatus("inst-1", StatusError)
+
+	// Trigger OnInstanceComplete
+	startedIDs := m.OnInstanceComplete(context.Background(), "inst-1")
+
+	// No instances should be auto-started because group1 failed
+	if len(startedIDs) != 0 {
+		t.Errorf("Expected 0 auto-started instances on failure, got %d", len(startedIDs))
+	}
+
+	// Verify inst-2 is still pending
+	inst2, _ := m.GetInstance("inst-2")
+	if inst2.Status != StatusPending {
+		t.Errorf("Expected inst-2 status %q, got %q", StatusPending, inst2.Status)
+	}
+}
+
+func TestManager_GroupLifecycle_FullWorkflow(t *testing.T) {
+	// This test exercises a full group workflow:
+	// 1. Group 1 executes and completes
+	// 2. Group 2 auto-starts after group 1 completes
+	// 3. Group 2 completes, verifying the full lifecycle
+
+	var phaseChanges []struct {
+		groupID  string
+		oldPhase GroupPhase
+		newPhase GroupPhase
+	}
+	var completions []struct {
+		groupID string
+		success bool
+	}
+	var mu sync.Mutex
+
+	callbacks := Callbacks{
+		OnGroupPhaseChange: func(groupID, groupName string, oldPhase, newPhase GroupPhase) {
+			mu.Lock()
+			phaseChanges = append(phaseChanges, struct {
+				groupID  string
+				oldPhase GroupPhase
+				newPhase GroupPhase
+			}{groupID, oldPhase, newPhase})
+			mu.Unlock()
+		},
+		OnGroupComplete: func(groupID, groupName string, success bool, failedCount, successCount int) {
+			mu.Lock()
+			completions = append(completions, struct {
+				groupID string
+				success bool
+			}{groupID, success})
+			mu.Unlock()
+		},
+	}
+
+	m := NewManager(DefaultConfig(), callbacks, nil)
+	provider := newMockGroupProvider()
+
+	group1 := &GroupInfo{
+		ID:             "group1",
+		Name:           "Group 1",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 0,
+		InstanceIDs:    []string{"inst-1"},
+	}
+	group2 := &GroupInfo{
+		ID:             "group2",
+		Name:           "Group 2",
+		Phase:          GroupPhasePending,
+		ExecutionOrder: 1,
+		InstanceIDs:    []string{"inst-2"},
+		DependsOn:      []string{"group1"},
+	}
+
+	provider.AddGroup(group1)
+	provider.AddGroup(group2)
+	m.SetGroupProvider(provider)
+
+	_, _ = m.CreateInstance("inst-1", "/tmp/wt1", "branch1", "task1")
+	_, _ = m.CreateInstance("inst-2", "/tmp/wt2", "branch2", "task2")
+
+	// Start group 1
+	started, _ := m.StartNextGroup(context.Background())
+	if started != 1 {
+		t.Fatalf("Expected 1 instance started, got %d", started)
+	}
+
+	// Verify phase changed to executing
+	mu.Lock()
+	if len(phaseChanges) < 1 || phaseChanges[0].newPhase != GroupPhaseExecuting {
+		t.Error("Expected phase change to executing")
+	}
+	mu.Unlock()
+
+	// Complete inst-1
+	_ = m.UpdateStatus("inst-1", StatusCompleted)
+	autoStarted := m.OnInstanceComplete(context.Background(), "inst-1")
+
+	// Verify group 2 auto-started
+	if len(autoStarted) != 1 || autoStarted[0] != "inst-2" {
+		t.Errorf("Expected inst-2 to auto-start, got %v", autoStarted)
+	}
+
+	// Verify phase changes
+	mu.Lock()
+	changeCount := len(phaseChanges)
+	mu.Unlock()
+
+	// Should have: group1 pending->executing, group1 executing->completed, group2 pending->executing
+	if changeCount < 3 {
+		t.Errorf("Expected at least 3 phase changes, got %d", changeCount)
+	}
+
+	// Complete inst-2
+	_ = m.UpdateStatus("inst-2", StatusCompleted)
+	m.CheckGroupCompletion("inst-2")
+
+	// Verify completions
+	mu.Lock()
+	completionCount := len(completions)
+	mu.Unlock()
+
+	if completionCount < 2 {
+		t.Errorf("Expected at least 2 completions, got %d", completionCount)
+	}
+}

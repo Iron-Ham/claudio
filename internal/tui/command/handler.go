@@ -80,6 +80,9 @@ type Result struct {
 
 	// Mode transition - Triple-Shot
 	StartTripleShot *bool // Request to switch to triple-shot mode
+
+	// Mode transition - Plan Mode
+	StartPlanMode *bool // Request to switch to inline plan mode
 }
 
 // CommandInfo contains metadata about a command for help display.
@@ -206,6 +209,9 @@ func (h *Handler) registerCommands() {
 	h.commands["triple"] = cmdTripleShot
 	h.commands["3shot"] = cmdTripleShot
 
+	// Plan mode commands
+	h.commands["plan"] = cmdPlan
+
 	// Help commands
 	h.commands["h"] = cmdHelp
 	h.commands["help"] = cmdHelp
@@ -259,6 +265,7 @@ func (h *Handler) buildCategories() {
 				{ShortKey: "r", LongKey: "pr", Description: "Show PR creation command", Category: "utility"},
 				{ShortKey: "", LongKey: "cancel", Description: "Cancel ultra-plan execution", Category: "utility"},
 				{ShortKey: "", LongKey: "tripleshot", Description: "Start triple-shot mode (3 parallel attempts + judge)", Category: "utility"},
+				{ShortKey: "", LongKey: "plan", Description: "Start inline plan mode for structured task planning", Category: "utility"},
 			},
 		},
 		{
@@ -734,6 +741,29 @@ func cmdTripleShot(deps Dependencies) Result {
 	return Result{
 		StartTripleShot: &startTripleShot,
 		InfoMessage:     "Enter a task for triple-shot mode",
+	}
+}
+
+func cmdPlan(deps Dependencies) Result {
+	// Check if inline plan is enabled in config
+	if !viper.GetBool("experimental.inline_plan") {
+		return Result{ErrorMessage: "Plan mode is disabled. Enable it in :config under Experimental"}
+	}
+
+	// Don't allow starting plan mode if already in a special mode
+	if deps.IsUltraPlanMode() {
+		return Result{ErrorMessage: "Cannot start plan mode while in ultraplan mode"}
+	}
+	if deps.IsTripleShotMode() {
+		return Result{ErrorMessage: "Cannot start plan mode while in triple-shot mode"}
+	}
+
+	// Signal to the model that we want to enter plan mode
+	// The model will handle prompting for the objective if not provided
+	startPlanMode := true
+	return Result{
+		StartPlanMode: &startPlanMode,
+		InfoMessage:   "Enter an objective for plan mode",
 	}
 }
 
