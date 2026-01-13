@@ -787,32 +787,8 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 		o.mu.Unlock()
 	}
 
-	// Configure state change callback for notifications
-	mgr.SetStateCallback(func(id string, state detect.WaitingState) {
-		switch state {
-		case detect.StateCompleted:
-			o.handleInstanceExit(id)
-		case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
-			o.handleInstanceWaitingInput(id)
-		case detect.StatePROpened:
-			o.handleInstancePROpened(id)
-		}
-	})
-
-	// Configure metrics callback for resource tracking
-	mgr.SetMetricsCallback(func(id string, m *instmetrics.ParsedMetrics) {
-		o.handleInstanceMetrics(id, m)
-	})
-
-	// Configure timeout callback
-	mgr.SetTimeoutCallback(func(id string, timeoutType instance.TimeoutType) {
-		o.handleInstanceTimeout(id, timeoutType)
-	})
-
-	// Configure bell callback to forward terminal bells
-	mgr.SetBellCallback(func(id string) {
-		o.handleInstanceBell(id)
-	})
+	// Configure all callbacks
+	o.configureInstanceCallbacks(mgr)
 
 	if err := mgr.Start(); err != nil {
 		if o.logger != nil {
@@ -1249,6 +1225,38 @@ func (o *Orchestrator) registerInstance(session *Session, inst *Instance) error 
 	}
 
 	return nil
+}
+
+// configureInstanceCallbacks sets up all necessary callbacks on an instance manager.
+// This centralizes callback configuration to avoid duplication between StartInstance
+// and ReconnectInstance.
+func (o *Orchestrator) configureInstanceCallbacks(mgr *instance.Manager) {
+	// Configure state change callback for notifications
+	mgr.SetStateCallback(func(id string, state detect.WaitingState) {
+		switch state {
+		case detect.StateCompleted:
+			o.handleInstanceExit(id)
+		case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
+			o.handleInstanceWaitingInput(id)
+		case detect.StatePROpened:
+			o.handleInstancePROpened(id)
+		}
+	})
+
+	// Configure metrics callback for resource tracking
+	mgr.SetMetricsCallback(func(id string, m *instmetrics.ParsedMetrics) {
+		o.handleInstanceMetrics(id, m)
+	})
+
+	// Configure timeout callback
+	mgr.SetTimeoutCallback(func(id string, timeoutType instance.TimeoutType) {
+		o.handleInstanceTimeout(id, timeoutType)
+	})
+
+	// Configure bell callback to forward terminal bells
+	mgr.SetBellCallback(func(id string) {
+		o.handleInstanceBell(id)
+	})
 }
 
 // Session returns the current session
@@ -1923,30 +1931,8 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 		o.mu.Unlock()
 	}
 
-	// Configure state change callback
-	mgr.SetStateCallback(func(id string, state detect.WaitingState) {
-		switch state {
-		case detect.StateCompleted:
-			o.handleInstanceExit(id)
-		case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
-			o.handleInstanceWaitingInput(id)
-		}
-	})
-
-	// Configure metrics callback
-	mgr.SetMetricsCallback(func(id string, m *instmetrics.ParsedMetrics) {
-		o.handleInstanceMetrics(id, m)
-	})
-
-	// Configure timeout callback
-	mgr.SetTimeoutCallback(func(id string, timeoutType instance.TimeoutType) {
-		o.handleInstanceTimeout(id, timeoutType)
-	})
-
-	// Configure bell callback to forward terminal bells
-	mgr.SetBellCallback(func(id string) {
-		o.handleInstanceBell(id)
-	})
+	// Configure all callbacks
+	o.configureInstanceCallbacks(mgr)
 
 	// Check if the tmux session still exists
 	if mgr.TmuxSessionExists() {
