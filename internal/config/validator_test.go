@@ -507,6 +507,66 @@ func TestConfig_Validate_Ultraplan(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("valid consolidation modes", func(t *testing.T) {
+		for _, mode := range []string{"stacked", "single", ""} {
+			cfg := Default()
+			cfg.Ultraplan.ConsolidationMode = mode
+			errs := cfg.Validate()
+
+			for _, err := range errs {
+				if err.Field == "ultraplan.consolidation_mode" {
+					t.Errorf("mode %q should be valid: %v", mode, err)
+				}
+			}
+		}
+	})
+
+	t.Run("invalid consolidation mode", func(t *testing.T) {
+		cfg := Default()
+		cfg.Ultraplan.ConsolidationMode = "invalid"
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "ultraplan.consolidation_mode" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for invalid consolidation mode")
+		}
+	})
+
+	t.Run("negative max task retries", func(t *testing.T) {
+		cfg := Default()
+		cfg.Ultraplan.MaxTaskRetries = -1
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "ultraplan.max_task_retries" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for negative max task retries")
+		}
+	})
+
+	t.Run("zero max task retries is valid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Ultraplan.MaxTaskRetries = 0
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if err.Field == "ultraplan.max_task_retries" {
+				t.Errorf("zero max task retries should be valid: %v", err)
+			}
+		}
+	})
 }
 
 func TestConfig_Validate_Plan(t *testing.T) {

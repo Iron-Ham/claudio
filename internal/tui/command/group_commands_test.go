@@ -921,6 +921,9 @@ func TestGroupResolutionEdgeCases(t *testing.T) {
 		deps := newMockGroupDeps()
 
 		grp := orchestrator.NewInstanceGroup("Group")
+		// Use a deterministic ID that doesn't start with "0" to avoid
+		// flaky prefix matching (the randomly generated ID might start with "0")
+		grp.ID = "abcd1234"
 		deps.session.Groups = append(deps.session.Groups, grp)
 
 		inst := &orchestrator.Instance{ID: "inst-001", Task: "Test"}

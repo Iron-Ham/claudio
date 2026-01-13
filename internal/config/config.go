@@ -134,6 +134,23 @@ type UltraplanConfig struct {
 	MultiPass bool `mapstructure:"multi_pass"`
 	// Notifications controls audio notifications for user input
 	Notifications NotificationConfig `mapstructure:"notifications"`
+
+	// Consolidation settings
+	// ConsolidationMode controls how completed work is consolidated: "stacked" creates
+	// a chain of PRs, "single" merges all work into one PR (default: "stacked")
+	ConsolidationMode string `mapstructure:"consolidation_mode"`
+	// CreateDraftPRs creates PRs as drafts during consolidation (default: true)
+	CreateDraftPRs bool `mapstructure:"create_draft_prs"`
+	// PRLabels are labels to add to PRs created during consolidation (default: ["ultraplan"])
+	PRLabels []string `mapstructure:"pr_labels"`
+	// BranchPrefix overrides branch.prefix for ultraplan branches (default: "" uses branch.prefix)
+	BranchPrefix string `mapstructure:"branch_prefix"`
+
+	// Task verification settings
+	// MaxTaskRetries is the max retry attempts for tasks that produce no commits (default: 3)
+	MaxTaskRetries int `mapstructure:"max_task_retries"`
+	// RequireVerifiedCommits requires tasks to produce commits to be marked successful (default: true)
+	RequireVerifiedCommits bool `mapstructure:"require_verified_commits"`
 }
 
 // NotificationConfig controls notification behavior for ultraplan
@@ -299,6 +316,12 @@ func Default() *Config {
 				UseSound:  false,
 				SoundPath: "",
 			},
+			ConsolidationMode:      "stacked",
+			CreateDraftPRs:         true,
+			PRLabels:               []string{"ultraplan"},
+			BranchPrefix:           "", // Empty means use branch.prefix
+			MaxTaskRetries:         3,
+			RequireVerifiedCommits: true,
 		},
 		Plan: PlanConfig{
 			OutputFormat: "issues",
@@ -395,6 +418,12 @@ func SetDefaults() {
 	viper.SetDefault("ultraplan.notifications.enabled", defaults.Ultraplan.Notifications.Enabled)
 	viper.SetDefault("ultraplan.notifications.use_sound", defaults.Ultraplan.Notifications.UseSound)
 	viper.SetDefault("ultraplan.notifications.sound_path", defaults.Ultraplan.Notifications.SoundPath)
+	viper.SetDefault("ultraplan.consolidation_mode", defaults.Ultraplan.ConsolidationMode)
+	viper.SetDefault("ultraplan.create_draft_prs", defaults.Ultraplan.CreateDraftPRs)
+	viper.SetDefault("ultraplan.pr_labels", defaults.Ultraplan.PRLabels)
+	viper.SetDefault("ultraplan.branch_prefix", defaults.Ultraplan.BranchPrefix)
+	viper.SetDefault("ultraplan.max_task_retries", defaults.Ultraplan.MaxTaskRetries)
+	viper.SetDefault("ultraplan.require_verified_commits", defaults.Ultraplan.RequireVerifiedCommits)
 
 	// Plan defaults
 	viper.SetDefault("plan.output_format", defaults.Plan.OutputFormat)
