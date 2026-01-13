@@ -166,9 +166,10 @@ func (dv *DashboardView) renderSidebarInstance(
 		prefixLen += 2
 	}
 
-	// Instance number and truncated task
+	// Instance number and truncated display name
+	// Uses EffectiveName() which returns DisplayName if set, otherwise Task
 	maxTaskLen := max(width-8-prefixLen, 10) // Account for number, dot, prefix, padding
-	label := fmt.Sprintf("%d %s%s", i+1, prefix, truncate(inst.Task, maxTaskLen))
+	label := fmt.Sprintf("%d %s%s", i+1, prefix, truncate(inst.EffectiveName(), maxTaskLen))
 
 	// Choose style based on active state and status
 	var itemStyle lipgloss.Style

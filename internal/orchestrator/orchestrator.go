@@ -18,6 +18,7 @@ import (
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	instancestate "github.com/Iron-Ham/claudio/internal/instance/state"
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/namer"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/budget"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/display"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/lifecycle"
@@ -56,6 +57,7 @@ type Orchestrator struct {
 	eventBus      *event.Bus             // Inter-component event communication
 	stateMonitor  *instancestate.Monitor // Centralized state monitoring for all instances
 	budgetMgr     *budget.Manager        // Budget monitoring and enforcement
+	namer         *namer.Namer           // Intelligent instance naming (optional)
 
 	session          *Session
 	instances        map[string]*instance.Manager
@@ -154,6 +156,9 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 	// Wire state monitor callbacks to orchestrator handlers
 	orch.wireStateMonitorCallbacks()
 
+	// Initialize intelligent naming service (optional - degrades gracefully if API key not set)
+	orch.initNamer()
+
 	return orch, nil
 }
 
@@ -240,6 +245,9 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 
 	// Wire state monitor callbacks to orchestrator handlers
 	orch.wireStateMonitorCallbacks()
+
+	// Initialize intelligent naming service (optional - degrades gracefully if API key not set)
+	orch.initNamer()
 
 	return orch, nil
 }
@@ -1054,6 +1062,11 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 		o.conflictDetector.Stop()
 	}
 
+	// Stop namer service
+	if o.namer != nil {
+		o.namer.Stop()
+	}
+
 	// Stop all instances
 	for _, inst := range sess.Instances {
 		if mgr, ok := o.instances[inst.ID]; ok {
@@ -1158,13 +1171,22 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 func (o *Orchestrator) newInstanceManager(instanceID, workdir, task string) *instance.Manager {
 	cfg := o.instanceManagerConfig()
 
+	// Build rename callback if namer is available
+	var renameCallback instance.RenameCallback
+	if o.namer != nil {
+		renameCallback = func(instID, instTask, output string) {
+			o.namer.RequestRename(instID, instTask, output)
+		}
+	}
+
 	mgr := instance.NewManagerWithDeps(instance.ManagerOptions{
-		ID:           instanceID,
-		SessionID:    o.sessionID,
-		WorkDir:      workdir,
-		Task:         task,
-		Config:       cfg,
-		StateMonitor: o.stateMonitor,
+		ID:             instanceID,
+		SessionID:      o.sessionID,
+		WorkDir:        workdir,
+		Task:           task,
+		Config:         cfg,
+		StateMonitor:   o.stateMonitor,
+		RenameCallback: renameCallback,
 		// LifecycleManager not set - instances use internal Start/Stop/Reconnect
 	})
 
@@ -1342,6 +1364,85 @@ func (o *Orchestrator) initBudgetManager() {
 	}
 
 	o.budgetMgr = budget.NewManagerFromConfig(o.config, o, o, callbacks, o.logger)
+}
+
+// initNamer initializes the intelligent naming service.
+// This is optional - requires both:
+// 1. experimental.intelligent_naming config set to true
+// 2. ANTHROPIC_API_KEY environment variable set
+// If disabled or API key not set, instances use their original task as the display name.
+func (o *Orchestrator) initNamer() {
+	// Check if intelligent naming is enabled in config
+	if o.config == nil || !o.config.Experimental.IntelligentNaming {
+		if o.logger != nil {
+			o.logger.Debug("intelligent naming disabled via config")
+		}
+		return
+	}
+
+	client, err := namer.NewAnthropicClient()
+	if err != nil {
+		// API key not set or other issue - namer won't be available
+		// This is expected in many environments, so only log at debug level
+		if o.logger != nil {
+			o.logger.Debug("intelligent naming disabled", "reason", err.Error())
+		}
+		return
+	}
+
+	o.namer = namer.New(client, o.logger)
+	o.namer.OnRename(o.handleInstanceRenamed)
+	o.namer.Start()
+
+	if o.logger != nil {
+		o.logger.Debug("intelligent naming enabled")
+	}
+}
+
+// handleInstanceRenamed is called when the namer generates a display name for an instance.
+func (o *Orchestrator) handleInstanceRenamed(instanceID, newName string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.session == nil {
+		return
+	}
+
+	inst := o.session.GetInstance(instanceID)
+	if inst == nil {
+		return
+	}
+
+	// Don't override manually named instances
+	if inst.ManuallyNamed {
+		if o.logger != nil {
+			o.logger.Debug("skipping auto-rename for manually named instance",
+				"instance_id", instanceID,
+				"current_name", inst.DisplayName,
+			)
+		}
+		return
+	}
+
+	inst.DisplayName = newName
+
+	if o.logger != nil {
+		o.logger.Debug("instance renamed",
+			"instance_id", instanceID,
+			"display_name", newName,
+		)
+	}
+
+	// Persist the change
+	if err := o.saveSession(); err != nil {
+		if o.logger != nil {
+			o.logger.Warn("failed to persist renamed instance - name may be lost on restart",
+				"instance_id", instanceID,
+				"display_name", newName,
+				"error", err.Error(),
+			)
+		}
+	}
 }
 
 // saveSession persists the session state to disk

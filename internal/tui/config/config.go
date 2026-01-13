@@ -323,6 +323,18 @@ func New() Model {
 				},
 			},
 		},
+		{
+			Name: "Experimental",
+			Items: []ConfigItem{
+				{
+					Key:         "experimental.intelligent_naming",
+					Label:       "Intelligent Naming",
+					Description: "Use Claude to generate short, descriptive instance names (requires ANTHROPIC_API_KEY)",
+					Type:        "bool",
+					Category:    "experimental",
+				},
+			},
+		},
 	}
 
 	return Model{
@@ -788,6 +800,8 @@ func (m *Model) resetCurrentToDefault() {
 		"plan.output_file":   defaults.Plan.OutputFile,
 		// Paths
 		"paths.worktree_dir": defaults.Paths.WorktreeDir,
+		// Experimental
+		"experimental.intelligent_naming": defaults.Experimental.IntelligentNaming,
 	}
 
 	if defaultVal, ok := defaultValues[item.Key]; ok {

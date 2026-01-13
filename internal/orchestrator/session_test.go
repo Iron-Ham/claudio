@@ -439,3 +439,43 @@ func TestSession_GetReadyInstances(t *testing.T) {
 		t.Errorf("GetReadyInstances()[0].ID = %q, want %q", ready[0].ID, "inst-2")
 	}
 }
+
+func TestInstance_EffectiveName(t *testing.T) {
+	tests := []struct {
+		name        string
+		displayName string
+		task        string
+		expected    string
+	}{
+		{
+			name:        "returns DisplayName when set",
+			displayName: "Fix auth bug",
+			task:        "Fix authentication issues with OAuth and update the login flow",
+			expected:    "Fix auth bug",
+		},
+		{
+			name:        "returns Task when DisplayName is empty",
+			displayName: "",
+			task:        "Implement new feature",
+			expected:    "Implement new feature",
+		},
+		{
+			name:        "returns DisplayName even if shorter than Task",
+			displayName: "X",
+			task:        "A very long task description",
+			expected:    "X",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inst := &Instance{
+				Task:        tt.task,
+				DisplayName: tt.displayName,
+			}
+			if got := inst.EffectiveName(); got != tt.expected {
+				t.Errorf("EffectiveName() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}

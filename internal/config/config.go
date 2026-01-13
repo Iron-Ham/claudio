@@ -11,18 +11,19 @@ import (
 
 // Config represents the complete Claudio configuration
 type Config struct {
-	Completion CompletionConfig `mapstructure:"completion"`
-	TUI        TUIConfig        `mapstructure:"tui"`
-	Session    SessionConfig    `mapstructure:"session"`
-	Instance   InstanceConfig   `mapstructure:"instance"`
-	Branch     BranchConfig     `mapstructure:"branch"`
-	PR         PRConfig         `mapstructure:"pr"`
-	Cleanup    CleanupConfig    `mapstructure:"cleanup"`
-	Resources  ResourceConfig   `mapstructure:"resources"`
-	Ultraplan  UltraplanConfig  `mapstructure:"ultraplan"`
-	Plan       PlanConfig       `mapstructure:"plan"`
-	Logging    LoggingConfig    `mapstructure:"logging"`
-	Paths      PathsConfig      `mapstructure:"paths"`
+	Completion   CompletionConfig   `mapstructure:"completion"`
+	TUI          TUIConfig          `mapstructure:"tui"`
+	Session      SessionConfig      `mapstructure:"session"`
+	Instance     InstanceConfig     `mapstructure:"instance"`
+	Branch       BranchConfig       `mapstructure:"branch"`
+	PR           PRConfig           `mapstructure:"pr"`
+	Cleanup      CleanupConfig      `mapstructure:"cleanup"`
+	Resources    ResourceConfig     `mapstructure:"resources"`
+	Ultraplan    UltraplanConfig    `mapstructure:"ultraplan"`
+	Plan         PlanConfig         `mapstructure:"plan"`
+	Logging      LoggingConfig      `mapstructure:"logging"`
+	Paths        PathsConfig        `mapstructure:"paths"`
+	Experimental ExperimentalConfig `mapstructure:"experimental"`
 }
 
 // CompletionConfig controls what happens when an instance completes
@@ -179,6 +180,14 @@ type PathsConfig struct {
 	WorktreeDir string `mapstructure:"worktree_dir"`
 }
 
+// ExperimentalConfig controls experimental features that may change or be removed
+type ExperimentalConfig struct {
+	// IntelligentNaming uses Claude to generate short, descriptive instance names
+	// for the sidebar based on the task and Claude's initial output.
+	// Requires ANTHROPIC_API_KEY to be set. (default: false)
+	IntelligentNaming bool `mapstructure:"intelligent_naming"`
+}
+
 // ResolveWorktreeDir returns the resolved worktree directory path.
 // If WorktreeDir is empty, it returns the default path relative to baseDir.
 // If WorktreeDir starts with ~, it expands to the user's home directory.
@@ -283,6 +292,9 @@ func Default() *Config {
 		Paths: PathsConfig{
 			WorktreeDir: "", // Empty means use default: .claudio/worktrees
 		},
+		Experimental: ExperimentalConfig{
+			IntelligentNaming: false, // Disabled by default until stable
+		},
 	}
 }
 
@@ -370,6 +382,9 @@ func SetDefaults() {
 
 	// Paths defaults
 	viper.SetDefault("paths.worktree_dir", defaults.Paths.WorktreeDir)
+
+	// Experimental defaults
+	viper.SetDefault("experimental.intelligent_naming", defaults.Experimental.IntelligentNaming)
 }
 
 // Load reads the configuration from viper into a Config struct and validates it
