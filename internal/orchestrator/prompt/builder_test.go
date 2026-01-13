@@ -51,6 +51,13 @@ func TestContext_Validate(t *testing.T) {
 				ID:      "plan-1",
 				Summary: "Test plan",
 			}
+		case PhasePlanSelection:
+			ctx.CandidatePlans = []CandidatePlanInfo{
+				{
+					Strategy: "test-strategy",
+					Summary:  "Test candidate plan",
+				},
+			}
 		}
 
 		return ctx

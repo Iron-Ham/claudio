@@ -10,13 +10,18 @@ import (
 // mockTheme implements Theme for testing purposes.
 type mockTheme struct{}
 
-func (m *mockTheme) Primary() lipgloss.Style   { return lipgloss.NewStyle() }
-func (m *mockTheme) Secondary() lipgloss.Style { return lipgloss.NewStyle() }
-func (m *mockTheme) Muted() lipgloss.Style     { return lipgloss.NewStyle() }
-func (m *mockTheme) Error() lipgloss.Style     { return lipgloss.NewStyle() }
-func (m *mockTheme) Warning() lipgloss.Style   { return lipgloss.NewStyle() }
-func (m *mockTheme) Surface() lipgloss.Style   { return lipgloss.NewStyle() }
-func (m *mockTheme) Border() lipgloss.Style    { return lipgloss.NewStyle() }
+func (m *mockTheme) Primary() lipgloss.Style     { return lipgloss.NewStyle() }
+func (m *mockTheme) Secondary() lipgloss.Style   { return lipgloss.NewStyle() }
+func (m *mockTheme) Muted() lipgloss.Style       { return lipgloss.NewStyle() }
+func (m *mockTheme) Error() lipgloss.Style       { return lipgloss.NewStyle() }
+func (m *mockTheme) Warning() lipgloss.Style     { return lipgloss.NewStyle() }
+func (m *mockTheme) Surface() lipgloss.Style     { return lipgloss.NewStyle() }
+func (m *mockTheme) Border() lipgloss.Style      { return lipgloss.NewStyle() }
+func (m *mockTheme) DiffAdd() lipgloss.Style     { return lipgloss.NewStyle() }
+func (m *mockTheme) DiffRemove() lipgloss.Style  { return lipgloss.NewStyle() }
+func (m *mockTheme) DiffHeader() lipgloss.Style  { return lipgloss.NewStyle() }
+func (m *mockTheme) DiffHunk() lipgloss.Style    { return lipgloss.NewStyle() }
+func (m *mockTheme) DiffContext() lipgloss.Style { return lipgloss.NewStyle() }
 
 // mockPanelRenderer implements PanelRenderer for testing.
 type mockPanelRenderer struct {
@@ -60,6 +65,11 @@ func TestThemeInterface(t *testing.T) {
 	_ = theme.Warning()
 	_ = theme.Surface()
 	_ = theme.Border()
+	_ = theme.DiffAdd()
+	_ = theme.DiffRemove()
+	_ = theme.DiffHeader()
+	_ = theme.DiffHunk()
+	_ = theme.DiffContext()
 }
 
 func TestRenderState_Validate(t *testing.T) {
