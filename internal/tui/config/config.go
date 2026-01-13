@@ -348,6 +348,27 @@ func New() Model {
 					Type:        "bool",
 					Category:    "experimental",
 				},
+				{
+					Key:         "experimental.inline_plan",
+					Label:       "Inline Plan",
+					Description: "Enable :plan command in standard TUI to start Plan workflows",
+					Type:        "bool",
+					Category:    "experimental",
+				},
+				{
+					Key:         "experimental.inline_ultraplan",
+					Label:       "Inline UltraPlan",
+					Description: "Enable :ultraplan command in standard TUI to start UltraPlan workflows",
+					Type:        "bool",
+					Category:    "experimental",
+				},
+				{
+					Key:         "experimental.grouped_instance_view",
+					Label:       "Grouped Instance View",
+					Description: "Enable visual grouping of instances by execution group in the sidebar",
+					Type:        "bool",
+					Category:    "experimental",
+				},
 			},
 		},
 	}
@@ -990,9 +1011,12 @@ func (m *Model) resetCurrentToDefault() {
 		// Paths
 		"paths.worktree_dir": defaults.Paths.WorktreeDir,
 		// Experimental
-		"experimental.intelligent_naming": defaults.Experimental.IntelligentNaming,
-		"experimental.triple_shot":        defaults.Experimental.TripleShot,
-		"experimental.terminal_support":   defaults.Experimental.TerminalSupport,
+		"experimental.intelligent_naming":    defaults.Experimental.IntelligentNaming,
+		"experimental.triple_shot":           defaults.Experimental.TripleShot,
+		"experimental.terminal_support":      defaults.Experimental.TerminalSupport,
+		"experimental.inline_plan":           defaults.Experimental.InlinePlan,
+		"experimental.inline_ultraplan":      defaults.Experimental.InlineUltraPlan,
+		"experimental.grouped_instance_view": defaults.Experimental.GroupedInstanceView,
 	}
 
 	if defaultVal, ok := defaultValues[item.Key]; ok {
