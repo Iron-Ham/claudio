@@ -65,6 +65,7 @@ type ManagerConfig struct {
 	CaptureIntervalMs        int
 	TmuxWidth                int
 	TmuxHeight               int
+	TmuxHistoryLimit         int  // Number of lines of scrollback to keep (default: 50000)
 	ActivityTimeoutMinutes   int  // 0 = disabled
 	CompletionTimeoutMinutes int  // 0 = disabled
 	StaleDetection           bool // Enable repeated output detection
@@ -76,9 +77,10 @@ func DefaultManagerConfig() ManagerConfig {
 		OutputBufferSize:         100000, // 100KB
 		CaptureIntervalMs:        100,
 		TmuxWidth:                200,
-		TmuxHeight:               30, // Shorter height so prompts scroll off and users see actual work
-		ActivityTimeoutMinutes:   30, // 30 minutes of no activity
-		CompletionTimeoutMinutes: 0,  // Disabled by default (no max runtime limit)
+		TmuxHeight:               30,    // Shorter height so prompts scroll off and users see actual work
+		TmuxHistoryLimit:         50000, // 50k lines of scrollback
+		ActivityTimeoutMinutes:   30,    // 30 minutes of no activity
+		CompletionTimeoutMinutes: 0,     // Disabled by default (no max runtime limit)
 		StaleDetection:           true,
 	}
 }
@@ -312,6 +314,22 @@ func (m *Manager) Start() error {
 	// Kill any existing session with this name (cleanup from previous run)
 	_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
 
+	// Determine history limit from config (default to 50000 if not set)
+	historyLimit := m.config.TmuxHistoryLimit
+	if historyLimit == 0 {
+		historyLimit = 50000
+	}
+
+	// Set history-limit BEFORE creating session so the new pane inherits it.
+	// tmux's history-limit only affects newly created panes, not existing ones.
+	if err := exec.Command("tmux", "set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
+		if m.logger != nil {
+			m.logger.Warn("failed to set global history-limit for tmux",
+				"history_limit", historyLimit,
+				"error", err.Error())
+		}
+	}
+
 	// Create a new detached tmux session with color support
 	createCmd := exec.Command("tmux",
 		"new-session",
@@ -333,8 +351,7 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
-	// Set up the tmux session for color support and large history
-	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "history-limit", "10000").Run()
+	// Set up additional tmux session options for color support
 	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run()
 	// Enable bell monitoring so we can detect and forward terminal bells
 	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
@@ -1188,8 +1205,9 @@ func (m *Manager) LifecycleConfig() lifecycle.InstanceConfig {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return lifecycle.InstanceConfig{
-		TmuxWidth:  m.config.TmuxWidth,
-		TmuxHeight: m.config.TmuxHeight,
+		TmuxWidth:        m.config.TmuxWidth,
+		TmuxHeight:       m.config.TmuxHeight,
+		TmuxHistoryLimit: m.config.TmuxHistoryLimit,
 	}
 }
 

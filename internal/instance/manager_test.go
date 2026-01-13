@@ -242,6 +242,10 @@ func TestDefaultManagerConfig(t *testing.T) {
 	if cfg.TmuxHeight <= 0 {
 		t.Errorf("TmuxHeight should be positive, got %d", cfg.TmuxHeight)
 	}
+
+	if cfg.TmuxHistoryLimit <= 0 {
+		t.Errorf("TmuxHistoryLimit should be positive, got %d", cfg.TmuxHistoryLimit)
+	}
 }
 
 func TestManager_DifferentialCaptureFieldsInitialized(t *testing.T) {
@@ -397,6 +401,7 @@ func TestManager_LifecycleConfig(t *testing.T) {
 		CaptureIntervalMs: 50,
 		TmuxWidth:         180,
 		TmuxHeight:        25,
+		TmuxHistoryLimit:  75000,
 	}
 	mgr := NewManagerWithConfig("test", "/tmp", "task", cfg)
 
@@ -406,5 +411,8 @@ func TestManager_LifecycleConfig(t *testing.T) {
 	}
 	if lcConfig.TmuxHeight != 25 {
 		t.Errorf("LifecycleConfig().TmuxHeight = %d, want %d", lcConfig.TmuxHeight, 25)
+	}
+	if lcConfig.TmuxHistoryLimit != 75000 {
+		t.Errorf("LifecycleConfig().TmuxHistoryLimit = %d, want %d", lcConfig.TmuxHistoryLimit, 75000)
 	}
 }

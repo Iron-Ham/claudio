@@ -142,6 +142,7 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  capture_interval_ms: %d\n", cfg.Instance.CaptureIntervalMs)
 	fmt.Printf("  tmux_width: %d\n", cfg.Instance.TmuxWidth)
 	fmt.Printf("  tmux_height: %d\n", cfg.Instance.TmuxHeight)
+	fmt.Printf("  tmux_history_limit: %d\n", cfg.Instance.TmuxHistoryLimit)
 
 	// PR settings
 	fmt.Println("pr:")

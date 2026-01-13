@@ -141,6 +141,13 @@ func (p *PRWorkflow) Start() error {
 	p.logDebug("cleaning up existing tmux session", "session_name", p.sessionName)
 	_ = exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
 
+	// Set history-limit BEFORE creating session so the new pane inherits it.
+	// tmux's history-limit only affects newly created panes, not existing ones.
+	// Use 50000 lines for generous scrollback in the PR workflow pane.
+	if err := exec.Command("tmux", "set-option", "-g", "history-limit", "50000").Run(); err != nil {
+		p.logDebug("failed to set global history-limit for tmux", "error", err.Error())
+	}
+
 	// Create a new detached tmux session
 	p.logDebug("creating tmux session",
 		"session_name", p.sessionName,
@@ -164,9 +171,8 @@ func (p *PRWorkflow) Start() error {
 		return fmt.Errorf("failed to create tmux session for PR workflow: %w", err)
 	}
 
-	// Set up tmux for color support
+	// Set up additional tmux session options for color support
 	p.logDebug("configuring tmux session options", "session_name", p.sessionName)
-	_ = exec.Command("tmux", "set-option", "-t", p.sessionName, "history-limit", "10000").Run()
 	_ = exec.Command("tmux", "set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run()
 
 	// Build and send the command

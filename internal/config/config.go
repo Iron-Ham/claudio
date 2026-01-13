@@ -57,6 +57,8 @@ type InstanceConfig struct {
 	TmuxWidth int `mapstructure:"tmux_width"`
 	// TmuxHeight is the height of the tmux pane
 	TmuxHeight int `mapstructure:"tmux_height"`
+	// TmuxHistoryLimit is the number of lines of scrollback to keep in tmux (default: 50000)
+	TmuxHistoryLimit int `mapstructure:"tmux_history_limit"`
 	// ActivityTimeoutMinutes is the number of minutes of no new output before marking as stuck (0 = disabled)
 	ActivityTimeoutMinutes int `mapstructure:"activity_timeout_minutes"`
 	// CompletionTimeoutMinutes is the maximum total runtime in minutes before marking as timeout (0 = disabled)
@@ -226,8 +228,9 @@ func Default() *Config {
 			CaptureIntervalMs:        100,
 			TmuxWidth:                200,
 			TmuxHeight:               50,
-			ActivityTimeoutMinutes:   30, // 30 minutes of no activity
-			CompletionTimeoutMinutes: 0,  // Disabled by default (no max runtime limit)
+			TmuxHistoryLimit:         50000, // 50k lines of scrollback
+			ActivityTimeoutMinutes:   30,    // 30 minutes of no activity
+			CompletionTimeoutMinutes: 0,     // Disabled by default (no max runtime limit)
 			StaleDetection:           true,
 		},
 		Branch: BranchConfig{
@@ -317,6 +320,7 @@ func SetDefaults() {
 	viper.SetDefault("instance.capture_interval_ms", defaults.Instance.CaptureIntervalMs)
 	viper.SetDefault("instance.tmux_width", defaults.Instance.TmuxWidth)
 	viper.SetDefault("instance.tmux_height", defaults.Instance.TmuxHeight)
+	viper.SetDefault("instance.tmux_history_limit", defaults.Instance.TmuxHistoryLimit)
 	viper.SetDefault("instance.activity_timeout_minutes", defaults.Instance.ActivityTimeoutMinutes)
 	viper.SetDefault("instance.completion_timeout_minutes", defaults.Instance.CompletionTimeoutMinutes)
 	viper.SetDefault("instance.stale_detection", defaults.Instance.StaleDetection)

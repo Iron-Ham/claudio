@@ -1180,6 +1180,7 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 		CaptureIntervalMs:        o.config.Instance.CaptureIntervalMs,
 		TmuxWidth:                width,
 		TmuxHeight:               height,
+		TmuxHistoryLimit:         o.config.Instance.TmuxHistoryLimit,
 		ActivityTimeoutMinutes:   o.config.Instance.ActivityTimeoutMinutes,
 		CompletionTimeoutMinutes: o.config.Instance.CompletionTimeoutMinutes,
 		StaleDetection:           o.config.Instance.StaleDetection,
