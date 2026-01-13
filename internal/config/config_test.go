@@ -28,6 +28,9 @@ func TestDefault(t *testing.T) {
 	if cfg.TUI.MaxOutputLines != 1000 {
 		t.Errorf("TUI.MaxOutputLines = %d, want 1000", cfg.TUI.MaxOutputLines)
 	}
+	if !cfg.TUI.VerboseCommandHelp {
+		t.Error("TUI.VerboseCommandHelp should be true by default")
+	}
 
 	// Verify default instance config
 	if cfg.Instance.OutputBufferSize != 100000 {
@@ -431,6 +434,32 @@ func TestPathsConfig_ResolveWorktreeDir(t *testing.T) {
 				t.Errorf("ResolveWorktreeDir(%q) = %q, want %q", tt.baseDir, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestTUIConfig_VerboseCommandHelp_ViperLoading(t *testing.T) {
+	// Test that verbose_command_help setting is properly loaded via viper
+	viper.Reset()
+	SetDefaults()
+
+	// After SetDefaults, tui.verbose_command_help should be true
+	verboseHelp := viper.GetBool("tui.verbose_command_help")
+	if !verboseHelp {
+		t.Error("viper.GetBool('tui.verbose_command_help') should be true by default")
+	}
+
+	// Test disabling via viper (simulates user preference for compact mode)
+	viper.Set("tui.verbose_command_help", false)
+	cfg := Get()
+	if cfg.TUI.VerboseCommandHelp {
+		t.Error("TUI.VerboseCommandHelp should be false after viper.Set(false)")
+	}
+
+	// Test re-enabling
+	viper.Set("tui.verbose_command_help", true)
+	cfg = Get()
+	if !cfg.TUI.VerboseCommandHelp {
+		t.Error("TUI.VerboseCommandHelp should be true after viper.Set(true)")
 	}
 }
 

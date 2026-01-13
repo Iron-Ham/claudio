@@ -54,6 +54,84 @@ func TestNew(t *testing.T) {
 	if len(h.commands) == 0 {
 		t.Error("expected commands to be registered")
 	}
+	if len(h.categories) == 0 {
+		t.Error("expected categories to be populated")
+	}
+}
+
+func TestCategories(t *testing.T) {
+	h := New()
+	categories := h.Categories()
+
+	if len(categories) == 0 {
+		t.Fatal("expected at least one category")
+	}
+
+	// Verify expected categories exist
+	expectedCategories := []string{
+		"Instance Control",
+		"Instance Management",
+		"View",
+		"Terminal",
+		"Utility",
+		"Session",
+	}
+
+	for _, expected := range expectedCategories {
+		found := false
+		for _, cat := range categories {
+			if cat.Name == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected category %q not found", expected)
+		}
+	}
+
+	// Verify each category has commands
+	for _, cat := range categories {
+		if len(cat.Commands) == 0 {
+			t.Errorf("category %q has no commands", cat.Name)
+		}
+
+		// Verify each command has required fields
+		for _, cmd := range cat.Commands {
+			if cmd.LongKey == "" {
+				t.Errorf("command in category %q has empty LongKey", cat.Name)
+			}
+			if cmd.Description == "" {
+				t.Errorf("command %q in category %q has empty Description", cmd.LongKey, cat.Name)
+			}
+			if cmd.Category == "" {
+				t.Errorf("command %q in category %q has empty Category", cmd.LongKey, cat.Name)
+			}
+		}
+	}
+}
+
+func TestCategoriesContainAllShortcuts(t *testing.T) {
+	h := New()
+	categories := h.Categories()
+
+	// Collect all short keys from categories
+	shortKeys := make(map[string]bool)
+	for _, cat := range categories {
+		for _, cmd := range cat.Commands {
+			if cmd.ShortKey != "" {
+				shortKeys[cmd.ShortKey] = true
+			}
+		}
+	}
+
+	// Verify key shortcuts are documented
+	expectedShortcuts := []string{"s", "x", "e", "p", "R", "a", "D", "C", "d", "m", "c", "f", "t", "r", "h", "q"}
+	for _, key := range expectedShortcuts {
+		if !shortKeys[key] {
+			t.Errorf("shortcut %q not found in categories", key)
+		}
+	}
 }
 
 func TestExecuteEmptyCommand(t *testing.T) {

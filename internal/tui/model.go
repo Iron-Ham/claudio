@@ -84,6 +84,7 @@ type Model struct {
 	ready           bool
 	quitting        bool
 	showHelp        bool
+	helpScroll      int  // Scroll offset for help panel
 	showConflicts   bool // When true, show detailed conflict view
 	addingTask      bool
 	taskInput       string

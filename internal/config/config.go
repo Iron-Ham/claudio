@@ -38,6 +38,8 @@ type TUIConfig struct {
 	AutoFocusOnInput bool `mapstructure:"auto_focus_on_input"`
 	// MaxOutputLines limits how many lines of output to display per instance
 	MaxOutputLines int `mapstructure:"max_output_lines"`
+	// VerboseCommandHelp shows full command descriptions in command mode instead of single letters
+	VerboseCommandHelp bool `mapstructure:"verbose_command_help"`
 }
 
 // SessionConfig controls session behavior
@@ -214,8 +216,9 @@ func Default() *Config {
 			DefaultAction: "prompt",
 		},
 		TUI: TUIConfig{
-			AutoFocusOnInput: true,
-			MaxOutputLines:   1000,
+			AutoFocusOnInput:   true,
+			MaxOutputLines:     1000,
+			VerboseCommandHelp: true,
 		},
 		Session: SessionConfig{},
 		Instance: InstanceConfig{
@@ -305,6 +308,7 @@ func SetDefaults() {
 	// TUI defaults
 	viper.SetDefault("tui.auto_focus_on_input", defaults.TUI.AutoFocusOnInput)
 	viper.SetDefault("tui.max_output_lines", defaults.TUI.MaxOutputLines)
+	viper.SetDefault("tui.verbose_command_help", defaults.TUI.VerboseCommandHelp)
 
 	// Session defaults (currently empty)
 

@@ -77,9 +77,28 @@ type Result struct {
 	TerminalDirMode   *int // 0 = invocation, 1 = worktree
 }
 
+// CommandInfo contains metadata about a command for help display.
+type CommandInfo struct {
+	// ShortKey is the single-letter shortcut (e.g., "s", "x")
+	ShortKey string
+	// LongKey is the full command name (e.g., "start", "stop")
+	LongKey string
+	// Description is a brief description of what the command does
+	Description string
+	// Category groups related commands together
+	Category string
+}
+
+// CommandCategory represents a group of related commands.
+type CommandCategory struct {
+	Name     string
+	Commands []CommandInfo
+}
+
 // Handler processes vim-style commands for the TUI.
 type Handler struct {
-	commands map[string]commandFunc
+	commands   map[string]commandFunc
+	categories []CommandCategory
 }
 
 // commandFunc is the signature for command implementations.
@@ -92,7 +111,13 @@ func New() *Handler {
 		commands: make(map[string]commandFunc),
 	}
 	h.registerCommands()
+	h.buildCategories()
 	return h
+}
+
+// Categories returns the command categories for help display.
+func (h *Handler) Categories() []CommandCategory {
+	return h.categories
 }
 
 // Execute parses and executes a command string.
@@ -176,6 +201,63 @@ func (h *Handler) registerCommands() {
 	h.commands["help"] = cmdHelp
 	h.commands["q"] = cmdQuit
 	h.commands["quit"] = cmdQuit
+}
+
+// buildCategories populates the categories slice with command metadata for help display.
+func (h *Handler) buildCategories() {
+	h.categories = []CommandCategory{
+		{
+			Name: "Instance Control",
+			Commands: []CommandInfo{
+				{ShortKey: "s", LongKey: "start", Description: "Start a stopped/new instance", Category: "control"},
+				{ShortKey: "x", LongKey: "stop", Description: "Stop instance and trigger auto-PR workflow", Category: "control"},
+				{ShortKey: "e", LongKey: "exit", Description: "Stop instance without auto-PR", Category: "control"},
+				{ShortKey: "p", LongKey: "pause", Description: "Pause/resume a running instance", Category: "control"},
+				{ShortKey: "R", LongKey: "reconnect", Description: "Reattach to a stopped instance's tmux session", Category: "control"},
+				{ShortKey: "", LongKey: "restart", Description: "Restart a stuck or timed-out instance", Category: "control"},
+			},
+		},
+		{
+			Name: "Instance Management",
+			Commands: []CommandInfo{
+				{ShortKey: "a", LongKey: "add", Description: "Create and add a new instance", Category: "management"},
+				{ShortKey: "", LongKey: "chain", Description: "Add task that auto-starts after selected instance", Category: "management"},
+				{ShortKey: "D", LongKey: "remove", Description: "Remove instance from session", Category: "management"},
+				{ShortKey: "", LongKey: "kill", Description: "Force kill instance process and remove from session", Category: "management"},
+				{ShortKey: "C", LongKey: "clear", Description: "Remove all completed instances", Category: "management"},
+			},
+		},
+		{
+			Name: "View",
+			Commands: []CommandInfo{
+				{ShortKey: "d", LongKey: "diff", Description: "Toggle diff preview panel", Category: "view"},
+				{ShortKey: "m", LongKey: "stats", Description: "Toggle metrics panel", Category: "view"},
+				{ShortKey: "c", LongKey: "conflicts", Description: "Toggle conflict view", Category: "view"},
+				{ShortKey: "f", LongKey: "filter", Description: "Open filter panel", Category: "view"},
+			},
+		},
+		{
+			Name: "Terminal",
+			Commands: []CommandInfo{
+				{ShortKey: "t", LongKey: "term", Description: "Focus/toggle terminal pane", Category: "terminal"},
+				{ShortKey: "", LongKey: "tmux", Description: "Show tmux attach command", Category: "terminal"},
+			},
+		},
+		{
+			Name: "Utility",
+			Commands: []CommandInfo{
+				{ShortKey: "r", LongKey: "pr", Description: "Show PR creation command", Category: "utility"},
+				{ShortKey: "", LongKey: "cancel", Description: "Cancel ultra-plan execution", Category: "utility"},
+			},
+		},
+		{
+			Name: "Session",
+			Commands: []CommandInfo{
+				{ShortKey: "h", LongKey: "help", Description: "Toggle help panel", Category: "session"},
+				{ShortKey: "q", LongKey: "quit", Description: "Quit Claudio", Category: "session"},
+			},
+		},
+	}
 }
 
 // Command implementations

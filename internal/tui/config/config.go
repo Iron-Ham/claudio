@@ -84,6 +84,13 @@ func New() Model {
 					Type:        "int",
 					Category:    "tui",
 				},
+				{
+					Key:         "tui.verbose_command_help",
+					Label:       "Verbose Command Help",
+					Description: "Show full command descriptions in command mode (disable for compact view)",
+					Type:        "bool",
+					Category:    "tui",
+				},
 			},
 		},
 		{
@@ -731,8 +738,9 @@ func (m *Model) resetCurrentToDefault() {
 		// Completion
 		"completion.default_action": defaults.Completion.DefaultAction,
 		// TUI
-		"tui.auto_focus_on_input": defaults.TUI.AutoFocusOnInput,
-		"tui.max_output_lines":    defaults.TUI.MaxOutputLines,
+		"tui.auto_focus_on_input":  defaults.TUI.AutoFocusOnInput,
+		"tui.max_output_lines":     defaults.TUI.MaxOutputLines,
+		"tui.verbose_command_help": defaults.TUI.VerboseCommandHelp,
 		// Instance
 		"instance.output_buffer_size":         defaults.Instance.OutputBufferSize,
 		"instance.capture_interval_ms":        defaults.Instance.CaptureIntervalMs,
