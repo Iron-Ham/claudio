@@ -2183,6 +2183,84 @@ func (c *Coordinator) GetConsolidation() *ConsolidationState {
 	return session.Consolidation
 }
 
+// ResumeConsolidation resumes consolidation after a conflict has been resolved.
+// The user must first resolve the conflict manually in the conflict worktree,
+// then call this method to continue the cherry-pick and restart consolidation.
+// Note: This restarts the consolidation instance from scratch, replaying any
+// already-completed group merges (which will be no-ops since commits exist).
+func (c *Coordinator) ResumeConsolidation() error {
+	session := c.Session()
+	if session == nil {
+		return fmt.Errorf("no session")
+	}
+
+	if session.Consolidation == nil {
+		return fmt.Errorf("no consolidation in progress")
+	}
+
+	if session.Consolidation.Phase != ConsolidationPaused {
+		return fmt.Errorf("consolidation is not paused (current phase: %s)", session.Consolidation.Phase)
+	}
+
+	conflictWorktree := session.Consolidation.ConflictWorktree
+	if conflictWorktree == "" {
+		return fmt.Errorf("no conflict worktree recorded")
+	}
+
+	// Log the resume attempt
+	c.logger.Info("resuming consolidation",
+		"conflict_worktree", conflictWorktree,
+		"conflict_task_id", session.Consolidation.ConflictTaskID,
+		"conflict_files", session.Consolidation.ConflictFiles,
+	)
+
+	// Check if there are still unresolved conflicts
+	conflictFiles, err := c.orch.wt.GetConflictingFiles(conflictWorktree)
+	if err != nil {
+		return fmt.Errorf("failed to check for conflicts in worktree %s: %w", conflictWorktree, err)
+	}
+	if len(conflictFiles) > 0 {
+		return fmt.Errorf("unresolved conflicts remain in %d file(s): %v", len(conflictFiles), conflictFiles)
+	}
+
+	// Continue the cherry-pick if one is in progress
+	if c.orch.wt.IsCherryPickInProgress(conflictWorktree) {
+		if err := c.orch.wt.ContinueCherryPick(conflictWorktree); err != nil {
+			return fmt.Errorf("failed to continue cherry-pick: %w", err)
+		}
+		c.logger.Info("continued cherry-pick operation", "worktree", conflictWorktree)
+	} else {
+		// No cherry-pick in progress - user may have resolved via abort/skip
+		c.logger.Info("no cherry-pick in progress, assuming conflict was resolved via abort or skip",
+			"worktree", conflictWorktree,
+		)
+	}
+
+	// Clear the conflict state
+	c.mu.Lock()
+	session.Consolidation.ConflictFiles = nil
+	session.Consolidation.ConflictTaskID = ""
+	session.Consolidation.ConflictWorktree = ""
+	session.ConsolidationID = ""
+	c.mu.Unlock()
+
+	// Save session state before restarting
+	if err := c.orch.SaveSession(); err != nil {
+		return fmt.Errorf("failed to save session state: %w", err)
+	}
+
+	// Restart consolidation from scratch
+	// The consolidation instance will replay all groups, but already-merged
+	// commits will be detected and skipped
+	c.logger.Info("restarting consolidation instance after conflict resolution")
+
+	if err := c.StartConsolidation(); err != nil {
+		return fmt.Errorf("failed to restart consolidation: %w", err)
+	}
+
+	return nil
+}
+
 // buildSynthesisPrompt creates the prompt for the synthesis phase
 func (c *Coordinator) buildSynthesisPrompt() string {
 	session := c.Session()

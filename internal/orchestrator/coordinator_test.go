@@ -1168,3 +1168,220 @@ func TestRestartStep_UnknownType(t *testing.T) {
 		t.Errorf("error = %q, want %q", err.Error(), expected)
 	}
 }
+
+// TestResumeConsolidation_NoSession tests ResumeConsolidation with nil session
+func TestResumeConsolidation_NoSession(t *testing.T) {
+	manager := &UltraPlanManager{session: nil}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	err := coord.ResumeConsolidation()
+	if err == nil {
+		t.Error("ResumeConsolidation with nil session should return an error")
+	}
+	if err.Error() != "no session" {
+		t.Errorf("error = %q, want %q", err.Error(), "no session")
+	}
+}
+
+// TestResumeConsolidation_NoConsolidation tests ResumeConsolidation when consolidation is nil
+func TestResumeConsolidation_NoConsolidation(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.Consolidation = nil
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	err := coord.ResumeConsolidation()
+	if err == nil {
+		t.Error("ResumeConsolidation without consolidation should return an error")
+	}
+	if err.Error() != "no consolidation in progress" {
+		t.Errorf("error = %q, want %q", err.Error(), "no consolidation in progress")
+	}
+}
+
+// TestResumeConsolidation_NotPaused tests ResumeConsolidation when not in paused state
+func TestResumeConsolidation_NotPaused(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.Consolidation = &ConsolidationState{
+		Phase: ConsolidationMergingTasks, // Not paused
+	}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	err := coord.ResumeConsolidation()
+	if err == nil {
+		t.Error("ResumeConsolidation when not paused should return an error")
+	}
+	if !strings.Contains(err.Error(), "consolidation is not paused") {
+		t.Errorf("error = %q, should contain %q", err.Error(), "consolidation is not paused")
+	}
+}
+
+// TestResumeConsolidation_NoConflictWorktree tests ResumeConsolidation with no conflict worktree
+func TestResumeConsolidation_NoConflictWorktree(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.Consolidation = &ConsolidationState{
+		Phase:            ConsolidationPaused,
+		ConflictWorktree: "", // Empty worktree path
+	}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	err := coord.ResumeConsolidation()
+	if err == nil {
+		t.Error("ResumeConsolidation with no conflict worktree should return an error")
+	}
+	if err.Error() != "no conflict worktree recorded" {
+		t.Errorf("error = %q, want %q", err.Error(), "no conflict worktree recorded")
+	}
+}
+
+// TestResumeConsolidation_ValidationStates tests various consolidation phase states
+func TestResumeConsolidation_ValidationStates(t *testing.T) {
+	tests := []struct {
+		name       string
+		phase      ConsolidationPhase
+		worktree   string
+		wantErr    bool
+		errContain string
+	}{
+		{
+			name:       "creating branches phase",
+			phase:      ConsolidationCreatingBranches,
+			worktree:   "/tmp/worktree",
+			wantErr:    true,
+			errContain: "consolidation is not paused",
+		},
+		{
+			name:       "pushing phase",
+			phase:      ConsolidationPushing,
+			worktree:   "/tmp/worktree",
+			wantErr:    true,
+			errContain: "consolidation is not paused",
+		},
+		{
+			name:       "complete phase",
+			phase:      ConsolidationComplete,
+			worktree:   "/tmp/worktree",
+			wantErr:    true,
+			errContain: "consolidation is not paused",
+		},
+		{
+			name:       "failed phase",
+			phase:      ConsolidationFailed,
+			worktree:   "/tmp/worktree",
+			wantErr:    true,
+			errContain: "consolidation is not paused",
+		},
+		{
+			name:     "paused with empty worktree",
+			phase:    ConsolidationPaused,
+			worktree: "",
+			wantErr:  true,
+			// This will fail with "no conflict worktree recorded"
+			errContain: "no conflict worktree recorded",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+			session.Consolidation = &ConsolidationState{
+				Phase:            tt.phase,
+				ConflictWorktree: tt.worktree,
+			}
+
+			manager := &UltraPlanManager{session: session}
+			coord := &Coordinator{
+				manager: manager,
+				// Note: We don't set logger/orch here because these tests should
+				// fail before reaching the code that uses them
+			}
+
+			err := coord.ResumeConsolidation()
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error but got nil")
+					return
+				}
+				if !strings.Contains(err.Error(), tt.errContain) {
+					t.Errorf("error = %q, should contain %q", err.Error(), tt.errContain)
+				}
+			} else if err != nil {
+				// For the success case, we can't fully test without mocking the orchestrator
+				// but we can verify the state changes would be made
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestConsolidationState_HasConflict tests the HasConflict method
+func TestConsolidationState_HasConflict(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    ConsolidationState
+		expected bool
+	}{
+		{
+			name: "paused with conflict files",
+			state: ConsolidationState{
+				Phase:         ConsolidationPaused,
+				ConflictFiles: []string{"file1.go", "file2.go"},
+			},
+			expected: true,
+		},
+		{
+			name: "paused without conflict files",
+			state: ConsolidationState{
+				Phase:         ConsolidationPaused,
+				ConflictFiles: []string{},
+			},
+			expected: false,
+		},
+		{
+			name: "paused with nil conflict files",
+			state: ConsolidationState{
+				Phase:         ConsolidationPaused,
+				ConflictFiles: nil,
+			},
+			expected: false,
+		},
+		{
+			name: "not paused with conflict files",
+			state: ConsolidationState{
+				Phase:         ConsolidationMergingTasks,
+				ConflictFiles: []string{"file1.go"},
+			},
+			expected: false,
+		},
+		{
+			name: "complete phase",
+			state: ConsolidationState{
+				Phase: ConsolidationComplete,
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.state.HasConflict()
+			if result != tt.expected {
+				t.Errorf("HasConflict() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}

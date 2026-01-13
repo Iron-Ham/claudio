@@ -54,6 +54,11 @@ type ConsolidationState struct {
 	CompletedAt      *time.Time         `json:"completed_at,omitempty"`
 }
 
+// HasConflict returns true if consolidation is paused due to a conflict.
+func (s *ConsolidationState) HasConflict() bool {
+	return s.Phase == ConsolidationPaused && len(s.ConflictFiles) > 0
+}
+
 // GroupConsolidationResult holds the result of consolidating one group
 type GroupConsolidationResult struct {
 	GroupIndex   int      `json:"group_index"`
