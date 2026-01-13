@@ -327,15 +327,7 @@ func (o *Orchestrator) LoadSession() (*Session, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	// Determine session file path based on mode
-	var sessionFile string
-	if o.sessionDir != "" {
-		sessionFile = filepath.Join(o.sessionDir, "session.json")
-	} else {
-		// Legacy single-session mode
-		sessionFile = filepath.Join(o.claudioDir, "session.json")
-	}
-
+	sessionFile := o.sessionFilePath()
 	data, err := os.ReadFile(sessionFile)
 	if err != nil {
 		if o.logger != nil {
@@ -1131,12 +1123,7 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 	}
 
 	// Remove session file
-	var sessionFile string
-	if o.sessionDir != "" {
-		sessionFile = filepath.Join(o.sessionDir, "session.json")
-	} else {
-		sessionFile = filepath.Join(o.claudioDir, "session.json")
-	}
+	sessionFile := o.sessionFilePath()
 	if err := os.Remove(sessionFile); err != nil && !os.IsNotExist(err) {
 		if o.logger != nil {
 			o.logger.Warn("failed to remove session file",
@@ -1355,15 +1342,7 @@ func (o *Orchestrator) saveSession() error {
 		return nil
 	}
 
-	// Determine session file path based on mode
-	var sessionFile string
-	if o.sessionDir != "" {
-		sessionFile = filepath.Join(o.sessionDir, "session.json")
-	} else {
-		// Legacy single-session mode
-		sessionFile = filepath.Join(o.claudioDir, "session.json")
-	}
-
+	sessionFile := o.sessionFilePath()
 	data, err := json.MarshalIndent(o.session, "", "  ")
 	if err != nil {
 		if o.logger != nil {
@@ -1391,6 +1370,15 @@ func (o *Orchestrator) saveSession() error {
 // like the Coordinator that need to trigger session persistence
 func (o *Orchestrator) SaveSession() error {
 	return o.saveSession()
+}
+
+// sessionFilePath returns the path to the session.json file.
+// Handles both multi-session mode (sessionDir) and legacy single-session mode (claudioDir).
+func (o *Orchestrator) sessionFilePath() string {
+	if o.sessionDir != "" {
+		return filepath.Join(o.sessionDir, "session.json")
+	}
+	return filepath.Join(o.claudioDir, "session.json")
 }
 
 // updateContext updates the shared context file in all worktrees
