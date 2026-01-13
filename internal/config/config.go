@@ -191,6 +191,18 @@ type ExperimentalConfig struct {
 	// working on the same problem, then uses a judge instance to evaluate and select
 	// the best solution. (default: false)
 	TripleShot bool `mapstructure:"triple_shot"`
+
+	// InlinePlan enables the :plan command in the standard TUI, allowing users
+	// to start Plan workflows directly from the main Claudio interface. (default: false)
+	InlinePlan bool `mapstructure:"inline_plan"`
+
+	// InlineUltraPlan enables the :ultraplan command in the standard TUI, allowing users
+	// to start UltraPlan workflows directly from the main Claudio interface. (default: false)
+	InlineUltraPlan bool `mapstructure:"inline_ultraplan"`
+
+	// GroupedInstanceView enables visual grouping of instances by execution group
+	// in the TUI sidebar, organizing related tasks together. (default: false)
+	GroupedInstanceView bool `mapstructure:"grouped_instance_view"`
 }
 
 // ResolveWorktreeDir returns the resolved worktree directory path.
@@ -298,8 +310,11 @@ func Default() *Config {
 			WorktreeDir: "", // Empty means use default: .claudio/worktrees
 		},
 		Experimental: ExperimentalConfig{
-			IntelligentNaming: false, // Disabled by default until stable
-			TripleShot:        false, // Disabled by default until stable
+			IntelligentNaming:   false, // Disabled by default until stable
+			TripleShot:          false, // Disabled by default until stable
+			InlinePlan:          false, // Disabled by default until stable
+			InlineUltraPlan:     false, // Disabled by default until stable
+			GroupedInstanceView: false, // Disabled by default until stable
 		},
 	}
 }
@@ -392,6 +407,9 @@ func SetDefaults() {
 	// Experimental defaults
 	viper.SetDefault("experimental.intelligent_naming", defaults.Experimental.IntelligentNaming)
 	viper.SetDefault("experimental.triple_shot", defaults.Experimental.TripleShot)
+	viper.SetDefault("experimental.inline_plan", defaults.Experimental.InlinePlan)
+	viper.SetDefault("experimental.inline_ultraplan", defaults.Experimental.InlineUltraPlan)
+	viper.SetDefault("experimental.grouped_instance_view", defaults.Experimental.GroupedInstanceView)
 }
 
 // Load reads the configuration from viper into a Config struct and validates it
