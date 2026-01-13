@@ -4,7 +4,10 @@
 package prworkflow
 
 import (
+	"fmt"
 	"maps"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/Iron-Ham/claudio/internal/config"
@@ -255,4 +258,463 @@ func (m *Manager) IDs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// GroupPRMode specifies how PRs should be created for groups.
+type GroupPRMode int
+
+const (
+	// GroupPRModeStacked creates one PR per group with stacked dependencies.
+	// Each group's PR is based on the previous group's branch.
+	GroupPRModeStacked GroupPRMode = iota
+
+	// GroupPRModeConsolidated creates a single PR containing all groups' changes.
+	GroupPRModeConsolidated
+
+	// GroupPRModeSingle creates a PR for a single group only.
+	GroupPRModeSingle
+)
+
+// String returns a human-readable string for the GroupPRMode.
+func (m GroupPRMode) String() string {
+	switch m {
+	case GroupPRModeStacked:
+		return "stacked"
+	case GroupPRModeConsolidated:
+		return "consolidated"
+	case GroupPRModeSingle:
+		return "single"
+	default:
+		return "unknown"
+	}
+}
+
+// GroupInfo represents group information for PR workflows.
+// This interface decouples group PR operations from the orchestrator's InstanceGroup type.
+type GroupInfo interface {
+	GetID() string
+	GetName() string
+	GetInstanceIDs() []string
+	GetExecutionOrder() int
+	GetDependsOn() []string
+}
+
+// GroupPROptions configures group-based PR creation.
+type GroupPROptions struct {
+	// Mode specifies how PRs should be created (stacked, consolidated, or single).
+	Mode GroupPRMode
+
+	// GroupID is the target group ID (for GroupPRModeSingle).
+	GroupID string
+
+	// Groups contains all groups to process (for stacked/consolidated modes).
+	Groups []GroupInfo
+
+	// Instances maps instance IDs to their information.
+	// Required for looking up instance details when building PRs.
+	Instances map[string]InstanceInfo
+
+	// SessionName is a human-readable session name for PR descriptions.
+	SessionName string
+
+	// BaseBranch is the base branch for the first PR or consolidated PR.
+	// Defaults to "main" if not specified.
+	BaseBranch string
+
+	// IncludeGroupStructure adds group relationship information to PR descriptions.
+	IncludeGroupStructure bool
+
+	// AutoLinkRelatedPRs adds links to related PRs from the same session.
+	AutoLinkRelatedPRs bool
+}
+
+// GroupPRResult contains the result of a group PR operation.
+type GroupPRResult struct {
+	// GroupID is the ID of the group this result is for.
+	GroupID string
+
+	// GroupName is the name of the group.
+	GroupName string
+
+	// InstanceIDs lists the instances included in this PR.
+	InstanceIDs []string
+
+	// PRDescription is the generated PR description.
+	PRDescription string
+
+	// PRTitle is the generated PR title.
+	PRTitle string
+
+	// BaseBranch is the base branch for this PR.
+	BaseBranch string
+
+	// HeadBranch is the head branch for this PR.
+	HeadBranch string
+}
+
+// GroupPRSession tracks an active group PR workflow.
+type GroupPRSession struct {
+	// ID uniquely identifies this group PR session.
+	ID string
+
+	// Mode is the PR creation mode.
+	Mode GroupPRMode
+
+	// Groups contains group information in execution order.
+	Groups []GroupInfo
+
+	// Results contains results for each processed group.
+	Results []*GroupPRResult
+
+	// CreatedPRURLs maps group IDs to their created PR URLs.
+	CreatedPRURLs map[string]string
+
+	// FailedGroups contains group IDs that failed PR creation.
+	FailedGroups []string
+
+	// PendingGroups contains group IDs awaiting PR creation.
+	PendingGroups []string
+
+	// CurrentGroupIndex is the index of the currently processing group.
+	CurrentGroupIndex int
+}
+
+// GenerateGroupPRDescription creates a PR description for a group.
+// This includes task relationships, group structure, and links to related PRs.
+func GenerateGroupPRDescription(opts GroupPROptions, group GroupInfo, relatedPRURLs map[string]string) string {
+	var sb strings.Builder
+
+	// Header
+	sb.WriteString("## Summary\n\n")
+
+	// Group info
+	sb.WriteString(fmt.Sprintf("**Group:** %s\n", group.GetName()))
+	if opts.SessionName != "" {
+		sb.WriteString(fmt.Sprintf("**Session:** %s\n", opts.SessionName))
+	}
+	sb.WriteString("\n")
+
+	// Tasks in this group
+	instanceIDs := group.GetInstanceIDs()
+	if len(instanceIDs) > 0 {
+		sb.WriteString("### Tasks in this PR\n\n")
+		for _, instID := range instanceIDs {
+			if inst, ok := opts.Instances[instID]; ok {
+				task := inst.GetTask()
+				if task != "" {
+					sb.WriteString(fmt.Sprintf("- %s\n", task))
+				} else {
+					sb.WriteString(fmt.Sprintf("- Instance %s\n", instID))
+				}
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	// Group structure and dependencies
+	if opts.IncludeGroupStructure && len(opts.Groups) > 1 {
+		sb.WriteString("### Group Structure\n\n")
+
+		// Show execution order
+		orderedGroups := make([]GroupInfo, len(opts.Groups))
+		copy(orderedGroups, opts.Groups)
+		sort.Slice(orderedGroups, func(i, j int) bool {
+			return orderedGroups[i].GetExecutionOrder() < orderedGroups[j].GetExecutionOrder()
+		})
+
+		for i, g := range orderedGroups {
+			marker := " "
+			if g.GetID() == group.GetID() {
+				marker = "→"
+			}
+			sb.WriteString(fmt.Sprintf("%s %d. %s", marker, i+1, g.GetName()))
+
+			// Show dependency info
+			deps := g.GetDependsOn()
+			if len(deps) > 0 {
+				depNames := make([]string, 0, len(deps))
+				for _, depID := range deps {
+					for _, og := range opts.Groups {
+						if og.GetID() == depID {
+							depNames = append(depNames, og.GetName())
+							break
+						}
+					}
+				}
+				if len(depNames) > 0 {
+					sb.WriteString(fmt.Sprintf(" (depends on: %s)", strings.Join(depNames, ", ")))
+				}
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	// Related PRs from the same session
+	if opts.AutoLinkRelatedPRs && len(relatedPRURLs) > 0 {
+		sb.WriteString("### Related PRs\n\n")
+
+		// Sort by group for consistent ordering
+		var relatedGroupIDs []string
+		for gid := range relatedPRURLs {
+			if gid != group.GetID() {
+				relatedGroupIDs = append(relatedGroupIDs, gid)
+			}
+		}
+		sort.Strings(relatedGroupIDs)
+
+		for _, gid := range relatedGroupIDs {
+			url := relatedPRURLs[gid]
+			// Find group name
+			groupName := gid
+			for _, g := range opts.Groups {
+				if g.GetID() == gid {
+					groupName = g.GetName()
+					break
+				}
+			}
+			sb.WriteString(fmt.Sprintf("- [%s](%s)\n", groupName, url))
+		}
+		sb.WriteString("\n")
+	}
+
+	// Test plan placeholder
+	sb.WriteString("## Test Plan\n\n")
+	sb.WriteString("- [ ] Verify changes work as expected\n")
+	sb.WriteString("- [ ] Run existing tests\n")
+
+	return sb.String()
+}
+
+// GenerateGroupPRTitle creates a PR title for a group.
+func GenerateGroupPRTitle(group GroupInfo, mode GroupPRMode, totalGroups int) string {
+	switch mode {
+	case GroupPRModeConsolidated:
+		return fmt.Sprintf("%s (consolidated from %d groups)", group.GetName(), totalGroups)
+	case GroupPRModeStacked:
+		return fmt.Sprintf("[%d/%d] %s", group.GetExecutionOrder()+1, totalGroups, group.GetName())
+	default:
+		return group.GetName()
+	}
+}
+
+// GenerateConsolidatedPRDescription creates a PR description for a consolidated PR.
+func GenerateConsolidatedPRDescription(opts GroupPROptions) string {
+	var sb strings.Builder
+
+	sb.WriteString("## Summary\n\n")
+	sb.WriteString(fmt.Sprintf("This PR consolidates changes from %d groups.\n\n", len(opts.Groups)))
+
+	if opts.SessionName != "" {
+		sb.WriteString(fmt.Sprintf("**Session:** %s\n\n", opts.SessionName))
+	}
+
+	// Order groups by execution order
+	orderedGroups := make([]GroupInfo, len(opts.Groups))
+	copy(orderedGroups, opts.Groups)
+	sort.Slice(orderedGroups, func(i, j int) bool {
+		return orderedGroups[i].GetExecutionOrder() < orderedGroups[j].GetExecutionOrder()
+	})
+
+	// List each group and its tasks
+	for i, group := range orderedGroups {
+		sb.WriteString(fmt.Sprintf("### %d. %s\n\n", i+1, group.GetName()))
+
+		instanceIDs := group.GetInstanceIDs()
+		if len(instanceIDs) > 0 {
+			for _, instID := range instanceIDs {
+				if inst, ok := opts.Instances[instID]; ok {
+					task := inst.GetTask()
+					if task != "" {
+						sb.WriteString(fmt.Sprintf("- %s\n", task))
+					}
+				}
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	// Test plan
+	sb.WriteString("## Test Plan\n\n")
+	sb.WriteString("- [ ] Verify all group changes work together\n")
+	sb.WriteString("- [ ] Run integration tests\n")
+
+	return sb.String()
+}
+
+// GenerateConsolidatedPRTitle creates a title for a consolidated PR.
+func GenerateConsolidatedPRTitle(opts GroupPROptions) string {
+	if len(opts.Groups) == 0 {
+		return "Consolidated changes"
+	}
+
+	// Use first group's name or session name
+	if opts.SessionName != "" {
+		return fmt.Sprintf("%s (consolidated)", opts.SessionName)
+	}
+
+	if len(opts.Groups) == 1 {
+		return opts.Groups[0].GetName()
+	}
+
+	return fmt.Sprintf("Consolidated: %s + %d more", opts.Groups[0].GetName(), len(opts.Groups)-1)
+}
+
+// PrepareGroupPR prepares PR metadata for a single group without starting the workflow.
+// This is useful for previewing or customizing PR details before creation.
+func (m *Manager) PrepareGroupPR(opts GroupPROptions, group GroupInfo, relatedPRURLs map[string]string) *GroupPRResult {
+	baseBranch := opts.BaseBranch
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+
+	// For stacked PRs, determine base branch from previous group
+	if opts.Mode == GroupPRModeStacked && len(opts.Groups) > 1 {
+		// Find previous group in execution order
+		orderedGroups := make([]GroupInfo, len(opts.Groups))
+		copy(orderedGroups, opts.Groups)
+		sort.Slice(orderedGroups, func(i, j int) bool {
+			return orderedGroups[i].GetExecutionOrder() < orderedGroups[j].GetExecutionOrder()
+		})
+
+		for i, g := range orderedGroups {
+			if g.GetID() == group.GetID() && i > 0 {
+				// Use previous group's branch as base
+				prevGroup := orderedGroups[i-1]
+				// The branch name would typically be derived from the instance
+				// For now, we'll use a placeholder that callers can override
+				if len(prevGroup.GetInstanceIDs()) > 0 {
+					if inst, ok := opts.Instances[prevGroup.GetInstanceIDs()[0]]; ok {
+						baseBranch = inst.GetBranch()
+					}
+				}
+				break
+			}
+		}
+	}
+
+	// Determine head branch from first instance in this group
+	headBranch := ""
+	instanceIDs := group.GetInstanceIDs()
+	if len(instanceIDs) > 0 {
+		if inst, ok := opts.Instances[instanceIDs[0]]; ok {
+			headBranch = inst.GetBranch()
+		}
+	}
+
+	return &GroupPRResult{
+		GroupID:       group.GetID(),
+		GroupName:     group.GetName(),
+		InstanceIDs:   instanceIDs,
+		PRDescription: GenerateGroupPRDescription(opts, group, relatedPRURLs),
+		PRTitle:       GenerateGroupPRTitle(group, opts.Mode, len(opts.Groups)),
+		BaseBranch:    baseBranch,
+		HeadBranch:    headBranch,
+	}
+}
+
+// PrepareConsolidatedPR prepares PR metadata for a consolidated PR.
+func (m *Manager) PrepareConsolidatedPR(opts GroupPROptions) *GroupPRResult {
+	baseBranch := opts.BaseBranch
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+
+	// Collect all instance IDs from all groups
+	var allInstanceIDs []string
+	var headBranch string
+
+	// Order groups by execution order
+	orderedGroups := make([]GroupInfo, len(opts.Groups))
+	copy(orderedGroups, opts.Groups)
+	sort.Slice(orderedGroups, func(i, j int) bool {
+		return orderedGroups[i].GetExecutionOrder() < orderedGroups[j].GetExecutionOrder()
+	})
+
+	for _, group := range orderedGroups {
+		allInstanceIDs = append(allInstanceIDs, group.GetInstanceIDs()...)
+	}
+
+	// Use the last group's branch as head (contains all merged changes)
+	if len(orderedGroups) > 0 {
+		lastGroup := orderedGroups[len(orderedGroups)-1]
+		instanceIDs := lastGroup.GetInstanceIDs()
+		if len(instanceIDs) > 0 {
+			if inst, ok := opts.Instances[instanceIDs[0]]; ok {
+				headBranch = inst.GetBranch()
+			}
+		}
+	}
+
+	return &GroupPRResult{
+		GroupID:       "consolidated",
+		GroupName:     "Consolidated",
+		InstanceIDs:   allInstanceIDs,
+		PRDescription: GenerateConsolidatedPRDescription(opts),
+		PRTitle:       GenerateConsolidatedPRTitle(opts),
+		BaseBranch:    baseBranch,
+		HeadBranch:    headBranch,
+	}
+}
+
+// NewGroupPRSession creates a new tracking session for group PR workflows.
+func NewGroupPRSession(id string, opts GroupPROptions) *GroupPRSession {
+	session := &GroupPRSession{
+		ID:            id,
+		Mode:          opts.Mode,
+		Groups:        opts.Groups,
+		Results:       make([]*GroupPRResult, 0),
+		CreatedPRURLs: make(map[string]string),
+		FailedGroups:  make([]string, 0),
+		PendingGroups: make([]string, 0, len(opts.Groups)),
+	}
+
+	// Initialize pending groups
+	for _, g := range opts.Groups {
+		session.PendingGroups = append(session.PendingGroups, g.GetID())
+	}
+
+	return session
+}
+
+// RecordPRCreated records a successfully created PR for a group.
+func (s *GroupPRSession) RecordPRCreated(groupID, prURL string, result *GroupPRResult) {
+	s.CreatedPRURLs[groupID] = prURL
+	s.Results = append(s.Results, result)
+
+	// Remove from pending
+	for i, id := range s.PendingGroups {
+		if id == groupID {
+			s.PendingGroups = append(s.PendingGroups[:i], s.PendingGroups[i+1:]...)
+			break
+		}
+	}
+}
+
+// RecordPRFailed records a failed PR creation for a group.
+func (s *GroupPRSession) RecordPRFailed(groupID string) {
+	s.FailedGroups = append(s.FailedGroups, groupID)
+
+	// Remove from pending
+	for i, id := range s.PendingGroups {
+		if id == groupID {
+			s.PendingGroups = append(s.PendingGroups[:i], s.PendingGroups[i+1:]...)
+			break
+		}
+	}
+}
+
+// IsComplete returns true if all groups have been processed.
+func (s *GroupPRSession) IsComplete() bool {
+	return len(s.PendingGroups) == 0
+}
+
+// SuccessCount returns the number of successfully created PRs.
+func (s *GroupPRSession) SuccessCount() int {
+	return len(s.CreatedPRURLs)
+}
+
+// FailureCount returns the number of failed PR creations.
+func (s *GroupPRSession) FailureCount() int {
+	return len(s.FailedGroups)
 }
