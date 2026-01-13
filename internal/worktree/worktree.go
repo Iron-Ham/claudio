@@ -441,6 +441,68 @@ func (m *Manager) FindMainBranch() string {
 	return m.findMainBranch()
 }
 
+// BranchInfo contains information about a git branch
+type BranchInfo struct {
+	Name      string // Branch name (without refs/heads/ prefix)
+	IsCurrent bool   // Whether this is the currently checked out branch
+	IsMain    bool   // Whether this is the main/master branch
+}
+
+// ListBranches returns all local branches in the repository, sorted with main/master first
+func (m *Manager) ListBranches() ([]BranchInfo, error) {
+	// Use git branch to list all local branches
+	// --format gives us control over output: %(refname:short) for name, %(HEAD) for current indicator
+	cmd := exec.Command("git", "branch", "--format=%(HEAD)|%(refname:short)")
+	cmd.Dir = m.repoDir
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list branches: %w", err)
+	}
+
+	mainBranch := m.findMainBranch()
+	var branches []BranchInfo
+	var mainBranchInfo *BranchInfo
+
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+
+		parts := strings.SplitN(line, "|", 2)
+		if len(parts) != 2 {
+			// Skip malformed lines - this shouldn't happen with git's --format output,
+			// but we gracefully skip rather than fail the entire operation
+			continue
+		}
+
+		isCurrent := strings.TrimSpace(parts[0]) == "*"
+		name := strings.TrimSpace(parts[1])
+
+		info := BranchInfo{
+			Name:      name,
+			IsCurrent: isCurrent,
+			IsMain:    name == mainBranch,
+		}
+
+		// Collect main branch separately to put it first
+		if info.IsMain {
+			mainBranchInfo = &info
+		} else {
+			branches = append(branches, info)
+		}
+	}
+
+	// Put main branch first
+	var result []BranchInfo
+	if mainBranchInfo != nil {
+		result = append(result, *mainBranchInfo)
+	}
+	result = append(result, branches...)
+
+	return result, nil
+}
+
 // CreateBranchFrom creates a new branch from a specified base branch (without creating a worktree)
 func (m *Manager) CreateBranchFrom(branchName, baseBranch string) error {
 	cmd := exec.Command("git", "branch", branchName, baseBranch)

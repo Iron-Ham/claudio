@@ -1802,6 +1802,16 @@ func (o *Orchestrator) GetInstanceDiff(worktreePath string) (string, error) {
 	return o.wt.GetDiffAgainstMain(worktreePath)
 }
 
+// ListBranches returns all local git branches, sorted with main/master first
+func (o *Orchestrator) ListBranches() ([]worktree.BranchInfo, error) {
+	return o.wt.ListBranches()
+}
+
+// GetMainBranch returns the name of the main branch (main or master)
+func (o *Orchestrator) GetMainBranch() string {
+	return o.wt.FindMainBranch()
+}
+
 // ReconnectInstance attempts to reconnect to a stopped or paused instance
 // If the tmux session still exists, it reconnects to it
 // If not, it restarts Claude with the same task in the existing worktree

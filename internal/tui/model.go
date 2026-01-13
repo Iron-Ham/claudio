@@ -107,6 +107,12 @@ type Model struct {
 	templateSelected int    // Currently highlighted template index
 	templateSuffix   string // Suffix to append on submission (from selected template)
 
+	// Branch selection state (for selecting base branch when adding task)
+	showBranchSelector bool     // Whether the branch selector is visible
+	branchList         []string // Cached list of branch names
+	branchSelected     int      // Currently highlighted branch index (0 = main branch)
+	selectedBaseBranch string   // The selected base branch for the new instance
+
 	// File conflict tracking
 	conflicts []conflict.FileConflict
 

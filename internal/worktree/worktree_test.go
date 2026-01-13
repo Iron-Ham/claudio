@@ -530,6 +530,88 @@ func TestManager_findMainBranch(t *testing.T) {
 	}
 }
 
+func TestManager_ListBranches(t *testing.T) {
+	testutil.SkipIfNoGit(t)
+
+	repoDir := testutil.SetupTestRepo(t)
+	mgr, err := New(repoDir)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	// Initially should have just 'main' branch
+	branches, err := mgr.ListBranches()
+	if err != nil {
+		t.Fatalf("ListBranches() error = %v", err)
+	}
+	if len(branches) != 1 {
+		t.Errorf("ListBranches() returned %d branches, want 1", len(branches))
+	}
+	if branches[0].Name != "main" {
+		t.Errorf("ListBranches()[0].Name = %v, want 'main'", branches[0].Name)
+	}
+	if !branches[0].IsMain {
+		t.Error("ListBranches()[0].IsMain = false, want true")
+	}
+
+	// Create additional branches
+	testutil.CreateBranch(t, repoDir, "feature-1")
+	testutil.CreateBranch(t, repoDir, "feature-2")
+
+	branches, err = mgr.ListBranches()
+	if err != nil {
+		t.Fatalf("ListBranches() error = %v", err)
+	}
+	if len(branches) != 3 {
+		t.Errorf("ListBranches() returned %d branches, want 3", len(branches))
+	}
+
+	// First branch should be main
+	if branches[0].Name != "main" || !branches[0].IsMain {
+		t.Errorf("ListBranches() first branch should be main, got %v", branches[0])
+	}
+
+	// Other branches should not be marked as main
+	for _, b := range branches[1:] {
+		if b.IsMain {
+			t.Errorf("ListBranches() branch %v.IsMain = true, want false", b.Name)
+		}
+	}
+}
+
+func TestManager_ListBranches_CurrentBranch(t *testing.T) {
+	testutil.SkipIfNoGit(t)
+
+	repoDir := testutil.SetupTestRepo(t)
+	mgr, err := New(repoDir)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+
+	// Create a feature branch
+	testutil.CreateBranch(t, repoDir, "feature-branch")
+
+	branches, err := mgr.ListBranches()
+	if err != nil {
+		t.Fatalf("ListBranches() error = %v", err)
+	}
+
+	// Find the current branch and verify IsCurrent is set correctly
+	foundCurrent := false
+	for _, b := range branches {
+		if b.IsCurrent {
+			foundCurrent = true
+			// After CreateBranch, we should still be on main
+			if b.Name != "main" {
+				t.Errorf("IsCurrent branch should be 'main', got %v", b.Name)
+			}
+		}
+	}
+	if !foundCurrent {
+		t.Error("ListBranches() did not mark any branch as current")
+	}
+}
+
 func TestManager_CopyLocalClaudeFiles(t *testing.T) {
 	testutil.SkipIfNoGit(t)
 
