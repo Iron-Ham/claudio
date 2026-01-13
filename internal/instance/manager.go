@@ -485,24 +485,32 @@ func (m *Manager) captureLoop() {
 			// Always update if content changed
 			currentOutput := string(output)
 			if currentOutput != lastOutput {
-				byteCount := len(output)
-				m.outputBuf.Reset()
-				_, _ = m.outputBuf.Write(output)
+				// Only update the output buffer on full captures to preserve scrollback.
+				// Visible-only captures are used for state detection but shouldn't replace
+				// the buffer since they only contain the visible pane (no scrollback history).
+				if doFullCapture {
+					byteCount := len(output)
+					m.outputBuf.Reset()
+					_, _ = m.outputBuf.Write(output)
 
-				// Update activity tracking
+					m.mu.RLock()
+					logger := m.logger
+					m.mu.RUnlock()
+
+					if logger != nil {
+						logger.Debug("output captured",
+							"byte_count", byteCount)
+					}
+				}
+
+				// Update activity tracking (for both capture types)
 				m.mu.Lock()
 				m.lastActivityTime = time.Now()
 				m.lastOutputHash = lastOutput
 				m.repeatedOutputCount = 0
-				logger := m.logger
 				stateMonitor := m.stateMonitor
 				instanceID := m.id
 				m.mu.Unlock()
-
-				if logger != nil {
-					logger.Debug("output captured",
-						"byte_count", byteCount)
-				}
 
 				lastOutput = currentOutput
 
