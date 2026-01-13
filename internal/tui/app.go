@@ -857,6 +857,51 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Handle group command mode (vim-style 'g' prefix)
+	// When groupCommandPending is true, the next key is interpreted as a group command
+	if m.inputRouter != nil && m.inputRouter.IsGroupCommandPending() {
+		m.inputRouter.SetGroupCommandPending(false) // Clear pending state
+		groupHandler := NewGroupKeyHandler(m.session, m.groupViewState)
+		result := groupHandler.HandleGroupKey(msg)
+		if result.Handled {
+			// Apply result actions based on the Action type
+			switch result.Action {
+			case GroupActionToggleCollapse:
+				if result.GroupID != "" {
+					m.groupViewState.ToggleCollapse(result.GroupID)
+				}
+			case GroupActionCollapseAll:
+				if result.AllCollapsed {
+					// Collapse all groups
+					for _, g := range m.session.Groups {
+						if !m.groupViewState.IsCollapsed(g.ID) {
+							m.groupViewState.ToggleCollapse(g.ID)
+						}
+					}
+				} else {
+					// Expand all groups
+					for _, g := range m.session.Groups {
+						if m.groupViewState.IsCollapsed(g.ID) {
+							m.groupViewState.ToggleCollapse(g.ID)
+						}
+					}
+				}
+			case GroupActionNextGroup, GroupActionPrevGroup:
+				if result.GroupID != "" {
+					m.groupViewState.SelectedGroupID = result.GroupID
+				}
+			case GroupActionSkipGroup:
+				m.infoMessage = "Group skipped"
+			case GroupActionRetryGroup:
+				m.infoMessage = "Retrying failed tasks in group"
+			case GroupActionForceStart:
+				m.infoMessage = "Force-starting next group"
+			}
+			return m, nil
+		}
+		// If not handled, fall through to normal key handling
+	}
+
 	switch msg.String() {
 	case ":":
 		// Enter command mode (vim-style)
@@ -1100,7 +1145,12 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "g":
-		// Go to top of diff, help panel, or output
+		// In grouped sidebar mode with groups, enter group command mode
+		if m.sidebarMode == view.SidebarModeGrouped && m.session != nil && len(m.session.Groups) > 0 {
+			m.inputRouter.SetGroupCommandPending(true)
+			return m, nil
+		}
+		// Otherwise, go to top of diff, help panel, or output
 		if m.showDiff {
 			m.diffScroll = 0
 			return m, nil
@@ -2146,8 +2196,9 @@ func (m Model) View() string {
 		content = m.renderContent(mainContentWidth) // Reuse normal content for now
 	} else {
 		// Use view component for sidebar rendering
-		dashboardView := view.NewDashboardView()
-		sidebar = dashboardView.RenderSidebar(m, effectiveSidebarWidth, mainAreaHeight)
+		// SidebarView automatically handles both flat and grouped modes
+		sidebarView := view.NewSidebarView()
+		sidebar = sidebarView.RenderSidebar(m, effectiveSidebarWidth, mainAreaHeight)
 		content = m.renderContent(mainContentWidth)
 	}
 

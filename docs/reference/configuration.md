@@ -268,6 +268,41 @@ ultraplan:
 
 ---
 
+### experimental
+
+Controls experimental features that may change or be removed. These features are disabled by default.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `experimental.intelligent_naming` | bool | `false` | Use Claude to generate short, descriptive instance names |
+| `experimental.triple_shot` | bool | `false` | Spawn three parallel instances and select the best solution |
+| `experimental.inline_plan` | bool | `false` | Enable `:plan` command in the TUI |
+| `experimental.inline_ultraplan` | bool | `false` | Enable `:ultraplan` command in the TUI |
+| `experimental.grouped_instance_view` | bool | `false` | Enable visual group organization in the sidebar |
+
+**Feature descriptions:**
+
+| Feature | Description |
+|---------|-------------|
+| `intelligent_naming` | Uses Claude to generate short, descriptive instance names for the sidebar based on the task and Claude's initial output. Requires `ANTHROPIC_API_KEY`. |
+| `triple_shot` | Spawns three parallel instances working on the same problem, then uses a judge instance to evaluate and select the best solution. |
+| `inline_plan` | Enables the `:plan` command in the standard TUI, allowing you to start a Plan workflow directly from the main interface. |
+| `inline_ultraplan` | Enables the `:ultraplan` command in the standard TUI, allowing you to start an UltraPlan workflow with parallel task execution. |
+| `grouped_instance_view` | Organizes instances visually by execution group in the TUI sidebar. Related tasks are grouped together, with sub-groups for dependency chains. |
+
+```yaml
+experimental:
+  intelligent_naming: false
+  triple_shot: false
+  inline_plan: true
+  inline_ultraplan: true
+  grouped_instance_view: true
+```
+
+See the [Inline Planning Guide](../guide/inline-planning.md) for detailed usage of inline planning features.
+
+---
+
 ## Environment Variables
 
 All options can be set via environment variables:
@@ -286,6 +321,9 @@ Replace dots with underscores and use uppercase:
 | `resources.cost_limit` | `CLAUDIO_RESOURCES_COST_LIMIT` |
 | `ultraplan.max_parallel` | `CLAUDIO_ULTRAPLAN_MAX_PARALLEL` |
 | `paths.worktree_dir` | `CLAUDIO_PATHS_WORKTREE_DIR` |
+| `experimental.inline_plan` | `CLAUDIO_EXPERIMENTAL_INLINE_PLAN` |
+| `experimental.inline_ultraplan` | `CLAUDIO_EXPERIMENTAL_INLINE_ULTRAPLAN` |
+| `experimental.grouped_instance_view` | `CLAUDIO_EXPERIMENTAL_GROUPED_INSTANCE_VIEW` |
 
 **Priority:** Environment variables override config file values.
 
@@ -353,6 +391,14 @@ ultraplan:
   notifications:
     enabled: true
     use_sound: false
+
+# Experimental features (disabled by default)
+experimental:
+  intelligent_naming: false
+  triple_shot: false
+  inline_plan: false
+  inline_ultraplan: false
+  grouped_instance_view: false
 ```
 
 ---

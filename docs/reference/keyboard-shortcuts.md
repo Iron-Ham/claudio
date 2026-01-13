@@ -33,6 +33,22 @@ Quick reference for TUI keyboard shortcuts.
 | `g` | Jump to top |
 | `G` | Jump to bottom (latest) |
 
+## Group Commands (g prefix)
+
+These shortcuts use a vim-style `g` prefix. Press `g` first, then the action key.
+
+| Key | Action |
+|-----|--------|
+| `gc` | Collapse/expand current group |
+| `gC` | Collapse/expand all groups |
+| `gn` | Jump to next group |
+| `gp` | Jump to previous group |
+| `gs` | Skip current group (mark pending as skipped) |
+| `gr` | Retry failed tasks in current group |
+| `gf` | Force-start next group (ignore dependencies) |
+
+> **Note:** Group commands require `experimental.grouped_instance_view: true` in your config.
+
 ## Views
 
 | Key | Action |
