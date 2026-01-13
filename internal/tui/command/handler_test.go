@@ -458,6 +458,10 @@ func TestConflictsCommand(t *testing.T) {
 }
 
 func TestTerminalCommands(t *testing.T) {
+	// Terminal commands require experimental.terminal_support to be enabled
+	viper.Set("experimental.terminal_support", true)
+	defer viper.Set("experimental.terminal_support", false)
+
 	t.Run("term toggles terminal visibility", func(t *testing.T) {
 		h := New()
 		deps := newMockDeps()
@@ -545,6 +549,29 @@ func TestTerminalCommands(t *testing.T) {
 			t.Error("expected TerminalDirMode to be set to 0 (invocation)")
 		}
 	})
+}
+
+func TestTerminalCommandsDisabled(t *testing.T) {
+	// When terminal support is disabled, commands should return an error
+	viper.Set("experimental.terminal_support", false)
+
+	commands := []string{"term", "terminal", "t", "termdir worktree", "termdir wt", "termdir invoke", "termdir invocation"}
+
+	for _, cmd := range commands {
+		t.Run(cmd, func(t *testing.T) {
+			h := New()
+			deps := newMockDeps()
+			deps.terminalVisible = true // Even with terminal visible, should fail
+
+			result := h.Execute(cmd, deps)
+			if result.ErrorMessage == "" {
+				t.Error("expected error message when terminal support is disabled")
+			}
+			if result.ToggleTerminal || result.EnterTerminalMode || result.TerminalDirMode != nil {
+				t.Error("expected no terminal state changes when disabled")
+			}
+		})
+	}
 }
 
 func TestInstanceControlCommandsNoInstance(t *testing.T) {

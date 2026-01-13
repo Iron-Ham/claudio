@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Terminal Support Now Experimental** - Embedded terminal pane commands (`:term`, `:t`, `:termdir`) are now gated behind `experimental.terminal_support` config flag, disabled by default. Enable via `:config` under Experimental or set `experimental.terminal_support: true` in config.yaml
+
 ## [0.5.1] - 2026-01-13
 
 ### Fixed

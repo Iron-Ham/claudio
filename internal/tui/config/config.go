@@ -340,6 +340,13 @@ func New() Model {
 					Type:        "bool",
 					Category:    "experimental",
 				},
+				{
+					Key:         "experimental.terminal_support",
+					Label:       "Terminal Support",
+					Description: "Enable embedded terminal pane (:term, :t, :termdir commands)",
+					Type:        "bool",
+					Category:    "experimental",
+				},
 			},
 		},
 	}
@@ -810,6 +817,7 @@ func (m *Model) resetCurrentToDefault() {
 		// Experimental
 		"experimental.intelligent_naming": defaults.Experimental.IntelligentNaming,
 		"experimental.triple_shot":        defaults.Experimental.TripleShot,
+		"experimental.terminal_support":   defaults.Experimental.TerminalSupport,
 	}
 
 	if defaultVal, ok := defaultValues[item.Key]; ok {
