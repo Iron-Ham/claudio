@@ -588,43 +588,9 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 	}
 	inst.WorktreePath = wtPath
 
-	// Copy local Claude configuration files (e.g., CLAUDE.local.md) to the worktree
-	o.copyLocalClaudeFilesToWorktree(inst.ID, wtPath)
-
-	// Add to session
-	session.Instances = append(session.Instances, inst)
-
-	// Create instance manager with config
-	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, task)
-	o.instances[inst.ID] = mgr
-
-	// Register with conflict detector
-	if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
-		// Non-fatal, log at DEBUG since this is conflict detection related
-		if o.logger != nil {
-			o.logger.Debug("failed to watch instance for conflicts",
-				"instance_id", inst.ID,
-				"error", err,
-			)
-		}
-		fmt.Fprintf(os.Stderr, "Warning: failed to watch instance for conflicts: %v\n", err)
-	}
-
-	// Update shared context
-	if err := o.updateContext(); err != nil {
-		// Non-fatal, just log
-		fmt.Fprintf(os.Stderr, "Warning: failed to update context: %v\n", err)
-	}
-
-	// Save session
-	if err := o.saveSession(); err != nil {
-		if o.logger != nil {
-			o.logger.Error("failed to save session after adding instance",
-				"instance_id", inst.ID,
-				"error", err,
-			)
-		}
-		return nil, fmt.Errorf("failed to save session: %w", err)
+	// Register instance with managers and save session
+	if err := o.registerInstance(session, inst); err != nil {
+		return nil, err
 	}
 
 	// Log instance added
@@ -680,9 +646,6 @@ func (o *Orchestrator) AddInstanceWithDependencies(session *Session, task string
 	}
 	inst.WorktreePath = wtPath
 
-	// Copy local Claude configuration files (e.g., CLAUDE.local.md) to the worktree
-	o.copyLocalClaudeFilesToWorktree(inst.ID, wtPath)
-
 	// Update dependents lists on parent instances
 	for _, depID := range resolvedDeps {
 		for _, existing := range session.Instances {
@@ -693,38 +656,9 @@ func (o *Orchestrator) AddInstanceWithDependencies(session *Session, task string
 		}
 	}
 
-	// Add to session
-	session.Instances = append(session.Instances, inst)
-
-	// Create instance manager with config
-	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, task)
-	o.instances[inst.ID] = mgr
-
-	// Register with conflict detector
-	if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
-		if o.logger != nil {
-			o.logger.Debug("failed to watch instance for conflicts",
-				"instance_id", inst.ID,
-				"error", err,
-			)
-		}
-		fmt.Fprintf(os.Stderr, "Warning: failed to watch instance for conflicts: %v\n", err)
-	}
-
-	// Update shared context
-	if err := o.updateContext(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to update context: %v\n", err)
-	}
-
-	// Save session
-	if err := o.saveSession(); err != nil {
-		if o.logger != nil {
-			o.logger.Error("failed to save session after adding instance with dependencies",
-				"instance_id", inst.ID,
-				"error", err,
-			)
-		}
-		return nil, fmt.Errorf("failed to save session: %w", err)
+	// Register instance with managers and save session
+	if err := o.registerInstance(session, inst); err != nil {
+		return nil, err
 	}
 
 	// Log instance added
@@ -830,43 +764,9 @@ func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, base
 	}
 	inst.WorktreePath = wtPath
 
-	// Copy local Claude configuration files (e.g., CLAUDE.local.md) to the worktree
-	o.copyLocalClaudeFilesToWorktree(inst.ID, wtPath)
-
-	// Add to session
-	session.Instances = append(session.Instances, inst)
-
-	// Create instance manager with config
-	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, task)
-	o.instances[inst.ID] = mgr
-
-	// Register with conflict detector
-	if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
-		// Non-fatal, log at DEBUG since this is conflict detection related
-		if o.logger != nil {
-			o.logger.Debug("failed to watch instance for conflicts",
-				"instance_id", inst.ID,
-				"error", err,
-			)
-		}
-		fmt.Fprintf(os.Stderr, "Warning: failed to watch instance for conflicts: %v\n", err)
-	}
-
-	// Update shared context
-	if err := o.updateContext(); err != nil {
-		// Non-fatal, just log
-		fmt.Fprintf(os.Stderr, "Warning: failed to update context: %v\n", err)
-	}
-
-	// Save session
-	if err := o.saveSession(); err != nil {
-		if o.logger != nil {
-			o.logger.Error("failed to save session after adding instance from branch",
-				"instance_id", inst.ID,
-				"error", err,
-			)
-		}
-		return nil, fmt.Errorf("failed to save session: %w", err)
+	// Register instance with managers and save session
+	if err := o.registerInstance(session, inst); err != nil {
+		return nil, err
 	}
 
 	// Log instance added
@@ -1309,6 +1209,59 @@ func (o *Orchestrator) newInstanceManager(instanceID, workdir, task string) *ins
 	o.displayMgr.AddObserver(mgr)
 
 	return mgr
+}
+
+// registerInstance performs common registration steps after an instance is created.
+// This includes copying config files, registering with managers, and saving the session.
+// Must be called while holding o.mu lock.
+func (o *Orchestrator) registerInstance(session *Session, inst *Instance) error {
+	// Copy local Claude configuration files (e.g., CLAUDE.local.md) to the worktree.
+	// Failures are logged but do not block instance creation since local config is optional.
+	o.copyLocalClaudeFilesToWorktree(inst.ID, inst.WorktreePath)
+
+	// Add to session
+	session.Instances = append(session.Instances, inst)
+
+	// Create instance manager with config
+	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task)
+	o.instances[inst.ID] = mgr
+
+	// Register with conflict detector
+	if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
+		// Non-fatal, log at DEBUG since this is conflict detection related
+		if o.logger != nil {
+			o.logger.Debug("failed to watch instance for conflicts",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
+		fmt.Fprintf(os.Stderr, "Warning: failed to watch instance for conflicts: %v\n", err)
+	}
+
+	// Update shared context
+	if err := o.updateContext(); err != nil {
+		// Non-fatal, log but continue
+		if o.logger != nil {
+			o.logger.Warn("failed to update context",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
+		fmt.Fprintf(os.Stderr, "Warning: failed to update context: %v\n", err)
+	}
+
+	// Save session
+	if err := o.saveSession(); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to save session after adding instance",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
+		return fmt.Errorf("failed to save session: %w", err)
+	}
+
+	return nil
 }
 
 // Session returns the current session
