@@ -16,6 +16,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
+	instancestate "github.com/Iron-Ham/claudio/internal/instance/state"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/display"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/lifecycle"
@@ -47,11 +48,12 @@ type Orchestrator struct {
 	logger      *logging.Logger // Structured logger for debugging (nil = no logging)
 
 	// Composed managers (delegation targets for refactored operations)
-	sessionMgr    *orchsession.Manager // Session lifecycle management
-	lifecycleMgr  *lifecycle.Manager   // Instance lifecycle management
-	prWorkflowMgr *prworkflow.Manager  // PR workflow management
-	displayMgr    *display.Manager     // Display dimension management
-	eventBus      *event.Bus           // Inter-component event communication
+	sessionMgr    *orchsession.Manager   // Session lifecycle management
+	lifecycleMgr  *lifecycle.Manager     // Instance lifecycle management
+	prWorkflowMgr *prworkflow.Manager    // PR workflow management
+	displayMgr    *display.Manager       // Display dimension management
+	eventBus      *event.Bus             // Inter-component event communication
+	stateMonitor  *instancestate.Monitor // Centralized state monitoring for all instances
 
 	session          *Session
 	instances        map[string]*instance.Manager
@@ -121,7 +123,14 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		DefaultHeight: cfg.Instance.TmuxHeight,
 	})
 
-	return &Orchestrator{
+	// Create centralized state monitor for all instances
+	stateMonitor := instancestate.NewMonitor(instancestate.MonitorConfig{
+		ActivityTimeoutMinutes:   cfg.Instance.ActivityTimeoutMinutes,
+		CompletionTimeoutMinutes: cfg.Instance.CompletionTimeoutMinutes,
+		StaleDetection:           cfg.Instance.StaleDetection,
+	})
+
+	orch := &Orchestrator{
 		baseDir:          baseDir,
 		claudioDir:       claudioDir,
 		worktreeDir:      worktreeDir,
@@ -130,11 +139,17 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		prWorkflowMgr:    prWorkflowMgr,
 		displayMgr:       displayMgr,
 		eventBus:         eventBus,
+		stateMonitor:     stateMonitor,
 		instances:        make(map[string]*instance.Manager),
 		wt:               wt,
 		conflictDetector: detector,
 		config:           cfg,
-	}, nil
+	}
+
+	// Wire state monitor callbacks to orchestrator handlers
+	orch.wireStateMonitorCallbacks()
+
+	return orch, nil
 }
 
 // NewWithSession creates a new Orchestrator for a specific session.
@@ -190,7 +205,14 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		DefaultHeight: cfg.Instance.TmuxHeight,
 	})
 
-	return &Orchestrator{
+	// Create centralized state monitor for all instances
+	stateMonitor := instancestate.NewMonitor(instancestate.MonitorConfig{
+		ActivityTimeoutMinutes:   cfg.Instance.ActivityTimeoutMinutes,
+		CompletionTimeoutMinutes: cfg.Instance.CompletionTimeoutMinutes,
+		StaleDetection:           cfg.Instance.StaleDetection,
+	})
+
+	orch := &Orchestrator{
 		baseDir:          baseDir,
 		claudioDir:       claudioDir,
 		worktreeDir:      worktreeDir,
@@ -201,11 +223,17 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		prWorkflowMgr:    prWorkflowMgr,
 		displayMgr:       displayMgr,
 		eventBus:         eventBus,
+		stateMonitor:     stateMonitor,
 		instances:        make(map[string]*instance.Manager),
 		wt:               wt,
 		conflictDetector: detector,
 		config:           cfg,
-	}, nil
+	}
+
+	// Wire state monitor callbacks to orchestrator handlers
+	orch.wireStateMonitorCallbacks()
+
+	return orch, nil
 }
 
 // Init initializes the Claudio directory structure
@@ -1187,17 +1215,24 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 	}
 }
 
-// newInstanceManager creates a new instance manager with the appropriate constructor.
-// Uses session-scoped tmux naming when sessionID is set (multi-session mode).
+// newInstanceManager creates a new instance manager with explicit dependencies.
+// Uses the shared StateMonitor for centralized state tracking.
 // The manager is automatically registered with the display manager to receive resize events.
+//
+// Note: LifecycleManager delegation is available but not enabled by default.
+// The instance Manager's Start/Stop/Reconnect use their internal implementation.
 func (o *Orchestrator) newInstanceManager(instanceID, workdir, task string) *instance.Manager {
 	cfg := o.instanceManagerConfig()
-	var mgr *instance.Manager
-	if o.sessionID != "" {
-		mgr = instance.NewManagerWithSession(o.sessionID, instanceID, workdir, task, cfg)
-	} else {
-		mgr = instance.NewManagerWithConfig(instanceID, workdir, task, cfg)
-	}
+
+	mgr := instance.NewManagerWithDeps(instance.ManagerOptions{
+		ID:           instanceID,
+		SessionID:    o.sessionID,
+		WorkDir:      workdir,
+		Task:         task,
+		Config:       cfg,
+		StateMonitor: o.stateMonitor,
+		// LifecycleManager not set - instances use internal Start/Stop/Reconnect
+	})
 
 	// Register the manager as a resize observer so it receives dimension updates
 	o.displayMgr.AddObserver(mgr)
@@ -1235,6 +1270,44 @@ func (o *Orchestrator) ResizeAllInstances(width, height int) {
 // Components that need to register for resize notifications can use this.
 func (o *Orchestrator) DisplayManager() *display.Manager {
 	return o.displayMgr
+}
+
+// wireStateMonitorCallbacks sets up callbacks from the centralized state monitor
+// to route state changes, timeouts, and bells to the orchestrator's handlers.
+func (o *Orchestrator) wireStateMonitorCallbacks() {
+	// Wire state change callback - routes detected state changes to handlers
+	o.stateMonitor.OnStateChange(func(instanceID string, oldState, newState detect.WaitingState) {
+		switch newState {
+		case detect.StateCompleted:
+			o.handleInstanceExit(instanceID)
+		case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
+			o.handleInstanceWaitingInput(instanceID)
+		case detect.StatePROpened:
+			o.handleInstancePROpened(instanceID)
+		}
+	})
+
+	// Wire timeout callback - converts state.TimeoutType to instance.TimeoutType
+	o.stateMonitor.OnTimeout(func(instanceID string, timeoutType instancestate.TimeoutType) {
+		// Convert state.TimeoutType to instance.TimeoutType
+		var instTimeoutType instance.TimeoutType
+		switch timeoutType {
+		case instancestate.TimeoutActivity:
+			instTimeoutType = instance.TimeoutActivity
+		case instancestate.TimeoutCompletion:
+			instTimeoutType = instance.TimeoutCompletion
+		case instancestate.TimeoutStale:
+			instTimeoutType = instance.TimeoutStale
+		default:
+			instTimeoutType = instance.TimeoutActivity
+		}
+		o.handleInstanceTimeout(instanceID, instTimeoutType)
+	})
+
+	// Wire bell callback - forwards bell events directly
+	o.stateMonitor.OnBell(func(instanceID string) {
+		o.handleInstanceBell(instanceID)
+	})
 }
 
 // saveSession persists the session state to disk
