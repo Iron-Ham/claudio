@@ -11,6 +11,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/spf13/viper"
 )
 
 // Dependencies defines the interface for dependencies that the CommandHandler needs.
@@ -31,6 +32,7 @@ type Dependencies interface {
 	IsDiffVisible() bool
 	GetDiffContent() string
 	IsUltraPlanMode() bool
+	IsTripleShotMode() bool
 	GetUltraPlanCoordinator() *orchestrator.Coordinator
 
 	// Logger access
@@ -75,6 +77,9 @@ type Result struct {
 	EnterTerminalMode bool
 	ToggleTerminal    bool // signals that terminal visibility should be toggled
 	TerminalDirMode   *int // 0 = invocation, 1 = worktree
+
+	// Mode transition - Triple-Shot
+	StartTripleShot *bool // Request to switch to triple-shot mode
 }
 
 // CommandInfo contains metadata about a command for help display.
@@ -196,6 +201,11 @@ func (h *Handler) registerCommands() {
 	// Ultraplan commands
 	h.commands["cancel"] = cmdUltraPlanCancel
 
+	// Triple-shot commands
+	h.commands["tripleshot"] = cmdTripleShot
+	h.commands["triple"] = cmdTripleShot
+	h.commands["3shot"] = cmdTripleShot
+
 	// Help commands
 	h.commands["h"] = cmdHelp
 	h.commands["help"] = cmdHelp
@@ -248,6 +258,7 @@ func (h *Handler) buildCategories() {
 			Commands: []CommandInfo{
 				{ShortKey: "r", LongKey: "pr", Description: "Show PR creation command", Category: "utility"},
 				{ShortKey: "", LongKey: "cancel", Description: "Cancel ultra-plan execution", Category: "utility"},
+				{ShortKey: "", LongKey: "tripleshot", Description: "Start triple-shot mode (3 parallel attempts + judge)", Category: "utility"},
 			},
 		},
 		{
@@ -681,6 +692,29 @@ func cmdUltraPlanCancel(deps Dependencies) Result {
 	}
 
 	return Result{InfoMessage: "Execution cancelled"}
+}
+
+func cmdTripleShot(deps Dependencies) Result {
+	// Check if triple-shot is enabled in config
+	if !viper.GetBool("experimental.triple_shot") {
+		return Result{ErrorMessage: "Triple-shot mode is disabled. Enable it in :config under Experimental"}
+	}
+
+	// Don't allow starting triple-shot if already in a special mode
+	if deps.IsUltraPlanMode() {
+		return Result{ErrorMessage: "Cannot start triple-shot while in ultraplan mode"}
+	}
+	if deps.IsTripleShotMode() {
+		return Result{ErrorMessage: "Already in triple-shot mode"}
+	}
+
+	// Signal to the model that we want to enter triple-shot mode
+	// The model will handle prompting for the task
+	startTripleShot := true
+	return Result{
+		StartTripleShot: &startTripleShot,
+		InfoMessage:     "Enter a task for triple-shot mode",
+	}
 }
 
 func cmdHelp(_ Dependencies) Result {

@@ -105,6 +105,9 @@ type Session struct {
 
 	// UltraPlan holds the ultra-plan session state (nil for regular sessions)
 	UltraPlan *UltraPlanSession `json:"ultra_plan,omitempty"`
+
+	// TripleShot holds the triple-shot session state (nil for regular sessions)
+	TripleShot *TripleShotSession `json:"triple_shot,omitempty"`
 }
 
 // NewSession creates a new session with a generated ID

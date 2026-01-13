@@ -23,6 +23,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/spf13/viper"
 )
 
 // mockDeps implements Dependencies for testing
@@ -36,6 +37,7 @@ type mockDeps struct {
 	diffVisible      bool
 	diffContent      string
 	ultraPlanMode    bool
+	tripleShotMode   bool
 	ultraCoordinator *orchestrator.Coordinator
 	logger           *logging.Logger
 	startTime        time.Time
@@ -50,6 +52,7 @@ func (m *mockDeps) IsTerminalVisible() bool                     { return m.termi
 func (m *mockDeps) IsDiffVisible() bool                         { return m.diffVisible }
 func (m *mockDeps) GetDiffContent() string                      { return m.diffContent }
 func (m *mockDeps) IsUltraPlanMode() bool                       { return m.ultraPlanMode }
+func (m *mockDeps) IsTripleShotMode() bool                      { return m.tripleShotMode }
 func (m *mockDeps) GetUltraPlanCoordinator() *orchestrator.Coordinator {
 	return m.ultraCoordinator
 }
@@ -915,6 +918,105 @@ func TestClearCompletedNoOrchestrator(t *testing.T) {
 		if result.ErrorMessage == "" {
 			t.Error("expected error without session")
 		}
+	})
+}
+
+// TestTripleShotCommand tests the tripleshot command with config check
+func TestTripleShotCommand(t *testing.T) {
+	t.Run("disabled by default", func(t *testing.T) {
+		// Reset viper to ensure clean state
+		viper.Reset()
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("tripleshot", deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error when triple-shot is disabled")
+		}
+		if result.ErrorMessage != "Triple-shot mode is disabled. Enable it in :config under Experimental" {
+			t.Errorf("unexpected error message: %q", result.ErrorMessage)
+		}
+		if result.StartTripleShot != nil {
+			t.Error("StartTripleShot should be nil when disabled")
+		}
+	})
+
+	t.Run("enabled via config", func(t *testing.T) {
+		// Reset and enable triple-shot
+		viper.Reset()
+		viper.Set("experimental.triple_shot", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("tripleshot", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartTripleShot == nil || !*result.StartTripleShot {
+			t.Error("expected StartTripleShot to be true")
+		}
+		if result.InfoMessage != "Enter a task for triple-shot mode" {
+			t.Errorf("unexpected info message: %q", result.InfoMessage)
+		}
+
+		// Clean up
+		viper.Reset()
+	})
+
+	t.Run("blocked in ultraplan mode", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.triple_shot", true)
+
+		h := New()
+		deps := newMockDeps()
+		deps.ultraPlanMode = true
+
+		result := h.Execute("tripleshot", deps)
+
+		if result.ErrorMessage != "Cannot start triple-shot while in ultraplan mode" {
+			t.Errorf("expected ultraplan mode error, got: %q", result.ErrorMessage)
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("blocked when already in triple-shot mode", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.triple_shot", true)
+
+		h := New()
+		deps := newMockDeps()
+		deps.tripleShotMode = true
+
+		result := h.Execute("tripleshot", deps)
+
+		if result.ErrorMessage != "Already in triple-shot mode" {
+			t.Errorf("expected already in mode error, got: %q", result.ErrorMessage)
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("aliases work", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.triple_shot", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		aliases := []string{"tripleshot", "triple", "3shot"}
+		for _, alias := range aliases {
+			result := h.Execute(alias, deps)
+			if result.StartTripleShot == nil || !*result.StartTripleShot {
+				t.Errorf("alias %q should start triple-shot mode", alias)
+			}
+		}
+
+		viper.Reset()
 	})
 }
 

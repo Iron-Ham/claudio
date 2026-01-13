@@ -60,6 +60,19 @@ func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Ses
 	}
 }
 
+// NewWithTripleShot creates a new TUI application in triple-shot mode
+func NewWithTripleShot(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.TripleShotCoordinator, logger *logging.Logger) *App {
+	model := NewModel(orch, session, logger)
+	model.tripleShot = &TripleShotState{
+		Coordinator: coordinator,
+	}
+	return &App{
+		model:        model,
+		orchestrator: orch,
+		session:      session,
+	}
+}
+
 // Run starts the TUI application
 func (a *App) Run() error {
 	// Ensure session lock is released when TUI exits (both normal and signal-based)
@@ -368,6 +381,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.checkForPlanManagerPlanFile()
 		// Check for phase changes that need notification (synthesis, consolidation pause)
 		m.checkForPhaseNotification()
+		// Check for triple-shot attempt and judge completion
+		m.checkForTripleShotCompletion()
 
 		// Check if ultraplan needs user notification
 		var cmds []tea.Cmd
@@ -505,6 +520,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case tripleShotStartedMsg:
+		// Triple-shot attempts started successfully
+		m.infoMessage = "Triple-shot started: 3 instances working on the task"
+		if m.logger != nil {
+			m.logger.Info("triple-shot attempts started")
+		}
+		return m, nil
+
+	case tripleShotErrorMsg:
+		// Triple-shot failed to start
+		m.errorMessage = fmt.Sprintf("Failed to start triple-shot: %v", msg.err)
+		// Clean up triple-shot state on error
+		m.tripleShot = nil
+		m.session.TripleShot = nil
+		if m.logger != nil {
+			m.logger.Error("failed to start triple-shot", "error", msg.err)
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -636,6 +670,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.addingTask = false
 			m.addingDependentTask = false
 			m.dependentOnInstanceID = ""
+			m.startingTripleShot = false
 			m.taskInput = ""
 			m.taskInputCursor = 0
 			m.templateSuffix = ""        // Clear suffix on cancel
@@ -651,15 +686,22 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				isDependent := m.addingDependentTask
 				dependsOn := m.dependentOnInstanceID
 				baseBranch := m.selectedBaseBranch
+				isTripleShot := m.startingTripleShot
 				m.addingTask = false
 				m.addingDependentTask = false
 				m.dependentOnInstanceID = ""
+				m.startingTripleShot = false
 				m.taskInput = ""
 				m.taskInputCursor = 0
 				m.templateSuffix = ""        // Clear suffix after use
 				m.selectedBaseBranch = ""    // Clear base branch selection
 				m.branchList = nil           // Clear cached branches
 				m.showBranchSelector = false // Ensure dropdown is closed
+
+				// Handle triple-shot mode initiation
+				if isTripleShot {
+					return m.initiateTripleShotMode(task)
+				}
 
 				// Add instance asynchronously to avoid blocking UI during git worktree creation
 				if isDependent && dependsOn != "" {
@@ -678,6 +720,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.addingTask = false
 			m.addingDependentTask = false
 			m.dependentOnInstanceID = ""
+			m.startingTripleShot = false
 			m.taskInput = ""
 			m.taskInputCursor = 0
 			m.templateSuffix = ""        // Clear suffix on cancel
@@ -731,15 +774,22 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					isDependent := m.addingDependentTask
 					dependsOn := m.dependentOnInstanceID
 					baseBranch := m.selectedBaseBranch
+					isTripleShot := m.startingTripleShot
 					m.addingTask = false
 					m.addingDependentTask = false
 					m.dependentOnInstanceID = ""
+					m.startingTripleShot = false
 					m.taskInput = ""
 					m.taskInputCursor = 0
 					m.templateSuffix = ""        // Clear suffix after use
 					m.selectedBaseBranch = ""    // Clear base branch selection
 					m.branchList = nil           // Clear cached branches
 					m.showBranchSelector = false // Ensure dropdown is closed
+
+					// Handle triple-shot mode initiation
+					if isTripleShot {
+						return m.initiateTripleShotMode(task)
+					}
 
 					// Add instance asynchronously to avoid blocking UI during git worktree creation
 					if isDependent && dependsOn != "" {
@@ -758,6 +808,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.addingTask = false
 				m.addingDependentTask = false
 				m.dependentOnInstanceID = ""
+				m.startingTripleShot = false
 				m.taskInput = ""
 				m.taskInputCursor = 0
 				m.templateSuffix = ""        // Clear suffix on cancel
@@ -1323,6 +1374,14 @@ func (m *Model) applyCommandResult(result command.Result) {
 	}
 	if result.EnsureActiveVisible {
 		m.ensureActiveVisible()
+	}
+
+	// Handle triple-shot mode transition
+	if result.StartTripleShot != nil && *result.StartTripleShot {
+		m.startingTripleShot = true
+		m.addingTask = true
+		m.taskInput = ""
+		m.taskInputCursor = 0
 	}
 }
 
@@ -2037,10 +2096,12 @@ func (m Model) View() string {
 
 	var b strings.Builder
 
-	// Header - use ultra-plan header if in ultra-plan mode
+	// Header - use mode-specific header if applicable
 	var header string
 	if m.IsUltraPlanMode() {
 		header = m.renderUltraPlanHeader()
+	} else if m.IsTripleShotMode() {
+		header = m.renderTripleShotHeader()
 	} else {
 		header = m.renderHeader()
 	}
@@ -2060,11 +2121,14 @@ func (m Model) View() string {
 	mainAreaHeight := dims.MainAreaHeight
 
 	// Sidebar + Content area (horizontal layout)
-	// Use ultra-plan specific rendering if in ultra-plan mode
+	// Use mode-specific rendering if applicable
 	var sidebar, content string
 	if m.IsUltraPlanMode() {
 		sidebar = m.renderUltraPlanSidebar(effectiveSidebarWidth, mainAreaHeight)
 		content = m.renderUltraPlanContent(mainContentWidth)
+	} else if m.IsTripleShotMode() {
+		sidebar = m.renderTripleShotSidebar(effectiveSidebarWidth, mainAreaHeight)
+		content = m.renderContent(mainContentWidth) // Reuse normal content for now
 	} else {
 		// Use view component for sidebar rendering
 		dashboardView := view.NewDashboardView()
@@ -2119,6 +2183,8 @@ func (m Model) View() string {
 		b.WriteString(m.renderPlanEditorHelp())
 	} else if m.IsUltraPlanMode() {
 		b.WriteString(m.renderUltraPlanHelp())
+	} else if m.IsTripleShotMode() {
+		b.WriteString(m.renderTripleShotHelp())
 	} else {
 		b.WriteString(m.renderHelp())
 	}
@@ -2913,4 +2979,79 @@ func (m Model) renderStatsPanel(width int) string {
 	b.WriteString(styles.Muted.Render("Press [m] to close this view"))
 
 	return styles.ContentBox.Width(width - 4).Render(b.String())
+}
+
+// renderTripleShotHeader renders the header for triple-shot mode
+func (m Model) renderTripleShotHeader() string {
+	ctx := view.TripleShotRenderContext{
+		Orchestrator: m.orchestrator,
+		Session:      m.session,
+		TripleShot:   m.tripleShot,
+		ActiveTab:    m.activeTab,
+		Width:        m.terminalManager.Width(),
+		Height:       m.terminalManager.Height(),
+	}
+	return view.RenderTripleShotHeader(ctx)
+}
+
+// renderTripleShotSidebar renders the sidebar for triple-shot mode
+func (m Model) renderTripleShotSidebar(width, height int) string {
+	ctx := view.TripleShotRenderContext{
+		Orchestrator: m.orchestrator,
+		Session:      m.session,
+		TripleShot:   m.tripleShot,
+		ActiveTab:    m.activeTab,
+		Width:        width,
+		Height:       height,
+	}
+	return view.RenderTripleShotSidebarSection(ctx, width)
+}
+
+// renderTripleShotHelp renders the help bar for triple-shot mode
+func (m Model) renderTripleShotHelp() string {
+	keys := []string{
+		styles.HelpKey.Render("[:]") + " cmd",
+		styles.HelpKey.Render("[j/k]") + " scroll",
+		styles.HelpKey.Render("[Tab]") + " switch",
+		styles.HelpKey.Render("[/]") + " search",
+		styles.HelpKey.Render("[?]") + " help",
+		styles.HelpKey.Render("[:q]") + " quit",
+	}
+	return styles.HelpBar.Render(strings.Join(keys, "  "))
+}
+
+// initiateTripleShotMode creates and starts a triple-shot session
+func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
+	// Create triple-shot session with default config
+	tripleConfig := orchestrator.DefaultTripleShotConfig()
+	tripleSession := orchestrator.NewTripleShotSession(task, tripleConfig)
+
+	// Link triple-shot session to main session for persistence
+	m.session.TripleShot = tripleSession
+
+	// Create coordinator
+	coordinator := orchestrator.NewTripleShotCoordinator(m.orchestrator, m.session, tripleSession, m.logger)
+
+	// Set triple-shot state
+	m.tripleShot = &TripleShotState{
+		Coordinator: coordinator,
+	}
+
+	m.infoMessage = "Starting triple-shot mode..."
+
+	// Start attempts asynchronously
+	return m, func() tea.Msg {
+		if err := coordinator.StartAttempts(); err != nil {
+			return tripleShotErrorMsg{err: err}
+		}
+		return tripleShotStartedMsg{}
+	}
+}
+
+// tripleShotStartedMsg indicates triple-shot attempts have started
+type tripleShotStartedMsg struct{}
+
+// tripleShotErrorMsg indicates an error during triple-shot operation
+type tripleShotErrorMsg struct {
+	err error
 }
