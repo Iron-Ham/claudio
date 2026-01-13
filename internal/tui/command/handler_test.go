@@ -735,6 +735,8 @@ func TestAllCommandsRecognized(t *testing.T) {
 		"cancel",
 		// Plan mode
 		"plan",
+		// Ultraplan arg commands (need viper config)
+		// "ultraplan", "up", // These are arg commands, tested separately
 		// Help
 		"h", "help", "q", "quit",
 	}
@@ -1133,6 +1135,224 @@ func TestPlanCommand(t *testing.T) {
 		}
 
 		viper.Reset()
+	})
+}
+
+// TestUltraPlanCommand tests the ultraplan command with config check and argument parsing
+func TestUltraPlanCommand(t *testing.T) {
+	t.Run("disabled by default", func(t *testing.T) {
+		// Reset viper to ensure clean state
+		viper.Reset()
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("ultraplan", deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error when ultraplan mode is disabled")
+		}
+		if result.ErrorMessage != "UltraPlan mode is disabled. Enable it in :config under Experimental" {
+			t.Errorf("unexpected error message: %q", result.ErrorMessage)
+		}
+		if result.StartUltraPlanMode != nil {
+			t.Error("StartUltraPlanMode should be nil when disabled")
+		}
+	})
+
+	t.Run("enabled via config without objective", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_ultraplan", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("ultraplan", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartUltraPlanMode == nil || !*result.StartUltraPlanMode {
+			t.Error("expected StartUltraPlanMode to be true")
+		}
+		if result.InfoMessage != "Enter an objective for ultraplan mode" {
+			t.Errorf("unexpected info message: %q", result.InfoMessage)
+		}
+		if result.UltraPlanMultiPass != nil {
+			t.Error("UltraPlanMultiPass should be nil without --multi-pass flag")
+		}
+		if result.UltraPlanFromFile != nil {
+			t.Error("UltraPlanFromFile should be nil without --plan flag")
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("enabled with objective", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_ultraplan", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("ultraplan Add user authentication", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartUltraPlanMode == nil || !*result.StartUltraPlanMode {
+			t.Error("expected StartUltraPlanMode to be true")
+		}
+		if result.UltraPlanObjective == nil || *result.UltraPlanObjective != "Add user authentication" {
+			t.Errorf("expected objective 'Add user authentication', got: %v", result.UltraPlanObjective)
+		}
+		if result.InfoMessage != "Starting ultraplan: Add user authentication" {
+			t.Errorf("unexpected info message: %q", result.InfoMessage)
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("multi-pass flag", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_ultraplan", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("ultraplan --multi-pass Implement new feature", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartUltraPlanMode == nil || !*result.StartUltraPlanMode {
+			t.Error("expected StartUltraPlanMode to be true")
+		}
+		if result.UltraPlanMultiPass == nil || !*result.UltraPlanMultiPass {
+			t.Error("expected UltraPlanMultiPass to be true")
+		}
+		if result.UltraPlanObjective == nil || *result.UltraPlanObjective != "Implement new feature" {
+			t.Errorf("expected objective 'Implement new feature', got: %v", result.UltraPlanObjective)
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("plan flag with file", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_ultraplan", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("ultraplan --plan /path/to/plan.json", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartUltraPlanMode == nil || !*result.StartUltraPlanMode {
+			t.Error("expected StartUltraPlanMode to be true")
+		}
+		if result.UltraPlanFromFile == nil || *result.UltraPlanFromFile != "/path/to/plan.json" {
+			t.Errorf("expected UltraPlanFromFile '/path/to/plan.json', got: %v", result.UltraPlanFromFile)
+		}
+		if result.InfoMessage != "Loading ultraplan from: /path/to/plan.json" {
+			t.Errorf("unexpected info message: %q", result.InfoMessage)
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("plan flag without file", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_ultraplan", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("ultraplan --plan", deps)
+
+		if result.ErrorMessage != "Usage: :ultraplan --plan <file>" {
+			t.Errorf("expected usage error, got: %q", result.ErrorMessage)
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("blocked in ultraplan mode", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_ultraplan", true)
+
+		h := New()
+		deps := newMockDeps()
+		deps.ultraPlanMode = true
+
+		result := h.Execute("ultraplan test", deps)
+
+		if result.ErrorMessage != "Already in ultraplan mode" {
+			t.Errorf("expected already in ultraplan error, got: %q", result.ErrorMessage)
+		}
+		if result.StartUltraPlanMode != nil {
+			t.Error("StartUltraPlanMode should be nil when blocked")
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("blocked when in triple-shot mode", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_ultraplan", true)
+
+		h := New()
+		deps := newMockDeps()
+		deps.tripleShotMode = true
+
+		result := h.Execute("ultraplan test", deps)
+
+		if result.ErrorMessage != "Cannot start ultraplan while in triple-shot mode" {
+			t.Errorf("expected triple-shot mode error, got: %q", result.ErrorMessage)
+		}
+		if result.StartUltraPlanMode != nil {
+			t.Error("StartUltraPlanMode should be nil when blocked")
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("up alias works", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_ultraplan", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("up my objective", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartUltraPlanMode == nil || !*result.StartUltraPlanMode {
+			t.Error("expected StartUltraPlanMode to be true for 'up' alias")
+		}
+		if result.UltraPlanObjective == nil || *result.UltraPlanObjective != "my objective" {
+			t.Errorf("expected objective 'my objective', got: %v", result.UltraPlanObjective)
+		}
+
+		viper.Reset()
+	})
+}
+
+// TestArgCommandsPrecedence tests that exact matches take precedence over arg commands
+func TestArgCommandsPrecedence(t *testing.T) {
+	t.Run("exact match takes precedence", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+
+		// "help" is an exact match command, should not be parsed as arg command
+		result := h.Execute("help", deps)
+		if result.ShowHelp == nil || !*result.ShowHelp {
+			t.Error("expected ShowHelp to be true for exact 'help' command")
+		}
 	})
 }
 

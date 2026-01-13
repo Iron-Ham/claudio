@@ -83,6 +83,12 @@ type Result struct {
 
 	// Mode transition - Plan Mode
 	StartPlanMode *bool // Request to switch to inline plan mode
+
+	// Mode transition - UltraPlan Mode
+	StartUltraPlanMode *bool   // Request to switch to inline ultraplan mode
+	UltraPlanMultiPass *bool   // If true, use multi-pass planning
+	UltraPlanFromFile  *string // If set, load plan from this file path
+	UltraPlanObjective *string // Optional objective (if not loading from file)
 }
 
 // CommandInfo contains metadata about a command for help display.
@@ -105,18 +111,24 @@ type CommandCategory struct {
 
 // Handler processes vim-style commands for the TUI.
 type Handler struct {
-	commands   map[string]commandFunc
-	categories []CommandCategory
+	commands    map[string]commandFunc
+	argCommands map[string]commandArgFunc // Commands that accept arguments
+	categories  []CommandCategory
 }
 
 // commandFunc is the signature for command implementations.
 // It receives the dependencies interface and returns a Result.
 type commandFunc func(deps Dependencies) Result
 
+// commandArgFunc is the signature for commands that accept arguments.
+// It receives the dependencies interface and the argument string after the command name.
+type commandArgFunc func(deps Dependencies, args string) Result
+
 // New creates a new CommandHandler with all commands registered.
 func New() *Handler {
 	h := &Handler{
-		commands: make(map[string]commandFunc),
+		commands:    make(map[string]commandFunc),
+		argCommands: make(map[string]commandArgFunc),
 	}
 	h.registerCommands()
 	h.buildCategories()
@@ -137,9 +149,23 @@ func (h *Handler) Execute(cmd string, deps Dependencies) Result {
 		return Result{}
 	}
 
-	// Look up the command
+	// Look up exact command match first
 	if fn, ok := h.commands[cmd]; ok {
 		return fn(deps)
+	}
+
+	// Check for arg-based commands (command word + optional arguments)
+	// Split into command word and arguments
+	parts := strings.SplitN(cmd, " ", 2)
+	cmdWord := parts[0]
+	args := ""
+	if len(parts) > 1 {
+		args = strings.TrimSpace(parts[1])
+	}
+
+	// Look up arg-based command
+	if fn, ok := h.argCommands[cmdWord]; ok {
+		return fn(deps, args)
 	}
 
 	// Unknown command
@@ -203,6 +229,8 @@ func (h *Handler) registerCommands() {
 
 	// Ultraplan commands
 	h.commands["cancel"] = cmdUltraPlanCancel
+	h.argCommands["ultraplan"] = cmdUltraPlan
+	h.argCommands["up"] = cmdUltraPlan
 
 	// Triple-shot commands
 	h.commands["tripleshot"] = cmdTripleShot
@@ -266,6 +294,7 @@ func (h *Handler) buildCategories() {
 				{ShortKey: "", LongKey: "cancel", Description: "Cancel ultra-plan execution", Category: "utility"},
 				{ShortKey: "", LongKey: "tripleshot", Description: "Start triple-shot mode (3 parallel attempts + judge)", Category: "utility"},
 				{ShortKey: "", LongKey: "plan", Description: "Start inline plan mode for structured task planning", Category: "utility"},
+				{ShortKey: "", LongKey: "ultraplan", Description: "Start ultraplan mode for parallel task execution", Category: "utility"},
 			},
 		},
 		{
@@ -765,6 +794,76 @@ func cmdPlan(deps Dependencies) Result {
 		StartPlanMode: &startPlanMode,
 		InfoMessage:   "Enter an objective for plan mode",
 	}
+}
+
+// cmdUltraPlan handles the :ultraplan command with arguments.
+// Usage:
+//   - :ultraplan [objective]           - Start ultraplan with objective
+//   - :ultraplan --multi-pass [obj]    - Use multi-pass planning
+//   - :ultraplan --plan <file>         - Load existing plan file
+func cmdUltraPlan(deps Dependencies, args string) Result {
+	// Check if inline ultraplan is enabled in config
+	if !viper.GetBool("experimental.inline_ultraplan") {
+		return Result{ErrorMessage: "UltraPlan mode is disabled. Enable it in :config under Experimental"}
+	}
+
+	// Don't allow starting ultraplan if already in a special mode
+	if deps.IsUltraPlanMode() {
+		return Result{ErrorMessage: "Already in ultraplan mode"}
+	}
+	if deps.IsTripleShotMode() {
+		return Result{ErrorMessage: "Cannot start ultraplan while in triple-shot mode"}
+	}
+
+	// Parse arguments
+	args = strings.TrimSpace(args)
+	multiPass := false
+	planFile := ""
+	objective := ""
+
+	// Parse flags
+	if rest, found := strings.CutPrefix(args, "--multi-pass"); found {
+		multiPass = true
+		objective = strings.TrimSpace(rest)
+	} else if rest, found := strings.CutPrefix(args, "--plan"); found {
+		args = strings.TrimSpace(rest)
+		// The next word should be the file path
+		parts := strings.SplitN(args, " ", 2)
+		if len(parts) == 0 || parts[0] == "" {
+			return Result{ErrorMessage: "Usage: :ultraplan --plan <file>"}
+		}
+		planFile = parts[0]
+		// Any remaining args are ignored for --plan mode
+	} else {
+		// No flags, treat entire args as objective
+		objective = args
+	}
+
+	// Signal to the model that we want to enter ultraplan mode
+	startUltraPlan := true
+	result := Result{
+		StartUltraPlanMode: &startUltraPlan,
+	}
+
+	if multiPass {
+		mp := true
+		result.UltraPlanMultiPass = &mp
+	}
+
+	if planFile != "" {
+		result.UltraPlanFromFile = &planFile
+	}
+
+	if objective != "" {
+		result.UltraPlanObjective = &objective
+		result.InfoMessage = fmt.Sprintf("Starting ultraplan: %s", objective)
+	} else if planFile != "" {
+		result.InfoMessage = fmt.Sprintf("Loading ultraplan from: %s", planFile)
+	} else {
+		result.InfoMessage = "Enter an objective for ultraplan mode"
+	}
+
+	return result
 }
 
 func cmdHelp(_ Dependencies) Result {
