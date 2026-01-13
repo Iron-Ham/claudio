@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-12
+
+This release focuses on **tmux reliability** and **UX improvements**, with a major performance boost from persistent tmux connections and several quality-of-life enhancements for the TUI.
+
 ### Added
 - **TUI Task Chaining** - Chain tasks via TUI using `:chain`, `:dep`, or `:depends` commands to add tasks that auto-start when the selected instance completes
 - **Local Claude Config Copying** - `CLAUDE.local.md` is now automatically copied to worktrees for consistent local settings (#318)
@@ -248,6 +252,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.4.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.1.0
