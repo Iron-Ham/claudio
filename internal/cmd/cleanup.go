@@ -131,11 +131,9 @@ func discoverStaleResources(baseDir string) (*CleanupResult, error) {
 		ActiveInstanceIDs: make(map[string]bool),
 	}
 
-	claudioDir := filepath.Join(baseDir, ".claudio")
-	worktreesDir := filepath.Join(claudioDir, "worktrees")
-
-	// Get the configured branch prefix
+	// Get configuration for worktree directory and branch prefix
 	cfg := config.Get()
+	worktreesDir := cfg.Paths.ResolveWorktreeDir(baseDir)
 	branchPrefix := cfg.Branch.Prefix
 	if branchPrefix == "" {
 		branchPrefix = "claudio"
