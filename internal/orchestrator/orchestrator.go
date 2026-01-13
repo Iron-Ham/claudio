@@ -18,6 +18,7 @@ import (
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	instancestate "github.com/Iron-Ham/claudio/internal/instance/state"
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/budget"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/display"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/lifecycle"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prworkflow"
@@ -54,6 +55,7 @@ type Orchestrator struct {
 	displayMgr    *display.Manager       // Display dimension management
 	eventBus      *event.Bus             // Inter-component event communication
 	stateMonitor  *instancestate.Monitor // Centralized state monitoring for all instances
+	budgetMgr     *budget.Manager        // Budget monitoring and enforcement
 
 	session          *Session
 	instances        map[string]*instance.Manager
@@ -146,6 +148,9 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		config:           cfg,
 	}
 
+	// Initialize budget manager with orchestrator as provider and pauser
+	orch.initBudgetManager()
+
 	// Wire state monitor callbacks to orchestrator handlers
 	orch.wireStateMonitorCallbacks()
 
@@ -229,6 +234,9 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		conflictDetector: detector,
 		config:           cfg,
 	}
+
+	// Initialize budget manager with orchestrator as provider and pauser
+	orch.initBudgetManager()
 
 	// Wire state monitor callbacks to orchestrator handlers
 	orch.wireStateMonitorCallbacks()
@@ -354,7 +362,15 @@ func (o *Orchestrator) LoadSession() (*Session, error) {
 	// Start conflict detector and register existing instances
 	o.conflictDetector.Start()
 	for _, inst := range sess.Instances {
-		_ = o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath)
+		if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
+			if o.logger != nil {
+				o.logger.Warn("failed to register instance with conflict detector",
+					"instance_id", inst.ID,
+					"worktree_path", inst.WorktreePath,
+					"error", err,
+				)
+			}
+		}
 	}
 
 	// Log session loaded
@@ -439,7 +455,13 @@ func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
 	}
 
 	// Save updated session state
-	_ = o.saveSession()
+	if err := o.saveSession(); err != nil {
+		if o.logger != nil {
+			o.logger.Warn("failed to save session after recovery",
+				"error", err,
+			)
+		}
+	}
 
 	return session, reconnected, nil
 }
@@ -525,7 +547,14 @@ func (o *Orchestrator) CleanOrphanedTmuxSessions() (int, error) {
 	cleaned := 0
 	for _, sess := range orphaned {
 		cmd := exec.Command("tmux", "kill-session", "-t", sess)
-		if cmd.Run() == nil {
+		if err := cmd.Run(); err != nil {
+			if o.logger != nil {
+				o.logger.Warn("failed to kill orphaned tmux session",
+					"session", sess,
+					"error", err,
+				)
+			}
+		} else {
 			cleaned++
 		}
 	}
@@ -1099,13 +1128,27 @@ func (o *Orchestrator) RemoveInstance(session *Session, instanceID string, force
 
 	// Stop the instance if running
 	if mgr, ok := o.instances[inst.ID]; ok {
-		_ = mgr.Stop()
+		if err := mgr.Stop(); err != nil {
+			if o.logger != nil {
+				o.logger.Warn("failed to stop instance during removal",
+					"instance_id", inst.ID,
+					"error", err,
+				)
+			}
+		}
 		o.displayMgr.RemoveObserver(mgr)
 		delete(o.instances, inst.ID)
 	}
 
 	// Stop PR workflow if running (delegates to prWorkflowMgr)
-	_ = o.prWorkflowMgr.Stop(inst.ID)
+	if err := o.prWorkflowMgr.Stop(inst.ID); err != nil {
+		if o.logger != nil {
+			o.logger.Warn("failed to stop PR workflow during instance removal",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
+	}
 
 	// Remove worktree
 	if err := o.wt.Remove(inst.WorktreePath); err != nil {
@@ -1146,7 +1189,14 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 	// Stop all instances
 	for _, inst := range sess.Instances {
 		if mgr, ok := o.instances[inst.ID]; ok {
-			_ = mgr.Stop()
+			if err := mgr.Stop(); err != nil {
+				if o.logger != nil {
+					o.logger.Warn("failed to stop instance during session stop",
+						"instance_id", inst.ID,
+						"error", err,
+					)
+				}
+			}
 		}
 	}
 
@@ -1156,13 +1206,27 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 	// Clean up worktrees if forced
 	if force {
 		for _, inst := range sess.Instances {
-			_ = o.wt.Remove(inst.WorktreePath)
+			if err := o.wt.Remove(inst.WorktreePath); err != nil {
+				if o.logger != nil {
+					o.logger.Warn("failed to remove worktree during session stop",
+						"instance_id", inst.ID,
+						"worktree_path", inst.WorktreePath,
+						"error", err,
+					)
+				}
+			}
 		}
 	}
 
 	// Release session lock
 	if o.lock != nil {
-		_ = o.lock.Release()
+		if err := o.lock.Release(); err != nil {
+			if o.logger != nil {
+				o.logger.Warn("failed to release session lock",
+					"error", err,
+				)
+			}
+		}
 		o.lock = nil
 	}
 
@@ -1173,7 +1237,14 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 	} else {
 		sessionFile = filepath.Join(o.claudioDir, "session.json")
 	}
-	_ = os.Remove(sessionFile)
+	if err := os.Remove(sessionFile); err != nil && !os.IsNotExist(err) {
+		if o.logger != nil {
+			o.logger.Warn("failed to remove session file",
+				"path", sessionFile,
+				"error", err,
+			)
+		}
+	}
 
 	// Log session stopped
 	if o.logger != nil {
@@ -1308,6 +1379,21 @@ func (o *Orchestrator) wireStateMonitorCallbacks() {
 	o.stateMonitor.OnBell(func(instanceID string) {
 		o.handleInstanceBell(instanceID)
 	})
+}
+
+// initBudgetManager creates and configures the budget manager.
+// The orchestrator itself implements InstanceProvider and InstancePauser.
+func (o *Orchestrator) initBudgetManager() {
+	callbacks := budget.Callbacks{
+		OnBudgetLimit: func() {
+			o.executeNotification("notifications.on_budget_limit", nil)
+		},
+		OnBudgetWarning: func() {
+			o.executeNotification("notifications.on_budget_warning", nil)
+		},
+	}
+
+	o.budgetMgr = budget.NewManagerFromConfig(o.config, o, o, callbacks, o.logger)
 }
 
 // saveSession persists the session state to disk
@@ -1617,66 +1703,13 @@ func (o *Orchestrator) handleInstanceMetrics(id string, m *instmetrics.ParsedMet
 	// The session will be saved when status changes occur
 }
 
-// checkBudgetLimits checks if any budget limits have been exceeded
+// checkBudgetLimits checks if any budget limits have been exceeded.
+// Delegates to the budget manager for limit checking and enforcement.
 func (o *Orchestrator) checkBudgetLimits() {
-	if o.config == nil || o.session == nil {
+	if o.budgetMgr == nil || o.session == nil {
 		return
 	}
-
-	// Get session totals
-	sessionMetrics := o.GetSessionMetrics()
-
-	// Check cost limit
-	if o.config.Resources.CostLimit > 0 && sessionMetrics.TotalCost >= o.config.Resources.CostLimit {
-		if o.logger != nil {
-			o.logger.Warn("budget limit exceeded, pausing all instances",
-				"total_cost", sessionMetrics.TotalCost,
-				"cost_limit", o.config.Resources.CostLimit,
-			)
-		}
-		// Pause all running instances
-		for _, inst := range o.session.Instances {
-			if inst.Status == StatusWorking {
-				if mgr, ok := o.instances[inst.ID]; ok {
-					_ = mgr.Pause()
-					inst.Status = StatusPaused
-				}
-			}
-		}
-		o.executeNotification("notifications.on_budget_limit", nil)
-	}
-
-	// Check cost warning threshold
-	if o.config.Resources.CostWarningThreshold > 0 && sessionMetrics.TotalCost >= o.config.Resources.CostWarningThreshold {
-		if o.logger != nil {
-			o.logger.Warn("budget warning threshold reached",
-				"total_cost", sessionMetrics.TotalCost,
-				"warning_threshold", o.config.Resources.CostWarningThreshold,
-			)
-		}
-		o.executeNotification("notifications.on_budget_warning", nil)
-	}
-
-	// Check per-instance token limit
-	if o.config.Resources.TokenLimitPerInstance > 0 {
-		for _, inst := range o.session.Instances {
-			if inst.Metrics != nil && inst.Status == StatusWorking {
-				if inst.Metrics.TotalTokens() >= o.config.Resources.TokenLimitPerInstance {
-					if o.logger != nil {
-						o.logger.Warn("instance token limit exceeded",
-							"instance_id", inst.ID,
-							"total_tokens", inst.Metrics.TotalTokens(),
-							"token_limit", o.config.Resources.TokenLimitPerInstance,
-						)
-					}
-					if mgr, ok := o.instances[inst.ID]; ok {
-						_ = mgr.Pause()
-						inst.Status = StatusPaused
-					}
-				}
-			}
-		}
-	}
+	o.budgetMgr.CheckLimits()
 }
 
 // SessionMetrics holds aggregated metrics for the entire session
@@ -1692,36 +1725,25 @@ type SessionMetrics struct {
 	ActiveCount       int
 }
 
-// GetSessionMetrics aggregates metrics across all instances in the session
+// GetSessionMetrics aggregates metrics across all instances in the session.
+// Delegates to the budget manager for aggregation.
 func (o *Orchestrator) GetSessionMetrics() *SessionMetrics {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-
-	if o.session == nil {
+	if o.budgetMgr == nil {
 		return &SessionMetrics{}
 	}
 
-	metrics := &SessionMetrics{
-		InstanceCount: len(o.session.Instances),
+	bm := o.budgetMgr.GetSessionMetrics()
+	return &SessionMetrics{
+		TotalInputTokens:  bm.TotalInputTokens,
+		TotalOutputTokens: bm.TotalOutputTokens,
+		TotalCacheRead:    bm.TotalCacheRead,
+		TotalCacheWrite:   bm.TotalCacheWrite,
+		TotalCost:         bm.TotalCost,
+		TotalAPICalls:     bm.TotalAPICalls,
+		TotalDuration:     bm.TotalDuration,
+		InstanceCount:     bm.InstanceCount,
+		ActiveCount:       bm.ActiveCount,
 	}
-
-	for _, inst := range o.session.Instances {
-		if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
-			metrics.ActiveCount++
-		}
-
-		if inst.Metrics != nil {
-			metrics.TotalInputTokens += inst.Metrics.InputTokens
-			metrics.TotalOutputTokens += inst.Metrics.OutputTokens
-			metrics.TotalCacheRead += inst.Metrics.CacheRead
-			metrics.TotalCacheWrite += inst.Metrics.CacheWrite
-			metrics.TotalCost += inst.Metrics.Cost
-			metrics.TotalAPICalls += inst.Metrics.APICalls
-			metrics.TotalDuration += inst.Metrics.Duration()
-		}
-	}
-
-	return metrics
 }
 
 // GetInstanceMetrics returns the current metrics for a specific instance
@@ -1731,6 +1753,65 @@ func (o *Orchestrator) GetInstanceMetrics(id string) *Metrics {
 		return nil
 	}
 	return inst.Metrics
+}
+
+// GetAllInstanceMetrics implements budget.InstanceProvider.
+// Returns metrics for all instances in the current session.
+func (o *Orchestrator) GetAllInstanceMetrics() []budget.InstanceMetrics {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+
+	if o.session == nil {
+		return nil
+	}
+
+	result := make([]budget.InstanceMetrics, 0, len(o.session.Instances))
+	for _, inst := range o.session.Instances {
+		m := budget.InstanceMetrics{
+			ID:     inst.ID,
+			Status: string(inst.Status),
+		}
+		if inst.Metrics != nil {
+			m.InputTokens = inst.Metrics.InputTokens
+			m.OutputTokens = inst.Metrics.OutputTokens
+			m.CacheRead = inst.Metrics.CacheRead
+			m.CacheWrite = inst.Metrics.CacheWrite
+			m.Cost = inst.Metrics.Cost
+			m.APICalls = inst.Metrics.APICalls
+			if inst.Metrics.StartTime != nil {
+				m.StartTime = *inst.Metrics.StartTime
+			}
+			m.EndTime = inst.Metrics.EndTime
+		}
+		result = append(result, m)
+	}
+	return result
+}
+
+// PauseInstance implements budget.InstancePauser.
+// Pauses the instance and updates its status.
+func (o *Orchestrator) PauseInstance(id string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	mgr, ok := o.instances[id]
+	if !ok {
+		return fmt.Errorf("instance %s not found", id)
+	}
+
+	if err := mgr.Pause(); err != nil {
+		return err
+	}
+
+	// Update status in session
+	for _, inst := range o.session.Instances {
+		if inst.ID == id {
+			inst.Status = StatusPaused
+			break
+		}
+	}
+
+	return nil
 }
 
 // handleInstanceWaitingInput handles when a Claude instance is waiting for input
