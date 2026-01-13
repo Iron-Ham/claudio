@@ -37,6 +37,7 @@ type Model struct {
 	itemIndex      int
 	width          int
 	height         int
+	scrollOffset   int // Line offset for scrolling
 	editing        bool
 	textInput      textinput.Model
 	selectIndex    int // For select-type options
@@ -368,6 +369,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.ensureSelectionVisible(m.calculateAvailableLines())
 		return m, nil
 
 	case tea.KeyMsg:
@@ -397,6 +399,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.itemIndex = len(m.categories[m.categoryIndex].Items) - 1
 			}
+			m.ensureSelectionVisible(m.calculateAvailableLines())
 
 		case "down", "j":
 			m.itemIndex++
@@ -408,6 +411,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.itemIndex = 0
 			}
+			m.ensureSelectionVisible(m.calculateAvailableLines())
 
 		case "tab":
 			// Move to next category
@@ -416,6 +420,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.categoryIndex = 0
 			}
 			m.itemIndex = 0
+			m.ensureSelectionVisible(m.calculateAvailableLines())
 
 		case "shift+tab":
 			// Move to previous category
@@ -424,6 +429,55 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.categoryIndex = len(m.categories) - 1
 			}
 			m.itemIndex = 0
+			m.ensureSelectionVisible(m.calculateAvailableLines())
+
+		case "ctrl+d", "pgdown":
+			// Page down - move half a screen
+			halfPage := m.calculateAvailableLines() / 2
+			for i := 0; i < halfPage; i++ {
+				m.itemIndex++
+				if m.itemIndex >= len(m.categories[m.categoryIndex].Items) {
+					m.categoryIndex++
+					if m.categoryIndex >= len(m.categories) {
+						// Stop at the last item
+						m.categoryIndex = len(m.categories) - 1
+						m.itemIndex = len(m.categories[m.categoryIndex].Items) - 1
+						break
+					}
+					m.itemIndex = 0
+				}
+			}
+			m.ensureSelectionVisible(m.calculateAvailableLines())
+
+		case "ctrl+u", "pgup":
+			// Page up - move half a screen
+			halfPage := m.calculateAvailableLines() / 2
+			for i := 0; i < halfPage; i++ {
+				m.itemIndex--
+				if m.itemIndex < 0 {
+					m.categoryIndex--
+					if m.categoryIndex < 0 {
+						// Stop at the first item
+						m.categoryIndex = 0
+						m.itemIndex = 0
+						break
+					}
+					m.itemIndex = len(m.categories[m.categoryIndex].Items) - 1
+				}
+			}
+			m.ensureSelectionVisible(m.calculateAvailableLines())
+
+		case "g":
+			// Go to first item
+			m.categoryIndex = 0
+			m.itemIndex = 0
+			m.ensureSelectionVisible(m.calculateAvailableLines())
+
+		case "G":
+			// Go to last item
+			m.categoryIndex = len(m.categories) - 1
+			m.itemIndex = len(m.categories[m.categoryIndex].Items) - 1
+			m.ensureSelectionVisible(m.calculateAvailableLines())
 
 		case "enter", " ":
 			item := m.currentItem()
@@ -534,7 +588,10 @@ func (m Model) View() string {
 	b.WriteString(styles.Muted.Render(fmt.Sprintf("Config file: %s", configPath)))
 	b.WriteString("\n\n")
 
-	// Categories and items
+	availableLines := m.calculateAvailableLines()
+
+	// Build all content lines
+	var allLines []string
 	for ci, cat := range m.categories {
 		isActiveCategory := ci == m.categoryIndex
 
@@ -543,14 +600,60 @@ func (m Model) View() string {
 		if isActiveCategory {
 			catStyle = styles.Primary.Bold(true)
 		}
-		b.WriteString(catStyle.Render(fmt.Sprintf("[ %s ]", cat.Name)))
-		b.WriteString("\n")
+		allLines = append(allLines, catStyle.Render(fmt.Sprintf("[ %s ]", cat.Name)))
 
 		for ii, item := range cat.Items {
 			isSelected := isActiveCategory && ii == m.itemIndex
-			b.WriteString(m.renderItem(item, isSelected))
-			b.WriteString("\n")
+			allLines = append(allLines, m.renderItem(item, isSelected))
 		}
+		allLines = append(allLines, "") // Blank line after category
+	}
+
+	// Calculate scroll bounds
+	totalLines := len(allLines)
+	scrollOffset := m.scrollOffset
+
+	// Clamp scroll offset
+	maxScroll := totalLines - availableLines
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
+	// Show scroll up indicator
+	hasMoreAbove := scrollOffset > 0
+	if hasMoreAbove {
+		b.WriteString(styles.Muted.Render(fmt.Sprintf("  ▲ %d more above", scrollOffset)))
+		b.WriteString("\n")
+	}
+
+	// Render visible lines
+	endLine := scrollOffset + availableLines
+	if endLine > totalLines {
+		endLine = totalLines
+	}
+
+	for i := scrollOffset; i < endLine; i++ {
+		b.WriteString(allLines[i])
+		b.WriteString("\n")
+	}
+
+	// Show scroll down indicator
+	hasMoreBelow := endLine < totalLines
+	if hasMoreBelow {
+		remaining := totalLines - endLine
+		b.WriteString(styles.Muted.Render(fmt.Sprintf("  ▼ %d more below", remaining)))
+		b.WriteString("\n")
+	}
+
+	// Add padding if content is shorter than available space
+	if !hasMoreAbove && !hasMoreBelow {
+		// No scrolling needed, but add a blank line for consistency
 		b.WriteString("\n")
 	}
 
@@ -654,8 +757,10 @@ func (m Model) renderHelp() string {
 
 	return helpStyle.Render(
 		keyStyle.Render("j/k") + " navigate  " +
-			keyStyle.Render("tab") + " next category  " +
-			keyStyle.Render("enter/space") + " edit  " +
+			keyStyle.Render("ctrl+d/u") + " page  " +
+			keyStyle.Render("g/G") + " top/bottom  " +
+			keyStyle.Render("tab") + " category  " +
+			keyStyle.Render("enter") + " edit  " +
 			keyStyle.Render("r") + " reset  " +
 			keyStyle.Render("esc") + " quit",
 	)
@@ -663,6 +768,76 @@ func (m Model) renderHelp() string {
 
 func (m Model) currentItem() ConfigItem {
 	return m.categories[m.categoryIndex].Items[m.itemIndex]
+}
+
+// calculateAvailableLines returns the number of lines available for scrollable content
+func (m Model) calculateAvailableLines() int {
+	// Reserve lines for: header (2), config path (2), description (2), messages (2), help (2), scroll indicators (2)
+	const reservedLines = 12
+	availableLines := m.height - reservedLines
+	if availableLines < 5 {
+		availableLines = 5 // Minimum visible lines
+	}
+	return availableLines
+}
+
+// totalLines returns the total number of lines needed to render all categories and items
+func (m Model) totalLines() int {
+	lines := 0
+	for _, cat := range m.categories {
+		lines++ // Category header
+		lines += len(cat.Items)
+		lines++ // Blank line after category
+	}
+	return lines
+}
+
+// currentSelectionLine returns the line number (0-indexed) of the currently selected item
+func (m Model) currentSelectionLine() int {
+	line := 0
+	for ci, cat := range m.categories {
+		if ci == m.categoryIndex {
+			line++ // Category header
+			line += m.itemIndex
+			return line
+		}
+		line++ // Category header
+		line += len(cat.Items)
+		line++ // Blank line after category
+	}
+	return line
+}
+
+// ensureSelectionVisible adjusts scrollOffset to keep the current selection visible
+func (m *Model) ensureSelectionVisible(availableLines int) {
+	if availableLines <= 0 {
+		return
+	}
+
+	selectionLine := m.currentSelectionLine()
+
+	// If selection is above viewport, scroll up
+	if selectionLine < m.scrollOffset {
+		m.scrollOffset = selectionLine
+	}
+
+	// If selection is below viewport, scroll down
+	// We want the selection to be visible, so check if it's past the bottom
+	if selectionLine >= m.scrollOffset+availableLines {
+		m.scrollOffset = selectionLine - availableLines + 1
+	}
+
+	// Clamp scroll offset
+	maxScroll := m.totalLines() - availableLines
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.scrollOffset > maxScroll {
+		m.scrollOffset = maxScroll
+	}
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
 }
 
 func (m Model) getCurrentValue() string {
