@@ -2253,7 +2253,7 @@ func (m Model) renderContent(width int) string {
 	inst := m.activeInstance()
 	if inst == nil {
 		return styles.ContentBox.Width(width - 4).Render(
-			"No instance selected.\n\nPress [a] to add a new Claude instance.",
+			"No instance selected.\n\nPress [:a] to add a new Claude instance.",
 		)
 	}
 

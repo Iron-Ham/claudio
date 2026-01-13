@@ -68,7 +68,7 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 	if instanceCount == 0 && !isAddingTask {
 		b.WriteString(styles.Muted.Render("No instances"))
 		b.WriteString("\n")
-		b.WriteString(styles.Muted.Render("Press [a] to add"))
+		b.WriteString(styles.Muted.Render("Press [:a] to add"))
 	} else {
 		// Calculate available slots for instances
 		// Reserve: 1 for title, 1 for blank line, 1 for add hint, 2 for scroll indicators, plus border padding
@@ -126,11 +126,11 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 	b.WriteString("\n")
 	// Add instance hint with navigation help when paginated
 	if instanceCount > 0 {
-		addHint := styles.Muted.Render("[a]") + " " + styles.Muted.Render("add") + "  " +
-			styles.Muted.Render("[↑↓]") + " " + styles.Muted.Render("nav")
+		addHint := styles.Muted.Render("[:a]") + " " + styles.Muted.Render("add") + "  " +
+			styles.Muted.Render("[Tab]") + " " + styles.Muted.Render("nav")
 		b.WriteString(addHint)
 	} else {
-		addHint := styles.Muted.Render("[a]") + " " + styles.Muted.Render("Add new")
+		addHint := styles.Muted.Render("[:a]") + " " + styles.Muted.Render("Add new")
 		b.WriteString(addHint)
 	}
 
