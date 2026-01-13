@@ -756,3 +756,47 @@ func TestCommandModePriorityOverOtherModes(t *testing.T) {
 		}
 	})
 }
+
+// TestHelpPanelContainsAllCommands verifies that the help panel documents all
+// primary commands from the command handler's categories. This prevents the
+// help panel from getting out of sync when new commands are added.
+func TestHelpPanelContainsAllCommands(t *testing.T) {
+	m := testModel()
+	// Set terminal size large enough to show all help content without scrolling
+	// The help panel truncates based on terminal height, so we need enough height
+	// to display all sections (Navigation, Instance Control, Instance Management,
+	// View Commands, Terminal Pane, Input Mode, Search, Inline Planning, Session)
+	m.terminalManager.SetSize(120, 200)
+
+	// Render the help panel
+	helpContent := m.renderHelpPanel(100)
+
+	// Get all commands from the handler's categories
+	categories := m.commandHandler.Categories()
+
+	// Track missing commands for better error reporting
+	var missingCommands []string
+
+	for _, cat := range categories {
+		for _, cmd := range cat.Commands {
+			// Skip subcommands (contain spaces) and flag variants (contain "=")
+			// These are documented under their parent command
+			if strings.Contains(cmd.LongKey, " ") || strings.Contains(cmd.LongKey, "=") {
+				continue
+			}
+
+			// Check that the command's long key appears in the help panel
+			// The key is rendered with a colon prefix in the help (e.g., ":start")
+			searchKey := ":" + cmd.LongKey
+			if !strings.Contains(helpContent, searchKey) {
+				missingCommands = append(missingCommands, cmd.LongKey)
+			}
+		}
+	}
+
+	if len(missingCommands) > 0 {
+		t.Errorf("help panel is missing the following commands: %v\n"+
+			"Update renderHelpPanel() in app.go to include these commands",
+			missingCommands)
+	}
+}

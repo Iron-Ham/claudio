@@ -2534,77 +2534,92 @@ func (m Model) renderHelpPanel(width int) string {
 		return styles.Muted.Render(d)
 	}
 
+	// Helper to format a help line with consistent alignment
+	// Keys column is ~22 chars, then description starts
+	helpLine := func(keys, description string) string {
+		// Pad keys to fixed width for alignment
+		const keyColWidth = 22
+		keyLen := len(keys) // Note: this is byte length, not display width
+		padding := keyColWidth - keyLen
+		if padding < 1 {
+			padding = 1
+		}
+		return fmt.Sprintf("    %s%s%s", key(keys), strings.Repeat(" ", padding), desc(description))
+	}
+
 	// Navigation section
 	lines = append(lines, section("Navigation"))
-	lines = append(lines, fmt.Sprintf("    %s  %s   %s", key("Tab/l"), key("Shift+Tab/h"), desc("Next / Previous instance")))
-	lines = append(lines, fmt.Sprintf("    %s  %s             %s", key("j/↓"), key("k/↑"), desc("Scroll down / up one line")))
-	lines = append(lines, fmt.Sprintf("    %s  %s     %s", key("Ctrl+D/U"), key("Ctrl+F/B"), desc("Scroll half / full page")))
-	lines = append(lines, fmt.Sprintf("    %s  %s               %s", key("g"), key("G"), desc("Jump to top / bottom")))
-	lines = append(lines, "")
+	lines = append(lines, helpLine("Tab/l  Shift+Tab/h", "Next / Previous instance"))
+	lines = append(lines, helpLine("j/↓  k/↑", "Scroll down / up one line"))
+	lines = append(lines, helpLine("Ctrl+D/U  Ctrl+F/B", "Scroll half / full page"))
+	lines = append(lines, helpLine("g  G", "Jump to top / bottom"))
 	lines = append(lines, "")
 
 	// Instance Control section
 	lines = append(lines, section("Instance Control"))
-	lines = append(lines, fmt.Sprintf("    %s  %s       %s", key(":s"), key(":start"), desc("Start a stopped/new instance")))
-	lines = append(lines, fmt.Sprintf("    %s  %s        %s", key(":x"), key(":stop"), desc("Stop instance + auto-PR workflow")))
-	lines = append(lines, fmt.Sprintf("    %s  %s        %s", key(":e"), key(":exit"), desc("Stop instance (no auto-PR)")))
-	lines = append(lines, fmt.Sprintf("    %s  %s       %s", key(":p"), key(":pause"), desc("Pause/resume instance")))
-	lines = append(lines, fmt.Sprintf("    %s  %s   %s", key(":R"), key(":reconnect"), desc("Reattach to stopped tmux session")))
-	lines = append(lines, fmt.Sprintf("    %s          %s", key(":restart"), desc("Restart stuck/timeout instance")))
-	lines = append(lines, "")
+	lines = append(lines, helpLine(":s  :start", "Start a stopped/new instance"))
+	lines = append(lines, helpLine(":x  :stop", "Stop instance + auto-PR workflow"))
+	lines = append(lines, helpLine(":e  :exit", "Stop instance (no auto-PR)"))
+	lines = append(lines, helpLine(":p  :pause", "Pause/resume instance"))
+	lines = append(lines, helpLine(":R  :reconnect", "Reattach to stopped tmux session"))
+	lines = append(lines, helpLine(":restart", "Restart stuck/timeout instance"))
 	lines = append(lines, "")
 
 	// Instance Management section
 	lines = append(lines, section("Instance Management"))
-	lines = append(lines, fmt.Sprintf("    %s  %s         %s", key(":a"), key(":add"), desc("Create and add new instance")))
-	lines = append(lines, fmt.Sprintf("    %s  %s  %s   %s", key(":chain"), key(":dep"), key(":depends"), desc("Add dependent task")))
-	lines = append(lines, fmt.Sprintf("    %s  %s      %s", key(":D"), key(":remove"), desc("Remove instance (keeps branch)")))
-	lines = append(lines, fmt.Sprintf("    %s            %s", key(":kill"), desc("Force kill and remove instance")))
-	lines = append(lines, fmt.Sprintf("    %s  %s       %s", key(":C"), key(":clear"), desc("Remove all completed instances")))
-	lines = append(lines, "")
+	lines = append(lines, helpLine(":a  :add", "Create and add new instance"))
+	lines = append(lines, helpLine(":chain  :dep  :depends", "Add dependent task"))
+	lines = append(lines, helpLine(":D  :remove", "Remove instance (keeps branch)"))
+	lines = append(lines, helpLine(":kill", "Force kill and remove instance"))
+	lines = append(lines, helpLine(":C  :clear", "Remove all completed instances"))
 	lines = append(lines, "")
 
 	// View Commands section
 	lines = append(lines, section("View Commands"))
-	lines = append(lines, fmt.Sprintf("    %s  %s        %s", key(":d"), key(":diff"), desc("Toggle diff preview panel")))
-	lines = append(lines, fmt.Sprintf("    %s  %s       %s", key(":m"), key(":stats"), desc("Toggle metrics panel")))
-	lines = append(lines, fmt.Sprintf("    %s  %s   %s", key(":c"), key(":conflicts"), desc("Toggle conflict view")))
-	lines = append(lines, fmt.Sprintf("    %s  %s      %s", key(":f"), key(":filter"), desc("Open filter panel")))
-	lines = append(lines, fmt.Sprintf("    %s            %s", key(":tmux"), desc("Show tmux attach command")))
-	lines = append(lines, fmt.Sprintf("    %s  %s          %s", key(":r"), key(":pr"), desc("Show PR creation command")))
-	lines = append(lines, "")
+	lines = append(lines, helpLine(":d  :diff", "Toggle diff preview panel"))
+	lines = append(lines, helpLine(":m  :stats", "Toggle metrics panel"))
+	lines = append(lines, helpLine(":c  :conflicts", "Toggle conflict view"))
+	lines = append(lines, helpLine(":f  :filter", "Open filter panel"))
+	lines = append(lines, helpLine(":tmux", "Show tmux attach command"))
+	lines = append(lines, helpLine(":r  :pr", "Show PR creation command"))
 	lines = append(lines, "")
 
 	// Terminal section
 	lines = append(lines, section("Terminal Pane"))
-	lines = append(lines, fmt.Sprintf("    %s  %s       %s", key("`"), key(":term"), desc("Toggle terminal pane")))
-	lines = append(lines, fmt.Sprintf("    %s              %s", key(":t"), desc("Focus terminal for typing")))
-	lines = append(lines, fmt.Sprintf("    %s          %s", key("Ctrl+]"), desc("Exit terminal mode")))
-	lines = append(lines, fmt.Sprintf("    %s     %s", key("Ctrl+Shift+T"), desc("Switch terminal directory")))
-	lines = append(lines, "")
+	lines = append(lines, helpLine("`  :term", "Toggle terminal pane"))
+	lines = append(lines, helpLine(":t", "Focus terminal for typing"))
+	lines = append(lines, helpLine("Ctrl+]", "Exit terminal mode"))
+	lines = append(lines, helpLine("Ctrl+Shift+T", "Switch terminal directory"))
 	lines = append(lines, "")
 
 	// Input Mode section
 	lines = append(lines, section("Input Mode"))
-	lines = append(lines, fmt.Sprintf("    %s  %s         %s", key("i"), key("Enter"), desc("Enter input mode (talk to Claude)")))
-	lines = append(lines, fmt.Sprintf("    %s          %s", key("Ctrl+]"), desc("Exit input mode")))
-	lines = append(lines, "")
+	lines = append(lines, helpLine("i  Enter", "Enter input mode (talk to Claude)"))
+	lines = append(lines, helpLine("Ctrl+]", "Exit input mode"))
 	lines = append(lines, "")
 
 	// Search section
 	lines = append(lines, section("Search"))
-	lines = append(lines, fmt.Sprintf("    %s              %s", key("/"), desc("Start search")))
-	lines = append(lines, fmt.Sprintf("    %s  %s            %s", key("n"), key("N"), desc("Next / previous match")))
-	lines = append(lines, fmt.Sprintf("    %s         %s", key("Ctrl+/"), desc("Clear search")))
-	lines = append(lines, fmt.Sprintf("    %s       %s", key("r:pattern"), desc("Use regex search")))
+	lines = append(lines, helpLine("/", "Start search"))
+	lines = append(lines, helpLine("n  N", "Next / previous match"))
+	lines = append(lines, helpLine("Ctrl+/", "Clear search"))
+	lines = append(lines, helpLine("r:pattern", "Use regex search"))
 	lines = append(lines, "")
+
+	// Inline Planning section (experimental)
+	lines = append(lines, section("Inline Planning (experimental)"))
+	lines = append(lines, helpLine(":plan", "Start inline plan mode"))
+	lines = append(lines, helpLine(":ultraplan  :up", "Start ultraplan mode"))
+	lines = append(lines, helpLine(":tripleshot", "Run 3 parallel attempts + judge"))
+	lines = append(lines, helpLine(":cancel", "Cancel ultraplan execution"))
+	lines = append(lines, helpLine(":group", "Manage instance groups"))
 	lines = append(lines, "")
 
 	// Session section
 	lines = append(lines, section("Session"))
-	lines = append(lines, fmt.Sprintf("    %s  %s        %s", key(":h"), key(":help"), desc("Toggle this help panel")))
-	lines = append(lines, fmt.Sprintf("    %s  %s        %s", key(":q"), key(":quit"), desc("Quit (instances continue in tmux)")))
-	lines = append(lines, fmt.Sprintf("    %s               %s", key("?"), desc("Quick toggle help")))
+	lines = append(lines, helpLine(":h  :help", "Toggle this help panel"))
+	lines = append(lines, helpLine(":q  :quit", "Quit (instances continue in tmux)"))
+	lines = append(lines, helpLine("?", "Quick toggle help"))
 
 	// Calculate visible lines based on terminal height
 	maxLines := m.terminalManager.Height() - 10
