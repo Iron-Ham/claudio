@@ -590,8 +590,20 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 		if session.Phase == orchestrator.PhaseConsolidating &&
 			session.Consolidation != nil &&
 			session.Consolidation.Phase == orchestrator.ConsolidationPaused {
-			// TODO: Implement resume functionality when coordinator exposes it
-			m.infoMessage = "Resuming consolidation..."
+			// Capture worktree path before resume clears it
+			conflictWorktree := session.Consolidation.ConflictWorktree
+			if err := m.ultraPlan.Coordinator.ResumeConsolidation(); err != nil {
+				m.errorMessage = fmt.Sprintf("Failed to resume consolidation: %v", err)
+			} else {
+				m.infoMessage = "Resuming consolidation..."
+				// Log user decision
+				if m.logger != nil {
+					m.logger.Info("user decision",
+						"decision_type", "resume_consolidation",
+						"conflict_worktree", conflictWorktree,
+					)
+				}
+			}
 		}
 		return true, m, nil
 
