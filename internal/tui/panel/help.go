@@ -134,7 +134,7 @@ func DefaultHelpSections() []HelpSection {
 				{Key: "Tab/l  Shift+Tab/h", Description: "Next / Previous instance"},
 				{Key: "j/↓  k/↑", Description: "Scroll down / up one line"},
 				{Key: "Ctrl+D/U  Ctrl+F/B", Description: "Scroll half / full page"},
-				{Key: "gg  G", Description: "Jump to top / bottom"},
+				{Key: "g  G", Description: "Jump to top / bottom"},
 			},
 		},
 		{
@@ -168,6 +168,16 @@ func DefaultHelpSections() []HelpSection {
 				{Key: ":D  :remove", Description: "Remove instance (keeps branch)"},
 				{Key: ":kill", Description: "Force kill and remove instance"},
 				{Key: ":C  :clear", Description: "Remove all completed instances"},
+			},
+		},
+		{
+			Title: "Inline Planning (experimental)",
+			Items: []HelpItem{
+				{Key: ":plan", Description: "Start plan workflow with objective"},
+				{Key: ":ultraplan", Description: "Start ultraplan with coordinator"},
+				{Key: ":group create [name]", Description: "Create new empty group"},
+				{Key: ":group add [inst] [grp]", Description: "Add instance to group"},
+				{Key: ":group show", Description: "Toggle grouped sidebar view"},
 			},
 		},
 		{

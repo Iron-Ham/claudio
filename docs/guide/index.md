@@ -26,6 +26,9 @@ Create polished pull requests with AI-generated descriptions, automatic rebasing
 ### [Ultra-Plan Mode](ultra-plan.md)
 Orchestrate complex tasks with intelligent planning. Let Claude analyze your codebase, create an execution plan, and coordinate parallel task execution automatically.
 
+### [Inline Planning](inline-planning.md) (Experimental)
+Start Plan and UltraPlan workflows directly from the standard TUI. Create plans, organize tasks into visual groups, and execute them without leaving your session.
+
 ## Quick Links
 
 - [CLI Reference](../reference/cli.md) - Complete command documentation
