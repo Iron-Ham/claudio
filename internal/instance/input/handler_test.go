@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // mockTmuxSender is a test implementation of TmuxSender that records all calls.
@@ -980,5 +981,398 @@ func TestHandler_Close_Multiple(t *testing.T) {
 	err = h.Close()
 	if err != nil {
 		t.Fatalf("Second Close failed: %v", err)
+	}
+}
+
+// ============================================================================
+// Batching Tests - test the new keystroke coalescing feature
+// ============================================================================
+
+func TestDefaultBatchConfig(t *testing.T) {
+	cfg := DefaultBatchConfig()
+
+	if !cfg.Enabled {
+		t.Error("DefaultBatchConfig should be enabled")
+	}
+
+	if cfg.FlushInterval <= 0 {
+		t.Errorf("FlushInterval = %v, should be positive", cfg.FlushInterval)
+	}
+
+	if cfg.MaxBatchSize <= 0 {
+		t.Errorf("MaxBatchSize = %d, should be positive", cfg.MaxBatchSize)
+	}
+}
+
+func TestHandler_WithBatching(t *testing.T) {
+	mock := &mockTmuxSender{}
+	cfg := DefaultBatchConfig()
+
+	h := NewHandler(
+		WithTmuxSender(mock),
+		WithBatching("test-session", cfg),
+	)
+	defer func() { _ = h.Close() }()
+
+	if h.sessionName != "test-session" {
+		t.Errorf("sessionName = %q, want %q", h.sessionName, "test-session")
+	}
+
+	if !h.batchConfig.Enabled {
+		t.Error("batching should be enabled")
+	}
+
+	if h.batchChan == nil {
+		t.Error("batchChan should not be nil when batching is enabled")
+	}
+
+	if h.batchStopChan == nil {
+		t.Error("batchStopChan should not be nil when batching is enabled")
+	}
+}
+
+func TestHandler_WithBatching_Disabled(t *testing.T) {
+	mock := &mockTmuxSender{}
+	cfg := BatchConfig{Enabled: false}
+
+	h := NewHandler(
+		WithTmuxSender(mock),
+		WithBatching("test-session", cfg),
+	)
+	defer func() { _ = h.Close() }()
+
+	if h.batchChan != nil {
+		t.Error("batchChan should be nil when batching is disabled")
+	}
+}
+
+func TestHandler_Batching_CoalescesLiterals(t *testing.T) {
+	mock := &mockTmuxSender{}
+	cfg := BatchConfig{
+		Enabled:       true,
+		FlushInterval: 50 * time.Millisecond,
+		MaxBatchSize:  100,
+	}
+
+	h := NewHandler(
+		WithTmuxSender(mock),
+		WithBatching("test-session", cfg),
+	)
+	defer func() { _ = h.Close() }()
+
+	// Send multiple literal characters quickly
+	_ = h.SendLiteral("test-session", "h")
+	_ = h.SendLiteral("test-session", "e")
+	_ = h.SendLiteral("test-session", "l")
+	_ = h.SendLiteral("test-session", "l")
+	_ = h.SendLiteral("test-session", "o")
+
+	// Wait for flush
+	time.Sleep(100 * time.Millisecond)
+
+	calls := mock.getCalls()
+
+	// All 5 characters should have been batched into a single call
+	if len(calls) != 1 {
+		t.Errorf("got %d calls, want 1 (batched): %+v", len(calls), calls)
+		return
+	}
+
+	if calls[0].keys != "hello" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "hello")
+	}
+
+	if !calls[0].literal {
+		t.Error("call should be literal")
+	}
+}
+
+func TestHandler_Batching_SpecialKeyFlushes(t *testing.T) {
+	mock := &mockTmuxSender{}
+	cfg := BatchConfig{
+		Enabled:       true,
+		FlushInterval: 1 * time.Second, // Long interval so timer doesn't fire
+		MaxBatchSize:  100,
+	}
+
+	h := NewHandler(
+		WithTmuxSender(mock),
+		WithBatching("test-session", cfg),
+	)
+	defer func() { _ = h.Close() }()
+
+	// Send some literals followed by a special key
+	_ = h.SendLiteral("test-session", "abc")
+	_ = h.SendKey("test-session", "Enter")
+
+	// Give the batcher goroutine time to process
+	time.Sleep(50 * time.Millisecond)
+
+	calls := mock.getCalls()
+
+	// Should have 2 calls: batched literals, then Enter
+	if len(calls) != 2 {
+		t.Fatalf("got %d calls, want 2: %+v", len(calls), calls)
+	}
+
+	// First: batched literals
+	if calls[0].keys != "abc" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "abc")
+	}
+	if !calls[0].literal {
+		t.Error("call[0] should be literal")
+	}
+
+	// Second: Enter key
+	if calls[1].keys != "Enter" {
+		t.Errorf("call[1].keys = %q, want %q", calls[1].keys, "Enter")
+	}
+	if calls[1].literal {
+		t.Error("call[1] should not be literal")
+	}
+}
+
+func TestHandler_Batching_TimerFlush(t *testing.T) {
+	mock := &mockTmuxSender{}
+	cfg := BatchConfig{
+		Enabled:       true,
+		FlushInterval: 20 * time.Millisecond,
+		MaxBatchSize:  100,
+	}
+
+	h := NewHandler(
+		WithTmuxSender(mock),
+		WithBatching("test-session", cfg),
+	)
+	defer func() { _ = h.Close() }()
+
+	// Send literals
+	_ = h.SendLiteral("test-session", "test")
+
+	// Don't send any more - timer should flush after FlushInterval
+	time.Sleep(100 * time.Millisecond)
+
+	calls := mock.getCalls()
+
+	if len(calls) != 1 {
+		t.Fatalf("got %d calls, want 1 (timer flush): %+v", len(calls), calls)
+	}
+
+	if calls[0].keys != "test" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "test")
+	}
+}
+
+func TestHandler_Batching_MaxSizeFlush(t *testing.T) {
+	mock := &mockTmuxSender{}
+	cfg := BatchConfig{
+		Enabled:       true,
+		FlushInterval: 10 * time.Second, // Very long so timer won't fire
+		MaxBatchSize:  5,                // Small max to trigger flush
+	}
+
+	h := NewHandler(
+		WithTmuxSender(mock),
+		WithBatching("test-session", cfg),
+	)
+	defer func() { _ = h.Close() }()
+
+	// Send more than MaxBatchSize characters
+	_ = h.SendLiteral("test-session", "12345")
+	_ = h.SendLiteral("test-session", "67890")
+
+	// Give the batcher time to process
+	time.Sleep(50 * time.Millisecond)
+
+	calls := mock.getCalls()
+
+	// Should have at least 2 calls due to max size flush
+	if len(calls) < 2 {
+		t.Fatalf("got %d calls, want at least 2 (max size flush): %+v", len(calls), calls)
+	}
+
+	// First batch should be exactly 5 characters
+	if len(calls[0].keys) != 5 {
+		t.Errorf("first batch size = %d, want 5", len(calls[0].keys))
+	}
+}
+
+func TestHandler_Batching_Ordering(t *testing.T) {
+	mock := &mockTmuxSender{}
+	cfg := BatchConfig{
+		Enabled:       true,
+		FlushInterval: 50 * time.Millisecond,
+		MaxBatchSize:  100,
+	}
+
+	h := NewHandler(
+		WithTmuxSender(mock),
+		WithBatching("test-session", cfg),
+	)
+	defer func() { _ = h.Close() }()
+
+	// Send a sequence that should maintain order
+	_ = h.SendLiteral("test-session", "a")
+	_ = h.SendKey("test-session", "Enter")
+	_ = h.SendLiteral("test-session", "b")
+	_ = h.SendKey("test-session", "Tab")
+	_ = h.SendLiteral("test-session", "c")
+
+	// Wait for flush
+	time.Sleep(100 * time.Millisecond)
+
+	calls := mock.getCalls()
+
+	// Should have 5 calls: a, Enter, b, Tab, c
+	if len(calls) != 5 {
+		t.Fatalf("got %d calls, want 5: %+v", len(calls), calls)
+	}
+
+	expected := []struct {
+		keys    string
+		literal bool
+	}{
+		{"a", true},
+		{"Enter", false},
+		{"b", true},
+		{"Tab", false},
+		{"c", true},
+	}
+
+	for i, exp := range expected {
+		if calls[i].keys != exp.keys {
+			t.Errorf("call[%d].keys = %q, want %q", i, calls[i].keys, exp.keys)
+		}
+		if calls[i].literal != exp.literal {
+			t.Errorf("call[%d].literal = %v, want %v", i, calls[i].literal, exp.literal)
+		}
+	}
+}
+
+func TestHandler_Batching_CloseFlushes(t *testing.T) {
+	mock := &mockTmuxSender{}
+	cfg := BatchConfig{
+		Enabled:       true,
+		FlushInterval: 10 * time.Second, // Long interval
+		MaxBatchSize:  100,
+	}
+
+	h := NewHandler(
+		WithTmuxSender(mock),
+		WithBatching("test-session", cfg),
+	)
+
+	// Send literals but don't wait for timer
+	_ = h.SendLiteral("test-session", "pending")
+
+	// Close should flush pending input
+	err := h.Close()
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Give a moment for any final processing
+	time.Sleep(10 * time.Millisecond)
+
+	calls := mock.getCalls()
+
+	if len(calls) != 1 {
+		t.Fatalf("got %d calls, want 1 (close flush): %+v", len(calls), calls)
+	}
+
+	if calls[0].keys != "pending" {
+		t.Errorf("call[0].keys = %q, want %q", calls[0].keys, "pending")
+	}
+}
+
+func TestHandler_Batching_ConcurrentAccess(t *testing.T) {
+	mock := &mockTmuxSender{}
+	cfg := BatchConfig{
+		Enabled:       true,
+		FlushInterval: 10 * time.Millisecond,
+		MaxBatchSize:  50,
+	}
+
+	h := NewHandler(
+		WithTmuxSender(mock),
+		WithBatching("test-session", cfg),
+	)
+	defer func() { _ = h.Close() }()
+
+	var wg sync.WaitGroup
+	numGoroutines := 10
+	numOps := 100
+
+	// Spawn goroutines sending literals concurrently
+	for i := range numGoroutines {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for range numOps {
+				_ = h.SendLiteral("test-session", fmt.Sprintf("%d", id))
+			}
+		}(i)
+	}
+
+	// Spawn goroutines sending keys concurrently
+	for range numGoroutines / 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range numOps / 10 {
+				_ = h.SendKey("test-session", "Enter")
+				time.Sleep(time.Millisecond)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Wait for final flush
+	time.Sleep(50 * time.Millisecond)
+
+	// Just verify we didn't panic and got some calls
+	calls := mock.getCalls()
+	if len(calls) == 0 {
+		t.Error("expected some calls after concurrent access")
+	}
+}
+
+func TestHandler_Batching_ChannelFull_Fallback(t *testing.T) {
+	// Create a handler with a very small channel buffer to test fallback behavior
+	mock := &mockTmuxSender{}
+	cfg := BatchConfig{
+		Enabled:       true,
+		FlushInterval: 100 * time.Millisecond,
+		MaxBatchSize:  1000,
+	}
+
+	h := NewHandler(
+		WithTmuxSender(mock),
+		WithBatching("test-session", cfg),
+	)
+	defer func() { _ = h.Close() }()
+
+	// The default channel size is 256, so sending more than that quickly
+	// should trigger the fallback path (though it's hard to test precisely)
+
+	// Send a batch of inputs
+	for i := range 10 {
+		_ = h.SendLiteral("test-session", fmt.Sprintf("test%d", i))
+	}
+
+	// Wait for processing
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify history was recorded for all inputs
+	history := h.History()
+	if len(history) != 10 {
+		t.Errorf("history length = %d, want 10", len(history))
+	}
+
+	// Verify calls were made (either batched or via fallback)
+	calls := mock.getCalls()
+	if len(calls) == 0 {
+		t.Error("expected some calls to be made")
 	}
 }

@@ -164,7 +164,10 @@ func NewManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager 
 		detector:      detect.NewDetector(),
 		currentState:  detect.StateWorking,
 		metricsParser: metrics.NewMetricsParser(),
-		inputHandler:  input.NewHandler(input.WithPersistentSender(sessionName)),
+		inputHandler: input.NewHandler(
+			input.WithPersistentSender(sessionName),
+			input.WithBatching(sessionName, input.DefaultBatchConfig()),
+		),
 	}
 }
 
@@ -192,7 +195,10 @@ func NewManagerWithSession(sessionID, id, workdir, task string, cfg ManagerConfi
 		detector:      detect.NewDetector(),
 		currentState:  detect.StateWorking,
 		metricsParser: metrics.NewMetricsParser(),
-		inputHandler:  input.NewHandler(input.WithPersistentSender(sessionName)),
+		inputHandler: input.NewHandler(
+			input.WithPersistentSender(sessionName),
+			input.WithBatching(sessionName, input.DefaultBatchConfig()),
+		),
 	}
 }
 

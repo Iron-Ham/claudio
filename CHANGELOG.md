@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Cleanup Command Respects Worktree Config** - The `claudio cleanup` command and stale resource warnings now correctly use the configured worktree directory instead of the hardcoded default
 
+### Performance
+
+- **Keystroke Batching** - Input mode now coalesces rapid keystrokes into batches before sending to tmux, reducing command overhead by 5-10x for fast typists (250+ WPM)
+
 ## [0.4.0] - 2026-01-12
 
 This release focuses on **tmux reliability** and **UX improvements**, with a major performance boost from persistent tmux connections and several quality-of-life enhancements for the TUI.

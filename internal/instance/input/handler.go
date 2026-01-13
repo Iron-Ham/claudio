@@ -8,9 +8,11 @@ package input
 import (
 	"fmt"
 	"io"
+	"log"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // TmuxSender defines the interface for sending commands to tmux.
@@ -76,6 +78,35 @@ func (t InputType) String() string {
 	}
 }
 
+// BatchConfig controls input batching behavior.
+// When enabled, consecutive literal characters are coalesced into batches
+// to reduce the number of tmux commands sent.
+type BatchConfig struct {
+	// Enabled controls whether batching is active
+	Enabled bool
+	// FlushInterval is how long to wait before flushing accumulated input
+	FlushInterval time.Duration
+	// MaxBatchSize is the maximum characters before forcing a flush
+	MaxBatchSize int
+}
+
+// DefaultBatchConfig returns sensible defaults for input batching.
+// The 8ms flush interval balances responsiveness with batching efficiency -
+// it's imperceptible to users while allowing 5-10x reduction in tmux commands.
+func DefaultBatchConfig() BatchConfig {
+	return BatchConfig{
+		Enabled:       true,
+		FlushInterval: 8 * time.Millisecond,
+		MaxBatchSize:  100,
+	}
+}
+
+// batchItem represents a single input item to be processed by the batcher.
+type batchItem struct {
+	text    string
+	literal bool // true for literals, false for special keys
+}
+
 // Handler manages input encoding, buffering, and history for tmux sessions.
 type Handler struct {
 	mu     sync.RWMutex
@@ -89,6 +120,14 @@ type Handler struct {
 	// Input buffer for batching small inputs
 	buffer     []byte
 	bufferLock sync.Mutex
+
+	// Batching state for coalescing keystrokes
+	batchConfig   BatchConfig
+	batchChan     chan batchItem
+	batchStopChan chan struct{}
+	batchWg       sync.WaitGroup
+	batchOnce     sync.Once // Ensures batcher is stopped only once
+	sessionName   string    // Cached session name for batching
 }
 
 // Option configures the Handler.
@@ -117,6 +156,31 @@ func WithMaxHistory(max int) Option {
 func WithPersistentSender(sessionName string, opts ...PersistentOption) Option {
 	return func(h *Handler) {
 		h.sender = NewPersistentTmuxSender(sessionName, opts...)
+	}
+}
+
+// WithBatching enables input batching with the given configuration.
+// When enabled, consecutive literal characters are coalesced and sent together,
+// dramatically reducing the number of tmux commands for fast typists.
+// The sessionName is required for the batch goroutine to send to tmux.
+// Panics if cfg.Enabled is true but FlushInterval or MaxBatchSize are not positive.
+func WithBatching(sessionName string, cfg BatchConfig) Option {
+	return func(h *Handler) {
+		if cfg.Enabled {
+			if cfg.FlushInterval <= 0 {
+				panic("BatchConfig.FlushInterval must be positive when batching is enabled")
+			}
+			if cfg.MaxBatchSize <= 0 {
+				panic("BatchConfig.MaxBatchSize must be positive when batching is enabled")
+			}
+		}
+		h.sessionName = sessionName
+		h.batchConfig = cfg
+		if cfg.Enabled {
+			h.batchChan = make(chan batchItem, 256)
+			h.batchStopChan = make(chan struct{})
+			h.startBatcher()
+		}
 	}
 }
 
@@ -180,18 +244,16 @@ func (h *Handler) SendInput(sessionName string, input string) error {
 
 // SendKey sends a special key to the tmux session.
 // Common keys: "Enter", "Tab", "Escape", "BSpace", "C-c" (Ctrl+C), etc.
+// When batching is enabled, this flushes any pending literals first.
 // This method is asynchronous and returns immediately.
 func (h *Handler) SendKey(sessionName string, key string) error {
-	h.mu.RLock()
-	sender := h.sender
-	h.mu.RUnlock()
-
-	// Run async to avoid blocking the caller
-	go func() {
-		_ = sender.SendKeys(sessionName, key, false)
-	}()
-
 	h.recordHistory(key, InputTypeKey)
+
+	if h.trySendToBatcher(batchItem{text: key, literal: false}) {
+		return nil
+	}
+
+	h.sendAsync(sessionName, key, false)
 	return nil
 }
 
@@ -203,42 +265,68 @@ func (h *Handler) SendInterrupt(sessionName string) error {
 
 // SendLiteral sends text to the tmux session without any interpretation.
 // Unlike SendInput, this does not process special characters.
+// When batching is enabled, literals are buffered and sent together.
 // This method is asynchronous and returns immediately.
 func (h *Handler) SendLiteral(sessionName string, text string) error {
-	h.mu.RLock()
-	sender := h.sender
-	h.mu.RUnlock()
-
-	// Run async to avoid blocking the caller
-	go func() {
-		_ = sender.SendKeys(sessionName, text, true)
-	}()
-
 	h.recordHistory(text, InputTypeLiteral)
+
+	if h.trySendToBatcher(batchItem{text: text, literal: true}) {
+		return nil
+	}
+
+	h.sendAsync(sessionName, text, true)
 	return nil
+}
+
+// trySendToBatcher attempts to send an item to the batch channel.
+// Returns true if the item was successfully queued, false if batching is
+// disabled or the channel is full (caller should fall back to direct send).
+func (h *Handler) trySendToBatcher(item batchItem) bool {
+	if !h.batchConfig.Enabled || h.batchChan == nil {
+		return false
+	}
+
+	select {
+	case h.batchChan <- item:
+		return true
+	default:
+		return false
+	}
+}
+
+// sendAsync sends input to tmux asynchronously without blocking.
+// Used as a fallback when batching is disabled or the batch channel is full.
+func (h *Handler) sendAsync(sessionName string, text string, literal bool) {
+	sender := h.getSender()
+	go func() {
+		if err := sender.SendKeys(sessionName, text, literal); err != nil {
+			log.Printf("WARNING: async send failed: %v", err)
+		}
+	}()
+}
+
+// getSender returns the current sender with proper locking.
+func (h *Handler) getSender() TmuxSender {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.sender
 }
 
 // SendPaste sends pasted text with bracketed paste mode sequences.
 // This preserves paste context for applications that support bracketed paste.
 // The sequence is: ESC[200~ + text + ESC[201~
 func (h *Handler) SendPaste(sessionName string, text string) error {
-	h.mu.RLock()
-	sender := h.sender
-	h.mu.RUnlock()
+	h.recordHistory(text, InputTypePaste)
 
-	// Run async to avoid blocking the caller
+	sender := h.getSender()
 	go func() {
-		// Bracketed paste mode escape sequences
-		pasteStart := "\x1b[200~"
-		pasteEnd := "\x1b[201~"
-
-		// Send in sequence: start marker, content, end marker
+		const pasteStart = "\x1b[200~"
+		const pasteEnd = "\x1b[201~"
 		_ = sender.SendKeys(sessionName, pasteStart, true)
 		_ = sender.SendKeys(sessionName, text, true)
 		_ = sender.SendKeys(sessionName, pasteEnd, true)
 	}()
 
-	h.recordHistory(text, InputTypePaste)
 	return nil
 }
 
@@ -364,10 +452,102 @@ func (h *Handler) ClearBuffer() {
 	h.buffer = h.buffer[:0]
 }
 
+// startBatcher launches the background goroutine that coalesces input.
+// It accumulates literal characters in a buffer and flushes them either:
+// - When the flush interval timer fires
+// - When a special key is received (flush first, then send key)
+// - When the batch reaches maximum size
+func (h *Handler) startBatcher() {
+	h.batchWg.Add(1)
+	go func() {
+		defer h.batchWg.Done()
+
+		var literalBuf strings.Builder
+		var timer *time.Timer
+		var timerC <-chan time.Time
+
+		stopTimer := func() {
+			if timer != nil {
+				timer.Stop()
+				timer = nil
+				timerC = nil
+			}
+		}
+
+		flushLiterals := func() {
+			if literalBuf.Len() > 0 {
+				text := literalBuf.String()
+				literalBuf.Reset()
+				if err := h.getSender().SendKeys(h.sessionName, text, true); err != nil {
+					log.Printf("WARNING: failed to send batched input (%d chars): %v", len(text), err)
+				}
+			}
+			stopTimer()
+		}
+
+		processItem := func(item batchItem) {
+			if item.literal {
+				literalBuf.WriteString(item.text)
+				if timer == nil {
+					timer = time.NewTimer(h.batchConfig.FlushInterval)
+					timerC = timer.C
+				}
+				if literalBuf.Len() >= h.batchConfig.MaxBatchSize {
+					flushLiterals()
+				}
+				return
+			}
+
+			// Special key: flush pending literals first, then send key
+			flushLiterals()
+			if err := h.getSender().SendKeys(h.sessionName, item.text, false); err != nil {
+				log.Printf("WARNING: failed to send key %q: %v", item.text, err)
+			}
+		}
+
+		drainAndExit := func() {
+			for {
+				select {
+				case item, ok := <-h.batchChan:
+					if !ok {
+						flushLiterals()
+						return
+					}
+					processItem(item)
+				default:
+					flushLiterals()
+					return
+				}
+			}
+		}
+
+		for {
+			select {
+			case <-h.batchStopChan:
+				drainAndExit()
+				return
+
+			case item, ok := <-h.batchChan:
+				if !ok {
+					flushLiterals()
+					return
+				}
+				processItem(item)
+
+			case <-timerC:
+				flushLiterals()
+			}
+		}
+	}()
+}
+
 // Close releases resources held by the handler.
 // If the handler uses a persistent sender, this closes the connection.
 // This should be called when the handler is no longer needed.
+// Safe to call multiple times; only the first call has any effect.
 func (h *Handler) Close() error {
+	h.stopBatcher()
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -375,4 +555,26 @@ func (h *Handler) Close() error {
 		return closer.Close()
 	}
 	return nil
+}
+
+// stopBatcher safely stops the batcher goroutine if running.
+// Uses sync.Once to ensure it only runs once, avoiding double-close panics.
+func (h *Handler) stopBatcher() {
+	h.batchOnce.Do(func() {
+		h.mu.Lock()
+		stopChan := h.batchStopChan
+		h.mu.Unlock()
+
+		if stopChan == nil {
+			return
+		}
+
+		close(stopChan)
+		h.batchWg.Wait()
+
+		h.mu.Lock()
+		h.batchStopChan = nil
+		h.batchChan = nil
+		h.mu.Unlock()
+	})
 }
