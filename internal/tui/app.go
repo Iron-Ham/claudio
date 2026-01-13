@@ -3075,17 +3075,10 @@ func (m Model) renderTripleShotHeader() string {
 	return view.RenderTripleShotHeader(ctx)
 }
 
-// renderTripleShotSidebar renders the sidebar for triple-shot mode
+// renderTripleShotSidebar renders the sidebar for triple-shot mode.
+// Uses normal sidebar view to ensure instances created during triple-shot are visible.
 func (m Model) renderTripleShotSidebar(width, height int) string {
-	ctx := view.TripleShotRenderContext{
-		Orchestrator: m.orchestrator,
-		Session:      m.session,
-		TripleShot:   m.tripleShot,
-		ActiveTab:    m.activeTab,
-		Width:        width,
-		Height:       height,
-	}
-	return view.RenderTripleShotSidebarSection(ctx, width)
+	return view.NewSidebarView().RenderSidebar(m, width, height)
 }
 
 // renderTripleShotHelp renders the help bar for triple-shot mode
