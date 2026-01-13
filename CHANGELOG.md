@@ -7,11 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Session Progress Persistence** - Claude conversation session IDs are now automatically detected and stored, enabling the `--resume` flag to be used when restarting interrupted instances. If Claudio is exited while instances are running, reconnecting to the session will restore tmux connections where possible, and instances without tmux sessions can be resumed using their stored Claude session ID to continue the conversation.
+- **Plan Mode in Triple-Shot** - The `:plan` command can now be used while in triple-shot mode. Plan groups appear as separate sections in the sidebar below the tripleshot attempts and judge, allowing parallel planning workflows alongside tripleshot execution.
+- **Inline Plan Mode** (Experimental) - New `:plan` command enables structured task planning directly within the TUI. Create task groups, define dependencies, and execute plans without leaving Claudio. Enable via `experimental.inline_plan` in config.
+- **Inline UltraPlan Mode** (Experimental) - New `:ultraplan` command for parallel task execution with automatic coordination. Supports multi-pass planning (`--multi-pass`) and loading existing plans (`--plan <file>`). Enable via `experimental.inline_ultraplan` in config.
+- **Grouped Instance View** (Experimental) - Visual grouping of instances in the sidebar with collapsible groups. Toggle with `:group show`. Enable via `experimental.grouped_instance_view` in config.
+- **Group Keyboard Shortcuts** - Vim-style `g` prefix commands for group navigation: `gc` toggle collapse, `gC` collapse/expand all, `gn/gp` navigate groups, `gs` skip group, `gr` retry failed, `gf` force-start next group.
+- **Group Management Commands** - New commands for organizing instances: `:group create`, `:group add`, `:group remove`, `:group move`, `:group order`, `:group delete`.
+- **Group-aware PR Workflow** - Create PRs for task groups with `:pr --group` (stacked PRs), `:pr --group=all` (consolidated), or `:pr --group=single` (single group).
+- **Session Resume for Consolidation** - Resume paused consolidation after manually resolving merge conflicts using the `r` key in UltraPlan mode. The system validates conflicts are resolved before continuing.
+
 ### Fixed
 
 - **Triple-Shot Accept Command** - Implement missing `:accept` command that was referenced in UI message but never implemented. Users can now accept winning triple-shot solutions after evaluation completes.
-
-### Added
 
 - **Plan Mode in Triple-Shot** - The `:plan` command can now be used while in triple-shot mode. Plan groups appear as separate sections in the sidebar below the tripleshot attempts and judge, allowing parallel planning workflows alongside tripleshot execution.
 - **Inline Plan Mode** (Experimental) - New `:plan` command enables structured task planning directly within the TUI. Create task groups, define dependencies, and execute plans without leaving Claudio. Enable via `experimental.inline_plan` in config.

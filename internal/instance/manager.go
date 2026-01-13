@@ -89,6 +89,10 @@ func DefaultManagerConfig() ManagerConfig {
 // MetricsChangeCallback is called when metrics are updated
 type MetricsChangeCallback func(instanceID string, metrics *metrics.ParsedMetrics)
 
+// ClaudeSessionIDCallback is called when a Claude conversation session ID is detected.
+// This session ID can be used with Claude's --resume flag to continue a conversation.
+type ClaudeSessionIDCallback func(instanceID, claudeSessionID string)
+
 // ManagerOptions holds explicit dependencies for creating a Manager.
 // Use NewManagerWithDeps to create a Manager with these options.
 type ManagerOptions struct {
@@ -99,6 +103,7 @@ type ManagerOptions struct {
 	Config           ManagerConfig
 	StateMonitor     *state.Monitor     // Optional - if nil, an internal monitor is created
 	LifecycleManager *lifecycle.Manager // Optional - if set, delegates Start/Stop/Reconnect
+	ClaudeSessionID  string             // Optional - existing Claude session ID for resume
 }
 
 // Manager handles a single Claude Code instance running in a tmux session.
@@ -139,6 +144,11 @@ type Manager struct {
 
 	// Input handling
 	inputHandler *input.Handler
+
+	// Claude session ID detection and persistence
+	sessionDetector         *detect.SessionDetector
+	claudeSessionID         string                  // Claude conversation session ID for --resume
+	claudeSessionIDCallback ClaudeSessionIDCallback // Callback when session ID is detected
 
 	// Logger for structured logging
 	logger *logging.Logger
@@ -254,15 +264,17 @@ func NewManagerWithDeps(opts ManagerOptions) *Manager {
 	}
 
 	return &Manager{
-		id:            opts.ID,
-		sessionID:     opts.SessionID,
-		workdir:       opts.WorkDir,
-		task:          opts.Task,
-		sessionName:   sessionName,
-		outputBuf:     capture.NewRingBuffer(cfg.OutputBufferSize),
-		doneChan:      make(chan struct{}),
-		config:        cfg,
-		metricsParser: metrics.NewMetricsParser(),
+		id:              opts.ID,
+		sessionID:       opts.SessionID,
+		workdir:         opts.WorkDir,
+		task:            opts.Task,
+		sessionName:     sessionName,
+		outputBuf:       capture.NewRingBuffer(cfg.OutputBufferSize),
+		doneChan:        make(chan struct{}),
+		config:          cfg,
+		metricsParser:   metrics.NewMetricsParser(),
+		sessionDetector: detect.NewSessionDetector(),
+		claudeSessionID: opts.ClaudeSessionID,
 		inputHandler: input.NewHandler(
 			input.WithPersistentSender(sessionName),
 			input.WithBatching(sessionName, input.DefaultBatchConfig()),
@@ -298,6 +310,33 @@ func (m *Manager) SetBellCallback(cb BellCallback) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.bellCallback = cb
+}
+
+// SetClaudeSessionIDCallback sets a callback for when a Claude session ID is detected.
+// This enables persistence of the session ID for later resume.
+func (m *Manager) SetClaudeSessionIDCallback(cb ClaudeSessionIDCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.claudeSessionIDCallback = cb
+}
+
+// SetClaudeSessionID sets the Claude conversation session ID for resume.
+// This should be called before Start() if resuming a previous session.
+func (m *Manager) SetClaudeSessionID(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.claudeSessionID = sessionID
+	// Also update the detector so it knows about this session
+	if m.sessionDetector != nil {
+		m.sessionDetector.Reset()
+	}
+}
+
+// ClaudeSessionID returns the detected/stored Claude conversation session ID.
+func (m *Manager) ClaudeSessionID() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.claudeSessionID
 }
 
 // SetLogger sets the logger for the instance manager.
@@ -440,16 +479,31 @@ func (m *Manager) Start() error {
 	// Enable bell monitoring so we can detect and forward terminal bells
 	_ = tmux.Command("set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
 
-	// Write the task/prompt to a temporary file to avoid shell escaping issues
-	// (prompts with <, >, |, etc. would otherwise be interpreted by the shell)
-	promptFile := filepath.Join(m.workdir, ".claude-prompt")
-	if err := os.WriteFile(promptFile, []byte(m.task), 0600); err != nil {
-		_ = tmux.Command("kill-session", "-t", m.sessionName).Run()
-		return fmt.Errorf("failed to write prompt file: %w", err)
+	// Build the claude command with appropriate options
+	var claudeCmd string
+
+	// Check if we have a Claude session ID to resume
+	if m.claudeSessionID != "" {
+		// Resume existing conversation using --resume flag
+		// This continues from where the previous conversation left off
+		claudeCmd = fmt.Sprintf("claude --dangerously-skip-permissions --resume %q", m.claudeSessionID)
+		if m.logger != nil {
+			m.logger.Info("resuming claude conversation",
+				"session_name", m.sessionName,
+				"claude_session_id", m.claudeSessionID)
+		}
+	} else {
+		// Write the task/prompt to a temporary file to avoid shell escaping issues
+		// (prompts with <, >, |, etc. would otherwise be interpreted by the shell)
+		promptFile := filepath.Join(m.workdir, ".claude-prompt")
+		if err := os.WriteFile(promptFile, []byte(m.task), 0600); err != nil {
+			_ = tmux.Command("kill-session", "-t", m.sessionName).Run()
+			return fmt.Errorf("failed to write prompt file: %w", err)
+		}
+		// Send the claude command to the tmux session, reading prompt from file
+		claudeCmd = fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q", promptFile, promptFile)
 	}
 
-	// Send the claude command to the tmux session, reading prompt from file
-	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q", promptFile, promptFile)
 	sendCmd := tmux.Command(
 		"send-keys",
 		"-t", m.sessionName,
@@ -459,6 +513,8 @@ func (m *Manager) Start() error {
 	if err := sendCmd.Run(); err != nil {
 		// Clean up the session if we failed to start claude
 		_ = tmux.Command("kill-session", "-t", m.sessionName).Run()
+		// Clean up prompt file if it exists
+		promptFile := filepath.Join(m.workdir, ".claude-prompt")
 		_ = os.Remove(promptFile)
 		if m.logger != nil {
 			m.logger.Error("failed to start claude in tmux session",
@@ -608,6 +664,9 @@ func (m *Manager) captureLoop() {
 			// Parse metrics from output (separate from state detection)
 			m.parseAndNotifyMetrics(output)
 
+			// Detect and track Claude session ID for resume capability
+			m.detectAndNotifySessionID(output, instanceID)
+
 			// Check for timeout conditions
 			m.stateMonitor.CheckTimeouts(instanceID)
 
@@ -731,6 +790,41 @@ func (m *Manager) checkAndForwardBell(sessionName, instanceID string) {
 
 	bellActive := strings.TrimSpace(string(output)) == "1"
 	m.stateMonitor.CheckBell(instanceID, bellActive)
+}
+
+// detectAndNotifySessionID checks for Claude session ID in output and notifies callback if found.
+// This enables session persistence for resume capability.
+func (m *Manager) detectAndNotifySessionID(output []byte, instanceID string) {
+	if m.sessionDetector == nil {
+		return
+	}
+
+	newSessionID := m.sessionDetector.ProcessOutput(output)
+	if newSessionID == "" {
+		return
+	}
+
+	m.mu.Lock()
+	// Only update and notify if this is actually a new session ID
+	if newSessionID != m.claudeSessionID {
+		m.claudeSessionID = newSessionID
+		callback := m.claudeSessionIDCallback
+		logger := m.logger
+		m.mu.Unlock()
+
+		if logger != nil {
+			logger.Info("claude session ID detected",
+				"instance_id", instanceID,
+				"claude_session_id", newSessionID)
+		}
+
+		// Notify callback (outside lock to prevent deadlocks)
+		if callback != nil {
+			callback(instanceID, newSessionID)
+		}
+	} else {
+		m.mu.Unlock()
+	}
 }
 
 // parseAndNotifyMetrics parses metrics from output and notifies if changed

@@ -72,6 +72,10 @@ type Instance struct {
 	// Intelligent naming support - LLM-generated short names for sidebar display
 	DisplayName   string `json:"display_name,omitempty"`   // Short descriptive name (e.g., "Fix auth bug")
 	ManuallyNamed bool   `json:"manually_named,omitempty"` // If true, auto-rename is disabled
+
+	// Session persistence support - enables resuming interrupted Claude conversations
+	ClaudeSessionID string     `json:"claude_session_id,omitempty"` // Claude Code conversation session ID for --resume
+	LastResumedAt   *time.Time `json:"last_resumed_at,omitempty"`   // When the instance was last resumed
 }
 
 // GetID returns the instance ID (satisfies prworkflow.InstanceInfo).

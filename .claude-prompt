@@ -1,0 +1,34 @@
+You are one of three Claude instances working on the same problem.
+Your goal is to solve the problem using your own approach - be creative and thorough.
+
+## Task
+Add progress persistence for interrupted or long-running sessions. If Claudio is exited, the sessions should be reconnected to which means re-starting the tmux sessions if needed, and resuming the correct claude instance. 
+
+## Important Instructions
+
+1. **Solve the problem independently** - Don't try to coordinate with other instances
+2. **Use your best judgment** - Choose the approach you think is most appropriate
+3. **Document your approach** - Write clear commit messages and code comments
+4. **Be thorough** - Make sure your solution is complete and well-tested
+
+## Completion Protocol
+
+When your solution is complete, you MUST write a completion file:
+
+1. Use Write tool to create `.claudio-tripleshot-complete.json` in your worktree root
+2. Include this JSON structure:
+```json
+{
+  "attempt_index": 2,
+  "status": "complete",
+  "summary": "Brief summary of what you implemented",
+  "files_modified": ["file1.go", "file2.go"],
+  "approach": "Description of the approach you took and why",
+  "notes": "Any additional notes or concerns"
+}
+```
+
+3. Set status to "complete" if you finished successfully, or "failed" if you couldn't complete the task
+4. The approach field is important - it helps the judge understand your solution
+
+This file signals that your work is done and provides context for evaluation.

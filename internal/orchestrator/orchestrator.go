@@ -400,8 +400,10 @@ func (o *Orchestrator) LoadSessionWithLock() (*Session, error) {
 	return o.LoadSession()
 }
 
-// RecoverSession loads a session and attempts to reconnect to running tmux sessions
-// Returns a list of instance IDs that were successfully reconnected
+// RecoverSession loads a session and attempts to reconnect to running tmux sessions.
+// Returns a list of instance IDs that were successfully reconnected.
+// For instances where tmux sessions no longer exist but have ClaudeSessionID stored,
+// they can be resumed later using ReconnectInstance which will use --resume.
 func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
 	session, err := o.LoadSession()
 	if err != nil {
@@ -409,50 +411,60 @@ func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
 	}
 
 	var reconnected []string
+	var resumable []string // Instances that can be resumed via Claude --resume
+
 	for _, inst := range session.Instances {
-		// Create instance manager
+		// Create instance manager (this picks up the ClaudeSessionID automatically)
 		mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task)
+
+		// Configure all callbacks using the centralized method
+		o.configureInstanceCallbacks(mgr)
 
 		// Try to reconnect if the tmux session still exists
 		if mgr.TmuxSessionExists() {
-			// Configure state change callback
-			mgr.SetStateCallback(func(id string, state detect.WaitingState) {
-				switch state {
-				case detect.StateCompleted:
-					o.handleInstanceExit(id)
-				case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
-					o.handleInstanceWaitingInput(id)
-				case detect.StatePROpened:
-					o.handleInstancePROpened(id)
-				}
-			})
-
-			// Configure timeout callback
-			mgr.SetTimeoutCallback(func(id string, timeoutType instance.TimeoutType) {
-				o.handleInstanceTimeout(id, timeoutType)
-			})
-
-			// Configure bell callback to forward terminal bells
-			mgr.SetBellCallback(func(id string) {
-				o.handleInstanceBell(id)
-			})
-
 			if err := mgr.Reconnect(); err == nil {
 				inst.Status = StatusWorking
 				inst.PID = mgr.PID()
 				reconnected = append(reconnected, inst.ID)
+
+				if o.logger != nil {
+					o.logger.Info("instance reconnected to existing tmux session",
+						"instance_id", inst.ID,
+						"tmux_session", mgr.SessionName(),
+					)
+				}
 			}
 		} else {
-			// Tmux session doesn't exist - mark as paused if it was working
+			// Tmux session doesn't exist - check if we can resume the Claude conversation
 			if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
 				inst.Status = StatusPaused
 				inst.PID = 0
+
+				// If we have a Claude session ID, this instance can be resumed
+				if inst.ClaudeSessionID != "" {
+					resumable = append(resumable, inst.ID)
+					if o.logger != nil {
+						o.logger.Info("instance can be resumed via Claude --resume",
+							"instance_id", inst.ID,
+							"claude_session_id", inst.ClaudeSessionID,
+						)
+					}
+				}
 			}
 		}
 
 		o.mu.Lock()
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
+	}
+
+	// Log summary
+	if o.logger != nil {
+		o.logger.Info("session recovery complete",
+			"reconnected", len(reconnected),
+			"resumable", len(resumable),
+			"total_instances", len(session.Instances),
+		)
 	}
 
 	// Save updated session state
@@ -1177,13 +1189,22 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 func (o *Orchestrator) newInstanceManager(instanceID, workdir, task string) *instance.Manager {
 	cfg := o.instanceManagerConfig()
 
+	// Look up the instance to get the Claude session ID for resume capability
+	var claudeSessionID string
+	if o.session != nil {
+		if inst := o.session.GetInstance(instanceID); inst != nil {
+			claudeSessionID = inst.ClaudeSessionID
+		}
+	}
+
 	mgr := instance.NewManagerWithDeps(instance.ManagerOptions{
-		ID:           instanceID,
-		SessionID:    o.sessionID,
-		WorkDir:      workdir,
-		Task:         task,
-		Config:       cfg,
-		StateMonitor: o.stateMonitor,
+		ID:              instanceID,
+		SessionID:       o.sessionID,
+		WorkDir:         workdir,
+		Task:            task,
+		Config:          cfg,
+		StateMonitor:    o.stateMonitor,
+		ClaudeSessionID: claudeSessionID,
 		// LifecycleManager not set - instances use internal Start/Stop/Reconnect
 	})
 
@@ -1275,6 +1296,11 @@ func (o *Orchestrator) configureInstanceCallbacks(mgr *instance.Manager) {
 	// Configure bell callback to forward terminal bells
 	mgr.SetBellCallback(func(id string) {
 		o.handleInstanceBell(id)
+	})
+
+	// Configure Claude session ID callback for progress persistence
+	mgr.SetClaudeSessionIDCallback(func(id string, claudeSessionID string) {
+		o.handleClaudeSessionIDDetected(id, claudeSessionID)
 	})
 }
 
@@ -1962,6 +1988,35 @@ func (o *Orchestrator) handleInstanceBell(id string) {
 	}
 }
 
+// handleClaudeSessionIDDetected handles when a Claude conversation session ID is detected.
+// This persists the session ID to enable resuming interrupted conversations.
+func (o *Orchestrator) handleClaudeSessionIDDetected(id, claudeSessionID string) {
+	inst := o.GetInstance(id)
+	if inst == nil {
+		return
+	}
+
+	// Update the instance with the detected Claude session ID
+	inst.ClaudeSessionID = claudeSessionID
+
+	if o.logger != nil {
+		o.logger.Info("claude session ID persisted for resume",
+			"instance_id", id,
+			"claude_session_id", claudeSessionID,
+		)
+	}
+
+	// Persist the change immediately so it survives crashes
+	if err := o.saveSession(); err != nil {
+		if o.logger != nil {
+			o.logger.Warn("failed to persist claude session ID - resume may not work after crash",
+				"instance_id", id,
+				"error", err.Error(),
+			)
+		}
+	}
+}
+
 // executeNotification executes a notification command from config
 func (o *Orchestrator) executeNotification(configKey string, inst *Instance) {
 	cmd := viper.GetString(configKey)
@@ -2016,17 +2071,24 @@ func (o *Orchestrator) GetMainBranch() string {
 // ReconnectInstance attempts to reconnect to a stopped or paused instance
 // If the tmux session still exists, it reconnects to it
 // If not, it restarts Claude with the same task in the existing worktree
+// When restarting, it uses --resume with the Claude session ID if available
 func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 	o.mu.Lock()
 	mgr, ok := o.instances[inst.ID]
 	o.mu.Unlock()
 
-	// If no manager exists yet, create one
+	// If no manager exists yet, create one (which will pick up the Claude session ID)
 	if !ok {
 		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task)
 		o.mu.Lock()
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
+	} else {
+		// Manager exists but may not have the latest Claude session ID
+		// Update it in case the instance was updated
+		if inst.ClaudeSessionID != "" && mgr.ClaudeSessionID() != inst.ClaudeSessionID {
+			mgr.SetClaudeSessionID(inst.ClaudeSessionID)
+		}
 	}
 
 	// Configure all callbacks
@@ -2039,7 +2101,21 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 			return fmt.Errorf("failed to reconnect to existing session: %w", err)
 		}
 	} else {
-		// Session doesn't exist - start a fresh one with the same task
+		// Session doesn't exist - start a fresh one
+		// If we have a Claude session ID, it will be used for --resume
+		willResume := inst.ClaudeSessionID != ""
+		if o.logger != nil {
+			if willResume {
+				o.logger.Info("restarting instance with Claude conversation resume",
+					"instance_id", inst.ID,
+					"claude_session_id", inst.ClaudeSessionID,
+				)
+			} else {
+				o.logger.Info("restarting instance from scratch (no Claude session ID available)",
+					"instance_id", inst.ID,
+				)
+			}
+		}
 		if err := mgr.Start(); err != nil {
 			return fmt.Errorf("failed to restart instance: %w", err)
 		}
@@ -2049,12 +2125,18 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 	inst.PID = mgr.PID()
 	inst.TmuxSession = mgr.SessionName()
 
+	// Track resume timestamp
+	if inst.ClaudeSessionID != "" {
+		now := time.Now()
+		inst.LastResumedAt = &now
+	}
+
 	// Update start time for metrics
-	now := mgr.StartTime()
+	startTime := mgr.StartTime()
 	if inst.Metrics == nil {
-		inst.Metrics = &Metrics{StartTime: now}
+		inst.Metrics = &Metrics{StartTime: startTime}
 	} else {
-		inst.Metrics.StartTime = now
+		inst.Metrics.StartTime = startTime
 		inst.Metrics.EndTime = nil // Clear end time since we're restarting
 	}
 

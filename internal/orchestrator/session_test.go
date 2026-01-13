@@ -479,3 +479,68 @@ func TestInstance_EffectiveName(t *testing.T) {
 		})
 	}
 }
+
+// Tests for session persistence fields
+
+func TestInstance_ClaudeSessionID_Field(t *testing.T) {
+	inst := NewInstance("test task")
+
+	// ClaudeSessionID should be empty initially
+	if inst.ClaudeSessionID != "" {
+		t.Errorf("instance.ClaudeSessionID should be empty initially, got %q", inst.ClaudeSessionID)
+	}
+
+	// Should be settable
+	testSessionID := "12345678-1234-1234-1234-123456789012"
+	inst.ClaudeSessionID = testSessionID
+	if inst.ClaudeSessionID != testSessionID {
+		t.Errorf("instance.ClaudeSessionID = %q, want %q", inst.ClaudeSessionID, testSessionID)
+	}
+}
+
+func TestInstance_LastResumedAt_Field(t *testing.T) {
+	inst := NewInstance("test task")
+
+	// LastResumedAt should be nil initially
+	if inst.LastResumedAt != nil {
+		t.Errorf("instance.LastResumedAt should be nil initially, got %v", inst.LastResumedAt)
+	}
+
+	// Should be settable
+	now := time.Now()
+	inst.LastResumedAt = &now
+	if inst.LastResumedAt == nil {
+		t.Error("instance.LastResumedAt should not be nil after setting")
+	}
+	if !inst.LastResumedAt.Equal(now) {
+		t.Errorf("instance.LastResumedAt = %v, want %v", inst.LastResumedAt, now)
+	}
+}
+
+func TestInstance_SessionPersistenceIntegration(t *testing.T) {
+	// Test that all persistence-related fields work together
+	inst := NewInstance("implement feature X")
+
+	// Initial state: no persistence data
+	if inst.ClaudeSessionID != "" {
+		t.Error("ClaudeSessionID should be empty for new instance")
+	}
+	if inst.LastResumedAt != nil {
+		t.Error("LastResumedAt should be nil for new instance")
+	}
+
+	// Simulate detection of Claude session ID
+	inst.ClaudeSessionID = "abcdef12-1234-5678-9abc-def012345678"
+
+	// Simulate resume
+	resumeTime := time.Now()
+	inst.LastResumedAt = &resumeTime
+
+	// Verify persistence data
+	if inst.ClaudeSessionID != "abcdef12-1234-5678-9abc-def012345678" {
+		t.Errorf("ClaudeSessionID = %q, want UUID", inst.ClaudeSessionID)
+	}
+	if inst.LastResumedAt == nil || !inst.LastResumedAt.Equal(resumeTime) {
+		t.Error("LastResumedAt not set correctly")
+	}
+}
