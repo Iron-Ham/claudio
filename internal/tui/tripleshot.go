@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 )
@@ -117,4 +119,83 @@ func (m *Model) handleTripleShotFailed(session *orchestrator.TripleShotSession) 
 	if session.Error != "" && m.errorMessage == "" {
 		m.errorMessage = "Triple-shot failed: " + session.Error
 	}
+}
+
+// handleTripleShotAccept handles accepting the winning triple-shot solution.
+// It identifies the winning attempt, displays acceptance info, and exits triple-shot mode.
+// On error, the user remains in triple-shot mode so they can investigate or retry.
+func (m *Model) handleTripleShotAccept() {
+	if m.tripleShot == nil || m.tripleShot.Coordinator == nil {
+		if m.logger != nil {
+			m.logger.Warn("triple-shot accept failed", "reason", "no active session")
+		}
+		m.errorMessage = "No active triple-shot session"
+		return
+	}
+
+	coordinator := m.tripleShot.Coordinator
+	session := coordinator.Session()
+	if session == nil || session.Evaluation == nil {
+		if m.logger != nil {
+			m.logger.Warn("triple-shot accept failed", "reason", "no evaluation available")
+		}
+		m.errorMessage = "No evaluation available"
+		return
+	}
+
+	eval := session.Evaluation
+
+	// Handle different merge strategies
+	switch eval.MergeStrategy {
+	case orchestrator.MergeStrategySelect:
+		// Direct selection - identify the winning branch
+		if eval.WinnerIndex < 0 || eval.WinnerIndex >= 3 {
+			if m.logger != nil {
+				m.logger.Warn("triple-shot accept failed",
+					"reason", "invalid winner index",
+					"winner_index", eval.WinnerIndex,
+				)
+			}
+			m.errorMessage = "Invalid winner index in evaluation"
+			return
+		}
+
+		winnerAttempt := session.Attempts[eval.WinnerIndex]
+		winningBranch := winnerAttempt.Branch
+
+		if m.logger != nil {
+			m.logger.Info("accepting triple-shot solution",
+				"strategy", eval.MergeStrategy,
+				"winner_index", eval.WinnerIndex,
+				"branch", winningBranch,
+			)
+		}
+
+		m.infoMessage = fmt.Sprintf("Accepted winning solution from attempt %d. Use 'git checkout %s' to switch to the winning branch, or create a PR with 'claudio pr %s'",
+			eval.WinnerIndex+1, winningBranch, winnerAttempt.InstanceID)
+
+	case orchestrator.MergeStrategyMerge, orchestrator.MergeStrategyCombine:
+		// Merge/combine strategies require manual intervention
+		if m.logger != nil {
+			m.logger.Info("accepting triple-shot solution",
+				"strategy", eval.MergeStrategy,
+			)
+		}
+
+		m.infoMessage = fmt.Sprintf("Evaluation recommends %s strategy. Review the attempts and suggested changes manually.",
+			eval.MergeStrategy)
+
+	default:
+		if m.logger != nil {
+			m.logger.Warn("triple-shot accept failed",
+				"reason", "unknown merge strategy",
+				"strategy", eval.MergeStrategy,
+			)
+		}
+		m.errorMessage = fmt.Sprintf("Unknown merge strategy: %s", eval.MergeStrategy)
+		return
+	}
+
+	// Exit triple-shot mode only on successful acceptance
+	m.tripleShot = nil
 }
