@@ -15,8 +15,10 @@ import (
 
 // Layout constants for dashboard rendering
 const (
-	SidebarWidth    = 30 // Fixed sidebar width
-	SidebarMinWidth = 20 // Minimum sidebar width for narrow terminals
+	SidebarWidth               = 30 // Fixed sidebar width
+	SidebarMinWidth            = 20 // Minimum sidebar width for narrow terminals
+	ExpandedNameMaxLen         = 50 // Maximum length for expanded instance names
+	ExpandedNameContinuationIn = 4  // Indentation for continuation lines
 )
 
 // DashboardState provides the minimal state needed for dashboard rendering.
@@ -36,6 +38,8 @@ type DashboardState interface {
 	TerminalHeight() int
 	// IsAddingTask returns whether the user is currently adding a new task
 	IsAddingTask() bool
+	// IntelligentNamingEnabled returns whether intelligent naming is enabled
+	IntelligentNamingEnabled() bool
 }
 
 // DashboardView handles rendering of the instance list/dashboard sidebar.
@@ -101,9 +105,10 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 		if !isAddingTask {
 			activeTab = state.ActiveTab()
 		}
+		intelligentNaming := state.IntelligentNamingEnabled()
 		for i := startIdx; i < endIdx; i++ {
 			inst := session.Instances[i]
-			b.WriteString(dv.renderSidebarInstance(i, inst, conflictingInstances, activeTab, width))
+			b.WriteString(dv.renderSidebarInstance(i, inst, conflictingInstances, activeTab, width, intelligentNaming))
 			b.WriteString("\n")
 		}
 
@@ -139,12 +144,16 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 }
 
 // renderSidebarInstance renders a single instance item in the sidebar.
+// When intelligentNaming is enabled and this instance is selected (i == activeTab),
+// the instance name is expanded to show more characters (up to ExpandedNameMaxLen),
+// potentially wrapping to multiple lines.
 func (dv *DashboardView) renderSidebarInstance(
 	i int,
 	inst *orchestrator.Instance,
 	conflictingInstances map[string]bool,
 	activeTab int,
 	width int,
+	intelligentNaming bool,
 ) string {
 	// Status indicator (colored dot)
 	statusColor := styles.StatusColor(string(inst.Status))
@@ -165,11 +174,6 @@ func (dv *DashboardView) renderSidebarInstance(
 		prefix += "⛓ " // Chain icon to indicate waiting for dependencies
 		prefixLen += 2
 	}
-
-	// Instance number and truncated display name
-	// Uses EffectiveName() which returns DisplayName if set, otherwise Task
-	maxTaskLen := max(width-8-prefixLen, 10) // Account for number, dot, prefix, padding
-	label := fmt.Sprintf("%d %s%s", i+1, prefix, truncate(inst.EffectiveName(), maxTaskLen))
 
 	// Choose style based on active state and status
 	var itemStyle lipgloss.Style
@@ -194,8 +198,73 @@ func (dv *DashboardView) renderSidebarInstance(
 		}
 	}
 
-	// Combine dot and label
+	// Calculate maximum task length based on context
+	// When intelligent naming is on and this is the selected instance, expand the name
+	effectiveName := inst.EffectiveName()
+	normalMaxLen := max(width-8-prefixLen, 10) // Account for number, dot, prefix, padding
+	isSelected := i == activeTab
+
+	if intelligentNaming && isSelected && len([]rune(effectiveName)) > normalMaxLen {
+		// Expand the selected instance name, potentially wrapping to multiple lines
+		return dv.renderExpandedInstance(i, effectiveName, prefix, prefixLen, dot, itemStyle, width)
+	}
+
+	// Standard single-line rendering
+	label := fmt.Sprintf("%d %s%s", i+1, prefix, truncate(effectiveName, normalMaxLen))
 	return dot + " " + itemStyle.Render(label)
+}
+
+// renderExpandedInstance renders an instance with an expanded name that may wrap to multiple lines.
+func (dv *DashboardView) renderExpandedInstance(
+	i int,
+	effectiveName string,
+	prefix string,
+	prefixLen int,
+	dot string,
+	itemStyle lipgloss.Style,
+	width int,
+) string {
+	// Cap at maximum expanded length
+	nameRunes := []rune(effectiveName)
+	if len(nameRunes) > ExpandedNameMaxLen {
+		nameRunes = append(nameRunes[:ExpandedNameMaxLen-3], '.', '.', '.')
+	}
+	displayName := string(nameRunes)
+
+	// Calculate how much fits on the first line
+	// Format: "● N prefix<name>" where N is the instance number
+	firstLineOverhead := 2 + len(fmt.Sprintf("%d ", i+1)) + prefixLen // "● " + "N " + prefix
+	firstLineAvailable := max(width-firstLineOverhead-2, 10)          // -2 for padding
+
+	if len(nameRunes) <= firstLineAvailable {
+		// Fits on one line even when expanded
+		label := fmt.Sprintf("%d %s%s", i+1, prefix, displayName)
+		return dot + " " + itemStyle.Render(label)
+	}
+
+	// Need to wrap to multiple lines
+	var lines []string
+
+	// First line: "● N prefix<part of name>"
+	firstPart := string(nameRunes[:firstLineAvailable])
+	firstLabel := fmt.Sprintf("%d %s%s", i+1, prefix, firstPart)
+	lines = append(lines, dot+" "+itemStyle.Render(firstLabel))
+
+	// Continuation lines: indented with remaining text
+	remaining := nameRunes[firstLineAvailable:]
+	continuationAvailable := max(width-ExpandedNameContinuationIn-2, 10) // indent + padding
+
+	for len(remaining) > 0 {
+		chunkLen := min(len(remaining), continuationAvailable)
+		chunk := string(remaining[:chunkLen])
+		remaining = remaining[chunkLen:]
+
+		// Indent continuation lines to align under the name
+		indent := strings.Repeat(" ", ExpandedNameContinuationIn)
+		lines = append(lines, indent+itemStyle.Render(chunk))
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // buildConflictMap creates a map of instance IDs that have conflicts.

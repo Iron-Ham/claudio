@@ -29,13 +29,14 @@ func (p *InstancePanel) Render(state *RenderState) string {
 
 	// Create adapter state from RenderState
 	adapterState := &instancePanelState{
-		session:             state.Session,
-		activeTab:           state.ActiveIndex,
-		sidebarScrollOffset: state.ScrollOffset,
-		conflicts:           state.Conflicts,
-		terminalWidth:       state.Width,
-		terminalHeight:      state.Height,
-		isAddingTask:        state.IsAddingTask,
+		session:                  state.Session,
+		activeTab:                state.ActiveIndex,
+		sidebarScrollOffset:      state.ScrollOffset,
+		conflicts:                state.Conflicts,
+		terminalWidth:            state.Width,
+		terminalHeight:           state.Height,
+		isAddingTask:             state.IsAddingTask,
+		intelligentNamingEnabled: state.IntelligentNamingEnabled,
 	}
 
 	result := p.view.RenderSidebar(adapterState, state.Width, state.Height)
@@ -53,13 +54,14 @@ func (p *InstancePanel) Height() int {
 
 // instancePanelState adapts RenderState to the view.DashboardState interface.
 type instancePanelState struct {
-	session             *orchestrator.Session
-	activeTab           int
-	sidebarScrollOffset int
-	conflicts           []conflict.FileConflict
-	terminalWidth       int
-	terminalHeight      int
-	isAddingTask        bool
+	session                  *orchestrator.Session
+	activeTab                int
+	sidebarScrollOffset      int
+	conflicts                []conflict.FileConflict
+	terminalWidth            int
+	terminalHeight           int
+	isAddingTask             bool
+	intelligentNamingEnabled bool
 }
 
 // Session implements view.DashboardState.
@@ -95,4 +97,9 @@ func (s *instancePanelState) TerminalHeight() int {
 // IsAddingTask implements view.DashboardState.
 func (s *instancePanelState) IsAddingTask() bool {
 	return s.isAddingTask
+}
+
+// IntelligentNamingEnabled implements view.DashboardState.
+func (s *instancePanelState) IntelligentNamingEnabled() bool {
+	return s.intelligentNamingEnabled
 }

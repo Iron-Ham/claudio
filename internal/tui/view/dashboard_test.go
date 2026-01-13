@@ -10,13 +10,14 @@ import (
 
 // mockDashboardState implements DashboardState for testing
 type mockDashboardState struct {
-	session             *orchestrator.Session
-	activeTab           int
-	sidebarScrollOffset int
-	conflicts           []conflict.FileConflict
-	terminalWidth       int
-	terminalHeight      int
-	isAddingTask        bool
+	session                  *orchestrator.Session
+	activeTab                int
+	sidebarScrollOffset      int
+	conflicts                []conflict.FileConflict
+	terminalWidth            int
+	terminalHeight           int
+	isAddingTask             bool
+	intelligentNamingEnabled bool
 }
 
 func (m *mockDashboardState) Session() *orchestrator.Session     { return m.session }
@@ -26,6 +27,7 @@ func (m *mockDashboardState) Conflicts() []conflict.FileConflict { return m.conf
 func (m *mockDashboardState) TerminalWidth() int                 { return m.terminalWidth }
 func (m *mockDashboardState) TerminalHeight() int                { return m.terminalHeight }
 func (m *mockDashboardState) IsAddingTask() bool                 { return m.isAddingTask }
+func (m *mockDashboardState) IntelligentNamingEnabled() bool     { return m.intelligentNamingEnabled }
 
 func TestRenderSidebar_NoDuplicateTitle(t *testing.T) {
 	tests := []struct {
@@ -178,5 +180,183 @@ func TestRenderSidebar_WithInstances(t *testing.T) {
 	// Should NOT contain "No instances"
 	if strings.Contains(result, "No instances") {
 		t.Error("should not show 'No instances' when instances exist")
+	}
+}
+
+func TestRenderSidebar_IntelligentNamingExpanded(t *testing.T) {
+	longDisplayName := "Implement user authentication with OAuth2 and JWT tokens"
+	state := &mockDashboardState{
+		session: &orchestrator.Session{
+			Instances: []*orchestrator.Instance{
+				{
+					ID:          "inst-1",
+					Task:        "Short task",
+					DisplayName: longDisplayName, // Long intelligent name
+					Status:      orchestrator.StatusWorking,
+				},
+				{ID: "inst-2", Task: "Another task", Status: orchestrator.StatusPending},
+			},
+		},
+		activeTab:                0,
+		terminalWidth:            80,
+		terminalHeight:           24,
+		isAddingTask:             false,
+		intelligentNamingEnabled: true,
+	}
+
+	dv := NewDashboardView()
+	result := dv.RenderSidebar(state, 30, 20)
+
+	// With intelligent naming enabled and selected, more of the name should be visible
+	// The name should expand beyond the normal truncation point
+	// Check that OAuth2 appears somewhere (it's past the normal truncation point)
+	// Note: text may be split across multiple lines due to wrapping
+	if !strings.Contains(result, "OAuth2") {
+		t.Errorf("intelligent naming should expand selected instance name to show OAuth2, got:\n%s", result)
+	}
+}
+
+func TestRenderSidebar_IntelligentNamingNotExpandedWhenNotSelected(t *testing.T) {
+	longDisplayName := "Implement user authentication with OAuth2 and JWT tokens"
+	state := &mockDashboardState{
+		session: &orchestrator.Session{
+			Instances: []*orchestrator.Instance{
+				{
+					ID:          "inst-1",
+					Task:        "Short task",
+					DisplayName: longDisplayName, // Long intelligent name
+					Status:      orchestrator.StatusWorking,
+				},
+				{ID: "inst-2", Task: "Another task", Status: orchestrator.StatusPending},
+			},
+		},
+		activeTab:                1, // Second instance is selected
+		terminalWidth:            80,
+		terminalHeight:           24,
+		isAddingTask:             false,
+		intelligentNamingEnabled: true,
+	}
+
+	dv := NewDashboardView()
+	result := dv.RenderSidebar(state, 30, 20)
+
+	// The first instance (not selected) should be truncated normally
+	// It should contain the beginning but be truncated with ellipsis
+	if strings.Contains(result, "OAuth2") {
+		t.Errorf("non-selected instance should be truncated normally, got:\n%s", result)
+	}
+}
+
+func TestRenderSidebar_IntelligentNamingDisabled(t *testing.T) {
+	longDisplayName := "Implement user authentication with OAuth2 and JWT tokens"
+	state := &mockDashboardState{
+		session: &orchestrator.Session{
+			Instances: []*orchestrator.Instance{
+				{
+					ID:          "inst-1",
+					Task:        "Short task",
+					DisplayName: longDisplayName,
+					Status:      orchestrator.StatusWorking,
+				},
+			},
+		},
+		activeTab:                0,
+		terminalWidth:            80,
+		terminalHeight:           24,
+		isAddingTask:             false,
+		intelligentNamingEnabled: false, // Disabled
+	}
+
+	dv := NewDashboardView()
+	result := dv.RenderSidebar(state, 30, 20)
+
+	// Even when selected, should be truncated if intelligent naming is disabled
+	if strings.Contains(result, "OAuth2") {
+		t.Errorf("with intelligent naming disabled, should truncate normally, got:\n%s", result)
+	}
+}
+
+func TestRenderSidebar_IntelligentNamingMaxLength(t *testing.T) {
+	// Create a name longer than ExpandedNameMaxLen (50 chars)
+	veryLongName := "This is a very long instance name that exceeds the maximum allowed length for expanded names in the sidebar"
+	state := &mockDashboardState{
+		session: &orchestrator.Session{
+			Instances: []*orchestrator.Instance{
+				{
+					ID:          "inst-1",
+					Task:        "Short task",
+					DisplayName: veryLongName,
+					Status:      orchestrator.StatusWorking,
+				},
+			},
+		},
+		activeTab:                0,
+		terminalWidth:            80,
+		terminalHeight:           24,
+		isAddingTask:             false,
+		intelligentNamingEnabled: true,
+	}
+
+	dv := NewDashboardView()
+	result := dv.RenderSidebar(state, 30, 20)
+
+	// Should be capped at ExpandedNameMaxLen (50 chars) with ellipsis
+	// Should not contain text past the max length
+	if strings.Contains(result, "sidebar") {
+		t.Errorf("should cap expanded name at maximum length, got:\n%s", result)
+	}
+
+	// Should still contain the beginning of the name
+	if !strings.Contains(result, "This is a very long") {
+		t.Errorf("should contain beginning of expanded name, got:\n%s", result)
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{
+			name:     "short string unchanged",
+			input:    "hello",
+			maxLen:   10,
+			expected: "hello",
+		},
+		{
+			name:     "exact length unchanged",
+			input:    "hello",
+			maxLen:   5,
+			expected: "hello",
+		},
+		{
+			name:     "truncated with ellipsis",
+			input:    "hello world",
+			maxLen:   8,
+			expected: "hello...",
+		},
+		{
+			name:     "very short max returns input",
+			input:    "hello",
+			maxLen:   3,
+			expected: "hello",
+		},
+		{
+			name:     "unicode string truncation",
+			input:    "こんにちは世界",
+			maxLen:   5,
+			expected: "こん...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := truncate(tt.input, tt.maxLen)
+			if result != tt.expected {
+				t.Errorf("truncate(%q, %d) = %q, want %q", tt.input, tt.maxLen, result, tt.expected)
+			}
+		})
 	}
 }

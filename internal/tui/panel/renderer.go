@@ -150,6 +150,10 @@ type RenderState struct {
 	// IsAddingTask indicates if the user is currently adding a new task.
 	// Used by the instance panel to show input mode state.
 	IsAddingTask bool
+
+	// IntelligentNamingEnabled indicates if intelligent naming feature is enabled.
+	// Used to expand the selected instance name in the sidebar.
+	IntelligentNamingEnabled bool
 }
 
 // Validate checks that the RenderState has valid values for rendering.
