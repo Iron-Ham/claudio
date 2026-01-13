@@ -532,3 +532,92 @@ func TestManager_LifecycleConfig(t *testing.T) {
 		t.Errorf("LifecycleConfig().TmuxHistoryLimit = %d, want %d", lcConfig.TmuxHistoryLimit, 75000)
 	}
 }
+
+func TestManager_SocketName(t *testing.T) {
+	tests := []struct {
+		name       string
+		instanceID string
+		wantSocket string
+	}{
+		{
+			name:       "standard instance ID",
+			instanceID: "abc123",
+			wantSocket: "claudio-abc123",
+		},
+		{
+			name:       "longer instance ID",
+			instanceID: "instance-12345678",
+			wantSocket: "claudio-instance-12345678",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := NewManager(tt.instanceID, "/tmp", "test task")
+			got := mgr.SocketName()
+			if got != tt.wantSocket {
+				t.Errorf("SocketName() = %q, want %q", got, tt.wantSocket)
+			}
+		})
+	}
+}
+
+func TestTmuxSessionInfo_KillCommand(t *testing.T) {
+	tests := []struct {
+		name        string
+		sessionName string
+		socketName  string
+	}{
+		{
+			name:        "standard session",
+			sessionName: "claudio-abc123",
+			socketName:  "claudio-abc123",
+		},
+		{
+			name:        "default socket",
+			sessionName: "claudio-term-xyz",
+			socketName:  "claudio",
+		},
+		{
+			name:        "session with session ID",
+			sessionName: "claudio-sess1-inst1",
+			socketName:  "claudio-inst1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := TmuxSessionInfo{
+				SessionName: tt.sessionName,
+				SocketName:  tt.socketName,
+			}
+
+			cmd := info.KillCommand()
+			args := cmd.Args
+
+			// Verify command structure: tmux -L <socket> kill-session -t <session>
+			if len(args) < 6 {
+				t.Fatalf("Expected at least 6 args, got %d: %v", len(args), args)
+			}
+
+			if args[0] != "tmux" {
+				t.Errorf("args[0] = %q, want %q", args[0], "tmux")
+			}
+			if args[1] != "-L" {
+				t.Errorf("args[1] = %q, want %q", args[1], "-L")
+			}
+			if args[2] != tt.socketName {
+				t.Errorf("args[2] (socket) = %q, want %q", args[2], tt.socketName)
+			}
+			if args[3] != "kill-session" {
+				t.Errorf("args[3] = %q, want %q", args[3], "kill-session")
+			}
+			if args[4] != "-t" {
+				t.Errorf("args[4] = %q, want %q", args[4], "-t")
+			}
+			if args[5] != tt.sessionName {
+				t.Errorf("args[5] (session) = %q, want %q", args[5], tt.sessionName)
+			}
+		})
+	}
+}

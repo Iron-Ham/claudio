@@ -32,6 +32,7 @@ var errWriteTimeout = errors.New("write timeout: tmux connection may be stuck")
 type PersistentTmuxSender struct {
 	mu          sync.Mutex
 	sessionName string
+	socketName  string // tmux socket for this connection
 
 	// Process and pipes
 	cmd    *exec.Cmd
@@ -63,11 +64,13 @@ func WithFallbackSender(sender TmuxSender) PersistentOption {
 }
 
 // NewPersistentTmuxSender creates a new persistent sender for the given session.
+// The socketName specifies which tmux socket to use for the control mode connection.
 // The connection is established lazily on first use.
-func NewPersistentTmuxSender(sessionName string, opts ...PersistentOption) *PersistentTmuxSender {
+func NewPersistentTmuxSender(sessionName, socketName string, opts ...PersistentOption) *PersistentTmuxSender {
 	p := &PersistentTmuxSender{
 		sessionName: sessionName,
-		fallback:    &DefaultTmuxSender{},
+		socketName:  socketName,
+		fallback:    NewDefaultTmuxSender(socketName),
 	}
 
 	for _, opt := range opts {
@@ -203,7 +206,8 @@ func (p *PersistentTmuxSender) connectLocked() error {
 
 	// Start tmux in control mode, attached to the session
 	// Control mode (-C) keeps stdin open for commands and writes responses to stdout
-	cmd := tmux.Command("-C", "attach-session", "-t", p.sessionName)
+	// Use the instance-specific socket for crash isolation
+	cmd := tmux.CommandWithSocket(p.socketName, "-C", "attach-session", "-t", p.sessionName)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

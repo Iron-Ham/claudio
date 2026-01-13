@@ -916,7 +916,7 @@ func TestHandler_SendInput_ErrorMidBatch(t *testing.T) {
 
 func TestNewHandler_WithPersistentSender(t *testing.T) {
 	// WithPersistentSender should set up a persistent sender
-	h := NewHandler(WithPersistentSender("test-session"))
+	h := NewHandler(WithPersistentSender("test-session", "claudio-test"))
 
 	if h == nil {
 		t.Fatal("NewHandler returned nil")
@@ -959,7 +959,7 @@ func TestHandler_Close(t *testing.T) {
 	})
 
 	t.Run("with persistent sender", func(t *testing.T) {
-		h := NewHandler(WithPersistentSender("test-session"))
+		h := NewHandler(WithPersistentSender("test-session", "claudio-test"))
 
 		// Close should work with persistent sender
 		err := h.Close()
@@ -970,7 +970,7 @@ func TestHandler_Close(t *testing.T) {
 }
 
 func TestHandler_Close_Multiple(t *testing.T) {
-	h := NewHandler(WithPersistentSender("test-session"))
+	h := NewHandler(WithPersistentSender("test-session", "claudio-test"))
 
 	// Multiple closes should be safe
 	err := h.Close()

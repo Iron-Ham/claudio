@@ -11,6 +11,7 @@ type mockInstance struct {
 	mu          sync.Mutex
 	id          string
 	sessionName string
+	socketName  string
 	workDir     string
 	task        string
 	config      InstanceConfig
@@ -24,6 +25,7 @@ func newMockInstance(id string) *mockInstance {
 	return &mockInstance{
 		id:          id,
 		sessionName: "claudio-" + id,
+		socketName:  "claudio-" + id, // Each instance gets its own socket
 		workDir:     "/tmp/test",
 		task:        "test task",
 		config: InstanceConfig{
@@ -35,6 +37,7 @@ func newMockInstance(id string) *mockInstance {
 
 func (m *mockInstance) ID() string          { return m.id }
 func (m *mockInstance) SessionName() string { return m.sessionName }
+func (m *mockInstance) SocketName() string  { return m.socketName }
 func (m *mockInstance) WorkDir() string     { return m.workDir }
 func (m *mockInstance) Task() string        { return m.task }
 func (m *mockInstance) Config() InstanceConfig {

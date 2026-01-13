@@ -22,6 +22,7 @@ var (
 // Unlike the instance TmuxProcess, this runs a plain shell (no Claude command).
 type Process struct {
 	sessionName   string // tmux session name
+	socketName    string // tmux socket for crash isolation
 	invocationDir string // Directory where Claudio was invoked (never changes)
 	currentDir    string // Current working directory
 	width         int
@@ -34,9 +35,25 @@ type Process struct {
 // NewProcess creates a new terminal process manager.
 // sessionID should be the Claudio session ID to ensure unique tmux session names.
 // invocationDir is the directory where Claudio was launched.
+// Uses the default "claudio" socket for the terminal pane, keeping it separate
+// from per-instance sockets to isolate terminal from instance crashes.
 func NewProcess(sessionID, invocationDir string, width, height int) *Process {
 	return &Process{
 		sessionName:   fmt.Sprintf("claudio-term-%s", sessionID),
+		socketName:    tmux.SocketName, // Use shared socket for terminal pane
+		invocationDir: invocationDir,
+		currentDir:    invocationDir,
+		width:         width,
+		height:        height,
+	}
+}
+
+// NewProcessWithSocket creates a new terminal process manager with a specific socket.
+// This allows explicit control over socket isolation.
+func NewProcessWithSocket(sessionID, socketName, invocationDir string, width, height int) *Process {
+	return &Process{
+		sessionName:   fmt.Sprintf("claudio-term-%s", sessionID),
+		socketName:    socketName,
 		invocationDir: invocationDir,
 		currentDir:    invocationDir,
 		width:         width,
@@ -58,7 +75,7 @@ func (p *Process) startLocked() error {
 	}
 
 	// Kill any existing session with this name (cleanup from previous run)
-	if err := tmux.Command("kill-session", "-t", p.sessionName).Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "kill-session", "-t", p.sessionName).Run(); err != nil {
 		if !isSessionNotFoundError(err) {
 			log.Printf("WARNING: failed to cleanup existing terminal tmux session %s: %v", p.sessionName, err)
 		}
@@ -77,12 +94,12 @@ func (p *Process) startLocked() error {
 	// Set history-limit BEFORE creating session so the new pane inherits it.
 	// tmux's history-limit only affects newly created panes, not existing ones.
 	// Use 50000 lines for generous scrollback in the terminal pane.
-	if err := tmux.Command("set-option", "-g", "history-limit", "50000").Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "set-option", "-g", "history-limit", "50000").Run(); err != nil {
 		log.Printf("WARNING: failed to set global history-limit for tmux: %v", err)
 	}
 
 	// Create a new detached tmux session
-	createCmd := tmux.Command(
+	createCmd := tmux.CommandWithSocket(p.socketName,
 		"new-session",
 		"-d",
 		"-s", p.sessionName,
@@ -95,7 +112,7 @@ func (p *Process) startLocked() error {
 	}
 
 	// Set up additional tmux session options
-	if err := tmux.Command("set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run(); err != nil {
 		log.Printf("WARNING: failed to set default-terminal for terminal tmux session %s: %v", p.sessionName, err)
 	}
 
@@ -114,7 +131,7 @@ func (p *Process) Stop() error {
 	}
 
 	// Kill the tmux session
-	if err := tmux.Command("kill-session", "-t", p.sessionName).Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "kill-session", "-t", p.sessionName).Run(); err != nil {
 		if !isSessionNotFoundError(err) {
 			log.Printf("WARNING: unexpected error killing terminal tmux session %s: %v", p.sessionName, err)
 		}
@@ -139,7 +156,7 @@ func (p *Process) SessionExists() bool {
 }
 
 func (p *Process) sessionExists() bool {
-	cmd := tmux.Command("has-session", "-t", p.sessionName)
+	cmd := tmux.CommandWithSocket(p.socketName, "has-session", "-t", p.sessionName)
 	return cmd.Run() == nil
 }
 
@@ -173,7 +190,7 @@ func (p *Process) ChangeDirectory(dir string) error {
 
 	// Send cd command to the terminal
 	cdCmd := fmt.Sprintf("cd %q", dir)
-	if err := tmux.Command("send-keys", "-t", p.sessionName, cdCmd, "Enter").Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "send-keys", "-t", p.sessionName, cdCmd, "Enter").Run(); err != nil {
 		return fmt.Errorf("failed to change directory: %w", err)
 	}
 
@@ -204,7 +221,7 @@ func (p *Process) SendKey(key string) error {
 		return ErrNotRunning
 	}
 
-	if err := tmux.Command("send-keys", "-t", sessionName, key).Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "send-keys", "-t", sessionName, key).Run(); err != nil {
 		return fmt.Errorf("failed to send key to terminal: %w", err)
 	}
 	return nil
@@ -221,7 +238,7 @@ func (p *Process) SendLiteral(text string) error {
 		return ErrNotRunning
 	}
 
-	if err := tmux.Command("send-keys", "-t", sessionName, "-l", text).Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "send-keys", "-t", sessionName, "-l", text).Run(); err != nil {
 		return fmt.Errorf("failed to send literal to terminal: %w", err)
 	}
 	return nil
@@ -239,17 +256,17 @@ func (p *Process) SendPaste(text string) error {
 	}
 
 	// Send bracketed paste start sequence
-	if err := tmux.Command("send-keys", "-t", sessionName, "-l", "\x1b[200~").Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "send-keys", "-t", sessionName, "-l", "\x1b[200~").Run(); err != nil {
 		return fmt.Errorf("failed to send paste start: %w", err)
 	}
 
 	// Send the pasted content
-	if err := tmux.Command("send-keys", "-t", sessionName, "-l", text).Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "send-keys", "-t", sessionName, "-l", text).Run(); err != nil {
 		return fmt.Errorf("failed to send paste content: %w", err)
 	}
 
 	// Send bracketed paste end sequence
-	if err := tmux.Command("send-keys", "-t", sessionName, "-l", "\x1b[201~").Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "send-keys", "-t", sessionName, "-l", "\x1b[201~").Run(); err != nil {
 		return fmt.Errorf("failed to send paste end: %w", err)
 	}
 
@@ -269,7 +286,7 @@ func (p *Process) CaptureOutput() (string, error) {
 
 	// Capture visible pane content with escape sequences preserved (-e flag)
 	// The -e flag preserves ANSI color codes and other escape sequences
-	cmd := tmux.Command("capture-pane", "-t", sessionName, "-p", "-e")
+	cmd := tmux.CommandWithSocket(p.socketName, "capture-pane", "-t", sessionName, "-p", "-e")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to capture terminal output: %w", err)
@@ -291,7 +308,7 @@ func (p *Process) CaptureOutputWithHistory(lines int) (string, error) {
 
 	// Capture with history (-S for start line, negative means history)
 	// The -e flag preserves ANSI color codes and other escape sequences
-	cmd := tmux.Command("capture-pane", "-t", sessionName, "-p", "-e", "-S", fmt.Sprintf("-%d", lines))
+	cmd := tmux.CommandWithSocket(p.socketName, "capture-pane", "-t", sessionName, "-p", "-e", "-S", fmt.Sprintf("-%d", lines))
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("failed to capture terminal output with history: %w", err)
@@ -313,7 +330,7 @@ func (p *Process) Resize(width, height int) error {
 		return nil
 	}
 
-	resizeCmd := tmux.Command(
+	resizeCmd := tmux.CommandWithSocket(p.socketName,
 		"resize-window",
 		"-t", sessionName,
 		"-x", fmt.Sprintf("%d", width),
@@ -328,7 +345,12 @@ func (p *Process) Resize(width, height int) error {
 
 // AttachCommand returns the command to attach to this terminal's tmux session.
 func (p *Process) AttachCommand() string {
-	return fmt.Sprintf("tmux -L %s attach -t %s", tmux.SocketName, p.sessionName)
+	return fmt.Sprintf("tmux -L %s attach -t %s", p.socketName, p.sessionName)
+}
+
+// SocketName returns the tmux socket name used for this terminal.
+func (p *Process) SocketName() string {
+	return p.socketName
 }
 
 // SessionName returns the tmux session name.

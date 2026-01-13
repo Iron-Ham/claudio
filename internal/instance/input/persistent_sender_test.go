@@ -8,7 +8,7 @@ import (
 )
 
 func TestNewPersistentTmuxSender(t *testing.T) {
-	p := NewPersistentTmuxSender("test-session")
+	p := NewPersistentTmuxSender("test-session", "claudio-test")
 
 	if p == nil {
 		t.Fatal("NewPersistentTmuxSender returned nil")
@@ -16,6 +16,10 @@ func TestNewPersistentTmuxSender(t *testing.T) {
 
 	if p.sessionName != "test-session" {
 		t.Errorf("sessionName = %q, want %q", p.sessionName, "test-session")
+	}
+
+	if p.socketName != "claudio-test" {
+		t.Errorf("socketName = %q, want %q", p.socketName, "claudio-test")
 	}
 
 	if p.fallback == nil {
@@ -29,7 +33,7 @@ func TestNewPersistentTmuxSender(t *testing.T) {
 
 func TestNewPersistentTmuxSender_WithFallbackSender(t *testing.T) {
 	mock := &mockTmuxSender{}
-	p := NewPersistentTmuxSender("test-session", WithFallbackSender(mock))
+	p := NewPersistentTmuxSender("test-session", "claudio-test", WithFallbackSender(mock))
 
 	if p.fallback != mock {
 		t.Error("custom fallback sender not set")
@@ -39,7 +43,7 @@ func TestNewPersistentTmuxSender_WithFallbackSender(t *testing.T) {
 func TestPersistentTmuxSender_SendKeys_SessionMismatch(t *testing.T) {
 	// When called with a different session name, should use fallback
 	mock := &mockTmuxSender{}
-	p := NewPersistentTmuxSender("session-a", WithFallbackSender(mock))
+	p := NewPersistentTmuxSender("session-a", "claudio-test", WithFallbackSender(mock))
 
 	err := p.SendKeys("session-b", "hello", true)
 	if err != nil {
@@ -65,7 +69,7 @@ func TestPersistentTmuxSender_SendKeys_SessionMismatch(t *testing.T) {
 func TestPersistentTmuxSender_SendKeys_FallbackOnConnectionError(t *testing.T) {
 	// When connection fails, should fall back to subprocess sender
 	mock := &mockTmuxSender{}
-	p := NewPersistentTmuxSender("nonexistent-session-12345", WithFallbackSender(mock))
+	p := NewPersistentTmuxSender("nonexistent-session-12345", "claudio-test", WithFallbackSender(mock))
 
 	// This should fail to connect (session doesn't exist) and use fallback
 	err := p.SendKeys("nonexistent-session-12345", "hello", true)
@@ -91,7 +95,7 @@ func TestPersistentTmuxSender_SendKeys_FallbackPropagatesError(t *testing.T) {
 	expectedErr := errors.New("mock error")
 	mock.setFailNext(expectedErr)
 
-	p := NewPersistentTmuxSender("nonexistent-session-12345", WithFallbackSender(mock))
+	p := NewPersistentTmuxSender("nonexistent-session-12345", "claudio-test", WithFallbackSender(mock))
 
 	err := p.SendKeys("nonexistent-session-12345", "hello", true)
 	if err == nil {
@@ -103,7 +107,7 @@ func TestPersistentTmuxSender_SendKeys_FallbackPropagatesError(t *testing.T) {
 }
 
 func TestPersistentTmuxSender_Close(t *testing.T) {
-	p := NewPersistentTmuxSender("test-session")
+	p := NewPersistentTmuxSender("test-session", "claudio-test")
 
 	// Close should be safe to call even when not connected
 	err := p.Close()
@@ -121,7 +125,7 @@ func TestPersistentTmuxSender_Close_AfterConnect(t *testing.T) {
 	// This test requires tmux to be available, so we just test the code path
 	// The actual connection will fail without a real session, but Close should
 	// handle that gracefully
-	p := NewPersistentTmuxSender("test-session")
+	p := NewPersistentTmuxSender("test-session", "claudio-test")
 
 	// Simulate a connected state by attempting connection (which will fail)
 	// and then closing
@@ -139,7 +143,7 @@ func TestPersistentTmuxSender_Close_AfterConnect(t *testing.T) {
 
 func TestPersistentTmuxSender_ConcurrentAccess(t *testing.T) {
 	mock := &mockTmuxSender{}
-	p := NewPersistentTmuxSender("nonexistent-session", WithFallbackSender(mock))
+	p := NewPersistentTmuxSender("nonexistent-session", "claudio-test", WithFallbackSender(mock))
 
 	// Run multiple goroutines calling SendKeys concurrently
 	var wg sync.WaitGroup
@@ -230,7 +234,7 @@ func TestEscapeForControlMode(t *testing.T) {
 }
 
 func TestPersistentTmuxSender_Connected(t *testing.T) {
-	p := NewPersistentTmuxSender("test-session")
+	p := NewPersistentTmuxSender("test-session", "claudio-test")
 
 	// Initially not connected
 	if p.Connected() {
@@ -255,7 +259,7 @@ func TestPersistentTmuxSender_Connected(t *testing.T) {
 // persistent sender's locking and connection checking.
 func BenchmarkPersistentTmuxSender_SendKeys_Fallback(b *testing.B) {
 	mock := &mockTmuxSender{}
-	p := NewPersistentTmuxSender("nonexistent-session", WithFallbackSender(mock))
+	p := NewPersistentTmuxSender("nonexistent-session", "claudio-test", WithFallbackSender(mock))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -275,7 +279,7 @@ func BenchmarkDefaultTmuxSender_SendKeys_Mock(b *testing.B) {
 }
 
 func TestPersistentTmuxSender_BuildCommand(t *testing.T) {
-	p := NewPersistentTmuxSender("my-session")
+	p := NewPersistentTmuxSender("my-session", "claudio-test")
 
 	tests := []struct {
 		name     string
@@ -314,7 +318,7 @@ func TestPersistentTmuxSender_BuildCommand(t *testing.T) {
 }
 
 func TestPersistentTmuxSender_WriteWithTimeoutLocked_NilStdin(t *testing.T) {
-	p := NewPersistentTmuxSender("test-session")
+	p := NewPersistentTmuxSender("test-session", "claudio-test")
 	// stdin is nil when not connected
 
 	p.mu.Lock()
@@ -335,7 +339,7 @@ func TestPersistentTmuxSender_AutoReconnect_TriggeredOnTimeout(t *testing.T) {
 	// We use a session that doesn't exist, so connection always fails
 	// and we can verify the fallback is called
 	mock := &mockTmuxSender{}
-	p := NewPersistentTmuxSender("nonexistent-session-timeout-test", WithFallbackSender(mock))
+	p := NewPersistentTmuxSender("nonexistent-session-timeout-test", "claudio-test", WithFallbackSender(mock))
 
 	// First call - connection will fail, falls back to mock
 	err := p.SendKeys("nonexistent-session-timeout-test", "hello", true)
@@ -359,7 +363,7 @@ func TestPersistentTmuxSender_MultipleReconnectAttempts(t *testing.T) {
 	// Test that multiple calls in sequence all properly fall back
 	// when the session doesn't exist
 	mock := &mockTmuxSender{}
-	p := NewPersistentTmuxSender("nonexistent-reconnect-test", WithFallbackSender(mock))
+	p := NewPersistentTmuxSender("nonexistent-reconnect-test", "claudio-test", WithFallbackSender(mock))
 
 	// Make multiple calls
 	for i := 0; i < 5; i++ {
@@ -380,7 +384,7 @@ func TestPersistentTmuxSender_MultipleReconnectAttempts(t *testing.T) {
 // managed across connect/disconnect cycles.
 func TestPersistentTmuxSender_GoroutineLifecycle(t *testing.T) {
 	mock := &mockTmuxSender{}
-	p := NewPersistentTmuxSender("nonexistent-lifecycle-test", WithFallbackSender(mock))
+	p := NewPersistentTmuxSender("nonexistent-lifecycle-test", "claudio-test", WithFallbackSender(mock))
 
 	// Perform multiple operations that would trigger connection attempts
 	// Each failed connection should properly clean up
@@ -414,7 +418,7 @@ func TestPersistentTmuxSender_GoroutineLifecycle(t *testing.T) {
 // TestPersistentTmuxSender_RepeatedCloseIsSafe tests that calling Close
 // multiple times is safe and doesn't cause panics.
 func TestPersistentTmuxSender_RepeatedCloseIsSafe(t *testing.T) {
-	p := NewPersistentTmuxSender("test-session")
+	p := NewPersistentTmuxSender("test-session", "claudio-test")
 
 	// Close multiple times - should not panic
 	for i := 0; i < 5; i++ {
@@ -428,7 +432,7 @@ func TestPersistentTmuxSender_RepeatedCloseIsSafe(t *testing.T) {
 // TestPersistentTmuxSender_CloseWhileNotConnected tests that Close handles
 // the case where the sender was never connected.
 func TestPersistentTmuxSender_CloseWhileNotConnected(t *testing.T) {
-	p := NewPersistentTmuxSender("test-session")
+	p := NewPersistentTmuxSender("test-session", "claudio-test")
 
 	// Never attempt to connect, just close
 	err := p.Close()
@@ -447,7 +451,7 @@ func TestPersistentTmuxSender_CloseWhileNotConnected(t *testing.T) {
 // properly waits for goroutines to exit.
 func TestPersistentTmuxSender_DisconnectCleansUp(t *testing.T) {
 	mock := &mockTmuxSender{}
-	p := NewPersistentTmuxSender("nonexistent-cleanup-test", WithFallbackSender(mock))
+	p := NewPersistentTmuxSender("nonexistent-cleanup-test", "claudio-test", WithFallbackSender(mock))
 
 	// Trigger a connection attempt (will fail, but tests the code path)
 	_ = p.SendKeys("nonexistent-cleanup-test", "key", false)

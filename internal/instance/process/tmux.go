@@ -18,6 +18,7 @@ import (
 type TmuxProcess struct {
 	config      Config
 	sessionName string
+	socketName  string // tmux socket for crash isolation
 	mu          sync.RWMutex
 
 	// State
@@ -32,15 +33,22 @@ type TmuxProcess struct {
 
 // NewTmuxProcess creates a new tmux-based process manager.
 // The sessionName will be auto-generated if not provided in config.
+// The socketName defaults to "claudio" if not provided.
 func NewTmuxProcess(config Config) *TmuxProcess {
 	sessionName := config.TmuxSession
 	if sessionName == "" {
 		sessionName = fmt.Sprintf("claudio-%d", time.Now().UnixNano())
 	}
 
+	socketName := config.TmuxSocket
+	if socketName == "" {
+		socketName = tmux.SocketName
+	}
+
 	return &TmuxProcess{
 		config:      config,
 		sessionName: sessionName,
+		socketName:  socketName,
 	}
 }
 
@@ -65,7 +73,7 @@ func (p *TmuxProcess) Start(ctx context.Context) error {
 	}
 
 	// Kill any existing session with this name (cleanup from previous run)
-	if err := tmux.Command("kill-session", "-t", p.sessionName).Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "kill-session", "-t", p.sessionName).Run(); err != nil {
 		// Only log unexpected errors (not "session not found" which is expected)
 		if !isSessionNotFoundError(err) {
 			log.Printf("WARNING: failed to cleanup existing tmux session %s: %v", p.sessionName, err)
@@ -88,12 +96,12 @@ func (p *TmuxProcess) Start(ctx context.Context) error {
 
 	// Set history-limit BEFORE creating session so the new pane inherits it.
 	// tmux's history-limit only affects newly created panes, not existing ones.
-	if err := tmux.Command("set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
 		log.Printf("WARNING: failed to set global history-limit for tmux: %v", err)
 	}
 
 	// Create a new detached tmux session
-	createCmd := tmux.CommandContext(ctx,
+	createCmd := tmux.CommandContextWithSocket(ctx, p.socketName,
 		"new-session",
 		"-d",
 		"-s", p.sessionName,
@@ -107,30 +115,30 @@ func (p *TmuxProcess) Start(ctx context.Context) error {
 	}
 
 	// Set up additional tmux session options (log failures but don't abort - session will still work)
-	if err := tmux.Command("set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run(); err != nil {
 		log.Printf("WARNING: failed to set default-terminal for tmux session %s: %v", p.sessionName, err)
 	}
-	if err := tmux.Command("set-option", "-t", p.sessionName, "-w", "monitor-bell", "on").Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "set-option", "-t", p.sessionName, "-w", "monitor-bell", "on").Run(); err != nil {
 		log.Printf("WARNING: failed to set monitor-bell for tmux session %s: %v", p.sessionName, err)
 	}
 
 	// Write prompt to file to avoid shell escaping issues
 	promptFile := filepath.Join(p.config.WorkDir, ".claude-prompt")
 	if err := os.WriteFile(promptFile, []byte(p.config.InitialPrompt), 0600); err != nil {
-		_ = tmux.Command("kill-session", "-t", p.sessionName).Run()
+		_ = tmux.CommandWithSocket(p.socketName, "kill-session", "-t", p.sessionName).Run()
 		return fmt.Errorf("failed to write prompt file: %w", err)
 	}
 
 	// Send the claude command to the tmux session
 	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q", promptFile, promptFile)
-	sendCmd := tmux.CommandContext(ctx,
+	sendCmd := tmux.CommandContextWithSocket(ctx, p.socketName,
 		"send-keys",
 		"-t", p.sessionName,
 		claudeCmd,
 		"Enter",
 	)
 	if err := sendCmd.Run(); err != nil {
-		_ = tmux.Command("kill-session", "-t", p.sessionName).Run()
+		_ = tmux.CommandWithSocket(p.socketName, "kill-session", "-t", p.sessionName).Run()
 		_ = os.Remove(promptFile)
 		return fmt.Errorf("failed to start claude in tmux session: %w", err)
 	}
@@ -165,7 +173,7 @@ func (p *TmuxProcess) monitorSession() {
 			}
 
 			// Check if session still exists
-			checkCmd := tmux.Command("has-session", "-t", sessionName)
+			checkCmd := tmux.CommandWithSocket(p.socketName, "has-session", "-t", sessionName)
 			if checkCmd.Run() != nil {
 				// Session ended
 				p.mu.Lock()
@@ -204,13 +212,13 @@ func (p *TmuxProcess) Stop() error {
 	}
 
 	// Send Ctrl+C to gracefully stop Claude first
-	if err := tmux.Command("send-keys", "-t", p.sessionName, "C-c").Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "send-keys", "-t", p.sessionName, "C-c").Run(); err != nil {
 		log.Printf("WARNING: failed to send Ctrl+C to tmux session %s, proceeding to force kill: %v", p.sessionName, err)
 	}
 	time.Sleep(500 * time.Millisecond)
 
 	// Kill the tmux session
-	if err := tmux.Command("kill-session", "-t", p.sessionName).Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "kill-session", "-t", p.sessionName).Run(); err != nil {
 		// Only log unexpected errors (not "session not found" which is expected if process exited)
 		if !isSessionNotFoundError(err) {
 			log.Printf("WARNING: unexpected error killing tmux session %s: %v", p.sessionName, err)
@@ -287,7 +295,7 @@ func (p *TmuxProcess) SendInput(input string) error {
 			}
 		}
 
-		if err := tmux.Command("send-keys", "-t", sessionName, "-l", key).Run(); err != nil {
+		if err := tmux.CommandWithSocket(p.socketName, "send-keys", "-t", sessionName, "-l", key).Run(); err != nil {
 			return fmt.Errorf("failed to send key: %w", err)
 		}
 	}
@@ -298,6 +306,11 @@ func (p *TmuxProcess) SendInput(input string) error {
 // SessionName returns the tmux session name.
 func (p *TmuxProcess) SessionName() string {
 	return p.sessionName
+}
+
+// SocketName returns the tmux socket name used for this process.
+func (p *TmuxProcess) SocketName() string {
+	return p.socketName
 }
 
 // Resize implements Resizable interface.
@@ -311,7 +324,7 @@ func (p *TmuxProcess) Resize(width, height int) error {
 		return nil
 	}
 
-	resizeCmd := tmux.Command(
+	resizeCmd := tmux.CommandWithSocket(p.socketName,
 		"resize-window",
 		"-t", sessionName,
 		"-x", fmt.Sprintf("%d", width),
@@ -338,7 +351,7 @@ func (p *TmuxProcess) Reconnect() error {
 	}
 
 	// Ensure monitor-bell is enabled
-	if err := tmux.Command("set-option", "-t", p.sessionName, "-w", "monitor-bell", "on").Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "set-option", "-t", p.sessionName, "-w", "monitor-bell", "on").Run(); err != nil {
 		log.Printf("WARNING: failed to set monitor-bell on reconnect for tmux session %s: %v", p.sessionName, err)
 	}
 
@@ -362,13 +375,13 @@ func (p *TmuxProcess) SessionExists() bool {
 }
 
 func (p *TmuxProcess) sessionExists() bool {
-	cmd := tmux.Command("has-session", "-t", p.sessionName)
+	cmd := tmux.CommandWithSocket(p.socketName, "has-session", "-t", p.sessionName)
 	return cmd.Run() == nil
 }
 
 // AttachCommand returns the command to attach to this process's tmux session.
 func (p *TmuxProcess) AttachCommand() string {
-	return fmt.Sprintf("tmux -L %s attach -t %s", tmux.SocketName, p.sessionName)
+	return fmt.Sprintf("tmux -L %s attach -t %s", p.socketName, p.sessionName)
 }
 
 // PID returns the process ID of the shell in the tmux session.
@@ -382,7 +395,7 @@ func (p *TmuxProcess) PID() int {
 		return 0
 	}
 
-	cmd := tmux.Command("display-message", "-t", sessionName, "-p", "#{pane_pid}")
+	cmd := tmux.CommandWithSocket(p.socketName, "display-message", "-t", sessionName, "-p", "#{pane_pid}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0

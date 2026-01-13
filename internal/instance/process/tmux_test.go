@@ -400,3 +400,57 @@ func TestTmuxProcess_Integration(t *testing.T) {
 func testTmuxAvailable() error {
 	return nil // tmux availability is handled by the test itself
 }
+
+func TestTmuxProcess_SocketName(t *testing.T) {
+	tests := []struct {
+		name       string
+		config     Config
+		wantSocket string
+	}{
+		{
+			name: "custom socket",
+			config: Config{
+				TmuxSession:   "test-session",
+				TmuxSocket:    "claudio-custom123",
+				WorkDir:       "/tmp",
+				InitialPrompt: "test",
+			},
+			wantSocket: "claudio-custom123",
+		},
+		{
+			name: "default socket when empty",
+			config: Config{
+				TmuxSession:   "test-session",
+				TmuxSocket:    "", // empty should default to "claudio"
+				WorkDir:       "/tmp",
+				InitialPrompt: "test",
+			},
+			wantSocket: "claudio",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := NewTmuxProcess(tt.config)
+			if got := p.SocketName(); got != tt.wantSocket {
+				t.Errorf("SocketName() = %q, want %q", got, tt.wantSocket)
+			}
+		})
+	}
+}
+
+func TestTmuxProcess_AttachCommand_WithCustomSocket(t *testing.T) {
+	config := Config{
+		TmuxSession:   "test-session",
+		TmuxSocket:    "claudio-abc123",
+		WorkDir:       "/tmp",
+		InitialPrompt: "test",
+	}
+
+	p := NewTmuxProcess(config)
+
+	want := "tmux -L claudio-abc123 attach -t test-session"
+	if got := p.AttachCommand(); got != want {
+		t.Errorf("AttachCommand() = %q, want %q", got, want)
+	}
+}
