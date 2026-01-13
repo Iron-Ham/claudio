@@ -91,12 +91,12 @@ type BatchConfig struct {
 }
 
 // DefaultBatchConfig returns sensible defaults for input batching.
-// The 8ms flush interval balances responsiveness with batching efficiency -
-// it's imperceptible to users while allowing 5-10x reduction in tmux commands.
+// The 1ms flush interval ensures typed characters appear immediately
+// while still coalescing rapid input (e.g., pasted text).
 func DefaultBatchConfig() BatchConfig {
 	return BatchConfig{
 		Enabled:       true,
-		FlushInterval: 8 * time.Millisecond,
+		FlushInterval: 1 * time.Millisecond,
 		MaxBatchSize:  100,
 	}
 }
