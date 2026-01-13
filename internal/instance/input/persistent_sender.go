@@ -3,6 +3,7 @@ package input
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -38,6 +39,11 @@ type PersistentTmuxSender struct {
 
 	// State
 	connected bool
+
+	// Goroutine lifecycle management
+	drainCancel  context.CancelFunc // Cancels drain goroutines
+	drainWg      sync.WaitGroup     // Tracks drain goroutines
+	activeWrites sync.WaitGroup     // Tracks in-flight write operations
 
 	// Fallback sender for error recovery
 	fallback TmuxSender
@@ -146,7 +152,9 @@ func (p *PersistentTmuxSender) writeWithTimeoutLocked(data []byte) error {
 	stdin := p.stdin
 
 	done := make(chan error, 1)
+	p.activeWrites.Add(1)
 	go func() {
+		defer p.activeWrites.Done()
 		_, err := stdin.Write(data)
 		// Use non-blocking send to prevent goroutine leak if timeout already fired.
 		// If timeout fired, the caller will call disconnectLocked() which closes
@@ -276,13 +284,19 @@ func (p *PersistentTmuxSender) connectLocked() error {
 	p.stderr = stderr
 	p.connected = true
 
-	// Start a goroutine to drain remaining stdout/stderr to prevent blocking
-	go p.drainOutput()
+	// Create cancellation context for drain goroutines
+	ctx, cancel := context.WithCancel(context.Background())
+	p.drainCancel = cancel
+
+	// Start drain goroutines with proper lifecycle tracking
+	p.drainWg.Add(2)
+	go p.drainPipe(ctx, p.stdout)
+	go p.drainPipe(ctx, p.stderr)
 
 	return nil
 }
 
-// disconnectLocked closes the control-mode connection.
+// disconnectLocked closes the control-mode connection and waits for goroutines to exit.
 // Caller must hold p.mu.
 func (p *PersistentTmuxSender) disconnectLocked() {
 	if !p.connected {
@@ -291,6 +305,13 @@ func (p *PersistentTmuxSender) disconnectLocked() {
 
 	p.connected = false
 
+	// Cancel drain goroutines FIRST - this allows them to exit their loops
+	if p.drainCancel != nil {
+		p.drainCancel()
+		p.drainCancel = nil
+	}
+
+	// Close pipes - this unblocks any Read/Write calls
 	if p.stdin != nil {
 		_ = p.stdin.Close()
 		p.stdin = nil
@@ -303,44 +324,62 @@ func (p *PersistentTmuxSender) disconnectLocked() {
 		_ = p.stderr.Close()
 		p.stderr = nil
 	}
+
+	// Wait for drain goroutines to exit (with timeout to avoid blocking indefinitely)
+	drainDone := make(chan struct{})
+	go func() {
+		p.drainWg.Wait()
+		close(drainDone)
+	}()
+	select {
+	case <-drainDone:
+		// Drain goroutines exited cleanly
+	case <-time.After(500 * time.Millisecond):
+		log.Printf("WARNING: drain goroutines did not exit within timeout for session %s", p.sessionName)
+	}
+
+	// Wait for any active write operations (with timeout)
+	writesDone := make(chan struct{})
+	go func() {
+		p.activeWrites.Wait()
+		close(writesDone)
+	}()
+	select {
+	case <-writesDone:
+		// Active writes completed
+	case <-time.After(100 * time.Millisecond):
+		log.Printf("WARNING: active write operations did not complete within timeout for session %s", p.sessionName)
+	}
+
+	// Kill the process and wait for cleanup
 	if p.cmd != nil && p.cmd.Process != nil {
-		// Kill the process (sends SIGKILL) and wait for cleanup
 		_ = p.cmd.Process.Kill()
 		_ = p.cmd.Wait()
 		p.cmd = nil
 	}
 }
 
-// drainOutput reads from stdout and stderr to prevent the pipes from blocking.
-// This runs in a goroutine and exits when the pipes are closed.
-// Coverage: This method runs as a background goroutine reading from pipe file
-// descriptors. Testing requires a real tmux control mode connection.
-func (p *PersistentTmuxSender) drainOutput() {
-	// We need local copies since we can't hold the lock while reading
-	p.mu.Lock()
-	stdout := p.stdout
-	stderr := p.stderr
-	p.mu.Unlock()
+// drainPipe reads from a pipe to prevent it from blocking.
+// It exits when the context is cancelled or when the pipe is closed.
+// Must be called after drainWg.Add(1) - this function calls drainWg.Done() on exit.
+func (p *PersistentTmuxSender) drainPipe(ctx context.Context, pipe io.ReadCloser) {
+	defer p.drainWg.Done()
 
-	// Drain stdout in one goroutine - each goroutine needs its own buffer
-	// to avoid data races
-	go func() {
-		if stdout != nil {
-			buf := make([]byte, 4096)
-			for {
-				_, err := stdout.Read(buf)
-				if err != nil {
-					return
-				}
-			}
-		}
-	}()
+	if pipe == nil {
+		return
+	}
 
-	// Drain stderr with its own buffer
-	if stderr != nil {
-		buf := make([]byte, 4096)
-		for {
-			_, err := stderr.Read(buf)
+	buf := make([]byte, 4096)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			// Read with a small buffer - this will block until data is available
+			// or the pipe is closed. Note: context cancellation is only checked
+			// between reads; the pipe.Close() call in disconnectLocked is what
+			// actually unblocks this read when shutting down.
+			_, err := pipe.Read(buf)
 			if err != nil {
 				return
 			}

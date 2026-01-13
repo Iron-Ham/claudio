@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -33,6 +34,10 @@ const (
 // fullRefreshInterval is the number of capture ticks between full scrollback captures.
 // At 100ms per tick, 50 ticks = 5 seconds between full refreshes.
 const fullRefreshInterval = 50
+
+// tmuxCommandTimeout is the maximum time to wait for tmux subprocess commands.
+// This prevents the capture loop from hanging indefinitely if tmux becomes unresponsive.
+const tmuxCommandTimeout = 2 * time.Second
 
 // timeoutTypeName returns a human-readable name for a timeout type
 func timeoutTypeName(t TimeoutType) string {
@@ -518,9 +523,23 @@ func (m *Manager) captureLoop() {
 			m.checkAndForwardBellWithMonitor(sessionName, stateMonitor, instanceID)
 
 			// Check if the session is still running
-			checkCmd := exec.Command("tmux", "has-session", "-t", sessionName)
-			if checkCmd.Run() != nil {
-				// Session ended - notify completion and stop
+			ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+			checkCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", sessionName)
+			sessionErr := checkCmd.Run()
+			cancel()
+			if sessionErr != nil {
+				// Check if this was a timeout vs actual session end
+				if ctx.Err() == context.DeadlineExceeded {
+					m.mu.RLock()
+					logger := m.logger
+					m.mu.RUnlock()
+					if logger != nil {
+						logger.Warn("tmux has-session timed out, will retry next tick",
+							"session_name", sessionName)
+					}
+					continue // Don't mark as completed on timeout, retry next tick
+				}
+				// Session actually ended - notify completion and stop
 				m.mu.Lock()
 				m.running = false
 				callback := m.stateCallback
@@ -550,7 +569,9 @@ func (m *Manager) captureLoop() {
 // Note: Called without lock since it's a tmux query, and lastHistorySize is only
 // modified within the captureLoop goroutine.
 func (m *Manager) getHistorySize(sessionName string) int {
-	cmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#{history_size}")
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-t", sessionName, "-p", "#{history_size}")
 	output, err := cmd.Output()
 	if err != nil {
 		// Session not found is expected when session ends - don't log
@@ -588,12 +609,16 @@ func (m *Manager) getHistorySize(sessionName string) int {
 // captureVisiblePane captures only the visible pane content (no scrollback history).
 // This is much faster than capturing the full scrollback buffer.
 func (m *Manager) captureVisiblePane(sessionName string) ([]byte, error) {
-	return exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-e").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "tmux", "capture-pane", "-t", sessionName, "-p", "-e").Output()
 }
 
 // captureFullPane captures the full pane content including scrollback history.
 func (m *Manager) captureFullPane(sessionName string) ([]byte, error) {
-	return exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-e", "-S", "-", "-E", "-").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, "tmux", "capture-pane", "-t", sessionName, "-p", "-e", "-S", "-", "-E", "-").Output()
 }
 
 // checkTimeouts checks for various timeout conditions and triggers callbacks
@@ -669,7 +694,9 @@ func (m *Manager) checkTimeouts() {
 // or internal tracking, depending on whether a monitor is configured.
 func (m *Manager) checkAndForwardBellWithMonitor(sessionName string, stateMonitor *state.Monitor, instanceID string) {
 	// Query the window_bell_flag from tmux
-	bellCmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#{window_bell_flag}")
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+	bellCmd := exec.CommandContext(ctx, "tmux", "display-message", "-t", sessionName, "-p", "#{window_bell_flag}")
 	output, err := bellCmd.Output()
 	if err != nil {
 		return
@@ -962,7 +989,9 @@ func (m *Manager) PID() int {
 	}
 
 	// Get the PID from tmux
-	cmd := exec.Command("tmux", "display-message", "-t", m.sessionName, "-p", "#{pane_pid}")
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-t", m.sessionName, "-p", "#{pane_pid}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
@@ -981,7 +1010,9 @@ func (m *Manager) AttachCommand() string {
 
 // TmuxSessionExists checks if the tmux session for this instance exists
 func (m *Manager) TmuxSessionExists() bool {
-	cmd := exec.Command("tmux", "has-session", "-t", m.sessionName)
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", m.sessionName)
 	return cmd.Run() == nil
 }
 
@@ -1030,7 +1061,9 @@ func (m *Manager) Reconnect() error {
 
 // ListClaudioTmuxSessions returns a list of all tmux sessions with the claudio- prefix
 func ListClaudioTmuxSessions() ([]string, error) {
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}")
 	output, err := cmd.Output()
 	if err != nil {
 		// No sessions or tmux not running
@@ -1240,7 +1273,9 @@ func (m *Manager) Resize(width, height int) error {
 
 	// Resize the tmux window
 	// Note: We resize the window (not pane) since each session has one window
-	resizeCmd := exec.Command("tmux",
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+	resizeCmd := exec.CommandContext(ctx, "tmux",
 		"resize-window",
 		"-t", m.sessionName,
 		"-x", fmt.Sprintf("%d", width),

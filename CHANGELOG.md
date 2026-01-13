@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Idle Tmux Connection Recovery** - Persistent tmux connection now auto-reconnects after becoming unresponsive during idle periods, preventing UI freezes when returning to a long-idle session
+- **Tmux Instance Unresponsiveness** - Fixed critical issue where tmux instances could become completely unresponsive after extended use or network interruptions. Root causes addressed: goroutine leaks in persistent sender drain loops, missing timeouts on tmux subprocess calls causing capture loop freezes, and orphaned write goroutines accumulating over time
 
 ## [0.3.0] - 2026-01-12
 
