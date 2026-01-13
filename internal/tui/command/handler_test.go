@@ -1180,7 +1180,7 @@ func TestPlanCommand(t *testing.T) {
 		viper.Reset()
 	})
 
-	t.Run("blocked when in triple-shot mode", func(t *testing.T) {
+	t.Run("allowed when in triple-shot mode", func(t *testing.T) {
 		viper.Reset()
 		viper.Set("experimental.inline_plan", true)
 
@@ -1190,11 +1190,12 @@ func TestPlanCommand(t *testing.T) {
 
 		result := h.Execute("plan", deps)
 
-		if result.ErrorMessage != "Cannot start plan mode while in triple-shot mode" {
-			t.Errorf("expected triple-shot mode error, got: %q", result.ErrorMessage)
+		// Plan mode is allowed in triple-shot mode - plans appear as separate groups
+		if result.ErrorMessage != "" {
+			t.Errorf("expected no error, got: %q", result.ErrorMessage)
 		}
-		if result.StartPlanMode != nil {
-			t.Error("StartPlanMode should be nil when blocked")
+		if result.StartPlanMode == nil || !*result.StartPlanMode {
+			t.Error("StartPlanMode should be true when in triple-shot mode")
 		}
 
 		viper.Reset()
@@ -1372,7 +1373,8 @@ func TestUltraPlanCommand(t *testing.T) {
 
 		result := h.Execute("ultraplan test", deps)
 
-		if result.ErrorMessage != "Cannot start ultraplan while in triple-shot mode" {
+		// Ultraplan is blocked in triple-shot mode because it has its own dedicated UI
+		if result.ErrorMessage != "Cannot start ultraplan while in triple-shot mode. Use :plan instead" {
 			t.Errorf("expected triple-shot mode error, got: %q", result.ErrorMessage)
 		}
 		if result.StartUltraPlanMode != nil {
