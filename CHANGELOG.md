@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Cleanup Command Respects Worktree Config** - The `claudio cleanup` command and stale resource warnings now correctly use the configured worktree directory instead of the hardcoded default
-- **Input Mode Text Visibility** - Fixed typed text being invisible during input mode until a full capture occurred (up to 5 seconds). Output buffer is now updated immediately on any content change, regardless of capture type
+- **TUI Scrollback and Input Visibility** - Fixed output scrollback being lost when using differential capture optimization. Visible-only captures now trigger a full capture on the next tick when content changes, ensuring both immediate input visibility and preserved scrollback history
 
 ### Performance
 

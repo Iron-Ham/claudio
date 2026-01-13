@@ -134,8 +134,9 @@ type Manager struct {
 	timeoutCallback TimeoutCallback
 
 	// Differential capture optimization
-	lastHistorySize    int // Last captured history size (for differential capture)
-	fullRefreshCounter int // Counter for periodic full refresh
+	lastHistorySize    int  // Last captured history size (for differential capture)
+	fullRefreshCounter int  // Counter for periodic full refresh
+	forceFullCapture   bool // Force full capture on next tick (set when visible content changes)
 
 	// Bell tracking - delegated to stateMonitor
 	bellCallback BellCallback
@@ -538,10 +539,17 @@ func (m *Manager) captureLoop() {
 			m.mu.Lock()
 			lastHistorySize := m.lastHistorySize
 			m.fullRefreshCounter++
-			doFullCapture := m.fullRefreshCounter >= fullRefreshInterval || currentHistorySize > lastHistorySize
+			// Do full capture when:
+			// 1. Periodic refresh interval reached (every 5 seconds)
+			// 2. History size increased (new scrollback lines)
+			// 3. Visible content changed in previous tick (user typing)
+			doFullCapture := m.fullRefreshCounter >= fullRefreshInterval ||
+				currentHistorySize > lastHistorySize ||
+				m.forceFullCapture
 			if doFullCapture {
 				m.fullRefreshCounter = 0
 				m.lastHistorySize = currentHistorySize
+				m.forceFullCapture = false
 			}
 			m.mu.Unlock()
 
@@ -565,7 +573,7 @@ func (m *Manager) captureLoop() {
 				continue
 			}
 
-			// Always update if content changed
+			// Check if content changed
 			currentOutput := string(output)
 			if currentOutput != lastOutput {
 				// Always update the output buffer when content changes, regardless
@@ -580,10 +588,18 @@ func (m *Manager) captureLoop() {
 				logger := m.logger
 				m.mu.RUnlock()
 
-				if logger != nil {
-					logger.Debug("output captured",
-						"byte_count", byteCount,
-						"full_capture", doFullCapture)
+				if doFullCapture {
+					if logger != nil {
+						logger.Debug("output captured",
+							"byte_count", byteCount)
+					}
+				} else {
+					// Visible-only capture detected content change (e.g., user typing).
+					// Schedule a full capture on the next tick to update the output buffer
+					// while preserving scrollback history.
+					m.mu.Lock()
+					m.forceFullCapture = true
+					m.mu.Unlock()
 				}
 
 				lastOutput = currentOutput
