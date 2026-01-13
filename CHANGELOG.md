@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Cleanup Command Respects Worktree Config** - The `claudio cleanup` command and stale resource warnings now correctly use the configured worktree directory instead of the hardcoded default
+- **TUI Scrollback Display** - Fixed output scrollback being lost when using differential capture optimization. Visible-only captures (used for state detection) no longer replace the output buffer, preserving scrollback history from full captures
 
 ### Performance
 
