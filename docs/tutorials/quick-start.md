@@ -102,7 +102,7 @@ claudio cleanup
 - **Initialize**: `claudio init` sets up the project
 - **Start**: `claudio start <name>` launches the TUI
 - **Add instances**: Press `a` to add parallel tasks
-- **Navigate**: Use `1-9`, `Tab`, `j/k` to move around
+- **Navigate**: Use `Tab`/`Shift+Tab`, `j/k` to move around
 - **View changes**: Press `d` for diffs
 - **Create PRs**: Press `x` to stop and create PR
 - **Cleanup**: `claudio cleanup` removes stale resources

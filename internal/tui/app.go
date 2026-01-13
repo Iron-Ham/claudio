@@ -801,21 +801,6 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		idx := int(msg.String()[0] - '1')
-		if idx < m.instanceCount() {
-			m.activeTab = idx
-			m.ensureActiveVisible()
-			m.updateTerminalOnInstanceChange()
-			// Log focus change
-			if m.logger != nil {
-				if inst := m.activeInstance(); inst != nil {
-					m.logger.Info("user focused instance", "instance_id", inst.ID)
-				}
-			}
-		}
-		return m, nil
-
 	case "enter", "i":
 		// Enter input mode for the active instance
 		// Allow input if tmux session exists (running or waiting for input)
@@ -2483,7 +2468,6 @@ func (m Model) renderHelpPanel(width int) string {
 	// Navigation section
 	lines = append(lines, section("Navigation"))
 	lines = append(lines, fmt.Sprintf("  %s %s  %s", key("Tab/l"), key("Shift+Tab/h"), desc("Next / Previous instance")))
-	lines = append(lines, fmt.Sprintf("  %s              %s", key("1-9"), desc("Select instance by number")))
 	lines = append(lines, fmt.Sprintf("  %s %s            %s", key("j/↓"), key("k/↑"), desc("Scroll down / up one line")))
 	lines = append(lines, fmt.Sprintf("  %s %s    %s", key("Ctrl+D/U"), key("Ctrl+F/B"), desc("Scroll half / full page")))
 	lines = append(lines, fmt.Sprintf("  %s %s              %s", key("g"), key("G"), desc("Jump to top / bottom")))

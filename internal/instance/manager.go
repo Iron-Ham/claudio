@@ -1032,7 +1032,9 @@ func (m *Manager) Reconnect() error {
 	}
 
 	// Ensure monitor-bell is enabled for bell detection (may not be set if session was created before this feature)
-	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	_ = exec.CommandContext(ctx, "tmux", "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
+	cancel()
 
 	m.running = true
 	m.paused = false

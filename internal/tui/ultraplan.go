@@ -573,22 +573,6 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 		}
 		return true, m, nil
 
-	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		// Jump to task by number during execution (only if task has instance)
-		if session.Phase == orchestrator.PhaseExecuting && session.Plan != nil {
-			idx := int(msg.String()[0] - '1')
-			if idx < len(session.Plan.Tasks) {
-				task := &session.Plan.Tasks[idx]
-				if _, hasInstance := session.TaskToInstance[task.ID]; hasInstance {
-					m.ultraPlan.SelectedTaskIdx = idx
-					m.selectTaskInstance(session)
-				} else {
-					m.infoMessage = fmt.Sprintf("Task %d not yet started (blocked)", idx+1)
-				}
-			}
-		}
-		return true, m, nil
-
 	case "o":
 		// Open first PR URL in browser (when PRs have been created)
 		if len(session.PRUrls) > 0 {
@@ -673,32 +657,6 @@ func (m *Model) canRetriggerGroup(session *orchestrator.UltraPlanSession) bool {
 	}
 
 	return false
-}
-
-// selectTaskInstance switches to the instance associated with the currently selected task
-func (m *Model) selectTaskInstance(session *orchestrator.UltraPlanSession) {
-	if session.Plan == nil || m.ultraPlan.SelectedTaskIdx >= len(session.Plan.Tasks) {
-		return
-	}
-
-	task := &session.Plan.Tasks[m.ultraPlan.SelectedTaskIdx]
-	instanceID, ok := session.TaskToInstance[task.ID]
-	if !ok {
-		m.infoMessage = fmt.Sprintf("Task %s not yet started", task.Title)
-		return
-	}
-
-	// Find the instance index in session.Instances
-	for i, inst := range m.session.Instances {
-		if inst.ID == instanceID {
-			m.activeTab = i
-			m.ensureActiveVisible()
-			m.infoMessage = fmt.Sprintf("Viewing: %s", task.Title)
-			return
-		}
-	}
-
-	m.infoMessage = fmt.Sprintf("Instance for task %s not found", task.Title)
 }
 
 // handlePlanManagerCompletion handles the plan manager instance completing in multi-pass mode.

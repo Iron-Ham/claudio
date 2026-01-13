@@ -32,7 +32,6 @@ Claudio's Terminal User Interface (TUI) provides a real-time dashboard for manag
 
 | Key | Action |
 |-----|--------|
-| `1-9` | Select instance by number |
 | `Tab` | Next instance |
 | `Shift+Tab` | Previous instance |
 | `l` or `→` | Next instance |
@@ -239,7 +238,6 @@ claudio sessions recover
 
 | Key | Action |
 |-----|--------|
-| `1-9` | Select instance |
 | `Tab`/`Shift+Tab` | Next/previous instance |
 | `h`/`l` | Previous/next instance |
 | `j`/`k` | Scroll output |

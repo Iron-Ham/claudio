@@ -1205,7 +1205,6 @@ func (v *UltraplanView) RenderHelp() string {
 
 	case orchestrator.PhaseExecuting:
 		keys = append(keys, "[tab] next task")
-		keys = append(keys, "[1-9] select task")
 		keys = append(keys, "[g] group nav")
 		keys = append(keys, "[i] input mode")
 		keys = append(keys, "[v] toggle plan view")
