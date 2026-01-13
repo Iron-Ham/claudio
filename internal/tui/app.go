@@ -276,6 +276,15 @@ func addTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, t
 	}
 }
 
+// addTaskFromBranchAsync returns a command that adds a task from a specific base branch asynchronously.
+// The baseBranch parameter specifies which branch the new worktree should be created from.
+func addTaskFromBranchAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string, baseBranch string) tea.Cmd {
+	return func() tea.Msg {
+		inst, err := o.AddInstanceFromBranch(session, task, baseBranch)
+		return taskAddedMsg{instance: inst, err: err}
+	}
+}
+
 // addDependentTaskAsync returns a command that adds a task with dependencies asynchronously
 // The new task will depend on the specified instance and auto-start when it completes
 func addDependentTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string, dependsOn string) tea.Cmd {
@@ -567,6 +576,11 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Handle task input mode
 	if m.addingTask {
+		// Handle branch selector dropdown if visible
+		if m.showBranchSelector {
+			return m.handleBranchSelector(msg)
+		}
+
 		// Handle template dropdown if visible
 		if m.showTemplates {
 			return m.handleTemplateDropdown(msg)
@@ -625,7 +639,10 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.dependentOnInstanceID = ""
 			m.taskInput = ""
 			m.taskInputCursor = 0
-			m.templateSuffix = "" // Clear suffix on cancel
+			m.templateSuffix = ""        // Clear suffix on cancel
+			m.selectedBaseBranch = ""    // Clear base branch selection
+			m.branchList = nil           // Clear cached branches
+			m.showBranchSelector = false // Ensure dropdown is closed
 			return m, nil
 		case tea.KeyEnter:
 			if m.taskInput != "" {
@@ -634,17 +651,27 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				task := m.taskInput + m.templateSuffix
 				isDependent := m.addingDependentTask
 				dependsOn := m.dependentOnInstanceID
+				baseBranch := m.selectedBaseBranch
 				m.addingTask = false
 				m.addingDependentTask = false
 				m.dependentOnInstanceID = ""
 				m.taskInput = ""
 				m.taskInputCursor = 0
-				m.templateSuffix = "" // Clear suffix after use
+				m.templateSuffix = ""        // Clear suffix after use
+				m.selectedBaseBranch = ""    // Clear base branch selection
+				m.branchList = nil           // Clear cached branches
+				m.showBranchSelector = false // Ensure dropdown is closed
 
 				// Add instance asynchronously to avoid blocking UI during git worktree creation
 				if isDependent && dependsOn != "" {
 					m.infoMessage = "Adding dependent task..."
 					return m, addDependentTaskAsync(m.orchestrator, m.session, task, dependsOn)
+				}
+
+				// Use selected base branch if specified, otherwise use default (current HEAD)
+				if baseBranch != "" {
+					m.infoMessage = "Adding task from branch " + baseBranch + "..."
+					return m, addTaskFromBranchAsync(m.orchestrator, m.session, task, baseBranch)
 				}
 				m.infoMessage = "Adding task..."
 				return m, addTaskAsync(m.orchestrator, m.session, task)
@@ -654,7 +681,10 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.dependentOnInstanceID = ""
 			m.taskInput = ""
 			m.taskInputCursor = 0
-			m.templateSuffix = "" // Clear suffix on cancel
+			m.templateSuffix = ""        // Clear suffix on cancel
+			m.selectedBaseBranch = ""    // Clear base branch selection
+			m.branchList = nil           // Clear cached branches
+			m.showBranchSelector = false // Ensure dropdown is closed
 			return m, nil
 		case tea.KeyBackspace:
 			m.taskInputDeleteBack(1)
@@ -689,25 +719,39 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeySpace:
 			m.taskInputInsert(" ")
 			return m, nil
+		case tea.KeyTab:
+			// Open branch selector
+			return m.openBranchSelector()
 		case tea.KeyRunes:
 			char := string(msg.Runes)
 			// Handle Enter sent as rune (some terminals/input methods send \n or \r as runes)
 			if char == "\n" || char == "\r" {
 				if m.taskInput != "" {
 					// Capture task and clear input state first
-					task := m.taskInput
+					task := m.taskInput + m.templateSuffix
 					isDependent := m.addingDependentTask
 					dependsOn := m.dependentOnInstanceID
+					baseBranch := m.selectedBaseBranch
 					m.addingTask = false
 					m.addingDependentTask = false
 					m.dependentOnInstanceID = ""
 					m.taskInput = ""
 					m.taskInputCursor = 0
+					m.templateSuffix = ""        // Clear suffix after use
+					m.selectedBaseBranch = ""    // Clear base branch selection
+					m.branchList = nil           // Clear cached branches
+					m.showBranchSelector = false // Ensure dropdown is closed
 
 					// Add instance asynchronously to avoid blocking UI during git worktree creation
 					if isDependent && dependsOn != "" {
 						m.infoMessage = "Adding dependent task..."
 						return m, addDependentTaskAsync(m.orchestrator, m.session, task, dependsOn)
+					}
+
+					// Use selected base branch if specified, otherwise use default (current HEAD)
+					if baseBranch != "" {
+						m.infoMessage = "Adding task from branch " + baseBranch + "..."
+						return m, addTaskFromBranchAsync(m.orchestrator, m.session, task, baseBranch)
 					}
 					m.infoMessage = "Adding task..."
 					return m, addTaskAsync(m.orchestrator, m.session, task)
@@ -717,6 +761,10 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.dependentOnInstanceID = ""
 				m.taskInput = ""
 				m.taskInputCursor = 0
+				m.templateSuffix = ""        // Clear suffix on cancel
+				m.selectedBaseBranch = ""    // Clear base branch selection
+				m.branchList = nil           // Clear cached branches
+				m.showBranchSelector = false // Ensure dropdown is closed
 				return m, nil
 			}
 			// Detect "/" at start of input or after newline to show templates
@@ -1767,6 +1815,72 @@ func (m Model) handleTemplateDropdown(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// openBranchSelector opens the branch selector dropdown and populates the branch list.
+func (m Model) openBranchSelector() (tea.Model, tea.Cmd) {
+	// Fetch branches from the orchestrator
+	branches, err := m.orchestrator.ListBranches()
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to list branches", "error", err)
+		}
+		m.errorMessage = "Failed to list branches: " + err.Error()
+		return m, nil
+	}
+
+	// Convert to string list for the model
+	m.branchList = make([]string, len(branches))
+	for i, b := range branches {
+		m.branchList[i] = b.Name
+	}
+
+	// Find the index of the currently selected branch (if any)
+	selectedIdx := 0
+	if m.selectedBaseBranch != "" {
+		for i, name := range m.branchList {
+			if name == m.selectedBaseBranch {
+				selectedIdx = i
+				break
+			}
+		}
+	}
+
+	m.showBranchSelector = true
+	m.branchSelected = selectedIdx
+	return m, nil
+}
+
+// handleBranchSelector handles keyboard input when the branch selector is visible.
+func (m Model) handleBranchSelector(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		// Close dropdown without changing selection
+		m.showBranchSelector = false
+		return m, nil
+
+	case tea.KeyEnter, tea.KeyTab:
+		// Select the highlighted branch
+		if len(m.branchList) > 0 && m.branchSelected < len(m.branchList) {
+			m.selectedBaseBranch = m.branchList[m.branchSelected]
+		}
+		m.showBranchSelector = false
+		return m, nil
+
+	case tea.KeyUp:
+		if m.branchSelected > 0 {
+			m.branchSelected--
+		}
+		return m, nil
+
+	case tea.KeyDown:
+		if m.branchSelected < len(m.branchList)-1 {
+			m.branchSelected++
+		}
+		return m, nil
+	}
+
+	return m, nil
+}
+
 // handleSearchInput handles keyboard input when in search mode
 func (m Model) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
@@ -2398,11 +2512,15 @@ func (m Model) renderFilterPanel(width int) string {
 // renderAddTask renders the add task input
 func (m Model) renderAddTask(width int) string {
 	inputState := &view.InputState{
-		Text:             m.taskInput,
-		Cursor:           m.taskInputCursor,
-		ShowTemplates:    m.showTemplates,
-		Templates:        m.buildTemplateItems(),
-		TemplateSelected: m.templateSelected,
+		Text:               m.taskInput,
+		Cursor:             m.taskInputCursor,
+		ShowTemplates:      m.showTemplates,
+		Templates:          m.buildTemplateItems(),
+		TemplateSelected:   m.templateSelected,
+		ShowBranchSelector: m.showBranchSelector,
+		Branches:           m.buildBranchItems(),
+		BranchSelected:     m.branchSelected,
+		SelectedBranch:     m.selectedBaseBranch,
 	}
 
 	// Customize title/subtitle for dependent task mode
@@ -2434,6 +2552,25 @@ func (m Model) buildTemplateItems() []view.TemplateItem {
 		items[i] = view.TemplateItem{
 			Command: t.Command,
 			Name:    t.Name,
+		}
+	}
+	return items
+}
+
+// buildBranchItems converts the cached branch list to view branch items
+func (m Model) buildBranchItems() []view.BranchItem {
+	if len(m.branchList) == 0 {
+		return nil
+	}
+
+	// Get main branch name from orchestrator
+	mainBranch := m.orchestrator.GetMainBranch()
+
+	items := make([]view.BranchItem, len(m.branchList))
+	for i, name := range m.branchList {
+		items[i] = view.BranchItem{
+			Name:   name,
+			IsMain: name == mainBranch,
 		}
 	}
 	return items

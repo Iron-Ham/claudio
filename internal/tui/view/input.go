@@ -15,6 +15,12 @@ type TemplateItem struct {
 	Name    string // Display name (e.g., "Run Tests")
 }
 
+// BranchItem represents a git branch for display in the branch selector.
+type BranchItem struct {
+	Name   string // Branch name
+	IsMain bool   // Whether this is the main/master branch
+}
+
 // InputState holds the state needed to render the input dialog.
 // This struct is populated by the Model and passed to the view for rendering.
 type InputState struct {
@@ -30,6 +36,12 @@ type InputState struct {
 	ShowTemplates    bool           // Whether the template dropdown is visible
 	Templates        []TemplateItem // Filtered templates to display
 	TemplateSelected int            // Currently highlighted template index
+
+	// Branch selector state
+	ShowBranchSelector bool         // Whether the branch selector is visible
+	Branches           []BranchItem // Available branches to select from
+	BranchSelected     int          // Currently highlighted branch index
+	SelectedBranch     string       // The currently selected branch name (shown in UI)
 }
 
 // InputView renders the task input dialog.
@@ -54,6 +66,18 @@ func (v *InputView) Render(state *InputState, width int) string {
 	b.WriteString(styles.Title.Render(title))
 	b.WriteString("\n\n")
 
+	// Show branch selector line
+	branchLabel := "Base branch: "
+	branchName := state.SelectedBranch
+	if branchName == "" {
+		branchName = "(default)"
+	}
+	b.WriteString(styles.Muted.Render(branchLabel))
+	b.WriteString(styles.DropdownCommand.Render(branchName))
+	b.WriteString("  ")
+	b.WriteString(styles.Muted.Render("[Tab to change]"))
+	b.WriteString("\n\n")
+
 	// Subtitle (use default if not set)
 	subtitle := state.Subtitle
 	if subtitle == "" {
@@ -64,15 +88,19 @@ func (v *InputView) Render(state *InputState, width int) string {
 	// Render text input with cursor
 	b.WriteString(v.renderTextInput(state))
 
-	// Show template dropdown if active
-	if state.ShowTemplates {
+	// Show branch selector dropdown if active
+	if state.ShowBranchSelector {
+		b.WriteString("\n")
+		b.WriteString(v.renderBranchSelector(state))
+	} else if state.ShowTemplates {
+		// Show template dropdown if active (but not when branch selector is open)
 		b.WriteString("\n")
 		b.WriteString(v.renderTemplateDropdown(state))
 	}
 
 	// Help hints
 	b.WriteString("\n\n")
-	b.WriteString(v.renderHints(state.ShowTemplates))
+	b.WriteString(v.renderHints(state))
 
 	return styles.ContentBox.Width(width - 4).Render(b.String())
 }
@@ -147,9 +175,46 @@ func (v *InputView) renderTemplateDropdown(state *InputState) string {
 	return styles.DropdownContainer.Render(content)
 }
 
+// renderBranchSelector renders the branch selection dropdown.
+func (v *InputView) renderBranchSelector(state *InputState) string {
+	if len(state.Branches) == 0 {
+		return styles.Muted.Render("  No branches available")
+	}
+
+	var items []string
+	for i, branch := range state.Branches {
+		name := branch.Name
+		var suffix string
+		if branch.IsMain {
+			suffix = " (default)"
+		}
+
+		var item string
+		if i == state.BranchSelected {
+			// Selected item - highlight the whole row
+			item = styles.DropdownItemSelected.Render(name + suffix)
+		} else {
+			// Normal item
+			item = styles.DropdownItem.Render(
+				styles.DropdownCommand.Render(name) +
+					styles.Muted.Render(suffix),
+			)
+		}
+		items = append(items, item)
+	}
+
+	content := strings.Join(items, "\n")
+	return styles.DropdownContainer.Render(content)
+}
+
 // renderHints renders the context-aware keyboard hints.
-func (v *InputView) renderHints(showTemplates bool) string {
-	if showTemplates {
+func (v *InputView) renderHints(state *InputState) string {
+	if state.ShowBranchSelector {
+		return styles.Muted.Render("↑/↓") + " navigate  " +
+			styles.Muted.Render("Enter/Tab") + " select  " +
+			styles.Muted.Render("Esc") + " close"
+	}
+	if state.ShowTemplates {
 		return styles.Muted.Render("↑/↓") + " navigate  " +
 			styles.Muted.Render("Enter/Tab") + " select  " +
 			styles.Muted.Render("Esc") + " close  " +
@@ -157,6 +222,7 @@ func (v *InputView) renderHints(showTemplates bool) string {
 	}
 	return styles.Muted.Render("Enter") + " submit  " +
 		styles.Muted.Render("Shift+Enter") + " newline  " +
+		styles.Muted.Render("Tab") + " branch  " +
 		styles.Muted.Render("/") + " templates  " +
 		styles.Muted.Render("Esc") + " cancel"
 }
