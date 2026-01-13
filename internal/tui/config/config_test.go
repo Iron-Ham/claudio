@@ -1,9 +1,11 @@
 package config
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
+	mainconfig "github.com/Iron-Ham/claudio/internal/config"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -281,4 +283,122 @@ func TestWindowResizeUpdatesScroll(t *testing.T) {
 	if selectionLine < m.scrollOffset || selectionLine >= m.scrollOffset+availableLines {
 		t.Error("selection should remain visible after resize")
 	}
+}
+
+// TestTUIConfigCoversAllConfigFields ensures that new config fields are not
+// accidentally omitted from the TUI config interface. When a new field is added
+// to the main Config struct, this test will fail unless the field is either:
+// 1. Added to the TUI config categories, or
+// 2. Explicitly added to the excludedKeys list with a reason
+func TestTUIConfigCoversAllConfigFields(t *testing.T) {
+	// Keys that are intentionally excluded from the TUI config.
+	// Each exclusion should have a reason documented.
+	excludedKeys := map[string]string{
+		// Session config is a placeholder with no fields
+		// Logging is typically configured via environment or CLI, not interactive TUI
+		"logging.enabled":     "logging is typically configured via CLI flags",
+		"logging.level":       "logging is typically configured via CLI flags",
+		"logging.max_size_mb": "advanced setting not needed in TUI",
+		"logging.max_backups": "advanced setting not needed in TUI",
+		// Complex types that don't fit the simple TUI editor
+		"pr.template":          "complex multi-line template, better edited in config file",
+		"pr.reviewers.default": "list type, better edited in config file",
+		"pr.reviewers.by_path": "map type, better edited in config file",
+		"pr.labels":            "list type, better edited in config file",
+		"plan.labels":          "list type, better edited in config file",
+		"ultraplan.pr_labels":  "list type, better edited in config file",
+		// Advanced ultraplan settings
+		"ultraplan.multi_pass":               "advanced setting, use plan.multi_pass instead",
+		"ultraplan.consolidation_mode":       "advanced setting for power users",
+		"ultraplan.create_draft_prs":         "advanced setting for power users",
+		"ultraplan.branch_prefix":            "advanced setting, uses branch.prefix by default",
+		"ultraplan.max_task_retries":         "advanced setting for power users",
+		"ultraplan.require_verified_commits": "advanced setting for power users",
+		// Advanced instance settings
+		"instance.tmux_history_limit": "advanced tmux setting",
+	}
+
+	// Get all keys from the TUI config
+	tuiKeys := make(map[string]bool)
+	m := New()
+	for _, cat := range m.categories {
+		for _, item := range cat.Items {
+			tuiKeys[item.Key] = true
+		}
+	}
+
+	// Get all simple-type keys from the main Config struct using reflection
+	configKeys := extractConfigKeys(reflect.TypeOf(mainconfig.Config{}), "")
+
+	// Check that each config key is either in TUI or explicitly excluded
+	var missing []string
+	for _, key := range configKeys {
+		if tuiKeys[key] {
+			continue
+		}
+		if _, excluded := excludedKeys[key]; excluded {
+			continue
+		}
+		missing = append(missing, key)
+	}
+
+	if len(missing) > 0 {
+		t.Errorf("Config keys missing from TUI config (add to TUI or excludedKeys with reason):\n  %s",
+			strings.Join(missing, "\n  "))
+	}
+
+	// Also check that TUI doesn't have keys that don't exist in config
+	var invalid []string
+	configKeySet := make(map[string]bool)
+	for _, k := range configKeys {
+		configKeySet[k] = true
+	}
+	for key := range tuiKeys {
+		if !configKeySet[key] {
+			invalid = append(invalid, key)
+		}
+	}
+
+	if len(invalid) > 0 {
+		t.Errorf("TUI config has keys that don't exist in Config struct:\n  %s",
+			strings.Join(invalid, "\n  "))
+	}
+}
+
+// extractConfigKeys uses reflection to get all leaf field keys from a struct.
+// It recursively handles nested structs and builds dot-separated keys like "instance.tmux_width".
+func extractConfigKeys(t reflect.Type, prefix string) []string {
+	var keys []string
+
+	for i := range t.NumField() {
+		field := t.Field(i)
+
+		// Get the mapstructure tag, fall back to lowercase field name
+		tag := field.Tag.Get("mapstructure")
+		if tag == "" {
+			tag = strings.ToLower(field.Name)
+		}
+
+		key := tag
+		if prefix != "" {
+			key = prefix + "." + tag
+		}
+
+		// Handle different field types
+		switch field.Type.Kind() {
+		case reflect.Struct:
+			// Recurse into nested structs (but not time.Duration, etc.)
+			if field.Type.PkgPath() == "" || strings.HasPrefix(field.Type.PkgPath(), "github.com/Iron-Ham/claudio") {
+				keys = append(keys, extractConfigKeys(field.Type, key)...)
+			}
+		case reflect.Slice, reflect.Map:
+			// Include slice/map keys so they can be explicitly excluded
+			keys = append(keys, key)
+		default:
+			// Simple types: bool, int, string, float64, etc.
+			keys = append(keys, key)
+		}
+	}
+
+	return keys
 }
