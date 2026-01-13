@@ -768,6 +768,9 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "?":
 		m.showHelp = !m.showHelp
+		if !m.showHelp {
+			m.helpScroll = 0
+		}
 		return m, nil
 
 	case "tab", "l":
@@ -851,13 +854,17 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "j", "down":
-		// Scroll down in diff view, output view, or navigate to next instance
+		// Scroll down in diff view, help panel, output view, or navigate to next instance
 		if m.showDiff {
 			m.diffScroll++
 			return m, nil
 		}
-		if m.showHelp || m.showConflicts {
-			// Don't scroll output when other panels are shown
+		if m.showHelp {
+			m.helpScroll++
+			return m, nil
+		}
+		if m.showConflicts {
+			// Don't scroll output when conflict panel is shown
 			return m, nil
 		}
 		if inst := m.activeInstance(); inst != nil {
@@ -868,15 +875,21 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "k", "up":
-		// Scroll up in diff view, output view, or navigate to previous instance
+		// Scroll up in diff view, help panel, output view, or navigate to previous instance
 		if m.showDiff {
 			if m.diffScroll > 0 {
 				m.diffScroll--
 			}
 			return m, nil
 		}
-		if m.showHelp || m.showConflicts {
-			// Don't scroll output when other panels are shown
+		if m.showHelp {
+			if m.helpScroll > 0 {
+				m.helpScroll--
+			}
+			return m, nil
+		}
+		if m.showConflicts {
+			// Don't scroll output when conflict panel is shown
 			return m, nil
 		}
 		if inst := m.activeInstance(); inst != nil {
@@ -887,8 +900,15 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+u":
-		// Scroll up half page in output view
-		if m.showDiff || m.showHelp || m.showConflicts {
+		// Scroll up half page in help panel or output view
+		if m.showHelp {
+			m.helpScroll -= 10
+			if m.helpScroll < 0 {
+				m.helpScroll = 0
+			}
+			return m, nil
+		}
+		if m.showDiff || m.showConflicts {
 			return m, nil
 		}
 		if inst := m.activeInstance(); inst != nil {
@@ -898,8 +918,12 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+d":
-		// Scroll down half page in output view
-		if m.showDiff || m.showHelp || m.showConflicts {
+		// Scroll down half page in help panel or output view
+		if m.showHelp {
+			m.helpScroll += 10
+			return m, nil
+		}
+		if m.showDiff || m.showConflicts {
 			return m, nil
 		}
 		if inst := m.activeInstance(); inst != nil {
@@ -909,8 +933,15 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+b":
-		// Scroll up full page in output view
-		if m.showDiff || m.showHelp || m.showConflicts {
+		// Scroll up full page in help panel or output view
+		if m.showHelp {
+			m.helpScroll -= 20
+			if m.helpScroll < 0 {
+				m.helpScroll = 0
+			}
+			return m, nil
+		}
+		if m.showDiff || m.showConflicts {
 			return m, nil
 		}
 		if inst := m.activeInstance(); inst != nil {
@@ -920,8 +951,12 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+f":
-		// Scroll down full page in output view
-		if m.showDiff || m.showHelp || m.showConflicts {
+		// Scroll down full page in help panel or output view
+		if m.showHelp {
+			m.helpScroll += 20
+			return m, nil
+		}
+		if m.showDiff || m.showConflicts {
 			return m, nil
 		}
 		if inst := m.activeInstance(); inst != nil {
@@ -982,12 +1017,16 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "g":
-		// Go to top of diff or output
+		// Go to top of diff, help panel, or output
 		if m.showDiff {
 			m.diffScroll = 0
 			return m, nil
 		}
-		if m.showHelp || m.showConflicts {
+		if m.showHelp {
+			m.helpScroll = 0
+			return m, nil
+		}
+		if m.showConflicts {
 			return m, nil
 		}
 		if inst := m.activeInstance(); inst != nil {
@@ -996,7 +1035,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "G":
-		// Go to bottom of diff or output (re-enables auto-scroll)
+		// Go to bottom of diff, help panel, or output (re-enables auto-scroll)
 		if m.showDiff {
 			lines := strings.Split(m.diffContent, "\n")
 			maxLines := m.terminalManager.Height() - 14
@@ -1010,7 +1049,12 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.diffScroll = maxScroll
 			return m, nil
 		}
-		if m.showHelp || m.showConflicts {
+		if m.showHelp {
+			// Jump to bottom of help (will be clamped in render)
+			m.helpScroll = 1000
+			return m, nil
+		}
+		if m.showConflicts {
 			return m, nil
 		}
 		if inst := m.activeInstance(); inst != nil {
@@ -1144,6 +1188,9 @@ func (m *Model) applyCommandResult(result command.Result) {
 	if result.ShowHelp != nil {
 		// Toggle help (handler sets to true, we toggle)
 		m.showHelp = !m.showHelp
+		if !m.showHelp {
+			m.helpScroll = 0
+		}
 	}
 	if result.ShowStats != nil {
 		// Toggle stats
@@ -2408,90 +2455,136 @@ func (m Model) buildTemplateItems() []view.TemplateItem {
 	return items
 }
 
-// renderHelpPanel renders the help overlay
+// renderHelpPanel renders the help overlay with coloration and scrolling support.
 func (m Model) renderHelpPanel(width int) string {
-	help := `
-Claudio uses vim-style commands. Press : to enter command mode.
+	// Build help content with styling
+	var lines []string
 
-Navigation (always available):
-  Tab / l      Next instance
-  Shift+Tab/h  Previous instance
-  1-9          Select instance by number
-  j / ↓        Scroll down one line
-  k / ↑        Scroll up one line
-  Ctrl+D/U     Scroll half page down/up
-  Ctrl+F/B     Scroll full page down/up
-  g / G        Jump to top / bottom
+	// Title
+	lines = append(lines, styles.Title.Render("Claudio Help"))
+	lines = append(lines, styles.Muted.Render("Press : to enter command mode. Use j/k to scroll, ? or :h to close."))
+	lines = append(lines, "")
 
-Instance Commands (press : first, then type command):
-  :s :start      Start a stopped/new instance (runs Claude)
-  :x :stop       Stop instance and trigger auto-PR workflow (if enabled)
-  :e :exit       Stop instance without auto-PR (for manual PR later)
-  :p :pause      Pause/resume a running instance (SIGSTOP/SIGCONT)
-  :R :reconnect  Reattach to a stopped instance's tmux session
-  :restart       Restart a stuck or timed-out instance
-  :a :add        Create and add a new instance to the session
-  :chain :dep :depends  Add task that auto-starts after selected instance
-  :D :remove     Remove instance from session (keeps branch)
-  :kill          Force kill instance process and remove from session
-  :C :clear      Remove all completed instances from the list
+	// Helper function to format a section header
+	section := func(name string) string {
+		return styles.Secondary.Bold(true).Render("━━ " + name + " ━━")
+	}
 
-View Commands:
-  :d :diff       Toggle diff preview panel (show git changes)
-  :m :stats      Toggle metrics panel (tokens, cost, timing)
-  :c :conflicts  Toggle conflict view (show merge conflicts)
-  :f :filter     Open filter panel (filter output by category)
-  :tmux          Show tmux attach command for direct access
-  :r :pr         Show PR creation command for the instance
+	// Helper function to format a key
+	key := func(k string) string {
+		return styles.HelpKey.Render(k)
+	}
 
-Session Commands:
-  :h :help       Toggle this help panel
-  :q :quit       Quit Claudio (instances continue in tmux)
+	// Helper function to format a description
+	desc := func(d string) string {
+		return styles.Muted.Render(d)
+	}
 
-Terminal Pane:
-  Backtick       Toggle terminal pane visibility
-  :term          Toggle terminal pane (same as backtick)
-  :t             Focus terminal pane for typing
-  Ctrl+]         Exit terminal typing mode
-  Ctrl+Shift+T   Switch terminal directory (worktree/invocation)
+	// Navigation section
+	lines = append(lines, section("Navigation"))
+	lines = append(lines, fmt.Sprintf("  %s %s  %s", key("Tab/l"), key("Shift+Tab/h"), desc("Next / Previous instance")))
+	lines = append(lines, fmt.Sprintf("  %s              %s", key("1-9"), desc("Select instance by number")))
+	lines = append(lines, fmt.Sprintf("  %s %s            %s", key("j/↓"), key("k/↑"), desc("Scroll down / up one line")))
+	lines = append(lines, fmt.Sprintf("  %s %s    %s", key("Ctrl+D/U"), key("Ctrl+F/B"), desc("Scroll half / full page")))
+	lines = append(lines, fmt.Sprintf("  %s %s              %s", key("g"), key("G"), desc("Jump to top / bottom")))
+	lines = append(lines, "")
 
-Input Mode:
-  i / Enter      Enter input mode (interact with Claude)
-  Ctrl+]         Exit input mode back to navigation
+	// Instance Control section
+	lines = append(lines, section("Instance Control"))
+	lines = append(lines, fmt.Sprintf("  %s %s      %s", key(":s"), key(":start"), desc("Start a stopped/new instance")))
+	lines = append(lines, fmt.Sprintf("  %s %s       %s", key(":x"), key(":stop"), desc("Stop instance + auto-PR workflow")))
+	lines = append(lines, fmt.Sprintf("  %s %s       %s", key(":e"), key(":exit"), desc("Stop instance (no auto-PR)")))
+	lines = append(lines, fmt.Sprintf("  %s %s      %s", key(":p"), key(":pause"), desc("Pause/resume instance")))
+	lines = append(lines, fmt.Sprintf("  %s %s  %s", key(":R"), key(":reconnect"), desc("Reattach to stopped tmux session")))
+	lines = append(lines, fmt.Sprintf("  %s         %s", key(":restart"), desc("Restart stuck/timeout instance")))
+	lines = append(lines, "")
 
-Search (vim-style):
-  /              Start search (type pattern, Enter to confirm)
-  n / N          Next / previous match
-  Ctrl+/         Clear search
-  r:pattern      Use regex (prefix with r:)
+	// Instance Management section
+	lines = append(lines, section("Instance Management"))
+	lines = append(lines, fmt.Sprintf("  %s %s        %s", key(":a"), key(":add"), desc("Create and add new instance")))
+	lines = append(lines, fmt.Sprintf("  %s %s %s  %s", key(":chain"), key(":dep"), key(":depends"), desc("Add dependent task")))
+	lines = append(lines, fmt.Sprintf("  %s %s     %s", key(":D"), key(":remove"), desc("Remove instance (keeps branch)")))
+	lines = append(lines, fmt.Sprintf("  %s           %s", key(":kill"), desc("Force kill and remove instance")))
+	lines = append(lines, fmt.Sprintf("  %s %s      %s", key(":C"), key(":clear"), desc("Remove all completed instances")))
+	lines = append(lines, "")
 
-Search Tips:
-  • Search is case-insensitive by default
-  • Use r: prefix for regex (e.g. /r:error.*file)
-  • Matches highlighted in yellow, current in orange
+	// View Commands section
+	lines = append(lines, section("View Commands"))
+	lines = append(lines, fmt.Sprintf("  %s %s       %s", key(":d"), key(":diff"), desc("Toggle diff preview panel")))
+	lines = append(lines, fmt.Sprintf("  %s %s      %s", key(":m"), key(":stats"), desc("Toggle metrics panel")))
+	lines = append(lines, fmt.Sprintf("  %s %s  %s", key(":c"), key(":conflicts"), desc("Toggle conflict view")))
+	lines = append(lines, fmt.Sprintf("  %s %s     %s", key(":f"), key(":filter"), desc("Open filter panel")))
+	lines = append(lines, fmt.Sprintf("  %s           %s", key(":tmux"), desc("Show tmux attach command")))
+	lines = append(lines, fmt.Sprintf("  %s %s         %s", key(":r"), key(":pr"), desc("Show PR creation command")))
+	lines = append(lines, "")
 
-Filter Categories (toggle in filter panel :f):
-  • Errors: Stack traces, error messages
-  • Warnings: Warning indicators
-  • Tool calls: File operations, bash commands
-  • Thinking: Claude's reasoning
-  • Progress: Progress indicators
+	// Terminal section
+	lines = append(lines, section("Terminal Pane"))
+	lines = append(lines, fmt.Sprintf("  %s %s      %s", key("`"), key(":term"), desc("Toggle terminal pane")))
+	lines = append(lines, fmt.Sprintf("  %s             %s", key(":t"), desc("Focus terminal for typing")))
+	lines = append(lines, fmt.Sprintf("  %s         %s", key("Ctrl+]"), desc("Exit terminal mode")))
+	lines = append(lines, fmt.Sprintf("  %s    %s", key("Ctrl+Shift+T"), desc("Switch terminal directory")))
+	lines = append(lines, "")
 
-Input Mode Details:
-  All keystrokes are forwarded to Claude, including:
-  • Ctrl+key combinations (Ctrl+O, Ctrl+R, Ctrl+W, etc.)
-  • Function keys (F1-F12)
-  • Navigation keys (Page Up/Down, Home, End)
-  • Pasted text with bracketed paste support
-  Press Ctrl+] to return to navigation mode.
+	// Input Mode section
+	lines = append(lines, section("Input Mode"))
+	lines = append(lines, fmt.Sprintf("  %s %s        %s", key("i"), key("Enter"), desc("Enter input mode (talk to Claude)")))
+	lines = append(lines, fmt.Sprintf("  %s         %s", key("Ctrl+]"), desc("Exit input mode")))
+	lines = append(lines, "")
 
-General:
-  ?              Quick toggle help
-  :q             Quit (via command mode)
-  Auto-scroll follows new output. Scroll up to pause,
-  press G to resume. "NEW OUTPUT" appears when paused.
-`
-	return styles.ContentBox.Width(width - 4).Render(help)
+	// Search section
+	lines = append(lines, section("Search"))
+	lines = append(lines, fmt.Sprintf("  %s             %s", key("/"), desc("Start search")))
+	lines = append(lines, fmt.Sprintf("  %s %s           %s", key("n"), key("N"), desc("Next / previous match")))
+	lines = append(lines, fmt.Sprintf("  %s        %s", key("Ctrl+/"), desc("Clear search")))
+	lines = append(lines, fmt.Sprintf("  %s      %s", key("r:pattern"), desc("Use regex search")))
+	lines = append(lines, "")
+
+	// Session section
+	lines = append(lines, section("Session"))
+	lines = append(lines, fmt.Sprintf("  %s %s       %s", key(":h"), key(":help"), desc("Toggle this help panel")))
+	lines = append(lines, fmt.Sprintf("  %s %s       %s", key(":q"), key(":quit"), desc("Quit (instances continue in tmux)")))
+	lines = append(lines, fmt.Sprintf("  %s              %s", key("?"), desc("Quick toggle help")))
+
+	// Calculate visible lines based on terminal height
+	maxLines := m.terminalManager.Height() - 10
+	if maxLines < 10 {
+		maxLines = 10
+	}
+
+	// Clamp scroll to valid range
+	maxScroll := len(lines) - maxLines
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	scroll := m.helpScroll
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+
+	// Slice visible lines
+	endLine := scroll + maxLines
+	if endLine > len(lines) {
+		endLine = len(lines)
+	}
+	visibleLines := lines[scroll:endLine]
+
+	// Add scroll indicator if needed
+	var content string
+	if maxScroll > 0 {
+		scrollInfo := styles.Muted.Render(fmt.Sprintf(" [%d/%d] ", scroll+1, maxScroll+1))
+		if scroll > 0 {
+			scrollInfo = styles.Warning.Render("▲ ") + scrollInfo
+		}
+		if scroll < maxScroll {
+			scrollInfo = scrollInfo + styles.Warning.Render(" ▼")
+		}
+		content = strings.Join(visibleLines, "\n") + "\n" + scrollInfo
+	} else {
+		content = strings.Join(visibleLines, "\n")
+	}
+
+	return styles.ContentBox.Width(width - 4).Render(content)
 }
 
 // renderDiffPanel renders the diff preview panel with syntax highlighting
@@ -2617,6 +2710,14 @@ func (m Model) buildInstanceInfoList() []view.InstanceInfo {
 // renderCommandModeHelp renders the help bar when in command mode.
 // This is separate so it can take priority in all modes (normal, ultra-plan, plan editor).
 func (m Model) renderCommandModeHelp() string {
+	if viper.GetBool("tui.verbose_command_help") {
+		return m.renderVerboseCommandHelp()
+	}
+	return m.renderCompactCommandHelp()
+}
+
+// renderCompactCommandHelp renders the compact single-line command help (for experts).
+func (m Model) renderCompactCommandHelp() string {
 	return styles.HelpBar.Render(
 		styles.Primary.Bold(true).Render(":") + styles.Primary.Render(m.commandBuffer) +
 			styles.Muted.Render("█") + "  " +
@@ -2624,6 +2725,39 @@ func (m Model) renderCommandModeHelp() string {
 			styles.HelpKey.Render("[Esc]") + " cancel  " +
 			styles.Muted.Render("Commands: s/x/e/p/R a/D/C d/m/c/f t/r h/q (or :help)"),
 	)
+}
+
+// renderVerboseCommandHelp renders a multi-line command help panel with descriptions.
+// Shows only the most commonly used commands, with a hint to use :help for more.
+func (m Model) renderVerboseCommandHelp() string {
+	var lines []string
+
+	// Command input line
+	inputLine := styles.Primary.Bold(true).Render(":") + styles.Primary.Render(m.commandBuffer) +
+		styles.Muted.Render("█") + "  " +
+		styles.HelpKey.Render("[Enter]") + " execute  " +
+		styles.HelpKey.Render("[Esc]") + " cancel"
+	lines = append(lines, inputLine)
+
+	// Show prioritized commands grouped by function
+	// Line 1: Instance control (most common operations)
+	line1 := styles.Secondary.Bold(true).Render("Control:") + " " +
+		styles.HelpKey.Render("s/start") + " " + styles.Muted.Render("start") + "  " +
+		styles.HelpKey.Render("x/stop") + " " + styles.Muted.Render("stop+PR") + "  " +
+		styles.HelpKey.Render("p/pause") + " " + styles.Muted.Render("pause/resume") + "  " +
+		styles.HelpKey.Render("a/add") + " " + styles.Muted.Render("new instance")
+	lines = append(lines, line1)
+
+	// Line 2: Views and navigation
+	line2 := styles.Secondary.Bold(true).Render("View:") + " " +
+		styles.HelpKey.Render("d/diff") + " " + styles.Muted.Render("changes") + "  " +
+		styles.HelpKey.Render("m/stats") + " " + styles.Muted.Render("metrics") + "  " +
+		styles.HelpKey.Render("t/term") + " " + styles.Muted.Render("terminal") + "  " +
+		styles.HelpKey.Render("h/help") + " " + styles.Muted.Render("full help") + "  " +
+		styles.HelpKey.Render("q/quit") + " " + styles.Muted.Render("exit")
+	lines = append(lines, line2)
+
+	return styles.HelpBar.Render(strings.Join(lines, "\n"))
 }
 
 // renderHelp renders the help bar

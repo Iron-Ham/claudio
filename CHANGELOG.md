@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TUI Task Chaining** - Chain tasks via TUI using `:chain`, `:dep`, or `:depends` commands to add tasks that auto-start when the selected instance completes
 - **Local Claude Config Copying** - `CLAUDE.local.md` is now automatically copied to worktrees for consistent local settings (#318)
 - **Collapsible Task Groups** - UltraPlan sidebar now supports collapsible execution groups via `[g]` group navigation mode, with `[e]` expand all and `[c]` collapse all (#289)
+- **Verbose Command Mode Help** - Command mode now shows descriptive help with command explanations instead of just single letters; configurable via `tui.verbose_command_help` setting (enabled by default)
+- **Scrollable Help Panel** - The `:help` panel is now scrollable (j/k, Ctrl+D/U, g/G) with color-coded sections for better readability
 
 ### Performance
 
