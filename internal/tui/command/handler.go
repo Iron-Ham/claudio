@@ -10,6 +10,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/prworkflow"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/viper"
 )
@@ -92,6 +93,11 @@ type Result struct {
 
 	// View transition - Grouped View
 	ToggleGroupedView *bool // Request to toggle grouped instance view on/off
+
+	// Group PR workflow
+	StartGroupPR   *bool                   // Request to start a group PR workflow
+	GroupPRMode    *prworkflow.GroupPRMode // Mode for group PR creation (stacked, consolidated, single)
+	GroupPRGroupID *string                 // Target group ID for single group PR mode
 }
 
 // CommandInfo contains metadata about a command for help display.
@@ -218,8 +224,8 @@ func (h *Handler) registerCommands() {
 
 	// Utility commands
 	h.commands["tmux"] = cmdTmux
-	h.commands["r"] = cmdPR
-	h.commands["pr"] = cmdPR
+	h.argCommands["r"] = cmdPRWithArgs
+	h.argCommands["pr"] = cmdPRWithArgs
 
 	// Terminal pane commands
 	h.commands["t"] = cmdTerminalFocus
@@ -299,6 +305,9 @@ func (h *Handler) buildCategories() {
 			Name: "Utility",
 			Commands: []CommandInfo{
 				{ShortKey: "r", LongKey: "pr", Description: "Show PR creation command", Category: "utility"},
+				{ShortKey: "", LongKey: "pr --group", Description: "Create stacked PRs for all groups", Category: "utility"},
+				{ShortKey: "", LongKey: "pr --group=all", Description: "Create consolidated PR from all groups", Category: "utility"},
+				{ShortKey: "", LongKey: "pr --group=single", Description: "Create PR for current group only", Category: "utility"},
 				{ShortKey: "", LongKey: "cancel", Description: "Cancel ultra-plan execution", Category: "utility"},
 				{ShortKey: "", LongKey: "tripleshot", Description: "Start triple-shot mode (3 parallel attempts + judge)", Category: "utility"},
 				{ShortKey: "", LongKey: "plan", Description: "Start inline plan mode for structured task planning", Category: "utility"},
@@ -731,13 +740,155 @@ func cmdTmux(deps Dependencies) Result {
 	return Result{InfoMessage: "Attach with: " + mgr.AttachCommand()}
 }
 
-func cmdPR(deps Dependencies) Result {
+// cmdPRWithArgs handles the :pr command with optional arguments.
+// Usage:
+//   - :pr                  - Show PR command for active instance
+//   - :pr --group          - Create PRs for all groups (stacked)
+//   - :pr --group=stacked  - Create one PR per group with stacked dependencies
+//   - :pr --group=single   - Create PR for current group only
+//   - :pr --group=all      - Create single consolidated PR for all groups
+//   - :pr --group <name>   - Create PR for specific group
+func cmdPRWithArgs(deps Dependencies, args string) Result {
+	args = strings.TrimSpace(args)
+
+	// No args - show traditional PR command
+	if args == "" {
+		return cmdPRDefault(deps)
+	}
+
+	// Parse --group flag
+	if strings.HasPrefix(args, "--group") || strings.HasPrefix(args, "-g") {
+		return cmdPRGroup(deps, args)
+	}
+
+	// Unknown argument, show help
+	return Result{
+		ErrorMessage: fmt.Sprintf("Unknown PR argument: %s. Usage: :pr [--group[=stacked|single|all] [name]]", args),
+	}
+}
+
+// cmdPRDefault shows the traditional PR creation command.
+func cmdPRDefault(deps Dependencies) Result {
 	inst := deps.ActiveInstance()
 	if inst == nil {
 		return Result{InfoMessage: "No instance selected"}
 	}
 
 	return Result{InfoMessage: fmt.Sprintf("Create PR: claudio pr %s  (add --draft for draft PR)", inst.ID)}
+}
+
+// cmdPRGroup handles group-based PR creation.
+func cmdPRGroup(deps Dependencies, args string) Result {
+	// Try to get group dependencies
+	groupDeps, ok := deps.(GroupDependencies)
+	if !ok {
+		return Result{ErrorMessage: "Group PR commands not available in this context"}
+	}
+
+	session := deps.GetSession()
+	if session == nil {
+		return Result{ErrorMessage: "No session available"}
+	}
+
+	// Check if there are any groups
+	if len(session.Groups) == 0 {
+		return Result{ErrorMessage: "No groups defined. Use :group create to create groups first."}
+	}
+
+	// Parse the argument to determine mode and target
+	mode, targetGroupID, err := parsePRGroupArgs(args, session, groupDeps)
+	if err != nil {
+		return Result{ErrorMessage: err.Error()}
+	}
+
+	// Return result indicating we want to start a group PR workflow
+	startGroupPR := true
+	return Result{
+		StartGroupPR:   &startGroupPR,
+		GroupPRMode:    &mode,
+		GroupPRGroupID: targetGroupID,
+		InfoMessage:    formatGroupPRMessage(mode, targetGroupID, session),
+	}
+}
+
+// parsePRGroupArgs parses the --group argument to determine mode and target.
+func parsePRGroupArgs(args string, session *orchestrator.Session, deps GroupDependencies) (prworkflow.GroupPRMode, *string, error) {
+	// Strip the --group or -g prefix
+	var rest string
+	var found bool
+	if rest, found = strings.CutPrefix(args, "--group"); !found {
+		rest, _ = strings.CutPrefix(args, "-g")
+	}
+	rest = strings.TrimSpace(rest)
+
+	// Check for =mode syntax
+	var modeStr string
+	if modeStr, found = strings.CutPrefix(rest, "="); found {
+		// Check for mode=value followed by optional group name
+		parts := strings.SplitN(modeStr, " ", 2)
+		modeStr = strings.ToLower(parts[0])
+
+		switch modeStr {
+		case "stacked":
+			return prworkflow.GroupPRModeStacked, nil, nil
+		case "single":
+			// If a group name follows, use it; otherwise use current group
+			if len(parts) > 1 {
+				groupName := strings.TrimSpace(parts[1])
+				grp := resolveGroup(groupName, session)
+				if grp == nil {
+					return 0, nil, fmt.Errorf("group not found: %s", groupName)
+				}
+				return prworkflow.GroupPRModeSingle, &grp.ID, nil
+			}
+			// Use current group (from active instance)
+			inst := deps.ActiveInstance()
+			if inst != nil {
+				grp := session.GetGroupForInstance(inst.ID)
+				if grp != nil {
+					return prworkflow.GroupPRModeSingle, &grp.ID, nil
+				}
+			}
+			return 0, nil, fmt.Errorf("no group selected, select an instance in a group or specify a group name")
+		case "all", "consolidated":
+			return prworkflow.GroupPRModeConsolidated, nil, nil
+		default:
+			return 0, nil, fmt.Errorf("unknown PR mode: %s (use stacked, single, or all)", modeStr)
+		}
+	}
+
+	// No = syntax, check for group name after space
+	if rest != "" {
+		// Treat rest as a group name for single mode
+		grp := resolveGroup(rest, session)
+		if grp == nil {
+			return 0, nil, fmt.Errorf("group not found: %s", rest)
+		}
+		return prworkflow.GroupPRModeSingle, &grp.ID, nil
+	}
+
+	// Default: stacked mode for all groups
+	return prworkflow.GroupPRModeStacked, nil, nil
+}
+
+// formatGroupPRMessage creates an info message describing the group PR operation.
+func formatGroupPRMessage(mode prworkflow.GroupPRMode, targetGroupID *string, session *orchestrator.Session) string {
+	switch mode {
+	case prworkflow.GroupPRModeStacked:
+		return fmt.Sprintf("Creating stacked PRs for %d groups...", len(session.Groups))
+	case prworkflow.GroupPRModeConsolidated:
+		return fmt.Sprintf("Creating consolidated PR from %d groups...", len(session.Groups))
+	case prworkflow.GroupPRModeSingle:
+		if targetGroupID != nil {
+			grp := session.GetGroup(*targetGroupID)
+			if grp != nil {
+				return fmt.Sprintf("Creating PR for group: %s", grp.Name)
+			}
+		}
+		return "Creating PR for selected group..."
+	default:
+		return "Creating group PR..."
+	}
 }
 
 func cmdUltraPlanCancel(deps Dependencies) Result {
