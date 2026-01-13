@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-01-13
+
 ### Fixed
 
 - **Tmux Session Isolation** - Use dedicated tmux socket (`-L claudio`) to isolate Claudio sessions from other tmux clients (like iTerm2's tmux integration), preventing crashes from tmux control-mode notification bugs in tmux 3.6a
@@ -277,6 +279,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.5.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.5.1
 [0.5.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.3.0
