@@ -1383,6 +1383,21 @@ func (m *Model) applyCommandResult(result command.Result) {
 		m.taskInput = ""
 		m.taskInputCursor = 0
 	}
+
+	// Handle inline plan mode transition
+	if result.StartPlanMode != nil && *result.StartPlanMode {
+		m.initInlinePlanMode()
+	}
+
+	// Handle inline ultraplan mode transition
+	if result.StartUltraPlanMode != nil && *result.StartUltraPlanMode {
+		m.initInlineUltraPlanMode(result)
+	}
+
+	// Handle grouped view toggle
+	if result.ToggleGroupedView != nil && *result.ToggleGroupedView {
+		m.toggleGroupedView()
+	}
 }
 
 // sendKeyToTmux sends a key event to the tmux session

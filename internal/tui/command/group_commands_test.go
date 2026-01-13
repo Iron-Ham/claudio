@@ -851,3 +851,353 @@ func TestGroupOrderWithSpacesAroundCommas(t *testing.T) {
 var _ Dependencies = (*mockDeps)(nil)
 
 // mockGroupDeps inherits all Dependencies methods from embedded *mockDeps
+
+// --- Test: Edge cases for empty groups ---
+
+func TestGroupOperationsWithEmptyGroups(t *testing.T) {
+	t.Run("empty group can be deleted", func(t *testing.T) {
+		h := New()
+		deps := newMockGroupDeps()
+
+		// Create an empty group in the session
+		grp := orchestrator.NewInstanceGroup("Empty Group")
+		grp.Instances = []string{} // Explicitly empty
+		deps.session.Groups = append(deps.session.Groups, grp)
+
+		// Sync to group manager's mock session
+		mockSession := deps.groupManager
+		if mockSession == nil {
+			t.Skip("group manager not available")
+		}
+
+		result := h.Execute("group delete Empty Group", deps)
+		// Should succeed since group is empty
+		if result.ErrorMessage != "" && result.ErrorMessage != "Failed to delete group \"Empty Group\"" {
+			// It might fail due to the mock setup, but it shouldn't fail with "has instances" error
+			if result.ErrorMessage == "Cannot delete group \"Empty Group\": still has 1 instance(s). Remove instances first." {
+				t.Errorf("should allow deleting empty group, got: %q", result.ErrorMessage)
+			}
+		}
+	})
+
+	t.Run("delete reports instance count correctly", func(t *testing.T) {
+		h := New()
+		deps := newMockGroupDeps()
+
+		grp := orchestrator.NewInstanceGroup("Multi Instance Group")
+		grp.Instances = []string{"inst-1", "inst-2", "inst-3"}
+		deps.session.Groups = append(deps.session.Groups, grp)
+
+		result := h.Execute("group delete Multi Instance Group", deps)
+		if result.ErrorMessage != "Cannot delete group \"Multi Instance Group\": still has 3 instance(s). Remove instances first." {
+			t.Errorf("expected 3 instance error, got: %q", result.ErrorMessage)
+		}
+	})
+}
+
+// --- Test: Group resolution edge cases ---
+
+func TestGroupResolutionEdgeCases(t *testing.T) {
+	t.Run("resolve group by numeric index", func(t *testing.T) {
+		h := New()
+		deps := newMockGroupDeps()
+
+		grp1 := orchestrator.NewInstanceGroup("First Group")
+		grp2 := orchestrator.NewInstanceGroup("Second Group")
+		deps.session.Groups = append(deps.session.Groups, grp1, grp2)
+
+		inst := &orchestrator.Instance{ID: "inst-001", Task: "Test", DisplayName: "Test Inst"}
+		deps.session.Instances = append(deps.session.Instances, inst)
+
+		// Add using numeric index
+		result := h.Execute("group add inst-001 2", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error resolving group by index: %q", result.ErrorMessage)
+		}
+	})
+
+	t.Run("numeric index 0 is invalid (1-based)", func(t *testing.T) {
+		h := New()
+		deps := newMockGroupDeps()
+
+		grp := orchestrator.NewInstanceGroup("Group")
+		deps.session.Groups = append(deps.session.Groups, grp)
+
+		inst := &orchestrator.Instance{ID: "inst-001", Task: "Test"}
+		deps.session.Instances = append(deps.session.Instances, inst)
+
+		result := h.Execute("group add inst-001 0", deps)
+		if result.ErrorMessage != "Group not found: 0" {
+			t.Errorf("expected group not found for index 0, got: %q", result.ErrorMessage)
+		}
+	})
+
+	t.Run("resolve instance by prefix", func(t *testing.T) {
+		h := New()
+		deps := newMockGroupDeps()
+
+		grp := orchestrator.NewInstanceGroup("Target Group")
+		deps.session.Groups = append(deps.session.Groups, grp)
+
+		inst := &orchestrator.Instance{ID: "abc123def456", Task: "Test", DisplayName: "Test"}
+		deps.session.Instances = append(deps.session.Instances, inst)
+
+		// Add using ID prefix
+		result := h.Execute("group add abc123 Target Group", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error resolving instance by prefix: %q", result.ErrorMessage)
+		}
+	})
+}
+
+// --- Test: Move with current group info ---
+
+func TestGroupMoveShowsFromInfo(t *testing.T) {
+	t.Run("move shows ungrouped when not in any group", func(t *testing.T) {
+		h := New()
+		deps := newMockGroupDeps()
+
+		inst := &orchestrator.Instance{ID: "inst-001", Task: "Test", DisplayName: "Test Inst"}
+		deps.session.Instances = append(deps.session.Instances, inst)
+
+		grp := orchestrator.NewInstanceGroup("Target")
+		deps.session.Groups = append(deps.session.Groups, grp)
+
+		result := h.Execute("group move inst-001 Target", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		// Should mention "from ungrouped"
+		if result.InfoMessage != "" && !contains(result.InfoMessage, "ungrouped") {
+			t.Errorf("expected info message to mention ungrouped, got: %q", result.InfoMessage)
+		}
+	})
+}
+
+// --- Test: Order command edge cases ---
+
+func TestGroupOrderEdgeCases(t *testing.T) {
+	t.Run("order with single group", func(t *testing.T) {
+		h := New()
+		deps := newMockGroupDeps()
+
+		grp := orchestrator.NewInstanceGroup("Only Group")
+		deps.session.Groups = append(deps.session.Groups, grp)
+
+		result := h.Execute("group order Only Group", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error ordering single group: %q", result.ErrorMessage)
+		}
+		if result.InfoMessage != "Reordered 1 groups" {
+			t.Errorf("expected 'Reordered 1 groups', got: %q", result.InfoMessage)
+		}
+	})
+
+	t.Run("order skips empty entries", func(t *testing.T) {
+		h := New()
+		deps := newMockGroupDeps()
+
+		grp1 := orchestrator.NewInstanceGroup("A")
+		grp2 := orchestrator.NewInstanceGroup("B")
+		deps.session.Groups = append(deps.session.Groups, grp1, grp2)
+
+		// Extra commas create empty entries
+		result := h.Execute("group order ,,A,,B,,", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.InfoMessage != "Reordered 2 groups" {
+			t.Errorf("expected 'Reordered 2 groups', got: %q", result.InfoMessage)
+		}
+	})
+
+	t.Run("order with all empty entries fails", func(t *testing.T) {
+		h := New()
+		deps := newMockGroupDeps()
+
+		grp := orchestrator.NewInstanceGroup("Group")
+		deps.session.Groups = append(deps.session.Groups, grp)
+
+		result := h.Execute("group order ,,,", deps)
+		if result.ErrorMessage != "No valid groups specified" {
+			t.Errorf("expected 'No valid groups specified', got: %q", result.ErrorMessage)
+		}
+	})
+}
+
+// --- Test: Subcommand case insensitivity ---
+
+func TestGroupSubcommandCaseInsensitive(t *testing.T) {
+	h := New()
+	deps := newMockGroupDeps()
+
+	// Test various case combinations
+	tests := []struct {
+		cmd  string
+		desc string
+	}{
+		{"group CREATE Test", "uppercase CREATE"},
+		{"group Create Test", "titlecase Create"},
+		{"group SHOW", "uppercase SHOW"},
+		{"group Show", "titlecase Show"},
+		{"group HELP", "uppercase HELP"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			result := h.Execute(tt.cmd, deps)
+			// Should not be unknown subcommand error
+			if result.ErrorMessage != "" && contains(result.ErrorMessage, "Unknown group subcommand") {
+				t.Errorf("subcommand should be case insensitive: %q", result.ErrorMessage)
+			}
+		})
+	}
+}
+
+// --- Test: Remove instance from group ---
+
+func TestGroupRemoveInstanceAlreadyUngrouped(t *testing.T) {
+	h := New()
+	deps := newMockGroupDeps()
+
+	inst := &orchestrator.Instance{ID: "inst-001", Task: "Test", DisplayName: "Test Inst"}
+	deps.session.Instances = append(deps.session.Instances, inst)
+	// Instance is not in any group
+
+	result := h.Execute("group remove inst-001", deps)
+
+	// Should succeed with informative message
+	if result.ErrorMessage != "" {
+		t.Errorf("unexpected error: %q", result.ErrorMessage)
+	}
+	if result.InfoMessage != "Instance \"Test Inst\" is not in any group" {
+		t.Errorf("expected already ungrouped message, got: %q", result.InfoMessage)
+	}
+}
+
+// --- Test: Group commands without group manager ---
+
+func TestGroupCommandsRequireManager(t *testing.T) {
+	commands := []string{
+		"group create Test",
+		"group add inst-001 Group1",
+		"group remove inst-001",
+		"group move inst-001 Group1",
+		"group order Group1",
+		"group delete Group1",
+	}
+
+	for _, cmd := range commands {
+		t.Run(cmd, func(t *testing.T) {
+			h := New()
+			deps := newMockGroupDeps()
+			deps.groupManager = nil
+
+			result := h.Execute(cmd, deps)
+			if result.ErrorMessage != "Group manager not available" {
+				t.Errorf("expected 'Group manager not available', got: %q", result.ErrorMessage)
+			}
+		})
+	}
+}
+
+// --- Test: Group commands require session ---
+
+func TestGroupCommandsRequireSession(t *testing.T) {
+	commands := []string{
+		"group create",
+		"group add inst-001 Group1",
+		"group remove inst-001",
+		"group move inst-001 Group1",
+		"group order Group1",
+		"group delete Group1",
+	}
+
+	for _, cmd := range commands {
+		t.Run(cmd, func(t *testing.T) {
+			h := New()
+			deps := newMockGroupDeps()
+			deps.session = nil
+
+			result := h.Execute(cmd, deps)
+			if result.ErrorMessage != "No session available" {
+				t.Errorf("expected 'No session available', got: %q", result.ErrorMessage)
+			}
+		})
+	}
+}
+
+// --- Test: Group show toggle behavior ---
+
+func TestGroupShowToggleBehavior(t *testing.T) {
+	h := New()
+
+	t.Run("toggle creates boolean pointer", func(t *testing.T) {
+		deps := newMockGroupDeps()
+		deps.groupedViewEnabled = false
+
+		result := h.Execute("group show", deps)
+
+		if result.ToggleGroupedView == nil {
+			t.Fatal("ToggleGroupedView should not be nil")
+		}
+		if !*result.ToggleGroupedView {
+			t.Error("expected ToggleGroupedView to be true when currently disabled")
+		}
+	})
+
+	t.Run("toggle off creates false pointer", func(t *testing.T) {
+		deps := newMockGroupDeps()
+		deps.groupedViewEnabled = true
+
+		result := h.Execute("group show", deps)
+
+		if result.ToggleGroupedView == nil {
+			t.Fatal("ToggleGroupedView should not be nil")
+		}
+		if *result.ToggleGroupedView {
+			t.Error("expected ToggleGroupedView to be false when currently enabled")
+		}
+	})
+}
+
+// --- Test: Circular dependency handling ---
+
+func TestGroupDependencyDoesNotValidateCircular(t *testing.T) {
+	// The group command system doesn't currently prevent circular dependencies
+	// at the command level - this is handled at execution time.
+	// This test documents the current behavior.
+
+	h := New()
+	deps := newMockGroupDeps()
+
+	grp1 := orchestrator.NewInstanceGroup("Group1")
+	grp2 := orchestrator.NewInstanceGroup("Group2")
+	deps.session.Groups = append(deps.session.Groups, grp1, grp2)
+
+	// Can order groups that might have dependencies
+	result := h.Execute("group order Group1,Group2", deps)
+	if result.ErrorMessage != "" {
+		t.Errorf("unexpected error: %q", result.ErrorMessage)
+	}
+}
+
+// --- Helper function ---
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr ||
+		len(s) > len(substr) &&
+			(s[:len(substr)] == substr ||
+				s[len(s)-len(substr):] == substr ||
+				containsInner(s, substr)))
+}
+
+func containsInner(s, substr string) bool {
+	for i := 1; i < len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

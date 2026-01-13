@@ -36,17 +36,13 @@ func (m Model) buildPlanEditorViewState() *view.PlanEditorState {
 // renderPlanEditorView renders the plan editor view with validation.
 // Delegates to the view package for the actual rendering.
 func (m Model) renderPlanEditorView(width int) string {
-	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
-		return "No plan available"
-	}
-
-	session := m.ultraPlan.Coordinator.Session()
-	if session == nil || session.Plan == nil {
+	plan := m.getPlanForEditor()
+	if plan == nil {
 		return "No plan available"
 	}
 
 	return planEditorView.Render(view.PlanEditorRenderParams{
-		Plan:                           session.Plan,
+		Plan:                           plan,
 		State:                          m.buildPlanEditorViewState(),
 		Width:                          width,
 		Height:                         m.terminalManager.Height(),
@@ -190,18 +186,29 @@ func (m Model) handlePlanEditorNavigationMode(msg tea.KeyMsg, plan *orchestrator
 	case "enter", "t":
 		// Confirm plan if valid, otherwise edit task title
 		if key == "enter" && m.canConfirmPlan() {
+			// Handle inline mode separately
+			if m.planEditor.inlineMode && m.inlinePlan != nil {
+				if err := m.confirmInlinePlanAndExecute(); err != nil {
+					m.errorMessage = fmt.Sprintf("Failed to start execution: %v", err)
+				}
+				return true, m, nil
+			}
+
+			// Ultra-plan mode
 			m.exitPlanEditor()
 			m.infoMessage = "Plan confirmed"
 			// Trigger execution if in refresh phase
-			session := m.ultraPlan.Coordinator.Session()
-			if session != nil && session.Phase == orchestrator.PhaseRefresh {
-				if err := m.ultraPlan.Coordinator.StartExecution(); err != nil {
-					m.errorMessage = fmt.Sprintf("Failed to start execution: %v", err)
-				} else {
-					m.infoMessage = "Plan confirmed. Execution started."
-					// Log plan approval
-					if m.logger != nil {
-						m.logger.Info("user approved plan", "task_count", len(plan.Tasks))
+			if m.ultraPlan != nil && m.ultraPlan.Coordinator != nil {
+				session := m.ultraPlan.Coordinator.Session()
+				if session != nil && session.Phase == orchestrator.PhaseRefresh {
+					if err := m.ultraPlan.Coordinator.StartExecution(); err != nil {
+						m.errorMessage = fmt.Sprintf("Failed to start execution: %v", err)
+					} else {
+						m.infoMessage = "Plan confirmed. Execution started."
+						// Log plan approval
+						if m.logger != nil {
+							m.logger.Info("user approved plan", "task_count", len(plan.Tasks))
+						}
 					}
 				}
 			}
@@ -369,8 +376,15 @@ func (m Model) handlePlanEditorEditMode(msg tea.KeyMsg, plan *orchestrator.PlanS
 	return true, m, nil // Consume all keys in edit mode
 }
 
-// getPlanForEditor returns the current plan from the ultra-plan session
+// getPlanForEditor returns the current plan from the appropriate source.
+// It checks inline plan mode first, then ultra-plan mode.
 func (m Model) getPlanForEditor() *orchestrator.PlanSpec {
+	// Check inline plan mode first
+	if m.planEditor != nil && m.planEditor.inlineMode && m.inlinePlan != nil {
+		return m.inlinePlan.Plan
+	}
+
+	// Fall back to ultra-plan mode
 	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
 		return nil
 	}
@@ -679,6 +693,16 @@ func (m *Model) planEditorDeleteWord() {
 
 // savePlanToFile saves the current plan to the plan file
 func (m *Model) savePlanToFile(plan *orchestrator.PlanSpec) error {
+	// Inline plan mode doesn't have a worktree yet, so save to base repo directory
+	if m.planEditor != nil && m.planEditor.inlineMode {
+		if m.session == nil {
+			return fmt.Errorf("no session")
+		}
+		planPath := orchestrator.PlanFilePath(m.session.BaseRepo)
+		return orchestrator.SavePlanToFile(plan, planPath)
+	}
+
+	// Ultra-plan mode
 	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
 		return fmt.Errorf("no ultra-plan session")
 	}
@@ -700,6 +724,12 @@ func (m *Model) savePlanToFile(plan *orchestrator.PlanSpec) error {
 
 // canStartExecution returns true if we can start plan execution
 func (m *Model) canStartExecution() bool {
+	// Inline plan mode - can always start if plan exists and valid
+	if m.planEditor != nil && m.planEditor.inlineMode {
+		return m.inlinePlan != nil && m.inlinePlan.Plan != nil
+	}
+
+	// Ultra-plan mode
 	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
 		return false
 	}
@@ -713,6 +743,12 @@ func (m *Model) canStartExecution() bool {
 
 // startPlanExecution triggers execution of the plan
 func (m *Model) startPlanExecution() error {
+	// Inline plan mode
+	if m.planEditor != nil && m.planEditor.inlineMode {
+		return m.startInlinePlanExecution()
+	}
+
+	// Ultra-plan mode
 	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
 		return fmt.Errorf("no ultra-plan session")
 	}
