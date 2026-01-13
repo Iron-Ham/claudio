@@ -11,6 +11,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/session"
+	"github.com/Iron-Ham/claudio/internal/tmux"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 	"github.com/spf13/cobra"
 )
@@ -265,7 +266,7 @@ func findOrphanedTmuxSessions(activeIDs map[string]bool) []string {
 	var orphaned []string
 
 	// List all tmux sessions
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	cmd := tmux.Command("list-sessions", "-F", "#{session_name}")
 	output, err := cmd.Output()
 	if err != nil {
 		return orphaned // tmux might not be running
@@ -418,7 +419,7 @@ func performCleanup(baseDir string, result *CleanupResult, cleanAll bool) error 
 	// Clean tmux sessions
 	if cleanAll || cleanupTmux {
 		for _, sess := range result.OrphanedTmuxSess {
-			killCmd := exec.Command("tmux", "kill-session", "-t", sess)
+			killCmd := tmux.Command("kill-session", "-t", sess)
 			if err := killCmd.Run(); err != nil {
 				fmt.Printf("Warning: failed to kill tmux session %s: %v\n", sess, err)
 				continue
@@ -462,7 +463,7 @@ func performCleanup(baseDir string, result *CleanupResult, cleanAll bool) error 
 
 // killAllClaudioTmuxSessions kills all tmux sessions with claudio-* prefix
 func killAllClaudioTmuxSessions() int {
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	cmd := tmux.Command("list-sessions", "-F", "#{session_name}")
 	output, err := cmd.Output()
 	if err != nil {
 		// Check if it's just "no server running" which is expected
@@ -484,7 +485,7 @@ func killAllClaudioTmuxSessions() int {
 			continue
 		}
 
-		killCmd := exec.Command("tmux", "kill-session", "-t", sess)
+		killCmd := tmux.Command("kill-session", "-t", sess)
 		if err := killCmd.Run(); err != nil {
 			fmt.Printf("Warning: failed to kill tmux session %s: %v\n", sess, err)
 			continue

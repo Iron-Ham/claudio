@@ -242,8 +242,12 @@ func TestManager_AttachCommand(t *testing.T) {
 	mgr := NewManager("abc123", "/tmp", "task")
 	cmd := mgr.AttachCommand()
 
-	if !strings.Contains(cmd, "tmux attach") {
-		t.Errorf("AttachCommand() should contain 'tmux attach', got %q", cmd)
+	if !strings.Contains(cmd, "tmux") || !strings.Contains(cmd, "attach") {
+		t.Errorf("AttachCommand() should contain 'tmux' and 'attach', got %q", cmd)
+	}
+
+	if !strings.Contains(cmd, "-L claudio") {
+		t.Errorf("AttachCommand() should specify claudio socket (-L claudio), got %q", cmd)
 	}
 
 	if !strings.Contains(cmd, "claudio-abc123") {

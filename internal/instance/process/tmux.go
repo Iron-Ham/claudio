@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/tmux"
 )
 
 // TmuxProcess implements the Process interface using tmux sessions.
@@ -64,7 +65,7 @@ func (p *TmuxProcess) Start(ctx context.Context) error {
 	}
 
 	// Kill any existing session with this name (cleanup from previous run)
-	if err := exec.Command("tmux", "kill-session", "-t", p.sessionName).Run(); err != nil {
+	if err := tmux.Command("kill-session", "-t", p.sessionName).Run(); err != nil {
 		// Only log unexpected errors (not "session not found" which is expected)
 		if !isSessionNotFoundError(err) {
 			log.Printf("WARNING: failed to cleanup existing tmux session %s: %v", p.sessionName, err)
@@ -87,12 +88,12 @@ func (p *TmuxProcess) Start(ctx context.Context) error {
 
 	// Set history-limit BEFORE creating session so the new pane inherits it.
 	// tmux's history-limit only affects newly created panes, not existing ones.
-	if err := exec.Command("tmux", "set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
+	if err := tmux.Command("set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
 		log.Printf("WARNING: failed to set global history-limit for tmux: %v", err)
 	}
 
 	// Create a new detached tmux session
-	createCmd := exec.CommandContext(ctx, "tmux",
+	createCmd := tmux.CommandContext(ctx,
 		"new-session",
 		"-d",
 		"-s", p.sessionName,
@@ -106,30 +107,30 @@ func (p *TmuxProcess) Start(ctx context.Context) error {
 	}
 
 	// Set up additional tmux session options (log failures but don't abort - session will still work)
-	if err := exec.Command("tmux", "set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run(); err != nil {
+	if err := tmux.Command("set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run(); err != nil {
 		log.Printf("WARNING: failed to set default-terminal for tmux session %s: %v", p.sessionName, err)
 	}
-	if err := exec.Command("tmux", "set-option", "-t", p.sessionName, "-w", "monitor-bell", "on").Run(); err != nil {
+	if err := tmux.Command("set-option", "-t", p.sessionName, "-w", "monitor-bell", "on").Run(); err != nil {
 		log.Printf("WARNING: failed to set monitor-bell for tmux session %s: %v", p.sessionName, err)
 	}
 
 	// Write prompt to file to avoid shell escaping issues
 	promptFile := filepath.Join(p.config.WorkDir, ".claude-prompt")
 	if err := os.WriteFile(promptFile, []byte(p.config.InitialPrompt), 0600); err != nil {
-		_ = exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
+		_ = tmux.Command("kill-session", "-t", p.sessionName).Run()
 		return fmt.Errorf("failed to write prompt file: %w", err)
 	}
 
 	// Send the claude command to the tmux session
 	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q", promptFile, promptFile)
-	sendCmd := exec.CommandContext(ctx, "tmux",
+	sendCmd := tmux.CommandContext(ctx,
 		"send-keys",
 		"-t", p.sessionName,
 		claudeCmd,
 		"Enter",
 	)
 	if err := sendCmd.Run(); err != nil {
-		_ = exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
+		_ = tmux.Command("kill-session", "-t", p.sessionName).Run()
 		_ = os.Remove(promptFile)
 		return fmt.Errorf("failed to start claude in tmux session: %w", err)
 	}
@@ -164,7 +165,7 @@ func (p *TmuxProcess) monitorSession() {
 			}
 
 			// Check if session still exists
-			checkCmd := exec.Command("tmux", "has-session", "-t", sessionName)
+			checkCmd := tmux.Command("has-session", "-t", sessionName)
 			if checkCmd.Run() != nil {
 				// Session ended
 				p.mu.Lock()
@@ -203,13 +204,13 @@ func (p *TmuxProcess) Stop() error {
 	}
 
 	// Send Ctrl+C to gracefully stop Claude first
-	if err := exec.Command("tmux", "send-keys", "-t", p.sessionName, "C-c").Run(); err != nil {
+	if err := tmux.Command("send-keys", "-t", p.sessionName, "C-c").Run(); err != nil {
 		log.Printf("WARNING: failed to send Ctrl+C to tmux session %s, proceeding to force kill: %v", p.sessionName, err)
 	}
 	time.Sleep(500 * time.Millisecond)
 
 	// Kill the tmux session
-	if err := exec.Command("tmux", "kill-session", "-t", p.sessionName).Run(); err != nil {
+	if err := tmux.Command("kill-session", "-t", p.sessionName).Run(); err != nil {
 		// Only log unexpected errors (not "session not found" which is expected if process exited)
 		if !isSessionNotFoundError(err) {
 			log.Printf("WARNING: unexpected error killing tmux session %s: %v", p.sessionName, err)
@@ -286,7 +287,7 @@ func (p *TmuxProcess) SendInput(input string) error {
 			}
 		}
 
-		if err := exec.Command("tmux", "send-keys", "-t", sessionName, "-l", key).Run(); err != nil {
+		if err := tmux.Command("send-keys", "-t", sessionName, "-l", key).Run(); err != nil {
 			return fmt.Errorf("failed to send key: %w", err)
 		}
 	}
@@ -310,7 +311,7 @@ func (p *TmuxProcess) Resize(width, height int) error {
 		return nil
 	}
 
-	resizeCmd := exec.Command("tmux",
+	resizeCmd := tmux.Command(
 		"resize-window",
 		"-t", sessionName,
 		"-x", fmt.Sprintf("%d", width),
@@ -337,7 +338,7 @@ func (p *TmuxProcess) Reconnect() error {
 	}
 
 	// Ensure monitor-bell is enabled
-	if err := exec.Command("tmux", "set-option", "-t", p.sessionName, "-w", "monitor-bell", "on").Run(); err != nil {
+	if err := tmux.Command("set-option", "-t", p.sessionName, "-w", "monitor-bell", "on").Run(); err != nil {
 		log.Printf("WARNING: failed to set monitor-bell on reconnect for tmux session %s: %v", p.sessionName, err)
 	}
 
@@ -361,13 +362,13 @@ func (p *TmuxProcess) SessionExists() bool {
 }
 
 func (p *TmuxProcess) sessionExists() bool {
-	cmd := exec.Command("tmux", "has-session", "-t", p.sessionName)
+	cmd := tmux.Command("has-session", "-t", p.sessionName)
 	return cmd.Run() == nil
 }
 
 // AttachCommand returns the command to attach to this process's tmux session.
 func (p *TmuxProcess) AttachCommand() string {
-	return fmt.Sprintf("tmux attach -t %s", p.sessionName)
+	return fmt.Sprintf("tmux -L %s attach -t %s", tmux.SocketName, p.sessionName)
 }
 
 // PID returns the process ID of the shell in the tmux session.
@@ -381,7 +382,7 @@ func (p *TmuxProcess) PID() int {
 		return 0
 	}
 
-	cmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#{pane_pid}")
+	cmd := tmux.Command("display-message", "-t", sessionName, "-p", "#{pane_pid}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0

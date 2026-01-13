@@ -25,6 +25,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prworkflow"
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	"github.com/Iron-Ham/claudio/internal/session"
+	"github.com/Iron-Ham/claudio/internal/tmux"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 	"github.com/spf13/viper"
 )
@@ -546,7 +547,7 @@ func (o *Orchestrator) CleanOrphanedTmuxSessions() (int, error) {
 
 	cleaned := 0
 	for _, sess := range orphaned {
-		cmd := exec.Command("tmux", "kill-session", "-t", sess)
+		cmd := tmux.Command("kill-session", "-t", sess)
 		if err := cmd.Run(); err != nil {
 			if o.logger != nil {
 				o.logger.Warn("failed to kill orphaned tmux session",

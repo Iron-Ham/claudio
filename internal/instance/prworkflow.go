@@ -2,13 +2,13 @@ package instance
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/instance/capture"
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/tmux"
 )
 
 // PRWorkflowConfig holds configuration for the PR workflow
@@ -139,12 +139,12 @@ func (p *PRWorkflow) Start() error {
 
 	// Kill any existing session with this name (cleanup from previous run)
 	p.logDebug("cleaning up existing tmux session", "session_name", p.sessionName)
-	_ = exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
+	_ = tmux.Command("kill-session", "-t", p.sessionName).Run()
 
 	// Set history-limit BEFORE creating session so the new pane inherits it.
 	// tmux's history-limit only affects newly created panes, not existing ones.
 	// Use 50000 lines for generous scrollback in the PR workflow pane.
-	if err := exec.Command("tmux", "set-option", "-g", "history-limit", "50000").Run(); err != nil {
+	if err := tmux.Command("set-option", "-g", "history-limit", "50000").Run(); err != nil {
 		p.logDebug("failed to set global history-limit for tmux", "error", err.Error())
 	}
 
@@ -154,7 +154,7 @@ func (p *PRWorkflow) Start() error {
 		"width", p.config.TmuxWidth,
 		"height", p.config.TmuxHeight,
 	)
-	createCmd := exec.Command("tmux",
+	createCmd := tmux.Command(
 		"new-session",
 		"-d",
 		"-s", p.sessionName,
@@ -173,7 +173,7 @@ func (p *PRWorkflow) Start() error {
 
 	// Set up additional tmux session options for color support
 	p.logDebug("configuring tmux session options", "session_name", p.sessionName)
-	_ = exec.Command("tmux", "set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run()
+	_ = tmux.Command("set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run()
 
 	// Build and send the command
 	var cmd string
@@ -189,7 +189,7 @@ func (p *PRWorkflow) Start() error {
 
 	p.logDebug("sending workflow command to tmux session")
 
-	sendCmd := exec.Command("tmux",
+	sendCmd := tmux.Command(
 		"send-keys",
 		"-t", p.sessionName,
 		cmd,
@@ -200,7 +200,7 @@ func (p *PRWorkflow) Start() error {
 			"error", err.Error(),
 			"session_name", p.sessionName,
 		)
-		_ = exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
+		_ = tmux.Command("kill-session", "-t", p.sessionName).Run()
 		return fmt.Errorf("failed to start PR workflow command: %w", err)
 	}
 
@@ -306,7 +306,7 @@ func (p *PRWorkflow) monitorLoop() {
 			p.mu.RUnlock()
 
 			// Capture output
-			captureCmd := exec.Command("tmux",
+			captureCmd := tmux.Command(
 				"capture-pane",
 				"-t", sessionName,
 				"-p",
@@ -321,7 +321,7 @@ func (p *PRWorkflow) monitorLoop() {
 			}
 
 			// Check if the session is still running
-			checkCmd := exec.Command("tmux", "has-session", "-t", sessionName)
+			checkCmd := tmux.Command("has-session", "-t", sessionName)
 			if checkCmd.Run() != nil {
 				// Session ended - workflow completed
 				p.mu.Lock()
@@ -433,7 +433,7 @@ func (p *PRWorkflow) Stop() error {
 	}
 
 	// Kill the tmux session
-	_ = exec.Command("tmux", "kill-session", "-t", p.sessionName).Run()
+	_ = tmux.Command("kill-session", "-t", p.sessionName).Run()
 
 	p.running = false
 	return nil

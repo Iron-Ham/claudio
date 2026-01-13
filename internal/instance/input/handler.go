@@ -9,10 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/tmux"
 )
 
 // TmuxSender defines the interface for sending commands to tmux.
@@ -26,14 +27,14 @@ type TmuxSender interface {
 // DefaultTmuxSender is the production implementation of TmuxSender.
 type DefaultTmuxSender struct{}
 
-// SendKeys sends keys to a tmux session using exec.Command.
+// SendKeys sends keys to a tmux session using the tmux package.
 func (d *DefaultTmuxSender) SendKeys(sessionName string, keys string, literal bool) error {
 	args := []string{"send-keys", "-t", sessionName}
 	if literal {
 		args = append(args, "-l")
 	}
 	args = append(args, keys)
-	return exec.Command("tmux", args...).Run()
+	return tmux.Command(args...).Run()
 }
 
 // HistoryEntry represents a single entry in the input history.

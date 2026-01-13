@@ -10,6 +10,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/session"
+	"github.com/Iron-Ham/claudio/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
@@ -290,7 +291,7 @@ func runSessionsClean(cmd *cobra.Command, args []string) error {
 		}
 		if !found {
 			// Kill orphaned session
-			killCmd := fmt.Sprintf("tmux kill-session -t %s", ts)
+			killCmd := fmt.Sprintf("tmux -L %s kill-session -t %s", tmux.SocketName, ts)
 			if _, err := runCommand(killCmd); err == nil {
 				orphanedKilled++
 			}

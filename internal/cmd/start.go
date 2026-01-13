@@ -13,6 +13,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	"github.com/Iron-Ham/claudio/internal/session"
+	"github.com/Iron-Ham/claudio/internal/tmux"
 	"github.com/Iron-Ham/claudio/internal/tui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -532,7 +533,7 @@ func cleanEmptySessions(baseDir string) {
 
 // shutdownAllSessions kills all claudio-* tmux sessions
 func shutdownAllSessions() {
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	cmd := tmux.Command("list-sessions", "-F", "#{session_name}")
 	output, err := cmd.Output()
 	if err != nil {
 		// Check if it's just "no server running" which is expected
@@ -555,7 +556,7 @@ func shutdownAllSessions() {
 			continue
 		}
 
-		killCmd := exec.Command("tmux", "kill-session", "-t", sess)
+		killCmd := tmux.Command("kill-session", "-t", sess)
 		if err := killCmd.Run(); err != nil {
 			fmt.Printf("Warning: failed to kill tmux session %s: %v\n", sess, err)
 			continue
@@ -599,7 +600,7 @@ func checkStaleResourcesWarning(baseDir string) {
 	}
 
 	// Count orphaned tmux sessions
-	tmuxCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	tmuxCmd := tmux.Command("list-sessions", "-F", "#{session_name}")
 	if output, err := tmuxCmd.Output(); err == nil {
 		sessions := strings.Split(strings.TrimSpace(string(output)), "\n")
 		for _, s := range sessions {

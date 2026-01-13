@@ -75,7 +75,7 @@ func TestTmuxProcess_AttachCommand(t *testing.T) {
 
 	p := NewTmuxProcess(config)
 
-	want := "tmux attach -t test-session"
+	want := "tmux -L claudio attach -t test-session"
 	if got := p.AttachCommand(); got != want {
 		t.Errorf("AttachCommand() = %q, want %q", got, want)
 	}
