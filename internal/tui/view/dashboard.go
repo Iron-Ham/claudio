@@ -242,22 +242,33 @@ func (dv *DashboardView) renderExpandedInstance(
 		return dot + " " + itemStyle.Render(label)
 	}
 
-	// Need to wrap to multiple lines
+	// Need to wrap to multiple lines with word-boundary awareness
 	var lines []string
 
 	// First line: "● N prefix<part of name>"
-	firstPart := string(nameRunes[:firstLineAvailable])
+	firstPart := wrapAtWordBoundary(nameRunes, firstLineAvailable)
 	firstLabel := fmt.Sprintf("%d %s%s", i+1, prefix, firstPart)
 	lines = append(lines, dot+" "+itemStyle.Render(firstLabel))
 
 	// Continuation lines: indented with remaining text
-	remaining := nameRunes[firstLineAvailable:]
+	remaining := nameRunes[len([]rune(firstPart)):]
+	// Trim leading space from remaining text after a word break
+	for len(remaining) > 0 && remaining[0] == ' ' {
+		remaining = remaining[1:]
+	}
 	continuationAvailable := max(width-ExpandedNameContinuationIn-2, 10) // indent + padding
 
 	for len(remaining) > 0 {
-		chunkLen := min(len(remaining), continuationAvailable)
-		chunk := string(remaining[:chunkLen])
-		remaining = remaining[chunkLen:]
+		chunk := wrapAtWordBoundary(remaining, continuationAvailable)
+		if len(chunk) == 0 {
+			// Safety: prevent infinite loop if wrapAtWordBoundary returns empty
+			break
+		}
+		remaining = remaining[len([]rune(chunk)):]
+		// Trim leading space from remaining text after a word break
+		for len(remaining) > 0 && remaining[0] == ' ' {
+			remaining = remaining[1:]
+		}
 
 		// Indent continuation lines to align under the name
 		indent := strings.Repeat(" ", ExpandedNameContinuationIn)
@@ -265,6 +276,37 @@ func (dv *DashboardView) renderExpandedInstance(
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// wrapAtWordBoundary returns a substring of runes that fits within maxLen,
+// breaking at the last space if possible to avoid splitting words. If no
+// space is found, or if the last space is within the first 1/3 of maxLen
+// (to avoid very short lines), it falls back to character-based breaking.
+func wrapAtWordBoundary(runes []rune, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	if len(runes) <= maxLen {
+		return string(runes)
+	}
+
+	// Look for the last space within the available length
+	lastSpace := -1
+	for i := maxLen - 1; i >= 0; i-- {
+		if runes[i] == ' ' {
+			lastSpace = i
+			break
+		}
+	}
+
+	// If we found a space and it's not too early in the string (at least 1/3 of available space),
+	// break at the word boundary
+	if lastSpace > maxLen/3 {
+		return string(runes[:lastSpace])
+	}
+
+	// No suitable word boundary found, fall back to character-based breaking
+	return string(runes[:maxLen])
 }
 
 // buildConflictMap creates a map of instance IDs that have conflicts.

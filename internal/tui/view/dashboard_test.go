@@ -312,6 +312,148 @@ func TestRenderSidebar_IntelligentNamingMaxLength(t *testing.T) {
 	}
 }
 
+func TestWrapAtWordBoundary(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{
+			name:     "short string fits entirely",
+			input:    "hello world",
+			maxLen:   20,
+			expected: "hello world",
+		},
+		{
+			name:     "breaks at word boundary",
+			input:    "hello world foo",
+			maxLen:   12,
+			expected: "hello world",
+		},
+		{
+			name:     "breaks at word boundary mid-sentence",
+			input:    "We should create a new GitHub Issue",
+			maxLen:   20,
+			expected: "We should create a",
+		},
+		{
+			name:     "avoids breaking mid-word",
+			input:    "GitHub Issue details",
+			maxLen:   8,
+			expected: "GitHub",
+		},
+		{
+			name:     "falls back to char break when word is too long",
+			input:    "Supercalifragilisticexpialidocious is a word",
+			maxLen:   10,
+			expected: "Supercalif", // No space found early enough
+		},
+		{
+			name:     "respects 1/3 minimum threshold",
+			input:    "I want to create something",
+			maxLen:   15,
+			expected: "I want to", // Space at position 9 is > 15/3=5
+		},
+		{
+			name:     "space at very beginning falls back to char break",
+			input:    "X verylongword here",
+			maxLen:   10,
+			expected: "X verylong", // Space at position 1 is NOT > 10/3=3, so falls back to char break
+		},
+		{
+			name:     "unicode characters handled correctly",
+			input:    "こんにちは 世界です",
+			maxLen:   6,
+			expected: "こんにちは",
+		},
+		{
+			name:     "exact fit with trailing space",
+			input:    "hello ",
+			maxLen:   6,
+			expected: "hello ",
+		},
+		{
+			name:     "multiple spaces in text",
+			input:    "one two three four",
+			maxLen:   14,
+			expected: "one two three",
+		},
+		{
+			name:     "empty string returns empty",
+			input:    "",
+			maxLen:   10,
+			expected: "",
+		},
+		{
+			name:     "maxLen zero returns empty",
+			input:    "hello world",
+			maxLen:   0,
+			expected: "",
+		},
+		{
+			name:     "negative maxLen returns empty",
+			input:    "hello world",
+			maxLen:   -5,
+			expected: "",
+		},
+		{
+			name:     "maxLen of 1",
+			input:    "hello world",
+			maxLen:   1,
+			expected: "h",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := wrapAtWordBoundary([]rune(tt.input), tt.maxLen)
+			if result != tt.expected {
+				t.Errorf("wrapAtWordBoundary(%q, %d) = %q, want %q", tt.input, tt.maxLen, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRenderSidebar_WordBoundaryWrapping(t *testing.T) {
+	// Test case matching the user's screenshot issue
+	longDisplayName := "We should create a new GitHub Issue detailing this"
+	state := &mockDashboardState{
+		session: &orchestrator.Session{
+			Instances: []*orchestrator.Instance{
+				{
+					ID:          "inst-1",
+					Task:        "Short task",
+					DisplayName: longDisplayName,
+					Status:      orchestrator.StatusWorking,
+				},
+			},
+		},
+		activeTab:                0,
+		terminalWidth:            80,
+		terminalHeight:           24,
+		isAddingTask:             false,
+		intelligentNamingEnabled: true,
+	}
+
+	dv := NewDashboardView()
+	result := dv.RenderSidebar(state, 30, 20)
+
+	// The word "GitHub" should appear on a single line (not split across lines)
+	// Check that at least one line contains the complete word
+	lines := strings.Split(result, "\n")
+	foundGitHub := false
+	for _, line := range lines {
+		if strings.Contains(line, "GitHub") {
+			foundGitHub = true
+			break
+		}
+	}
+	if !foundGitHub {
+		t.Errorf("'GitHub' should appear as a complete word on a single line, got:\n%s", result)
+	}
+}
+
 func TestTruncate(t *testing.T) {
 	tests := []struct {
 		name     string
