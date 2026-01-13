@@ -5,7 +5,9 @@ package panel
 
 import (
 	"errors"
+	"time"
 
+	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -50,6 +52,33 @@ type Theme interface {
 	Surface() lipgloss.Style
 	// Border returns the style for borders.
 	Border() lipgloss.Style
+
+	// DiffAdd returns the style for added lines in diffs.
+	DiffAdd() lipgloss.Style
+	// DiffRemove returns the style for removed lines in diffs.
+	DiffRemove() lipgloss.Style
+	// DiffHeader returns the style for diff headers.
+	DiffHeader() lipgloss.Style
+	// DiffHunk returns the style for diff hunk markers.
+	DiffHunk() lipgloss.Style
+	// DiffContext returns the style for context lines in diffs.
+	DiffContext() lipgloss.Style
+}
+
+// HelpSection represents a section of help content with keybindings.
+type HelpSection struct {
+	// Title is the section name (e.g., "Navigation", "Instance Control").
+	Title string
+	// Items contains the keybindings in this section.
+	Items []HelpItem
+}
+
+// HelpItem represents a single keybinding in the help panel.
+type HelpItem struct {
+	// Key is the keybinding (e.g., "j/k", "Enter").
+	Key string
+	// Description explains what the keybinding does.
+	Description string
 }
 
 // RenderState holds the complete state needed for rendering a panel.
@@ -85,6 +114,42 @@ type RenderState struct {
 	// Focused indicates whether this panel currently has focus.
 	// Used to adjust border styling and visual emphasis.
 	Focused bool
+
+	// SessionCreated is when the current session started.
+	// Used by stats panel to display session duration.
+	SessionCreated time.Time
+
+	// SessionMetrics contains aggregated metrics for the session.
+	// Used by stats panel for token usage and cost display.
+	SessionMetrics *orchestrator.SessionMetrics
+
+	// CostWarningThreshold is the configured cost warning level.
+	// Used to highlight when costs exceed expected levels.
+	CostWarningThreshold float64
+
+	// CostLimit is the configured maximum cost limit.
+	// Used to display remaining budget.
+	CostLimit float64
+
+	// DiffContent holds the git diff content for the diff panel.
+	// Contains the raw diff output to be syntax highlighted.
+	DiffContent string
+
+	// HelpSections contains help text organized by section.
+	// Used by the help panel to display categorized keybindings.
+	HelpSections []HelpSection
+
+	// Conflicts contains detected file conflicts between instances.
+	// Used by the conflict panel to display conflict information.
+	Conflicts []conflict.FileConflict
+
+	// Session is the current orchestrator session.
+	// Used by the instance panel to render the full sidebar.
+	Session *orchestrator.Session
+
+	// IsAddingTask indicates if the user is currently adding a new task.
+	// Used by the instance panel to show input mode state.
+	IsAddingTask bool
 }
 
 // Validate checks that the RenderState has valid values for rendering.

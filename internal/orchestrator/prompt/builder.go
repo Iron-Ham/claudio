@@ -62,15 +62,32 @@ type Context struct {
 	// Consolidation contains context for consolidation prompts
 	Consolidation *ConsolidationInfo
 
-	// PreviousGroupContext contains context from prior group consolidations
+	// PreviousGroupContext contains context from prior group consolidations (simple notes)
 	// Used to inform subsequent groups about changes made in earlier groups
 	PreviousGroupContext []string
+
+	// PreviousGroup contains detailed context from the previous group's consolidation
+	// Used by task prompts for tasks in groups after group 0
+	PreviousGroup *GroupContext
 
 	// CompletedTasks lists task IDs that have been completed
 	CompletedTasks []string
 
 	// FailedTasks lists task IDs that have failed
 	FailedTasks []string
+
+	// CandidatePlans contains multiple plans for plan selection phase (multi-pass planning)
+	CandidatePlans []CandidatePlanInfo
+}
+
+// CandidatePlanInfo contains information about a candidate plan for comparison.
+type CandidatePlanInfo struct {
+	Strategy       string
+	Summary        string
+	Tasks          []TaskInfo
+	ExecutionOrder [][]string
+	Insights       []string
+	Constraints    []string
 }
 
 // PlanInfo contains plan-level information for prompt building.
@@ -134,21 +151,33 @@ type ConsolidationInfo struct {
 // TaskWorktreeInfo contains information about a task's worktree.
 type TaskWorktreeInfo struct {
 	TaskID       string
+	TaskTitle    string
 	WorktreePath string
 	Branch       string
 	CommitCount  int
 }
 
+// GroupContext contains context from a previous group's consolidation.
+// This is used to inform tasks in subsequent groups about what was done.
+type GroupContext struct {
+	GroupIndex         int
+	Notes              string
+	IssuesForNextGroup []string
+	VerificationPassed bool
+}
+
 // Validation errors
 var (
-	ErrNilContext       = errors.New("prompt context is nil")
-	ErrEmptyObjective   = errors.New("objective is required")
-	ErrEmptySessionID   = errors.New("session ID is required")
-	ErrInvalidPhase     = errors.New("invalid or empty phase")
-	ErrMissingPlan      = errors.New("plan info is required for this phase")
-	ErrMissingTask      = errors.New("task info is required for this phase")
-	ErrMissingRevision  = errors.New("revision info is required for revision phase")
-	ErrMissingSynthesis = errors.New("synthesis info is required")
+	ErrNilContext            = errors.New("prompt context is nil")
+	ErrEmptyObjective        = errors.New("objective is required")
+	ErrEmptySessionID        = errors.New("session ID is required")
+	ErrInvalidPhase          = errors.New("invalid or empty phase")
+	ErrMissingPlan           = errors.New("plan info is required for this phase")
+	ErrMissingTask           = errors.New("task info is required for this phase")
+	ErrMissingRevision       = errors.New("revision info is required for revision phase")
+	ErrMissingSynthesis      = errors.New("synthesis info is required")
+	ErrMissingCandidatePlans = errors.New("candidate plans are required for plan selection phase")
+	ErrMissingConsolidation  = errors.New("consolidation info is required for consolidation phase")
 )
 
 // Validate checks that the context has all required fields for its phase.
@@ -210,7 +239,10 @@ func (c *Context) Validate() error {
 		return nil
 
 	case PhasePlanSelection:
-		// Plan selection needs the objective but not necessarily a plan yet
+		// Plan selection needs candidate plans to choose from
+		if len(c.CandidatePlans) == 0 {
+			return ErrMissingCandidatePlans
+		}
 		return nil
 
 	default:
