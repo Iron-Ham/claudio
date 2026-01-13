@@ -612,11 +612,25 @@ func cmdFilter(_ Dependencies) Result {
 	return Result{FilterMode: &filterMode}
 }
 
+// terminalDisabledError is the error message when terminal support is disabled.
+const terminalDisabledError = "Terminal support is disabled. Enable it in :config under Experimental"
+
+// isTerminalEnabled checks if the experimental terminal support feature is enabled.
+func isTerminalEnabled() bool {
+	return viper.GetBool("experimental.terminal_support")
+}
+
 func cmdTerminal(_ Dependencies) Result {
+	if !isTerminalEnabled() {
+		return Result{ErrorMessage: terminalDisabledError}
+	}
 	return Result{ToggleTerminal: true}
 }
 
 func cmdTerminalFocus(deps Dependencies) Result {
+	if !isTerminalEnabled() {
+		return Result{ErrorMessage: terminalDisabledError}
+	}
 	if deps.IsTerminalVisible() {
 		return Result{
 			EnterTerminalMode: true,
@@ -627,11 +641,17 @@ func cmdTerminalFocus(deps Dependencies) Result {
 }
 
 func cmdTerminalDirWorktree(_ Dependencies) Result {
+	if !isTerminalEnabled() {
+		return Result{ErrorMessage: terminalDisabledError}
+	}
 	mode := 1 // TerminalDirWorktree
 	return Result{TerminalDirMode: &mode}
 }
 
 func cmdTerminalDirInvocation(_ Dependencies) Result {
+	if !isTerminalEnabled() {
+		return Result{ErrorMessage: terminalDisabledError}
+	}
 	mode := 0 // TerminalDirInvocation
 	return Result{TerminalDirMode: &mode}
 }

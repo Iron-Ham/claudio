@@ -191,6 +191,11 @@ type ExperimentalConfig struct {
 	// working on the same problem, then uses a judge instance to evaluate and select
 	// the best solution. (default: false)
 	TripleShot bool `mapstructure:"triple_shot"`
+
+	// TerminalSupport enables the embedded terminal pane feature.
+	// When enabled, :term, :t, and :termdir commands become available
+	// to interact with a terminal inside Claudio. (default: false)
+	TerminalSupport bool `mapstructure:"terminal_support"`
 }
 
 // ResolveWorktreeDir returns the resolved worktree directory path.
@@ -300,6 +305,7 @@ func Default() *Config {
 		Experimental: ExperimentalConfig{
 			IntelligentNaming: false, // Disabled by default until stable
 			TripleShot:        false, // Disabled by default until stable
+			TerminalSupport:   false, // Disabled by default until stable
 		},
 	}
 }
@@ -392,6 +398,7 @@ func SetDefaults() {
 	// Experimental defaults
 	viper.SetDefault("experimental.intelligent_naming", defaults.Experimental.IntelligentNaming)
 	viper.SetDefault("experimental.triple_shot", defaults.Experimental.TripleShot)
+	viper.SetDefault("experimental.terminal_support", defaults.Experimental.TerminalSupport)
 }
 
 // Load reads the configuration from viper into a Config struct and validates it

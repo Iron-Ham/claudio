@@ -7,6 +7,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/command"
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/spf13/viper"
 )
 
 // testModel creates a Model with the commandHandler and terminalManager initialized for testing.
@@ -575,6 +576,10 @@ func TestConflictsCommandRequiresConflicts(t *testing.T) {
 }
 
 func TestTerminalFocusCommand(t *testing.T) {
+	// Terminal commands require experimental.terminal_support to be enabled
+	viper.Set("experimental.terminal_support", true)
+	defer viper.Set("experimental.terminal_support", false)
+
 	t.Run("t command attempts focus when terminal visible", func(t *testing.T) {
 		// Note: enterTerminalMode() requires a running terminal process to actually
 		// set focused=true. This test verifies the command path is correct.
