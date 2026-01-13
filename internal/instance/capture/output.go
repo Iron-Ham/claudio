@@ -2,9 +2,10 @@ package capture
 
 import (
 	"log"
-	"os/exec"
 	"sync"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/tmux"
 )
 
 const (
@@ -205,7 +206,7 @@ func (t *TmuxCapture) captureLoop() {
 // captureTmuxPane captures the full pane content from a tmux session.
 // This includes visible content and scrollback, with ANSI escape sequences preserved.
 func captureTmuxPane(sessionName string) ([]byte, error) {
-	cmd := exec.Command("tmux",
+	cmd := tmux.Command(
 		"capture-pane",
 		"-t", sessionName,
 		"-p",      // print to stdout
@@ -218,6 +219,6 @@ func captureTmuxPane(sessionName string) ([]byte, error) {
 
 // SessionExists checks if the tmux session exists.
 func (t *TmuxCapture) SessionExists() bool {
-	cmd := exec.Command("tmux", "has-session", "-t", t.config.SessionName)
+	cmd := tmux.Command("has-session", "-t", t.config.SessionName)
 	return cmd.Run() == nil
 }

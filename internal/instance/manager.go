@@ -17,6 +17,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/instance/state"
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/tmux"
 )
 
 // StateChangeCallback is called when the detected waiting state changes
@@ -395,7 +396,7 @@ func (m *Manager) Start() error {
 	}
 
 	// Kill any existing session with this name (cleanup from previous run)
-	_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+	_ = tmux.Command("kill-session", "-t", m.sessionName).Run()
 
 	// Determine history limit from config (default to 50000 if not set)
 	historyLimit := m.config.TmuxHistoryLimit
@@ -405,7 +406,7 @@ func (m *Manager) Start() error {
 
 	// Set history-limit BEFORE creating session so the new pane inherits it.
 	// tmux's history-limit only affects newly created panes, not existing ones.
-	if err := exec.Command("tmux", "set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
+	if err := tmux.Command("set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
 		if m.logger != nil {
 			m.logger.Warn("failed to set global history-limit for tmux",
 				"history_limit", historyLimit,
@@ -414,7 +415,7 @@ func (m *Manager) Start() error {
 	}
 
 	// Create a new detached tmux session with color support
-	createCmd := exec.Command("tmux",
+	createCmd := tmux.Command(
 		"new-session",
 		"-d",                // detached
 		"-s", m.sessionName, // session name
@@ -435,21 +436,21 @@ func (m *Manager) Start() error {
 	}
 
 	// Set up additional tmux session options for color support
-	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run()
+	_ = tmux.Command("set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run()
 	// Enable bell monitoring so we can detect and forward terminal bells
-	_ = exec.Command("tmux", "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
+	_ = tmux.Command("set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
 
 	// Write the task/prompt to a temporary file to avoid shell escaping issues
 	// (prompts with <, >, |, etc. would otherwise be interpreted by the shell)
 	promptFile := filepath.Join(m.workdir, ".claude-prompt")
 	if err := os.WriteFile(promptFile, []byte(m.task), 0600); err != nil {
-		_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+		_ = tmux.Command("kill-session", "-t", m.sessionName).Run()
 		return fmt.Errorf("failed to write prompt file: %w", err)
 	}
 
 	// Send the claude command to the tmux session, reading prompt from file
 	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q", promptFile, promptFile)
-	sendCmd := exec.Command("tmux",
+	sendCmd := tmux.Command(
 		"send-keys",
 		"-t", m.sessionName,
 		claudeCmd,
@@ -457,7 +458,7 @@ func (m *Manager) Start() error {
 	)
 	if err := sendCmd.Run(); err != nil {
 		// Clean up the session if we failed to start claude
-		_ = exec.Command("tmux", "kill-session", "-t", m.sessionName).Run()
+		_ = tmux.Command("kill-session", "-t", m.sessionName).Run()
 		_ = os.Remove(promptFile)
 		if m.logger != nil {
 			m.logger.Error("failed to start claude in tmux session",
@@ -615,7 +616,7 @@ func (m *Manager) captureLoop() {
 
 			// Check if the session is still running
 			ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
-			checkCmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", sessionName)
+			checkCmd := tmux.CommandContext(ctx, "has-session", "-t", sessionName)
 			sessionErr := checkCmd.Run()
 			cancel()
 			if sessionErr != nil {
@@ -657,7 +658,7 @@ func (m *Manager) captureLoop() {
 func (m *Manager) getHistorySize(sessionName string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-t", sessionName, "-p", "#{history_size}")
+	cmd := tmux.CommandContext(ctx, "display-message", "-t", sessionName, "-p", "#{history_size}")
 	output, err := cmd.Output()
 	if err != nil {
 		// Session not found is expected when session ends - don't log
@@ -697,14 +698,14 @@ func (m *Manager) getHistorySize(sessionName string) int {
 func (m *Manager) captureVisiblePane(sessionName string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
 	defer cancel()
-	return exec.CommandContext(ctx, "tmux", "capture-pane", "-t", sessionName, "-p", "-e").Output()
+	return tmux.CommandContext(ctx, "capture-pane", "-t", sessionName, "-p", "-e").Output()
 }
 
 // captureFullPane captures the full pane content including scrollback history.
 func (m *Manager) captureFullPane(sessionName string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
 	defer cancel()
-	return exec.CommandContext(ctx, "tmux", "capture-pane", "-t", sessionName, "-p", "-e", "-S", "-", "-E", "-").Output()
+	return tmux.CommandContext(ctx, "capture-pane", "-t", sessionName, "-p", "-e", "-S", "-", "-E", "-").Output()
 }
 
 // checkAndForwardBell checks for terminal bells and delegates to the state monitor.
@@ -712,7 +713,7 @@ func (m *Manager) checkAndForwardBell(sessionName, instanceID string) {
 	// Query the window_bell_flag from tmux
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
 	defer cancel()
-	bellCmd := exec.CommandContext(ctx, "tmux", "display-message", "-t", sessionName, "-p", "#{window_bell_flag}")
+	bellCmd := tmux.CommandContext(ctx, "display-message", "-t", sessionName, "-p", "#{window_bell_flag}")
 	output, err := bellCmd.Output()
 	if err != nil {
 		// Log at debug level since bell detection is non-critical
@@ -806,11 +807,11 @@ func (m *Manager) Stop() error {
 	}
 
 	// Send Ctrl+C to gracefully stop Claude first
-	_ = exec.Command("tmux", "send-keys", "-t", m.sessionName, "C-c").Run()
+	_ = tmux.Command("send-keys", "-t", m.sessionName, "C-c").Run()
 	time.Sleep(500 * time.Millisecond)
 
 	// Kill the tmux session
-	if err := exec.Command("tmux", "kill-session", "-t", m.sessionName).Run(); err != nil {
+	if err := tmux.Command("kill-session", "-t", m.sessionName).Run(); err != nil {
 		if m.logger != nil {
 			m.logger.Error("failed to kill tmux session",
 				"session_name", m.sessionName,
@@ -970,7 +971,7 @@ func (m *Manager) PID() int {
 	// Get the PID from tmux
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "display-message", "-t", m.sessionName, "-p", "#{pane_pid}")
+	cmd := tmux.CommandContext(ctx, "display-message", "-t", m.sessionName, "-p", "#{pane_pid}")
 	output, err := cmd.Output()
 	if err != nil {
 		return 0
@@ -984,14 +985,14 @@ func (m *Manager) PID() int {
 // AttachCommand returns the command to attach to this instance's tmux session
 // This allows users to attach directly if needed
 func (m *Manager) AttachCommand() string {
-	return fmt.Sprintf("tmux attach -t %s", m.sessionName)
+	return fmt.Sprintf("tmux -L %s attach -t %s", tmux.SocketName, m.sessionName)
 }
 
 // TmuxSessionExists checks if the tmux session for this instance exists
 func (m *Manager) TmuxSessionExists() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "has-session", "-t", m.sessionName)
+	cmd := tmux.CommandContext(ctx, "has-session", "-t", m.sessionName)
 	return cmd.Run() == nil
 }
 
@@ -1017,7 +1018,7 @@ func (m *Manager) Reconnect() error {
 
 	// Ensure monitor-bell is enabled for bell detection (may not be set if session was created before this feature)
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
-	_ = exec.CommandContext(ctx, "tmux", "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
+	_ = tmux.CommandContext(ctx, "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
 	cancel()
 
 	m.running = true
@@ -1043,7 +1044,7 @@ func (m *Manager) Reconnect() error {
 func ListClaudioTmuxSessions() ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "tmux", "list-sessions", "-F", "#{session_name}")
+	cmd := tmux.CommandContext(ctx, "list-sessions", "-F", "#{session_name}")
 	output, err := cmd.Output()
 	if err != nil {
 		// No sessions or tmux not running
@@ -1257,7 +1258,7 @@ func (m *Manager) Resize(width, height int) error {
 	// Note: We resize the window (not pane) since each session has one window
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
 	defer cancel()
-	resizeCmd := exec.CommandContext(ctx, "tmux",
+	resizeCmd := tmux.CommandContext(ctx,
 		"resize-window",
 		"-t", m.sessionName,
 		"-x", fmt.Sprintf("%d", width),

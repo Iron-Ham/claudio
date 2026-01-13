@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/tmux"
 )
 
 // Common errors returned by LifecycleManager operations.
@@ -195,7 +195,7 @@ func (m *Manager) Start(inst Instance) error {
 	cfg := inst.Config()
 
 	// Kill any existing session with this name (cleanup from previous run)
-	_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+	_ = tmux.Command("kill-session", "-t", sessionName).Run()
 
 	// Determine terminal dimensions
 	width := cfg.TmuxWidth
@@ -213,7 +213,7 @@ func (m *Manager) Start(inst Instance) error {
 
 	// Set history-limit BEFORE creating session so the new pane inherits it.
 	// tmux's history-limit only affects newly created panes, not existing ones.
-	if err := exec.Command("tmux", "set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
+	if err := tmux.Command("set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
 		if m.logger != nil {
 			m.logger.Warn("failed to set global history-limit for tmux",
 				"history_limit", historyLimit,
@@ -222,7 +222,7 @@ func (m *Manager) Start(inst Instance) error {
 	}
 
 	// Create a new detached tmux session with color support
-	createCmd := exec.Command("tmux",
+	createCmd := tmux.Command(
 		"new-session",
 		"-d",
 		"-s", sessionName,
@@ -243,28 +243,28 @@ func (m *Manager) Start(inst Instance) error {
 	}
 
 	// Set up additional tmux session options for color support
-	_ = exec.Command("tmux", "set-option", "-t", sessionName, "default-terminal", "xterm-256color").Run()
+	_ = tmux.Command("set-option", "-t", sessionName, "default-terminal", "xterm-256color").Run()
 	// Enable bell monitoring for detecting terminal bells
-	_ = exec.Command("tmux", "set-option", "-t", sessionName, "-w", "monitor-bell", "on").Run()
+	_ = tmux.Command("set-option", "-t", sessionName, "-w", "monitor-bell", "on").Run()
 
 	// Write the task/prompt to a temporary file to avoid shell escaping issues
 	promptFile := filepath.Join(workDir, ".claude-prompt")
 	if err := os.WriteFile(promptFile, []byte(task), 0600); err != nil {
-		_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+		_ = tmux.Command("kill-session", "-t", sessionName).Run()
 		m.setStateStopped(inst)
 		return fmt.Errorf("failed to write prompt file: %w", err)
 	}
 
 	// Send the claude command to the tmux session, reading prompt from file
 	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q", promptFile, promptFile)
-	sendCmd := exec.Command("tmux",
+	sendCmd := tmux.Command(
 		"send-keys",
 		"-t", sessionName,
 		claudeCmd,
 		"Enter",
 	)
 	if err := sendCmd.Run(); err != nil {
-		_ = exec.Command("tmux", "kill-session", "-t", sessionName).Run()
+		_ = tmux.Command("kill-session", "-t", sessionName).Run()
 		_ = os.Remove(promptFile)
 		m.setStateStopped(inst)
 		if m.logger != nil {
@@ -316,11 +316,11 @@ func (m *Manager) Stop(inst Instance) error {
 	sessionName := inst.SessionName()
 
 	// Send Ctrl+C to gracefully stop Claude first
-	_ = exec.Command("tmux", "send-keys", "-t", sessionName, "C-c").Run()
+	_ = tmux.Command("send-keys", "-t", sessionName, "C-c").Run()
 	time.Sleep(gracefulTimeout)
 
 	// Kill the tmux session
-	if err := exec.Command("tmux", "kill-session", "-t", sessionName).Run(); err != nil {
+	if err := tmux.Command("kill-session", "-t", sessionName).Run(); err != nil {
 		// Log but don't fail - session may have already exited
 		if m.logger != nil {
 			m.logger.Debug("tmux kill-session error (may be expected)",
@@ -450,7 +450,7 @@ func (m *Manager) Reconnect(inst Instance) error {
 	}
 
 	// Ensure monitor-bell is enabled
-	_ = exec.Command("tmux", "set-option", "-t", sessionName, "-w", "monitor-bell", "on").Run()
+	_ = tmux.Command("set-option", "-t", sessionName, "-w", "monitor-bell", "on").Run()
 
 	// Update instance state
 	inst.SetRunning(true)
@@ -473,7 +473,7 @@ func (m *Manager) Reconnect(inst Instance) error {
 
 // SessionExists checks if a tmux session with the given name exists.
 func (m *Manager) SessionExists(sessionName string) bool {
-	cmd := exec.Command("tmux", "has-session", "-t", sessionName)
+	cmd := tmux.Command("has-session", "-t", sessionName)
 	return cmd.Run() == nil
 }
 

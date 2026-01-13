@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/tmux"
 )
 
 // writeTimeout is the maximum time to wait for a write to the tmux control mode
@@ -201,7 +203,7 @@ func (p *PersistentTmuxSender) connectLocked() error {
 
 	// Start tmux in control mode, attached to the session
 	// Control mode (-C) keeps stdin open for commands and writes responses to stdout
-	cmd := exec.Command("tmux", "-C", "attach-session", "-t", p.sessionName)
+	cmd := tmux.Command("-C", "attach-session", "-t", p.sessionName)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
