@@ -7,6 +7,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	"github.com/Iron-Ham/claudio/internal/instance/lifecycle"
+	"github.com/Iron-Ham/claudio/internal/instance/state"
 )
 
 func TestExtractInstanceIDFromSession(t *testing.T) {
@@ -108,6 +109,117 @@ func TestNewManager(t *testing.T) {
 	defaultCfg := DefaultManagerConfig()
 	if mgr.config.OutputBufferSize != defaultCfg.OutputBufferSize {
 		t.Errorf("config.OutputBufferSize = %d, want %d", mgr.config.OutputBufferSize, defaultCfg.OutputBufferSize)
+	}
+}
+
+func TestNewManagerWithDeps_ExplicitMonitor(t *testing.T) {
+	// Test with explicit StateMonitor
+	monitor := state.NewMonitor(state.DefaultMonitorConfig())
+	opts := ManagerOptions{
+		ID:           "test-id",
+		SessionID:    "session-123",
+		WorkDir:      "/tmp/test",
+		Task:         "test task",
+		StateMonitor: monitor,
+	}
+	mgr := NewManagerWithDeps(opts)
+
+	if mgr == nil {
+		t.Fatal("NewManagerWithDeps returned nil")
+	}
+	if mgr.stateMonitor != monitor {
+		t.Error("Should use provided StateMonitor")
+	}
+	if mgr.sessionName != "claudio-session-123-test-id" {
+		t.Errorf("sessionName = %q, want claudio-session-123-test-id", mgr.sessionName)
+	}
+}
+
+func TestNewManagerWithDeps_NilMonitor(t *testing.T) {
+	// Test StateMonitor creation when nil
+	opts := ManagerOptions{
+		ID:      "test-id",
+		WorkDir: "/tmp",
+		Task:    "task",
+		// StateMonitor: nil - should create one internally
+	}
+	mgr := NewManagerWithDeps(opts)
+
+	if mgr == nil {
+		t.Fatal("NewManagerWithDeps returned nil")
+	}
+	if mgr.stateMonitor == nil {
+		t.Error("Should create StateMonitor when not provided")
+	}
+}
+
+func TestNewManagerWithDeps_ConfigDefaults(t *testing.T) {
+	// Test that zero config values get defaults
+	opts := ManagerOptions{
+		ID:      "test-id",
+		WorkDir: "/tmp",
+		Task:    "task",
+		Config:  ManagerConfig{}, // All zeros
+	}
+	mgr := NewManagerWithDeps(opts)
+
+	defaults := DefaultManagerConfig()
+	if mgr.config.OutputBufferSize != defaults.OutputBufferSize {
+		t.Errorf("Should apply default OutputBufferSize, got %d want %d",
+			mgr.config.OutputBufferSize, defaults.OutputBufferSize)
+	}
+	if mgr.config.CaptureIntervalMs != defaults.CaptureIntervalMs {
+		t.Errorf("Should apply default CaptureIntervalMs, got %d want %d",
+			mgr.config.CaptureIntervalMs, defaults.CaptureIntervalMs)
+	}
+	if mgr.config.TmuxWidth != defaults.TmuxWidth {
+		t.Errorf("Should apply default TmuxWidth, got %d want %d",
+			mgr.config.TmuxWidth, defaults.TmuxWidth)
+	}
+}
+
+func TestNewManagerWithDeps_SessionNameWithoutSessionID(t *testing.T) {
+	// Test session name generation without SessionID
+	opts := ManagerOptions{
+		ID:      "test-id",
+		WorkDir: "/tmp",
+		Task:    "task",
+	}
+	mgr := NewManagerWithDeps(opts)
+
+	if mgr.sessionName != "claudio-test-id" {
+		t.Errorf("sessionName = %q, want claudio-test-id", mgr.sessionName)
+	}
+}
+
+func TestNewManagerWithDeps_PreservesCustomConfig(t *testing.T) {
+	// Test that custom config values are preserved (not overwritten by defaults)
+	customCfg := ManagerConfig{
+		OutputBufferSize:  5000,
+		CaptureIntervalMs: 200,
+		TmuxWidth:         150,
+		TmuxHeight:        40,
+		TmuxHistoryLimit:  50000,
+	}
+	opts := ManagerOptions{
+		ID:      "test-id",
+		WorkDir: "/tmp",
+		Task:    "task",
+		Config:  customCfg,
+	}
+	mgr := NewManagerWithDeps(opts)
+
+	if mgr.config.OutputBufferSize != 5000 {
+		t.Errorf("config.OutputBufferSize = %d, want 5000", mgr.config.OutputBufferSize)
+	}
+	if mgr.config.CaptureIntervalMs != 200 {
+		t.Errorf("config.CaptureIntervalMs = %d, want 200", mgr.config.CaptureIntervalMs)
+	}
+	if mgr.config.TmuxWidth != 150 {
+		t.Errorf("config.TmuxWidth = %d, want 150", mgr.config.TmuxWidth)
+	}
+	if mgr.config.TmuxHeight != 40 {
+		t.Errorf("config.TmuxHeight = %d, want 40", mgr.config.TmuxHeight)
 	}
 }
 
