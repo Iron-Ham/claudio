@@ -88,6 +88,10 @@ func DefaultManagerConfig() ManagerConfig {
 // MetricsChangeCallback is called when metrics are updated
 type MetricsChangeCallback func(instanceID string, metrics *metrics.ParsedMetrics)
 
+// RenameCallback is called once after meaningful output is detected,
+// to trigger intelligent instance renaming.
+type RenameCallback func(instanceID, task, output string)
+
 // ManagerOptions holds explicit dependencies for creating a Manager.
 // Use NewManagerWithDeps to create a Manager with these options.
 type ManagerOptions struct {
@@ -98,6 +102,7 @@ type ManagerOptions struct {
 	Config           ManagerConfig
 	StateMonitor     *state.Monitor     // Optional - if nil, an internal monitor is created
 	LifecycleManager *lifecycle.Manager // Optional - if set, delegates Start/Stop/Reconnect
+	RenameCallback   RenameCallback     // Optional - called once after first meaningful output
 }
 
 // Manager handles a single Claude Code instance running in a tmux session.
@@ -148,6 +153,10 @@ type Manager struct {
 	// stateMonitor handles centralized state tracking (state detection, timeouts, bells).
 	// This is always set - either provided explicitly or created internally.
 	stateMonitor *state.Monitor
+
+	// Rename callback for intelligent naming (one-shot trigger)
+	renameCallback  RenameCallback
+	renameTriggered bool
 }
 
 // NewManager creates a new instance manager with default configuration.
@@ -267,6 +276,7 @@ func NewManagerWithDeps(opts ManagerOptions) *Manager {
 		),
 		stateMonitor:     monitor,
 		lifecycleManager: opts.LifecycleManager,
+		renameCallback:   opts.RenameCallback,
 	}
 }
 
@@ -583,6 +593,10 @@ func (m *Manager) captureLoop() {
 			// Always call this even if output hasn't changed (for stale detection).
 			m.stateMonitor.ProcessOutput(instanceID, output, currentOutput)
 
+			// Trigger rename callback once after meaningful output is detected.
+			// This enables intelligent instance naming based on Claude's understanding.
+			m.triggerRenameIfNeeded(instanceID, output)
+
 			// Parse metrics from output (separate from state detection)
 			m.parseAndNotifyMetrics(output)
 
@@ -627,6 +641,54 @@ func (m *Manager) captureLoop() {
 			}
 		}
 	}
+}
+
+// triggerRenameIfNeeded invokes the rename callback once after meaningful output is detected.
+// The callback is only fired once per Manager lifecycle to avoid repeated API calls.
+// Requires at least 200 bytes of output to ensure Claude has started working.
+func (m *Manager) triggerRenameIfNeeded(instanceID string, output []byte) {
+	m.mu.RLock()
+	triggered := m.renameTriggered
+	callback := m.renameCallback
+	task := m.task
+	m.mu.RUnlock()
+
+	// Skip if already triggered, no callback, or insufficient output
+	if triggered || callback == nil || len(output) < 200 {
+		return
+	}
+
+	// Mark as triggered before invoking callback
+	// Double-check to prevent TOCTOU race condition
+	m.mu.Lock()
+	if m.renameTriggered {
+		m.mu.Unlock()
+		return
+	}
+	m.renameTriggered = true
+	m.mu.Unlock()
+
+	// Invoke callback in goroutine to avoid blocking capture loop
+	// Limit output to 1000 bytes to avoid excessive data transfer
+	outputSnippet := string(output)
+	if len(outputSnippet) > 1000 {
+		outputSnippet = outputSnippet[:1000]
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// Callback panicked - log and continue
+				// This prevents a buggy callback from crashing the capture loop
+				if m.logger != nil {
+					m.logger.Error("rename callback panicked",
+						"instance_id", instanceID,
+						"panic", r,
+					)
+				}
+			}
+		}()
+		callback(instanceID, task, outputSnippet)
+	}()
 }
 
 // getHistorySize queries the current tmux pane history size.

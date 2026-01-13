@@ -68,6 +68,10 @@ type Instance struct {
 	DependsOn  []string `json:"depends_on,omitempty"` // Instance IDs this instance depends on
 	Dependents []string `json:"dependents,omitempty"` // Instance IDs that depend on this instance
 	AutoStart  bool     `json:"auto_start,omitempty"` // If true, auto-start when dependencies complete
+
+	// Intelligent naming support - LLM-generated short names for sidebar display
+	DisplayName   string `json:"display_name,omitempty"`   // Short descriptive name (e.g., "Fix auth bug")
+	ManuallyNamed bool   `json:"manually_named,omitempty"` // If true, auto-rename is disabled
 }
 
 // GetID returns the instance ID (satisfies prworkflow.InstanceInfo).
@@ -81,6 +85,15 @@ func (i *Instance) GetBranch() string { return i.Branch }
 
 // GetTask returns the task description (satisfies prworkflow.InstanceInfo).
 func (i *Instance) GetTask() string { return i.Task }
+
+// EffectiveName returns the display name to show in the sidebar.
+// Returns DisplayName if set, otherwise falls back to Task.
+func (i *Instance) EffectiveName() string {
+	if i.DisplayName != "" {
+		return i.DisplayName
+	}
+	return i.Task
+}
 
 // Session represents a Claudio work session
 type Session struct {
