@@ -566,30 +566,35 @@ func (m *Manager) captureLoop() {
 			// Check if content changed
 			currentOutput := string(output)
 			if currentOutput != lastOutput {
-				// Always update the output buffer when content changes, regardless
-				// of capture type. This ensures typed text appears immediately.
-				// Note: Visible-only captures don't include scrollback, but scrollback
-				// will be restored on the next full capture (every 5 seconds).
-				byteCount := len(output)
-				m.outputBuf.Reset()
-				_, _ = m.outputBuf.Write(output)
-
 				m.mu.RLock()
 				logger := m.logger
 				m.mu.RUnlock()
 
 				if doFullCapture {
+					// Only update the output buffer with full captures to preserve scrollback.
+					// Visible-only captures don't include scrollback history, so writing them
+					// to the buffer would cause the output to flash between short (visible) and
+					// long (full) content, breaking scroll position.
+					byteCount := len(output)
+					m.outputBuf.Reset()
+					_, _ = m.outputBuf.Write(output)
+
 					if logger != nil {
 						logger.Debug("output captured",
 							"byte_count", byteCount)
 					}
 				} else {
 					// Visible-only capture detected content change (e.g., user typing).
-					// Schedule a full capture on the next tick to update the output buffer
-					// while preserving scrollback history.
+					// Schedule a full capture on the next tick to update the output buffer.
+					// Do NOT write visible-only content to the buffer - it lacks scrollback
+					// and would cause display flashing.
 					m.mu.Lock()
 					m.forceFullCapture = true
 					m.mu.Unlock()
+
+					if logger != nil {
+						logger.Debug("visible content changed, scheduling full capture")
+					}
 				}
 
 				lastOutput = currentOutput

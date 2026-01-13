@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Intelligent Naming Triggers Immediately** - Instance renaming now triggers immediately when an instance starts, using only the task description. Previously required waiting for 200+ bytes of Claude output which could fail silently.
 - **Cleanup Command Respects Worktree Config** - The `claudio cleanup` command and stale resource warnings now correctly use the configured worktree directory instead of the hardcoded default
-- **TUI Scrollback and Input Visibility** - Fixed output scrollback being lost when using differential capture optimization. Visible-only captures now trigger a full capture on the next tick when content changes, ensuring both immediate input visibility and preserved scrollback history
+- **TUI Scrollback Stability** - Fixed output display flashing and scroll position jumping when using differential capture optimization. Visible-only captures no longer write to the output buffer, preventing the display from rapidly alternating between short (visible-only) and full (scrollback) content
 
 ### Performance
 

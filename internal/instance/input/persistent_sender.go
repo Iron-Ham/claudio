@@ -264,6 +264,12 @@ func (p *PersistentTmuxSender) connectLocked() error {
 			_ = stdin.Close()
 			_ = stdout.Close()
 			_ = stderr.Close()
+			// Kill the process before Wait() to prevent blocking indefinitely.
+			// Without Kill(), Wait() can hang if the verification goroutine is
+			// still reading from stdout when we closed the pipe.
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
 			_ = cmd.Wait()
 			return err
 		}
