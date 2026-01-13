@@ -624,3 +624,39 @@ func TestHandlerFunc(t *testing.T) {
 		t.Error("HandlerFunc returned Handled=false, want true")
 	}
 }
+
+func TestRouter_GroupCommandPending(t *testing.T) {
+	r := NewRouter()
+
+	if r.IsGroupCommandPending() {
+		t.Error("Initial IsGroupCommandPending() = true, want false")
+	}
+
+	r.SetGroupCommandPending(true)
+	if !r.IsGroupCommandPending() {
+		t.Error("After SetGroupCommandPending(true), IsGroupCommandPending() = false")
+	}
+
+	r.SetGroupCommandPending(false)
+	if r.IsGroupCommandPending() {
+		t.Error("After SetGroupCommandPending(false), IsGroupCommandPending() = true")
+	}
+}
+
+func TestRouter_GroupedViewActive(t *testing.T) {
+	r := NewRouter()
+
+	if r.IsGroupedViewActive() {
+		t.Error("Initial IsGroupedViewActive() = true, want false")
+	}
+
+	r.SetGroupedViewActive(true)
+	if !r.IsGroupedViewActive() {
+		t.Error("After SetGroupedViewActive(true), IsGroupedViewActive() = false")
+	}
+
+	r.SetGroupedViewActive(false)
+	if r.IsGroupedViewActive() {
+		t.Error("After SetGroupedViewActive(false), IsGroupedViewActive() = true")
+	}
+}

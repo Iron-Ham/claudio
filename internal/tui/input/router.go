@@ -138,6 +138,14 @@ type Router struct {
 	templateDropdown  bool
 	groupDecisionMode bool
 	retriggerMode     bool
+
+	// Group command mode tracking (vim-style 'g' prefix)
+	// When true, the next key press is interpreted as a group command.
+	groupCommandPending bool
+
+	// GroupedViewActive tracks whether the sidebar is in grouped mode.
+	// This enables group-specific shortcuts like J/K for group navigation.
+	groupedViewActive bool
 }
 
 // NewRouter creates a new input router in normal mode.
@@ -216,6 +224,28 @@ func (r *Router) SetRetriggerMode(active bool) {
 // IsRetriggerMode returns whether we're in retrigger mode.
 func (r *Router) IsRetriggerMode() bool {
 	return r.retriggerMode
+}
+
+// SetGroupCommandPending sets whether we're waiting for a group command key.
+// This is used for vim-style 'g' prefix commands (gc, gC, gn, gp, gs, gr, gf).
+func (r *Router) SetGroupCommandPending(pending bool) {
+	r.groupCommandPending = pending
+}
+
+// IsGroupCommandPending returns whether we're waiting for a group command key.
+func (r *Router) IsGroupCommandPending() bool {
+	return r.groupCommandPending
+}
+
+// SetGroupedViewActive sets whether the grouped sidebar view is active.
+// When active, group-specific shortcuts like J/K are enabled.
+func (r *Router) SetGroupedViewActive(active bool) {
+	r.groupedViewActive = active
+}
+
+// IsGroupedViewActive returns whether the grouped sidebar view is active.
+func (r *Router) IsGroupedViewActive() bool {
+	return r.groupedViewActive
 }
 
 // ClearBuffer clears the input buffer.

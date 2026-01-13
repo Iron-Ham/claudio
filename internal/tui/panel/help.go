@@ -134,7 +134,19 @@ func DefaultHelpSections() []HelpSection {
 				{Key: "Tab/l  Shift+Tab/h", Description: "Next / Previous instance"},
 				{Key: "j/↓  k/↑", Description: "Scroll down / up one line"},
 				{Key: "Ctrl+D/U  Ctrl+F/B", Description: "Scroll half / full page"},
-				{Key: "g  G", Description: "Jump to top / bottom"},
+				{Key: "gg  G", Description: "Jump to top / bottom"},
+			},
+		},
+		{
+			Title: "Group Commands (g prefix)",
+			Items: []HelpItem{
+				{Key: "gc", Description: "Collapse/expand current group"},
+				{Key: "gC", Description: "Collapse/expand all groups"},
+				{Key: "gn", Description: "Jump to next group"},
+				{Key: "gp", Description: "Jump to previous group"},
+				{Key: "gs", Description: "Skip current group (mark pending as skipped)"},
+				{Key: "gr", Description: "Retry failed tasks in current group"},
+				{Key: "gf", Description: "Force-start next group (ignore dependencies)"},
 			},
 		},
 		{
