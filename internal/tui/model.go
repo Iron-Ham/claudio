@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
@@ -12,6 +13,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/output"
 	"github.com/Iron-Ham/claudio/internal/tui/search"
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
+	"github.com/Iron-Ham/claudio/internal/tui/view"
 )
 
 // TerminalDirMode indicates which directory the terminal pane is using.
@@ -382,12 +384,51 @@ func (m *Model) ensureActiveVisible() {
 // getOutputMaxLines returns the maximum number of lines visible in the output area
 func (m Model) getOutputMaxLines() int {
 	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
-	// Output area is within main area, minus some reserved lines for header/status
-	maxLines := dims.MainAreaHeight - 6
+
+	// Calculate overhead based on the active instance's actual properties
+	overhead := m.calculateInstanceOverhead()
+
+	maxLines := dims.MainAreaHeight - overhead
 	if maxLines < 5 {
 		maxLines = 5
 	}
 	return maxLines
+}
+
+// calculateInstanceOverhead calculates the number of lines used by the instance view
+// for elements other than the output area (header, task, dependencies, metrics, etc.)
+func (m Model) calculateInstanceOverhead() int {
+	inst := m.activeInstance()
+	if inst == nil {
+		// Default overhead when no instance is selected
+		return 6
+	}
+
+	// Check if this instance is running
+	mgr := m.orchestrator.GetInstanceManager(inst.ID)
+	isRunning := mgr != nil && mgr.Running()
+
+	// Check config for metrics display
+	cfg := config.Get()
+	showMetrics := cfg.Resources.ShowMetricsInSidebar
+	hasMetrics := inst.Metrics != nil
+
+	// Build overhead params
+	params := view.OverheadParams{
+		Task:            inst.Task,
+		HasDependencies: len(inst.DependsOn) > 0,
+		HasDependents:   len(inst.Dependents) > 0,
+		ShowMetrics:     showMetrics,
+		HasMetrics:      hasMetrics,
+		IsRunning:       isRunning,
+		HasSearchActive: m.searchMode || m.searchInput != "",
+		// Always assume scroll indicator will be shown to avoid overflow
+		// This is a conservative estimate that prevents clipping
+		HasScrollIndicator: true,
+	}
+
+	instanceView := view.NewInstanceView(0, 0) // Dimensions not needed for overhead calculation
+	return instanceView.CalculateOverheadLines(params)
 }
 
 // isOutputAutoScroll returns whether auto-scroll is enabled for an instance (defaults to true)

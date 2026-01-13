@@ -186,10 +186,85 @@ func truncateTask(task string, maxLen int) string {
 	return task[:maxLen-3] + "..."
 }
 
-// RenderTask renders the task description, truncated to maxTaskLines.
+// MaxTaskDisplayLines is the maximum number of lines shown for task descriptions.
+// Task text exceeding this limit is truncated with "...".
+const MaxTaskDisplayLines = 5
+
+// OverheadParams contains the parameters needed to calculate overhead lines.
+// These are the variable factors that affect how many lines are used above the output area.
+type OverheadParams struct {
+	// Task is the instance task description
+	Task string
+	// HasDependencies indicates if the instance has dependencies to display
+	HasDependencies bool
+	// HasDependents indicates if the instance has dependents to display
+	HasDependents bool
+	// ShowMetrics indicates if metrics display is enabled in config.
+	// Metrics only contribute to overhead when both ShowMetrics AND HasMetrics are true.
+	ShowMetrics bool
+	// HasMetrics indicates if the instance has metrics data available
+	HasMetrics bool
+	// IsRunning indicates if the instance is currently running
+	IsRunning bool
+	// HasSearchActive indicates if a search pattern is active
+	HasSearchActive bool
+	// HasScrollIndicator indicates if the output needs a scroll indicator
+	HasScrollIndicator bool
+}
+
+// CalculateOverheadLines calculates the number of lines used by the instance view
+// above the output area. This accounts for header, task, dependencies, metrics,
+// status banner, scroll indicator, and search bar.
+func (v *InstanceView) CalculateOverheadLines(params OverheadParams) int {
+	lines := 0
+
+	// Header section: 1 line rendered + 1 for newline separator
+	lines += 2
+
+	// Task section: 1 to MaxTaskDisplayLines+1 lines (extra for "..." when truncated), plus newline
+	taskLines := strings.Count(params.Task, "\n") + 1
+	if taskLines > MaxTaskDisplayLines {
+		taskLines = MaxTaskDisplayLines + 1 // +1 for the "..." line
+	}
+	lines += taskLines + 1 // +1 for the newline after task
+
+	// Dependencies: 1 line each if present
+	if params.HasDependencies {
+		lines++
+	}
+	if params.HasDependents {
+		lines++
+	}
+
+	// Metrics: 1 line + newline if enabled and has data
+	if params.ShowMetrics && params.HasMetrics {
+		lines += 2
+	}
+
+	// Status banner: 1 line + newline if running
+	if params.IsRunning {
+		lines += 2
+	} else {
+		// Empty banner still adds a newline
+		lines++
+	}
+
+	// Scroll indicator: 1 line + newline if output is scrollable
+	if params.HasScrollIndicator {
+		lines += 2
+	}
+
+	// Search bar: 1 line + newline if search is active
+	if params.HasSearchActive {
+		lines += 2
+	}
+
+	return lines
+}
+
+// RenderTask renders the task description, truncated to MaxTaskDisplayLines.
 func (v *InstanceView) RenderTask(task string) string {
-	const maxTaskLines = 5
-	taskDisplay := truncateLines(task, maxTaskLines)
+	taskDisplay := truncateLines(task, MaxTaskDisplayLines)
 	return styles.Subtitle.Render("Task: " + taskDisplay)
 }
 
