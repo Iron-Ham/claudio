@@ -28,24 +28,31 @@ const (
 )
 
 // summarizePrompt is the prompt template for generating short instance names.
-const summarizePrompt = `Generate a very short name (max %d chars) for this task.
+// The prompt works with just the task description - no output context needed.
+const summarizePrompt = `Generate a very short name (max %d chars) for this coding task.
+
 Rules:
 1. Be descriptive but concise
-2. Start with a verb when possible (Add, Fix, Update, Implement)
-3. Focus on the core action/change
+2. Start with a verb (Add, Fix, Update, Implement, Refactor, Test, etc.)
+3. Focus on the core action/change being requested
 4. Omit articles (a, the) and filler words
 5. No quotes or punctuation
+6. Use title case
+
+Examples:
+- "Add user authentication" -> "Add User Auth"
+- "Fix the bug where login fails on mobile" -> "Fix Mobile Login Bug"
+- "Implement dark mode toggle" -> "Add Dark Mode Toggle"
+- "Refactor the database connection pooling" -> "Refactor DB Pool"
 
 Task: %s
-
-Context from Claude's work: %s
 
 Respond with ONLY the short name, nothing else.`
 
 // Client defines the interface for LLM-based name generation.
 type Client interface {
-	// Summarize generates a short descriptive name from a task and context.
-	Summarize(ctx context.Context, task, output string) (string, error)
+	// Summarize generates a short descriptive name from a task description.
+	Summarize(ctx context.Context, task string) (string, error)
 }
 
 // AnthropicClient implements Client using the Anthropic Messages API.
@@ -132,14 +139,9 @@ type apiError struct {
 	Message string `json:"message"`
 }
 
-// Summarize generates a short descriptive name from the task and Claude's output.
-func (c *AnthropicClient) Summarize(ctx context.Context, task, output string) (string, error) {
-	// Truncate output to avoid excessive token usage
-	if len(output) > 1500 {
-		output = output[:1500]
-	}
-
-	prompt := fmt.Sprintf(summarizePrompt, c.maxLen, task, output)
+// Summarize generates a short descriptive name from the task description.
+func (c *AnthropicClient) Summarize(ctx context.Context, task string) (string, error) {
+	prompt := fmt.Sprintf(summarizePrompt, c.maxLen, task)
 
 	reqBody := messagesRequest{
 		Model:     c.model,

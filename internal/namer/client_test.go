@@ -93,7 +93,7 @@ func TestAnthropicClient_Summarize_Success(t *testing.T) {
 		transport: originalTransport,
 	}
 
-	name, err := client.Summarize(context.Background(), "Fix authentication issues with OAuth", "Looking at auth.go...")
+	name, err := client.Summarize(context.Background(), "Fix authentication issues with OAuth")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestAnthropicClient_Summarize_TrimsQuotes(t *testing.T) {
 		transport: client.httpClient.Transport,
 	}
 
-	name, err := client.Summarize(context.Background(), "task", "output")
+	name, err := client.Summarize(context.Background(), "task")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestAnthropicClient_Summarize_TruncatesLongNames(t *testing.T) {
 		transport: client.httpClient.Transport,
 	}
 
-	name, err := client.Summarize(context.Background(), "task", "output")
+	name, err := client.Summarize(context.Background(), "task")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestAnthropicClient_Summarize_APIError(t *testing.T) {
 		transport: client.httpClient.Transport,
 	}
 
-	_, err := client.Summarize(context.Background(), "task", "output")
+	_, err := client.Summarize(context.Background(), "task")
 	if err == nil {
 		t.Error("expected error for rate limit response")
 	}
@@ -220,61 +220,9 @@ func TestAnthropicClient_Summarize_EmptyResponse(t *testing.T) {
 		transport: client.httpClient.Transport,
 	}
 
-	_, err := client.Summarize(context.Background(), "task", "output")
+	_, err := client.Summarize(context.Background(), "task")
 	if err == nil {
 		t.Error("expected error for empty response")
-	}
-}
-
-func TestAnthropicClient_Summarize_TruncatesLongOutput(t *testing.T) {
-	var receivedOutput string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req messagesRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("failed to decode request: %v", err)
-		}
-		if len(req.Messages) > 0 {
-			receivedOutput = req.Messages[0].Content
-		}
-
-		resp := messagesResponse{
-			Content: []contentBlock{
-				{Type: "text", Text: "Test name"},
-			},
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			t.Errorf("failed to encode response: %v", err)
-		}
-	}))
-	defer server.Close()
-
-	client := &AnthropicClient{
-		apiKey:     "test-key",
-		model:      defaultModel,
-		maxLen:     defaultMaxNameLength,
-		httpClient: server.Client(),
-	}
-	client.httpClient.Transport = &testTransport{
-		targetURL: server.URL,
-		transport: client.httpClient.Transport,
-	}
-
-	// Create a very long output string (3000 chars)
-	longOutput := make([]byte, 3000)
-	for i := range longOutput {
-		longOutput[i] = 'x'
-	}
-
-	_, err := client.Summarize(context.Background(), "task", string(longOutput))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// The output in the prompt should be truncated to 1500 chars
-	// Check that the full 3000-char output wasn't sent
-	if len(receivedOutput) > 2000 { // Allow some overhead for prompt template
-		t.Errorf("expected output to be truncated, but received %d chars in prompt", len(receivedOutput))
 	}
 }
 
@@ -303,7 +251,7 @@ func TestAnthropicClient_Summarize_EmptyNameAfterTrim(t *testing.T) {
 		transport: client.httpClient.Transport,
 	}
 
-	_, err := client.Summarize(context.Background(), "task", "output")
+	_, err := client.Summarize(context.Background(), "task")
 	if err == nil {
 		t.Error("expected error for empty name after trimming")
 	}
