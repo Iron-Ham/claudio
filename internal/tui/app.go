@@ -2449,9 +2449,9 @@ func (m Model) renderHelpPanel(width int) string {
 	lines = append(lines, styles.Muted.Render("Press : to enter command mode. Use j/k to scroll, ? or :h to close."))
 	lines = append(lines, "")
 
-	// Helper function to format a section header
+	// Helper function to format a section header with subtle prefix
 	section := func(name string) string {
-		return styles.Secondary.Bold(true).Render("━━ " + name + " ━━")
+		return styles.Primary.Bold(true).Render("▸ " + name)
 	}
 
 	// Helper function to format a key
@@ -2466,68 +2466,75 @@ func (m Model) renderHelpPanel(width int) string {
 
 	// Navigation section
 	lines = append(lines, section("Navigation"))
-	lines = append(lines, fmt.Sprintf("  %s %s  %s", key("Tab/l"), key("Shift+Tab/h"), desc("Next / Previous instance")))
-	lines = append(lines, fmt.Sprintf("  %s %s            %s", key("j/↓"), key("k/↑"), desc("Scroll down / up one line")))
-	lines = append(lines, fmt.Sprintf("  %s %s    %s", key("Ctrl+D/U"), key("Ctrl+F/B"), desc("Scroll half / full page")))
-	lines = append(lines, fmt.Sprintf("  %s %s              %s", key("g"), key("G"), desc("Jump to top / bottom")))
+	lines = append(lines, fmt.Sprintf("    %s  %s   %s", key("Tab/l"), key("Shift+Tab/h"), desc("Next / Previous instance")))
+	lines = append(lines, fmt.Sprintf("    %s  %s             %s", key("j/↓"), key("k/↑"), desc("Scroll down / up one line")))
+	lines = append(lines, fmt.Sprintf("    %s  %s     %s", key("Ctrl+D/U"), key("Ctrl+F/B"), desc("Scroll half / full page")))
+	lines = append(lines, fmt.Sprintf("    %s  %s               %s", key("g"), key("G"), desc("Jump to top / bottom")))
+	lines = append(lines, "")
 	lines = append(lines, "")
 
 	// Instance Control section
 	lines = append(lines, section("Instance Control"))
-	lines = append(lines, fmt.Sprintf("  %s %s      %s", key(":s"), key(":start"), desc("Start a stopped/new instance")))
-	lines = append(lines, fmt.Sprintf("  %s %s       %s", key(":x"), key(":stop"), desc("Stop instance + auto-PR workflow")))
-	lines = append(lines, fmt.Sprintf("  %s %s       %s", key(":e"), key(":exit"), desc("Stop instance (no auto-PR)")))
-	lines = append(lines, fmt.Sprintf("  %s %s      %s", key(":p"), key(":pause"), desc("Pause/resume instance")))
-	lines = append(lines, fmt.Sprintf("  %s %s  %s", key(":R"), key(":reconnect"), desc("Reattach to stopped tmux session")))
-	lines = append(lines, fmt.Sprintf("  %s         %s", key(":restart"), desc("Restart stuck/timeout instance")))
+	lines = append(lines, fmt.Sprintf("    %s  %s       %s", key(":s"), key(":start"), desc("Start a stopped/new instance")))
+	lines = append(lines, fmt.Sprintf("    %s  %s        %s", key(":x"), key(":stop"), desc("Stop instance + auto-PR workflow")))
+	lines = append(lines, fmt.Sprintf("    %s  %s        %s", key(":e"), key(":exit"), desc("Stop instance (no auto-PR)")))
+	lines = append(lines, fmt.Sprintf("    %s  %s       %s", key(":p"), key(":pause"), desc("Pause/resume instance")))
+	lines = append(lines, fmt.Sprintf("    %s  %s   %s", key(":R"), key(":reconnect"), desc("Reattach to stopped tmux session")))
+	lines = append(lines, fmt.Sprintf("    %s          %s", key(":restart"), desc("Restart stuck/timeout instance")))
+	lines = append(lines, "")
 	lines = append(lines, "")
 
 	// Instance Management section
 	lines = append(lines, section("Instance Management"))
-	lines = append(lines, fmt.Sprintf("  %s %s        %s", key(":a"), key(":add"), desc("Create and add new instance")))
-	lines = append(lines, fmt.Sprintf("  %s %s %s  %s", key(":chain"), key(":dep"), key(":depends"), desc("Add dependent task")))
-	lines = append(lines, fmt.Sprintf("  %s %s     %s", key(":D"), key(":remove"), desc("Remove instance (keeps branch)")))
-	lines = append(lines, fmt.Sprintf("  %s           %s", key(":kill"), desc("Force kill and remove instance")))
-	lines = append(lines, fmt.Sprintf("  %s %s      %s", key(":C"), key(":clear"), desc("Remove all completed instances")))
+	lines = append(lines, fmt.Sprintf("    %s  %s         %s", key(":a"), key(":add"), desc("Create and add new instance")))
+	lines = append(lines, fmt.Sprintf("    %s  %s  %s   %s", key(":chain"), key(":dep"), key(":depends"), desc("Add dependent task")))
+	lines = append(lines, fmt.Sprintf("    %s  %s      %s", key(":D"), key(":remove"), desc("Remove instance (keeps branch)")))
+	lines = append(lines, fmt.Sprintf("    %s            %s", key(":kill"), desc("Force kill and remove instance")))
+	lines = append(lines, fmt.Sprintf("    %s  %s       %s", key(":C"), key(":clear"), desc("Remove all completed instances")))
+	lines = append(lines, "")
 	lines = append(lines, "")
 
 	// View Commands section
 	lines = append(lines, section("View Commands"))
-	lines = append(lines, fmt.Sprintf("  %s %s       %s", key(":d"), key(":diff"), desc("Toggle diff preview panel")))
-	lines = append(lines, fmt.Sprintf("  %s %s      %s", key(":m"), key(":stats"), desc("Toggle metrics panel")))
-	lines = append(lines, fmt.Sprintf("  %s %s  %s", key(":c"), key(":conflicts"), desc("Toggle conflict view")))
-	lines = append(lines, fmt.Sprintf("  %s %s     %s", key(":f"), key(":filter"), desc("Open filter panel")))
-	lines = append(lines, fmt.Sprintf("  %s           %s", key(":tmux"), desc("Show tmux attach command")))
-	lines = append(lines, fmt.Sprintf("  %s %s         %s", key(":r"), key(":pr"), desc("Show PR creation command")))
+	lines = append(lines, fmt.Sprintf("    %s  %s        %s", key(":d"), key(":diff"), desc("Toggle diff preview panel")))
+	lines = append(lines, fmt.Sprintf("    %s  %s       %s", key(":m"), key(":stats"), desc("Toggle metrics panel")))
+	lines = append(lines, fmt.Sprintf("    %s  %s   %s", key(":c"), key(":conflicts"), desc("Toggle conflict view")))
+	lines = append(lines, fmt.Sprintf("    %s  %s      %s", key(":f"), key(":filter"), desc("Open filter panel")))
+	lines = append(lines, fmt.Sprintf("    %s            %s", key(":tmux"), desc("Show tmux attach command")))
+	lines = append(lines, fmt.Sprintf("    %s  %s          %s", key(":r"), key(":pr"), desc("Show PR creation command")))
+	lines = append(lines, "")
 	lines = append(lines, "")
 
 	// Terminal section
 	lines = append(lines, section("Terminal Pane"))
-	lines = append(lines, fmt.Sprintf("  %s %s      %s", key("`"), key(":term"), desc("Toggle terminal pane")))
-	lines = append(lines, fmt.Sprintf("  %s             %s", key(":t"), desc("Focus terminal for typing")))
-	lines = append(lines, fmt.Sprintf("  %s         %s", key("Ctrl+]"), desc("Exit terminal mode")))
-	lines = append(lines, fmt.Sprintf("  %s    %s", key("Ctrl+Shift+T"), desc("Switch terminal directory")))
+	lines = append(lines, fmt.Sprintf("    %s  %s       %s", key("`"), key(":term"), desc("Toggle terminal pane")))
+	lines = append(lines, fmt.Sprintf("    %s              %s", key(":t"), desc("Focus terminal for typing")))
+	lines = append(lines, fmt.Sprintf("    %s          %s", key("Ctrl+]"), desc("Exit terminal mode")))
+	lines = append(lines, fmt.Sprintf("    %s     %s", key("Ctrl+Shift+T"), desc("Switch terminal directory")))
+	lines = append(lines, "")
 	lines = append(lines, "")
 
 	// Input Mode section
 	lines = append(lines, section("Input Mode"))
-	lines = append(lines, fmt.Sprintf("  %s %s        %s", key("i"), key("Enter"), desc("Enter input mode (talk to Claude)")))
-	lines = append(lines, fmt.Sprintf("  %s         %s", key("Ctrl+]"), desc("Exit input mode")))
+	lines = append(lines, fmt.Sprintf("    %s  %s         %s", key("i"), key("Enter"), desc("Enter input mode (talk to Claude)")))
+	lines = append(lines, fmt.Sprintf("    %s          %s", key("Ctrl+]"), desc("Exit input mode")))
+	lines = append(lines, "")
 	lines = append(lines, "")
 
 	// Search section
 	lines = append(lines, section("Search"))
-	lines = append(lines, fmt.Sprintf("  %s             %s", key("/"), desc("Start search")))
-	lines = append(lines, fmt.Sprintf("  %s %s           %s", key("n"), key("N"), desc("Next / previous match")))
-	lines = append(lines, fmt.Sprintf("  %s        %s", key("Ctrl+/"), desc("Clear search")))
-	lines = append(lines, fmt.Sprintf("  %s      %s", key("r:pattern"), desc("Use regex search")))
+	lines = append(lines, fmt.Sprintf("    %s              %s", key("/"), desc("Start search")))
+	lines = append(lines, fmt.Sprintf("    %s  %s            %s", key("n"), key("N"), desc("Next / previous match")))
+	lines = append(lines, fmt.Sprintf("    %s         %s", key("Ctrl+/"), desc("Clear search")))
+	lines = append(lines, fmt.Sprintf("    %s       %s", key("r:pattern"), desc("Use regex search")))
+	lines = append(lines, "")
 	lines = append(lines, "")
 
 	// Session section
 	lines = append(lines, section("Session"))
-	lines = append(lines, fmt.Sprintf("  %s %s       %s", key(":h"), key(":help"), desc("Toggle this help panel")))
-	lines = append(lines, fmt.Sprintf("  %s %s       %s", key(":q"), key(":quit"), desc("Quit (instances continue in tmux)")))
-	lines = append(lines, fmt.Sprintf("  %s              %s", key("?"), desc("Quick toggle help")))
+	lines = append(lines, fmt.Sprintf("    %s  %s        %s", key(":h"), key(":help"), desc("Toggle this help panel")))
+	lines = append(lines, fmt.Sprintf("    %s  %s        %s", key(":q"), key(":quit"), desc("Quit (instances continue in tmux)")))
+	lines = append(lines, fmt.Sprintf("    %s               %s", key("?"), desc("Quick toggle help")))
 
 	// Calculate visible lines based on terminal height
 	maxLines := m.terminalManager.Height() - 10
