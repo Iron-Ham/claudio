@@ -7,15 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-01-13
+
+This release introduces **Triple-Shot Mode** - a powerful new execution strategy that runs three Claude instances in parallel on the same task, then uses a fourth "judge" instance to evaluate all solutions and pick the best approach.
+
 ### Added
 
-- **Triple-Shot Mode** - New `claudio tripleshot` command runs three Claude instances in parallel on the same task, then uses a fourth "judge" instance to evaluate all solutions and determine the best approach. Supports `--auto-approve` flag and provides a specialized TUI showing attempt status, judge evaluation, and results
+- **Triple-Shot Mode** (Experimental) - New `claudio tripleshot` command runs three Claude instances in parallel on the same task, then uses a fourth "judge" instance to evaluate all solutions and determine the best approach. Supports `--auto-approve` flag and provides a specialized TUI showing attempt status, judge evaluation, and results
 - **Configurable Worktree Directory** - Users can now configure where Claudio creates git worktrees via `paths.worktree_dir` in config. Supports absolute paths, relative paths, and `~` home directory expansion. Available in interactive config (`claudio config`) under the new "Paths" category.
 - **Expanded Instance Names in Sidebar** - When intelligent naming is enabled, the selected instance in the sidebar now expands to show up to 50 characters of its display name (with wrapping if needed), making it easier to identify active tasks without truncation
 
 ### Fixed
 
-- **Intelligent Naming Triggers Immediately** - Instance renaming now triggers immediately when an instance starts, using only the task description. Previously required waiting for 200+ bytes of Claude output which could fail silently.
+- **Intelligent Naming Triggers Immediately** (Experimental) - Instance renaming now triggers immediately when an instance starts, using only the task description. Previously required waiting for 200+ bytes of Claude output which could fail silently.
 - **Cleanup Command Respects Worktree Config** - The `claudio cleanup` command and stale resource warnings now correctly use the configured worktree directory instead of the hardcoded default
 - **TUI Scrollback Stability** - Fixed output display flashing and scroll position jumping when using differential capture optimization. Visible-only captures no longer write to the output buffer, preventing the display from rapidly alternating between short (visible-only) and full (scrollback) content
 
@@ -269,6 +273,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.5.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.2.0
