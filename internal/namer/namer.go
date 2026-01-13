@@ -24,7 +24,6 @@ type RenameCallback func(instanceID, newName string)
 type renameRequest struct {
 	InstanceID string
 	Task       string
-	Output     string
 }
 
 // Namer manages intelligent instance renaming using LLM summarization.
@@ -92,9 +91,9 @@ func (n *Namer) Stop() {
 	}
 }
 
-// RequestRename queues an instance for renaming.
+// RequestRename queues an instance for renaming based on its task description.
 // This is non-blocking; if the queue is full, the request is dropped.
-func (n *Namer) RequestRename(instanceID, task, output string) {
+func (n *Namer) RequestRename(instanceID, task string) {
 	// Skip if already renamed
 	n.mu.RLock()
 	if n.renamed[instanceID] {
@@ -108,7 +107,6 @@ func (n *Namer) RequestRename(instanceID, task, output string) {
 	case n.pending <- renameRequest{
 		InstanceID: instanceID,
 		Task:       task,
-		Output:     output,
 	}:
 	default:
 		if n.logger != nil {
@@ -170,7 +168,7 @@ func (n *Namer) processRename(req renameRequest) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	name, err := n.client.Summarize(ctx, req.Task, req.Output)
+	name, err := n.client.Summarize(ctx, req.Task)
 	if err != nil {
 		if n.logger != nil {
 			n.logger.Warn("failed to generate instance name",

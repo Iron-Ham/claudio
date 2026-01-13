@@ -820,6 +820,11 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 		inst.Metrics.StartTime = now
 	}
 
+	// Request intelligent naming if namer is available and instance not manually named
+	if o.namer != nil && !inst.ManuallyNamed {
+		o.namer.RequestRename(inst.ID, inst.Task)
+	}
+
 	// Log instance started
 	if o.logger != nil {
 		o.logger.Info("instance started",
@@ -1171,22 +1176,13 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 func (o *Orchestrator) newInstanceManager(instanceID, workdir, task string) *instance.Manager {
 	cfg := o.instanceManagerConfig()
 
-	// Build rename callback if namer is available
-	var renameCallback instance.RenameCallback
-	if o.namer != nil {
-		renameCallback = func(instID, instTask, output string) {
-			o.namer.RequestRename(instID, instTask, output)
-		}
-	}
-
 	mgr := instance.NewManagerWithDeps(instance.ManagerOptions{
-		ID:             instanceID,
-		SessionID:      o.sessionID,
-		WorkDir:        workdir,
-		Task:           task,
-		Config:         cfg,
-		StateMonitor:   o.stateMonitor,
-		RenameCallback: renameCallback,
+		ID:           instanceID,
+		SessionID:    o.sessionID,
+		WorkDir:      workdir,
+		Task:         task,
+		Config:       cfg,
+		StateMonitor: o.stateMonitor,
 		// LifecycleManager not set - instances use internal Start/Stop/Reconnect
 	})
 

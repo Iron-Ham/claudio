@@ -10,17 +10,17 @@ import (
 
 // mockClient implements Client for testing.
 type mockClient struct {
-	summarizeFunc func(ctx context.Context, task, output string) (string, error)
+	summarizeFunc func(ctx context.Context, task string) (string, error)
 	callCount     int
 	mu            sync.Mutex
 }
 
-func (m *mockClient) Summarize(ctx context.Context, task, output string) (string, error) {
+func (m *mockClient) Summarize(ctx context.Context, task string) (string, error) {
 	m.mu.Lock()
 	m.callCount++
 	m.mu.Unlock()
 	if m.summarizeFunc != nil {
-		return m.summarizeFunc(ctx, task, output)
+		return m.summarizeFunc(ctx, task)
 	}
 	return "Generated name", nil
 }
@@ -44,7 +44,7 @@ func TestNamer_RequestRename_Success(t *testing.T) {
 	namer.Start()
 	defer namer.Stop()
 
-	namer.RequestRename("inst-1", "Fix authentication bug", "Reading auth.go...")
+	namer.RequestRename("inst-1", "Fix authentication bug")
 
 	// Wait for callback with timeout
 	done := make(chan struct{})
@@ -87,9 +87,9 @@ func TestNamer_RequestRename_SkipsDuplicate(t *testing.T) {
 	defer namer.Stop()
 
 	// Request rename for same instance multiple times
-	namer.RequestRename("inst-1", "Task 1", "Output 1")
-	namer.RequestRename("inst-1", "Task 1", "Output 2")
-	namer.RequestRename("inst-1", "Task 1", "Output 3")
+	namer.RequestRename("inst-1", "Task 1")
+	namer.RequestRename("inst-1", "Task 1")
+	namer.RequestRename("inst-1", "Task 1")
 
 	// Wait for processing
 	time.Sleep(time.Second)
@@ -106,7 +106,7 @@ func TestNamer_RequestRename_SkipsDuplicate(t *testing.T) {
 
 func TestNamer_RequestRename_APIError(t *testing.T) {
 	client := &mockClient{
-		summarizeFunc: func(_ context.Context, _, _ string) (string, error) {
+		summarizeFunc: func(_ context.Context, _ string) (string, error) {
 			return "", errors.New("API error")
 		},
 	}
@@ -120,7 +120,7 @@ func TestNamer_RequestRename_APIError(t *testing.T) {
 	namer.Start()
 	defer namer.Stop()
 
-	namer.RequestRename("inst-1", "Task", "Output")
+	namer.RequestRename("inst-1", "Task")
 
 	// Wait for processing
 	time.Sleep(time.Second)
@@ -148,7 +148,7 @@ func TestNamer_IsRenamed(t *testing.T) {
 	}
 
 	// Request rename
-	namer.RequestRename("inst-1", "Task", "Output")
+	namer.RequestRename("inst-1", "Task")
 
 	// Wait for processing
 	time.Sleep(time.Second)
@@ -175,7 +175,7 @@ func TestNamer_Reset(t *testing.T) {
 	defer namer.Stop()
 
 	// First rename
-	namer.RequestRename("inst-1", "Task 1", "Output 1")
+	namer.RequestRename("inst-1", "Task 1")
 	time.Sleep(500 * time.Millisecond)
 
 	// Reset the renamed state
@@ -187,7 +187,7 @@ func TestNamer_Reset(t *testing.T) {
 	}
 
 	// Second rename should work
-	namer.RequestRename("inst-1", "Task 2", "Output 2")
+	namer.RequestRename("inst-1", "Task 2")
 	time.Sleep(time.Second)
 
 	mu.Lock()
@@ -201,7 +201,7 @@ func TestNamer_Reset(t *testing.T) {
 
 func TestNamer_MultipleInstances(t *testing.T) {
 	client := &mockClient{
-		summarizeFunc: func(_ context.Context, task, _ string) (string, error) {
+		summarizeFunc: func(_ context.Context, task string) (string, error) {
 			// Return different names based on task
 			return "Name for: " + task[:10], nil
 		},
@@ -223,9 +223,9 @@ func TestNamer_MultipleInstances(t *testing.T) {
 	namer.Start()
 	defer namer.Stop()
 
-	namer.RequestRename("inst-1", "First task description", "Output 1")
-	namer.RequestRename("inst-2", "Second task description", "Output 2")
-	namer.RequestRename("inst-3", "Third task description", "Output 3")
+	namer.RequestRename("inst-1", "First task description")
+	namer.RequestRename("inst-2", "Second task description")
+	namer.RequestRename("inst-3", "Third task description")
 
 	// Wait for all callbacks
 	done := make(chan struct{})
@@ -256,7 +256,7 @@ func TestNamer_MultipleInstances(t *testing.T) {
 
 func TestNamer_StopGracefully(t *testing.T) {
 	client := &mockClient{
-		summarizeFunc: func(_ context.Context, _, _ string) (string, error) {
+		summarizeFunc: func(_ context.Context, _ string) (string, error) {
 			time.Sleep(100 * time.Millisecond)
 			return "Name", nil
 		},
@@ -265,7 +265,7 @@ func TestNamer_StopGracefully(t *testing.T) {
 	namer.Start()
 
 	// Queue some requests
-	namer.RequestRename("inst-1", "Task 1", "Output 1")
+	namer.RequestRename("inst-1", "Task 1")
 
 	// Stop should not hang
 	done := make(chan struct{})
@@ -291,7 +291,7 @@ func TestNamer_NoCallback(t *testing.T) {
 	defer namer.Stop()
 
 	// Should not panic when callback is nil
-	namer.RequestRename("inst-1", "Task", "Output")
+	namer.RequestRename("inst-1", "Task")
 
 	time.Sleep(500 * time.Millisecond)
 
@@ -304,7 +304,7 @@ func TestNamer_NoCallback(t *testing.T) {
 func TestNamer_QueueFull(t *testing.T) {
 	// Create a slow client to back up the queue
 	client := &mockClient{
-		summarizeFunc: func(_ context.Context, _, _ string) (string, error) {
+		summarizeFunc: func(_ context.Context, _ string) (string, error) {
 			time.Sleep(time.Second)
 			return "Name", nil
 		},
@@ -315,7 +315,7 @@ func TestNamer_QueueFull(t *testing.T) {
 
 	// Fill the queue (pendingQueueSize is 20)
 	for range 30 {
-		namer.RequestRename("inst-overflow", "Task", "Output")
+		namer.RequestRename("inst-overflow", "Task")
 	}
 
 	// Should not block or panic
@@ -350,7 +350,7 @@ func TestNamer_Start_DoubleStartSafe(t *testing.T) {
 		wg.Done()
 	})
 
-	namer.RequestRename("inst-1", "Task", "Output")
+	namer.RequestRename("inst-1", "Task")
 
 	done := make(chan struct{})
 	go func() {
