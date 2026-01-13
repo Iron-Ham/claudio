@@ -164,9 +164,20 @@ func (m *Model) handleInlinePlanObjectiveSubmit(objective string) {
 	if gm != nil {
 		planGroup := gm.CreateGroup(fmt.Sprintf("Plan: %s", truncateString(objective, 30)), nil)
 		m.inlinePlan.GroupID = planGroup.ID
-	}
 
-	m.infoMessage = "Planning started. The plan will appear when ready..."
+		// If in tripleshot mode, register this group for sidebar display
+		if m.tripleShot != nil {
+			m.tripleShot.PlanGroupIDs = append(m.tripleShot.PlanGroupIDs, planGroup.ID)
+		}
+		m.infoMessage = "Planning started. The plan will appear when ready..."
+	} else {
+		// Group manager unavailable - plan will still execute but won't be organized in a group
+		if m.logger != nil {
+			m.logger.Warn("group manager unavailable, plan will not appear in group view",
+				"objective", objective)
+		}
+		m.infoMessage = "Planning started (group view unavailable)..."
+	}
 	m.activeTab = m.findInstanceIndex(inst.ID)
 	m.ensureActiveVisible()
 }

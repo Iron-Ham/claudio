@@ -988,13 +988,12 @@ func cmdPlan(deps Dependencies) Result {
 		return Result{ErrorMessage: "Plan mode is disabled. Enable it in :config under Experimental"}
 	}
 
-	// Don't allow starting plan mode if already in a special mode
+	// Don't allow starting plan mode if already in ultraplan mode
 	if deps.IsUltraPlanMode() {
 		return Result{ErrorMessage: "Cannot start plan mode while in ultraplan mode"}
 	}
-	if deps.IsTripleShotMode() {
-		return Result{ErrorMessage: "Cannot start plan mode while in triple-shot mode"}
-	}
+
+	// Plan mode is allowed in triple-shot mode - plans appear as separate groups in the sidebar
 
 	// Signal to the model that we want to enter plan mode
 	// The model will handle prompting for the objective if not provided
@@ -1016,12 +1015,14 @@ func cmdUltraPlan(deps Dependencies, args string) Result {
 		return Result{ErrorMessage: "UltraPlan mode is disabled. Enable it in :config under Experimental"}
 	}
 
-	// Don't allow starting ultraplan if already in a special mode
+	// Don't allow starting another ultraplan if already in ultraplan mode
 	if deps.IsUltraPlanMode() {
 		return Result{ErrorMessage: "Already in ultraplan mode"}
 	}
+	// Don't allow ultraplan in triple-shot mode - ultraplan has its own dedicated UI
+	// Use :plan instead for simpler planning within triple-shot
 	if deps.IsTripleShotMode() {
-		return Result{ErrorMessage: "Cannot start ultraplan while in triple-shot mode"}
+		return Result{ErrorMessage: "Cannot start ultraplan while in triple-shot mode. Use :plan instead"}
 	}
 
 	// Parse arguments
