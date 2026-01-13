@@ -733,6 +733,8 @@ func TestAllCommandsRecognized(t *testing.T) {
 		"termdir invoke", "termdir invocation",
 		// Ultraplan
 		"cancel",
+		// Plan mode
+		"plan",
 		// Help
 		"h", "help", "q", "quit",
 	}
@@ -1041,6 +1043,93 @@ func TestTripleShotCommand(t *testing.T) {
 			if result.StartTripleShot == nil || !*result.StartTripleShot {
 				t.Errorf("alias %q should start triple-shot mode", alias)
 			}
+		}
+
+		viper.Reset()
+	})
+}
+
+// TestPlanCommand tests the plan command with config check
+func TestPlanCommand(t *testing.T) {
+	t.Run("disabled by default", func(t *testing.T) {
+		// Reset viper to ensure clean state
+		viper.Reset()
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("plan", deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error when plan mode is disabled")
+		}
+		if result.ErrorMessage != "Plan mode is disabled. Enable it in :config under Experimental" {
+			t.Errorf("unexpected error message: %q", result.ErrorMessage)
+		}
+		if result.StartPlanMode != nil {
+			t.Error("StartPlanMode should be nil when disabled")
+		}
+	})
+
+	t.Run("enabled via config", func(t *testing.T) {
+		// Reset and enable plan mode
+		viper.Reset()
+		viper.Set("experimental.inline_plan", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("plan", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartPlanMode == nil || !*result.StartPlanMode {
+			t.Error("expected StartPlanMode to be true")
+		}
+		if result.InfoMessage != "Enter an objective for plan mode" {
+			t.Errorf("unexpected info message: %q", result.InfoMessage)
+		}
+
+		// Clean up
+		viper.Reset()
+	})
+
+	t.Run("blocked in ultraplan mode", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_plan", true)
+
+		h := New()
+		deps := newMockDeps()
+		deps.ultraPlanMode = true
+
+		result := h.Execute("plan", deps)
+
+		if result.ErrorMessage != "Cannot start plan mode while in ultraplan mode" {
+			t.Errorf("expected ultraplan mode error, got: %q", result.ErrorMessage)
+		}
+		if result.StartPlanMode != nil {
+			t.Error("StartPlanMode should be nil when blocked")
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("blocked when in triple-shot mode", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_plan", true)
+
+		h := New()
+		deps := newMockDeps()
+		deps.tripleShotMode = true
+
+		result := h.Execute("plan", deps)
+
+		if result.ErrorMessage != "Cannot start plan mode while in triple-shot mode" {
+			t.Errorf("expected triple-shot mode error, got: %q", result.ErrorMessage)
+		}
+		if result.StartPlanMode != nil {
+			t.Error("StartPlanMode should be nil when blocked")
 		}
 
 		viper.Reset()
