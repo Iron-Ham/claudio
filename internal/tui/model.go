@@ -741,6 +741,12 @@ func (m Model) IsAddingTask() bool {
 	return m.addingTask
 }
 
+// IntelligentNamingEnabled returns whether intelligent naming is enabled in config
+func (m Model) IntelligentNamingEnabled() bool {
+	cfg := config.Get()
+	return cfg.Experimental.IntelligentNaming
+}
+
 // -----------------------------------------------------------------------------
 // command.Dependencies interface implementation
 // These methods implement the command.Dependencies interface, allowing the Model
