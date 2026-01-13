@@ -72,8 +72,8 @@ func TestDefaultMonitorConfig(t *testing.T) {
 		t.Errorf("ActivityTimeoutMinutes = %d, want 30", cfg.ActivityTimeoutMinutes)
 	}
 
-	if cfg.CompletionTimeoutMinutes != 120 {
-		t.Errorf("CompletionTimeoutMinutes = %d, want 120", cfg.CompletionTimeoutMinutes)
+	if cfg.CompletionTimeoutMinutes != 0 {
+		t.Errorf("CompletionTimeoutMinutes = %d, want 0 (disabled)", cfg.CompletionTimeoutMinutes)
 	}
 
 	if !cfg.StaleDetection {

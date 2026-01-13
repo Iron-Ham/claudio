@@ -32,7 +32,7 @@ type MonitorConfig struct {
 func DefaultMonitorConfig() MonitorConfig {
 	return MonitorConfig{
 		ActivityTimeoutMinutes:   30,   // 30 minutes of no activity
-		CompletionTimeoutMinutes: 120,  // 2 hours max runtime
+		CompletionTimeoutMinutes: 0,    // Disabled by default (no max runtime limit)
 		StaleDetection:           true, // Enable stale detection
 		StaleThreshold:           3000, // ~5 minutes at 100ms capture interval
 	}

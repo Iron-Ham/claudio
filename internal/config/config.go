@@ -226,8 +226,8 @@ func Default() *Config {
 			CaptureIntervalMs:        100,
 			TmuxWidth:                200,
 			TmuxHeight:               50,
-			ActivityTimeoutMinutes:   30,  // 30 minutes of no activity
-			CompletionTimeoutMinutes: 120, // 2 hours max runtime
+			ActivityTimeoutMinutes:   30, // 30 minutes of no activity
+			CompletionTimeoutMinutes: 0,  // Disabled by default (no max runtime limit)
 			StaleDetection:           true,
 		},
 		Branch: BranchConfig{

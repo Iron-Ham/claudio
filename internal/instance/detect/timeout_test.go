@@ -31,8 +31,8 @@ func TestDefaultTimeoutConfig(t *testing.T) {
 	if cfg.ActivityTimeout != 30*time.Minute {
 		t.Errorf("ActivityTimeout = %v, want 30m", cfg.ActivityTimeout)
 	}
-	if cfg.CompletionTimeout != 120*time.Minute {
-		t.Errorf("CompletionTimeout = %v, want 120m", cfg.CompletionTimeout)
+	if cfg.CompletionTimeout != 0 {
+		t.Errorf("CompletionTimeout = %v, want 0 (disabled)", cfg.CompletionTimeout)
 	}
 	if cfg.StaleThreshold != 3000 {
 		t.Errorf("StaleThreshold = %d, want 3000", cfg.StaleThreshold)
@@ -284,8 +284,19 @@ func TestTimeoutDetector_EnabledChecks(t *testing.T) {
 		wantStale  bool
 	}{
 		{
-			name:       "all enabled",
+			name:       "default config (completion disabled)",
 			cfg:        DefaultTimeoutConfig(),
+			wantActive: true,
+			wantComp:   false, // CompletionTimeout disabled by default
+			wantStale:  true,
+		},
+		{
+			name: "all enabled",
+			cfg: TimeoutConfig{
+				ActivityTimeout:   30 * time.Minute,
+				CompletionTimeout: 120 * time.Minute,
+				StaleThreshold:    3000,
+			},
 			wantActive: true,
 			wantComp:   true,
 			wantStale:  true,
