@@ -111,9 +111,20 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 
 // toggleGroupedView toggles the grouped instance view on/off
 func (m *Model) toggleGroupedView() {
-	// This will be implemented by Group 4's work
-	// For now, just show a message
-	m.infoMessage = "Grouped view toggle (requires Group 4 implementation)"
+	// Toggle between flat and grouped sidebar modes
+	if m.sidebarMode == view.SidebarModeFlat {
+		// Switch to grouped mode
+		m.sidebarMode = view.SidebarModeGrouped
+		// Initialize group view state if needed
+		if m.groupViewState == nil {
+			m.groupViewState = view.NewGroupViewState()
+		}
+		m.infoMessage = "Grouped view enabled"
+	} else {
+		// Switch to flat mode
+		m.sidebarMode = view.SidebarModeFlat
+		m.infoMessage = "Grouped view disabled"
+	}
 }
 
 // handleInlinePlanObjectiveSubmit handles submission of the plan objective.

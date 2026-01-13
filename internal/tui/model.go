@@ -187,6 +187,10 @@ type Model struct {
 	// Sidebar pagination
 	sidebarScrollOffset int // Index of the first visible instance in sidebar
 
+	// Grouped sidebar view state
+	groupViewState *view.GroupViewState // State for group collapse/selection (nil until grouped mode is used)
+	sidebarMode    view.SidebarMode     // Current sidebar display mode (flat or grouped)
+
 	// Resource metrics display
 	showStats bool // When true, show the stats panel
 
@@ -227,6 +231,18 @@ func (m Model) IsPlanEditorActive() bool {
 // IsPlanEditorInlineMode returns true if the plan editor is in inline mode (from :plan command)
 func (m Model) IsPlanEditorInlineMode() bool {
 	return m.planEditor != nil && m.planEditor.inlineMode
+}
+
+// GroupViewState returns the current group view state for the sidebar.
+// Implements view.SidebarState interface.
+func (m Model) GroupViewState() *view.GroupViewState {
+	return m.groupViewState
+}
+
+// SidebarMode returns the current sidebar display mode.
+// Implements view.SidebarState interface.
+func (m Model) SidebarMode() view.SidebarMode {
+	return m.sidebarMode
 }
 
 // enterPlanEditor initializes the plan editor state when entering edit mode
