@@ -89,6 +89,9 @@ type Result struct {
 	UltraPlanMultiPass *bool   // If true, use multi-pass planning
 	UltraPlanFromFile  *string // If set, load plan from this file path
 	UltraPlanObjective *string // Optional objective (if not loading from file)
+
+	// View transition - Grouped View
+	ToggleGroupedView *bool // Request to toggle grouped instance view on/off
 }
 
 // CommandInfo contains metadata about a command for help display.
@@ -240,6 +243,11 @@ func (h *Handler) registerCommands() {
 	// Plan mode commands
 	h.commands["plan"] = cmdPlan
 
+	// Group management commands
+	h.argCommands["group"] = func(deps Dependencies, args string) Result {
+		return executeGroupCommand(args, deps)
+	}
+
 	// Help commands
 	h.commands["h"] = cmdHelp
 	h.commands["help"] = cmdHelp
@@ -302,6 +310,18 @@ func (h *Handler) buildCategories() {
 			Commands: []CommandInfo{
 				{ShortKey: "h", LongKey: "help", Description: "Toggle help panel", Category: "session"},
 				{ShortKey: "q", LongKey: "quit", Description: "Quit Claudio", Category: "session"},
+			},
+		},
+		{
+			Name: "Group Management",
+			Commands: []CommandInfo{
+				{ShortKey: "", LongKey: "group create", Description: "Create a new empty group", Category: "group"},
+				{ShortKey: "", LongKey: "group add", Description: "Add instance to a group", Category: "group"},
+				{ShortKey: "", LongKey: "group remove", Description: "Remove instance from its group", Category: "group"},
+				{ShortKey: "", LongKey: "group move", Description: "Move instance to a different group", Category: "group"},
+				{ShortKey: "", LongKey: "group order", Description: "Reorder group execution sequence", Category: "group"},
+				{ShortKey: "", LongKey: "group delete", Description: "Delete an empty group", Category: "group"},
+				{ShortKey: "", LongKey: "group show", Description: "Toggle grouped instance view on/off", Category: "group"},
 			},
 		},
 	}
