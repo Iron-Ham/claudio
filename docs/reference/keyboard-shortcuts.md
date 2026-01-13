@@ -6,7 +6,6 @@ Quick reference for TUI keyboard shortcuts.
 
 | Key | Action |
 |-----|--------|
-| `1-9` | Select instance by number |
 | `Tab` | Next instance |
 | `Shift+Tab` | Previous instance |
 | `l` / `→` | Next instance |

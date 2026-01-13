@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Completion Timeout Disabled by Default** - The `completion_timeout_minutes` setting now defaults to `0` (disabled) instead of `120` (2 hours). This prevents long-running tasks and UltraPlans from being interrupted. Users can still enable it by setting a non-zero value in their config.
+- **Simplified Instance Navigation** - Removed 1-9 number key shortcuts for instance selection; use Tab/Shift+Tab or h/l to navigate between instances
 
 ### Fixed
 

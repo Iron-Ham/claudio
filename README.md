@@ -101,7 +101,6 @@ claudio add "Update API documentation"
 
 | Key | Action |
 |-----|--------|
-| `1-9` | Select instance by number |
 | `Tab` / `l` / `→` | Next instance |
 | `Shift+Tab` / `h` / `←` | Previous instance |
 | `a` | Add new instance |

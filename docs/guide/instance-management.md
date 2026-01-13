@@ -92,7 +92,7 @@ claudio remove <instance-id> --force
 
 ### In the TUI
 
-- **Select**: Press `1-9` or navigate with `Tab`/`h`/`l`
+- **Select**: Navigate with `Tab`/`Shift+Tab` or `h`/`l`
 - **Scroll**: Use `j`/`k` or arrow keys
 - **Jump to latest**: Press `G`
 - **Search**: Press `/` and enter a pattern
