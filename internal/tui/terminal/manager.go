@@ -1,6 +1,24 @@
 // Package terminal provides terminal pane management for the TUI.
 package terminal
 
+import (
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/Iron-Ham/claudio/internal/logging"
+)
+
+// DirMode indicates which directory the terminal pane is using.
+type DirMode int
+
+const (
+	// DirInvocation means the terminal is in the directory where Claudio was invoked.
+	DirInvocation DirMode = iota
+	// DirWorktree means the terminal is in the active instance's worktree directory.
+	DirWorktree
+)
+
 // LayoutMode represents the terminal pane's visibility state.
 type LayoutMode int
 
@@ -49,8 +67,16 @@ type PaneDimensions struct {
 	TerminalPaneContentWidth int
 }
 
-// Manager tracks terminal dimensions and calculates pane layouts.
-// It centralizes all terminal sizing and pane calculation logic.
+// ActiveInstanceProvider returns the current active instance's worktree path.
+// This interface decouples the terminal manager from the orchestrator.
+type ActiveInstanceProvider interface {
+	// WorktreePath returns the worktree path of the active instance, or empty string if none.
+	WorktreePath() string
+}
+
+// Manager tracks terminal dimensions, manages the terminal process, and calculates pane layouts.
+// It centralizes all terminal pane concerns including process lifecycle, directory mode,
+// output capture, and key forwarding.
 type Manager struct {
 	// Terminal window dimensions
 	width  int
@@ -60,6 +86,15 @@ type Manager struct {
 	paneHeight int        // Height of the terminal pane in lines
 	layout     LayoutMode // Current layout mode (hidden/visible)
 	focused    bool       // Whether the terminal pane has input focus
+
+	// Terminal process management
+	process       *Process // Manages the terminal tmux session (nil until first toggle)
+	invocationDir string   // Directory where Claudio was invoked (for terminal)
+	dirMode       DirMode  // Which directory the terminal is in
+	output        string   // Cached terminal output
+
+	// Logger for error reporting
+	logger *logging.Logger
 }
 
 // NewManager creates a new TerminalManager with default settings.
@@ -68,7 +103,37 @@ func NewManager() *Manager {
 		paneHeight: DefaultPaneHeight,
 		layout:     LayoutHidden,
 		focused:    false,
+		dirMode:    DirInvocation,
 	}
+}
+
+// ManagerConfig contains configuration options for creating a Manager.
+type ManagerConfig struct {
+	InvocationDir string
+	Logger        *logging.Logger
+}
+
+// NewManagerWithConfig creates a new Manager with the given configuration.
+func NewManagerWithConfig(cfg ManagerConfig) *Manager {
+	return &Manager{
+		paneHeight:    DefaultPaneHeight,
+		layout:        LayoutHidden,
+		focused:       false,
+		dirMode:       DirInvocation,
+		invocationDir: cfg.InvocationDir,
+		logger:        cfg.Logger,
+	}
+}
+
+// SetInvocationDir sets the invocation directory for the terminal.
+// This should be called before the first Toggle if not using NewManagerWithConfig.
+func (m *Manager) SetInvocationDir(dir string) {
+	m.invocationDir = dir
+}
+
+// SetLogger sets the logger for the terminal manager.
+func (m *Manager) SetLogger(logger *logging.Logger) {
+	m.logger = logger
 }
 
 // SetSize updates the terminal window dimensions.
@@ -222,4 +287,403 @@ func (m *Manager) effectivePaneHeight() int {
 // Positive delta increases height, negative decreases it.
 func (m *Manager) ResizePaneHeight(delta int) {
 	m.paneHeight = max(m.paneHeight+delta, MinPaneHeight)
+}
+
+// -----------------------------------------------------------------------------
+// Process management methods
+// These methods manage the terminal's tmux process lifecycle.
+// -----------------------------------------------------------------------------
+
+// Toggle toggles the terminal pane visibility and manages the process lifecycle.
+// If turning on and the process doesn't exist, it will be created lazily.
+// Returns an error message for fatal errors, and a warning message for non-fatal issues.
+// The sessionID is used to create a unique tmux session name.
+func (m *Manager) Toggle(sessionID string) (errMsg, warnMsg string) {
+	nowVisible := m.ToggleVisibility()
+
+	if nowVisible {
+		// Initialize terminal process if needed (lazy initialization)
+		if m.process == nil {
+			dims := m.GetPaneDimensions(0)
+			m.process = NewProcess(sessionID, m.invocationDir, dims.TerminalPaneContentWidth, dims.TerminalPaneContentHeight)
+		}
+
+		// Start the process if not running
+		if !m.process.IsRunning() {
+			if err := m.process.Start(); err != nil {
+				m.SetLayout(LayoutHidden)
+				return "Failed to start terminal: " + err.Error(), ""
+			}
+		}
+
+		// Set initial directory based on mode
+		targetDir := m.GetDir(nil)
+		if m.process.CurrentDir() != targetDir {
+			if err := m.process.ChangeDirectory(targetDir); err != nil {
+				if m.logger != nil {
+					m.logger.Warn("failed to set initial terminal directory", "target", targetDir, "error", err)
+				}
+				// Terminal is open and functional, just in wrong directory - return as warning
+				return "", "Terminal opened but could not change to target directory"
+			}
+		}
+	}
+
+	return "", ""
+}
+
+// EnterMode enters terminal input mode (keys go to terminal).
+// This is a no-op if the terminal is not visible or no process is running.
+func (m *Manager) EnterMode() {
+	if !m.IsVisible() || m.process == nil || !m.process.IsRunning() {
+		return
+	}
+	m.SetFocused(true)
+}
+
+// ExitMode exits terminal input mode.
+func (m *Manager) ExitMode() {
+	m.SetFocused(false)
+}
+
+// GetDir returns the directory path for the terminal based on current mode.
+// If the mode is DirWorktree and a provider is given, it returns the active instance's worktree path.
+// Falls back to invocation directory if no worktree is available.
+func (m *Manager) GetDir(provider ActiveInstanceProvider) string {
+	if m.dirMode == DirWorktree && provider != nil {
+		if path := provider.WorktreePath(); path != "" {
+			return path
+		}
+	}
+	return m.invocationDir
+}
+
+// SwitchDir toggles between worktree and invocation directory modes.
+// Returns an info message describing the result, or an error message if the directory change failed.
+func (m *Manager) SwitchDir(provider ActiveInstanceProvider) (infoMsg, errMsg string) {
+	if m.dirMode == DirInvocation {
+		m.dirMode = DirWorktree
+	} else {
+		m.dirMode = DirInvocation
+	}
+
+	// Change directory if terminal is running
+	if m.process != nil && m.process.IsRunning() {
+		targetDir := m.GetDir(provider)
+		if err := m.process.ChangeDirectory(targetDir); err != nil {
+			return "", "Failed to change directory: " + err.Error()
+		}
+		if m.dirMode == DirWorktree {
+			return "Terminal: switched to worktree", ""
+		}
+		return "Terminal: switched to invocation directory", ""
+	}
+
+	// Provide feedback even when terminal is not running
+	if m.dirMode == DirWorktree {
+		return "Terminal will use worktree when opened", ""
+	}
+	return "Terminal will use invocation directory when opened", ""
+}
+
+// DirMode returns the current directory mode.
+func (m *Manager) DirMode() DirMode {
+	return m.dirMode
+}
+
+// SetDirMode sets the directory mode.
+func (m *Manager) SetDirMode(mode DirMode) {
+	m.dirMode = mode
+}
+
+// UpdateOutput captures current terminal output.
+func (m *Manager) UpdateOutput() {
+	if m.process == nil || !m.process.IsRunning() {
+		return
+	}
+
+	output, err := m.process.CaptureOutput()
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Warn("failed to capture terminal output", "error", err)
+		}
+		return
+	}
+	m.output = output
+}
+
+// Output returns the cached terminal output.
+func (m *Manager) Output() string {
+	return m.output
+}
+
+// Resize updates the terminal dimensions.
+func (m *Manager) Resize() {
+	if m.process == nil {
+		return
+	}
+
+	// Get content dimensions from manager (accounts for borders, padding, header)
+	dims := m.GetPaneDimensions(0)
+
+	if err := m.process.Resize(dims.TerminalPaneContentWidth, dims.TerminalPaneContentHeight); err != nil {
+		if m.logger != nil {
+			m.logger.Warn("failed to resize terminal", "width", dims.TerminalPaneContentWidth, "height", dims.TerminalPaneContentHeight, "error", err)
+		}
+	}
+}
+
+// Cleanup stops the terminal process (called on quit).
+func (m *Manager) Cleanup() {
+	if m.process != nil {
+		if err := m.process.Stop(); err != nil {
+			if m.logger != nil {
+				m.logger.Warn("failed to cleanup terminal session", "error", err)
+			}
+		}
+	}
+}
+
+// UpdateOnInstanceChange updates terminal directory if in worktree mode.
+// Called when the active instance changes.
+func (m *Manager) UpdateOnInstanceChange(provider ActiveInstanceProvider) string {
+	if m.dirMode != DirWorktree {
+		return ""
+	}
+	if m.process == nil || !m.process.IsRunning() {
+		return ""
+	}
+
+	targetDir := m.GetDir(provider)
+	if m.process.CurrentDir() != targetDir {
+		if err := m.process.ChangeDirectory(targetDir); err != nil {
+			return "Failed to change terminal directory: " + err.Error()
+		}
+	}
+	return ""
+}
+
+// Process returns the underlying terminal process, or nil if not initialized.
+// This is provided for cases where direct process access is needed.
+func (m *Manager) Process() *Process {
+	return m.process
+}
+
+// -----------------------------------------------------------------------------
+// Key sending methods
+// These methods forward key events to the terminal's tmux session.
+// -----------------------------------------------------------------------------
+
+// SendKey sends a key event to the terminal pane's tmux session.
+// This translates tea.KeyMsg to tmux key names.
+func (m *Manager) SendKey(msg tea.KeyMsg) {
+	if m.process == nil || !m.process.IsRunning() {
+		return
+	}
+
+	// Helper to log terminal key send errors
+	logKeyErr := func(op, key string, err error) {
+		if err != nil && m.logger != nil {
+			m.logger.Warn("failed to send key to terminal", "op", op, "key", key, "error", err)
+		}
+	}
+
+	var key string
+	literal := false
+
+	switch msg.Type {
+	// Basic keys
+	case tea.KeyEnter:
+		key = "Enter"
+	case tea.KeyBackspace:
+		key = "BSpace"
+	case tea.KeyTab:
+		key = "Tab"
+	case tea.KeyShiftTab:
+		key = "BTab"
+	case tea.KeySpace:
+		key = " "
+		literal = true
+	case tea.KeyEsc:
+		key = "Escape"
+
+	// Arrow keys
+	case tea.KeyUp:
+		key = "Up"
+	case tea.KeyDown:
+		key = "Down"
+	case tea.KeyRight:
+		key = "Right"
+	case tea.KeyLeft:
+		key = "Left"
+
+	// Navigation keys
+	case tea.KeyPgUp:
+		key = "PageUp"
+	case tea.KeyPgDown:
+		key = "PageDown"
+	case tea.KeyHome:
+		key = "Home"
+	case tea.KeyEnd:
+		key = "End"
+	case tea.KeyDelete:
+		key = "DC"
+	case tea.KeyInsert:
+		key = "IC"
+
+	// Ctrl+letter combinations
+	case tea.KeyCtrlA:
+		key = "C-a"
+	case tea.KeyCtrlB:
+		key = "C-b"
+	case tea.KeyCtrlC:
+		key = "C-c"
+	case tea.KeyCtrlD:
+		key = "C-d"
+	case tea.KeyCtrlE:
+		key = "C-e"
+	case tea.KeyCtrlF:
+		key = "C-f"
+	case tea.KeyCtrlG:
+		key = "C-g"
+	case tea.KeyCtrlH:
+		key = "C-h"
+	case tea.KeyCtrlJ:
+		key = "C-j"
+	case tea.KeyCtrlK:
+		key = "C-k"
+	case tea.KeyCtrlL:
+		key = "C-l"
+	case tea.KeyCtrlN:
+		key = "C-n"
+	case tea.KeyCtrlO:
+		key = "C-o"
+	case tea.KeyCtrlP:
+		key = "C-p"
+	case tea.KeyCtrlQ:
+		key = "C-q"
+	case tea.KeyCtrlR:
+		key = "C-r"
+	case tea.KeyCtrlS:
+		key = "C-s"
+	case tea.KeyCtrlT:
+		key = "C-t"
+	case tea.KeyCtrlU:
+		key = "C-u"
+	case tea.KeyCtrlV:
+		key = "C-v"
+	case tea.KeyCtrlW:
+		key = "C-w"
+	case tea.KeyCtrlX:
+		key = "C-x"
+	case tea.KeyCtrlY:
+		key = "C-y"
+	case tea.KeyCtrlZ:
+		key = "C-z"
+
+	// Function keys
+	case tea.KeyF1:
+		key = "F1"
+	case tea.KeyF2:
+		key = "F2"
+	case tea.KeyF3:
+		key = "F3"
+	case tea.KeyF4:
+		key = "F4"
+	case tea.KeyF5:
+		key = "F5"
+	case tea.KeyF6:
+		key = "F6"
+	case tea.KeyF7:
+		key = "F7"
+	case tea.KeyF8:
+		key = "F8"
+	case tea.KeyF9:
+		key = "F9"
+	case tea.KeyF10:
+		key = "F10"
+	case tea.KeyF11:
+		key = "F11"
+	case tea.KeyF12:
+		key = "F12"
+
+	// Runes (regular characters)
+	case tea.KeyRunes:
+		if len(msg.Runes) > 0 {
+			// Handle Alt+key combinations by sending Escape followed by the key
+			if msg.Alt {
+				key = string(msg.Runes)
+				logKeyErr("SendKey", "Escape", m.process.SendKey("Escape"))
+				logKeyErr("SendLiteral", key, m.process.SendLiteral(key))
+				return
+			}
+			key = string(msg.Runes)
+			literal = true
+		}
+
+	default:
+		// Handle complex key strings (shift+, alt+, ctrl+ combinations)
+		keyStr := msg.String()
+		switch {
+		case strings.HasPrefix(keyStr, "shift+"):
+			baseKey := strings.TrimPrefix(keyStr, "shift+")
+			switch baseKey {
+			case "up":
+				key = "S-Up"
+			case "down":
+				key = "S-Down"
+			case "left":
+				key = "S-Left"
+			case "right":
+				key = "S-Right"
+			case "home":
+				key = "S-Home"
+			case "end":
+				key = "S-End"
+			default:
+				key = keyStr
+			}
+		case strings.HasPrefix(keyStr, "alt+"):
+			baseKey := strings.TrimPrefix(keyStr, "alt+")
+			logKeyErr("SendKey", "Escape", m.process.SendKey("Escape"))
+			if len(baseKey) == 1 {
+				logKeyErr("SendLiteral", baseKey, m.process.SendLiteral(baseKey))
+			} else {
+				logKeyErr("SendKey", baseKey, m.process.SendKey(baseKey))
+			}
+			return
+		case strings.HasPrefix(keyStr, "ctrl+"):
+			baseKey := strings.TrimPrefix(keyStr, "ctrl+")
+			if len(baseKey) == 1 {
+				key = "C-" + baseKey
+			} else {
+				key = keyStr
+			}
+		default:
+			key = keyStr
+			if len(key) == 1 {
+				literal = true
+			}
+		}
+	}
+
+	if key == "" {
+		return
+	}
+
+	var err error
+	if literal {
+		err = m.process.SendLiteral(key)
+	} else {
+		err = m.process.SendKey(key)
+	}
+	logKeyErr("send", key, err)
+}
+
+// SendPaste sends pasted text with bracketed paste sequences.
+func (m *Manager) SendPaste(text string) error {
+	if m.process == nil || !m.process.IsRunning() {
+		return ErrNotRunning
+	}
+	return m.process.SendPaste(text)
 }

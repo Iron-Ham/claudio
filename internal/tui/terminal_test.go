@@ -307,25 +307,27 @@ func TestExitTerminalMode(t *testing.T) {
 
 func TestGetTerminalDir(t *testing.T) {
 	tests := []struct {
-		name            string
-		terminalDirMode TerminalDirMode
-		invocationDir   string
-		expectedDir     string
+		name          string
+		dirMode       terminal.DirMode
+		invocationDir string
+		expectedDir   string
 	}{
 		{
-			name:            "invocation mode returns invocation dir",
-			terminalDirMode: TerminalDirInvocation,
-			invocationDir:   "/home/user/project",
-			expectedDir:     "/home/user/project",
+			name:          "invocation mode returns invocation dir",
+			dirMode:       terminal.DirInvocation,
+			invocationDir: "/home/user/project",
+			expectedDir:   "/home/user/project",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			mgr := terminal.NewManagerWithConfig(terminal.ManagerConfig{
+				InvocationDir: tt.invocationDir,
+			})
+			mgr.SetDirMode(tt.dirMode)
 			m := Model{
-				terminalManager: terminal.NewManager(),
-				terminalDirMode: tt.terminalDirMode,
-				invocationDir:   tt.invocationDir,
+				terminalManager: mgr,
 			}
 
 			got := m.getTerminalDir()

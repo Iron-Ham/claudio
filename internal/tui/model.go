@@ -15,14 +15,28 @@ import (
 )
 
 // TerminalDirMode indicates which directory the terminal pane is using.
-type TerminalDirMode int
+// Deprecated: Use terminal.DirMode instead.
+type TerminalDirMode = terminal.DirMode
 
+// Terminal directory mode constants.
+// Deprecated: Use terminal.DirInvocation and terminal.DirWorktree instead.
 const (
-	// TerminalDirInvocation means the terminal is in the directory where Claudio was invoked.
-	TerminalDirInvocation TerminalDirMode = iota
-	// TerminalDirWorktree means the terminal is in the active instance's worktree directory.
-	TerminalDirWorktree
+	TerminalDirInvocation = terminal.DirInvocation
+	TerminalDirWorktree   = terminal.DirWorktree
 )
+
+// modelInstanceProvider adapts the Model to the terminal.ActiveInstanceProvider interface.
+type modelInstanceProvider struct {
+	model *Model
+}
+
+// WorktreePath returns the worktree path of the active instance.
+func (p modelInstanceProvider) WorktreePath() string {
+	if inst := p.model.activeInstance(); inst != nil {
+		return inst.WorktreePath
+	}
+	return ""
+}
 
 // PlanEditorState holds the state for the interactive plan editor
 type PlanEditorState struct {
@@ -142,11 +156,6 @@ type Model struct {
 	filterRegex      *regexp.Regexp  // Compiled custom filter regex
 	outputScroll     int             // Scroll position in output (for search navigation)
 
-	// Terminal pane state (dimension management delegated to terminalManager)
-	terminalProcess *terminal.Process // Manages the terminal tmux session (nil until first toggle)
-	terminalDirMode TerminalDirMode   // Which directory the terminal is in
-	terminalOutput  string            // Cached terminal output
-	invocationDir   string            // Directory where Claudio was invoked (for terminal)
 }
 
 // IsUltraPlanMode returns true if the model is in ultra-plan mode
@@ -247,6 +256,12 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 		invocationDir = orch.BaseDir()
 	}
 
+	// Create terminal manager with configuration
+	termMgr := terminal.NewManagerWithConfig(terminal.ManagerConfig{
+		InvocationDir: invocationDir,
+		Logger:        tuiLogger,
+	})
+
 	return Model{
 		orchestrator:    orch,
 		session:         session,
@@ -256,7 +271,7 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 		inputRouter:     input.NewRouter(),
 		outputManager:   output.NewManager(),
 		searchEngine:    search.NewEngine(),
-		terminalManager: terminal.NewManager(),
+		terminalManager: termMgr,
 		filterCategories: map[string]bool{
 			"errors":   true,
 			"warnings": true,
@@ -264,8 +279,6 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 			"thinking": true,
 			"progress": true,
 		},
-		// Terminal pane defaults
-		invocationDir: invocationDir,
 	}
 }
 
@@ -577,147 +590,60 @@ func (m Model) TerminalPaneHeight() int {
 
 // getTerminalDir returns the directory path for the terminal based on current mode.
 func (m Model) getTerminalDir() string {
-	if m.terminalDirMode == TerminalDirWorktree {
-		// Get active instance's worktree path
-		if inst := m.activeInstance(); inst != nil && inst.WorktreePath != "" {
-			return inst.WorktreePath
-		}
-		// Fall back to invocation dir if no active instance
-		return m.invocationDir
-	}
-	return m.invocationDir
+	return m.terminalManager.GetDir(modelInstanceProvider{model: &m})
 }
 
 // toggleTerminalVisibility toggles the terminal pane on or off.
 // If turning on and process doesn't exist, it will be created lazily.
 func (m *Model) toggleTerminalVisibility(sessionID string) {
-	nowVisible := m.terminalManager.ToggleVisibility()
-
-	if nowVisible {
-		// Initialize terminal process if needed (lazy initialization)
-		if m.terminalProcess == nil {
-			// Get content dimensions from manager (extra footer lines don't affect terminal pane size)
-			dims := m.terminalManager.GetPaneDimensions(0)
-			m.terminalProcess = terminal.NewProcess(sessionID, m.invocationDir, dims.TerminalPaneContentWidth, dims.TerminalPaneContentHeight)
-		}
-
-		// Start the process if not running
-		if !m.terminalProcess.IsRunning() {
-			if err := m.terminalProcess.Start(); err != nil {
-				m.errorMessage = "Failed to start terminal: " + err.Error()
-				m.terminalManager.SetLayout(terminal.LayoutHidden)
-				return
-			}
-		}
-
-		// Set initial directory based on mode
-		targetDir := m.getTerminalDir()
-		if m.terminalProcess.CurrentDir() != targetDir {
-			if err := m.terminalProcess.ChangeDirectory(targetDir); err != nil {
-				if m.logger != nil {
-					m.logger.Warn("failed to set initial terminal directory", "target", targetDir, "error", err)
-				}
-				m.infoMessage = "Terminal opened but could not change to target directory"
-			}
-		}
+	errMsg, warnMsg := m.terminalManager.Toggle(sessionID)
+	if errMsg != "" {
+		m.errorMessage = errMsg
+	} else if warnMsg != "" {
+		m.infoMessage = warnMsg
 	}
 }
 
 // enterTerminalMode enters terminal input mode (keys go to terminal).
 func (m *Model) enterTerminalMode() {
-	if !m.terminalManager.IsVisible() || m.terminalProcess == nil || !m.terminalProcess.IsRunning() {
-		return
-	}
-	m.terminalManager.SetFocused(true)
+	m.terminalManager.EnterMode()
 }
 
 // exitTerminalMode exits terminal input mode.
 func (m *Model) exitTerminalMode() {
-	m.terminalManager.SetFocused(false)
+	m.terminalManager.ExitMode()
 }
 
 // switchTerminalDir toggles between worktree and invocation directory modes.
 func (m *Model) switchTerminalDir() {
-	if m.terminalDirMode == TerminalDirInvocation {
-		m.terminalDirMode = TerminalDirWorktree
-	} else {
-		m.terminalDirMode = TerminalDirInvocation
-	}
-
-	// Change directory if terminal is running
-	if m.terminalProcess != nil && m.terminalProcess.IsRunning() {
-		targetDir := m.getTerminalDir()
-		if err := m.terminalProcess.ChangeDirectory(targetDir); err != nil {
-			m.errorMessage = "Failed to change directory: " + err.Error()
-		} else {
-			if m.terminalDirMode == TerminalDirWorktree {
-				m.infoMessage = "Terminal: switched to worktree"
-			} else {
-				m.infoMessage = "Terminal: switched to invocation directory"
-			}
-		}
+	infoMsg, errMsg := m.terminalManager.SwitchDir(modelInstanceProvider{model: m})
+	if errMsg != "" {
+		m.errorMessage = errMsg
+	} else if infoMsg != "" {
+		m.infoMessage = infoMsg
 	}
 }
 
 // updateTerminalOutput captures current terminal output.
 func (m *Model) updateTerminalOutput() {
-	if m.terminalProcess == nil || !m.terminalProcess.IsRunning() {
-		return
-	}
-
-	output, err := m.terminalProcess.CaptureOutput()
-	if err != nil {
-		if m.logger != nil {
-			m.logger.Warn("failed to capture terminal output", "error", err)
-		}
-		return
-	}
-	m.terminalOutput = output
+	m.terminalManager.UpdateOutput()
 }
 
 // resizeTerminal updates the terminal dimensions.
 func (m *Model) resizeTerminal() {
-	if m.terminalProcess == nil {
-		return
-	}
-
-	// Get content dimensions from manager (accounts for borders, padding, header)
-	// Extra footer lines don't affect terminal pane dimensions
-	dims := m.terminalManager.GetPaneDimensions(0)
-
-	if err := m.terminalProcess.Resize(dims.TerminalPaneContentWidth, dims.TerminalPaneContentHeight); err != nil {
-		if m.logger != nil {
-			m.logger.Warn("failed to resize terminal", "width", dims.TerminalPaneContentWidth, "height", dims.TerminalPaneContentHeight, "error", err)
-		}
-	}
+	m.terminalManager.Resize()
 }
 
 // cleanupTerminal stops the terminal process (called on quit).
 func (m *Model) cleanupTerminal() {
-	if m.terminalProcess != nil {
-		if err := m.terminalProcess.Stop(); err != nil {
-			if m.logger != nil {
-				m.logger.Warn("failed to cleanup terminal session", "error", err)
-			}
-		}
-	}
+	m.terminalManager.Cleanup()
 }
 
 // updateTerminalOnInstanceChange updates terminal directory if in worktree mode.
 // Called when the active instance changes.
 func (m *Model) updateTerminalOnInstanceChange() {
-	if m.terminalDirMode != TerminalDirWorktree {
-		return
-	}
-	if m.terminalProcess == nil || !m.terminalProcess.IsRunning() {
-		return
-	}
-
-	targetDir := m.getTerminalDir()
-	if m.terminalProcess.CurrentDir() != targetDir {
-		if err := m.terminalProcess.ChangeDirectory(targetDir); err != nil {
-			m.errorMessage = "Failed to change terminal directory: " + err.Error()
-		}
+	if errMsg := m.terminalManager.UpdateOnInstanceChange(modelInstanceProvider{model: m}); errMsg != "" {
+		m.errorMessage = errMsg
 	}
 }
 
