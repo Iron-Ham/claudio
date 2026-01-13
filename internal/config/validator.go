@@ -329,6 +329,34 @@ func (c *Config) validateUltraplan() []ValidationError {
 		}
 	}
 
+	// Validate consolidation mode
+	if c.Ultraplan.ConsolidationMode != "" {
+		validModes := []string{"stacked", "single"}
+		valid := false
+		for _, mode := range validModes {
+			if c.Ultraplan.ConsolidationMode == mode {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			errors = append(errors, ValidationError{
+				Field:   "ultraplan.consolidation_mode",
+				Value:   c.Ultraplan.ConsolidationMode,
+				Message: "must be 'stacked' or 'single'",
+			})
+		}
+	}
+
+	// Validate max task retries
+	if c.Ultraplan.MaxTaskRetries < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "ultraplan.max_task_retries",
+			Value:   c.Ultraplan.MaxTaskRetries,
+			Message: "cannot be negative",
+		})
+	}
+
 	return errors
 }
 

@@ -291,6 +291,36 @@ func TestConfig_UltraplanConfig_Values(t *testing.T) {
 	if cfg.Ultraplan.Notifications.SoundPath != "" {
 		t.Errorf("Ultraplan.Notifications.SoundPath should be empty, got %q", cfg.Ultraplan.Notifications.SoundPath)
 	}
+
+	// ConsolidationMode should default to "stacked"
+	if cfg.Ultraplan.ConsolidationMode != "stacked" {
+		t.Errorf("Ultraplan.ConsolidationMode = %q, want %q", cfg.Ultraplan.ConsolidationMode, "stacked")
+	}
+
+	// CreateDraftPRs should default to true
+	if !cfg.Ultraplan.CreateDraftPRs {
+		t.Error("Ultraplan.CreateDraftPRs should be true by default")
+	}
+
+	// PRLabels should default to ["ultraplan"]
+	if len(cfg.Ultraplan.PRLabels) != 1 || cfg.Ultraplan.PRLabels[0] != "ultraplan" {
+		t.Errorf("Ultraplan.PRLabels = %v, want [ultraplan]", cfg.Ultraplan.PRLabels)
+	}
+
+	// BranchPrefix should be empty by default (uses branch.prefix)
+	if cfg.Ultraplan.BranchPrefix != "" {
+		t.Errorf("Ultraplan.BranchPrefix should be empty, got %q", cfg.Ultraplan.BranchPrefix)
+	}
+
+	// MaxTaskRetries should default to 3
+	if cfg.Ultraplan.MaxTaskRetries != 3 {
+		t.Errorf("Ultraplan.MaxTaskRetries = %d, want 3", cfg.Ultraplan.MaxTaskRetries)
+	}
+
+	// RequireVerifiedCommits should default to true
+	if !cfg.Ultraplan.RequireVerifiedCommits {
+		t.Error("Ultraplan.RequireVerifiedCommits should be true by default")
+	}
 }
 
 func TestConfig_UltraplanMultiPass_ViperLoading(t *testing.T) {

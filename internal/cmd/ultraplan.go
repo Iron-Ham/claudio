@@ -129,11 +129,23 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	// Create ultra-plan configuration from defaults, then override with config file, then flags
 	ultraConfig := orchestrator.DefaultUltraPlanConfig()
 
-	// Apply config file settings (viper default is 3, user can set to 0 for unlimited)
-	ultraConfig.MaxParallel = cfg.Ultraplan.MaxParallel
-
 	// Apply config file settings
+	ultraConfig.MaxParallel = cfg.Ultraplan.MaxParallel
 	ultraConfig.MultiPass = cfg.Ultraplan.MultiPass
+
+	// Apply consolidation settings from config
+	if cfg.Ultraplan.ConsolidationMode != "" {
+		ultraConfig.ConsolidationMode = orchestrator.ConsolidationMode(cfg.Ultraplan.ConsolidationMode)
+	}
+	ultraConfig.CreateDraftPRs = cfg.Ultraplan.CreateDraftPRs
+	if len(cfg.Ultraplan.PRLabels) > 0 {
+		ultraConfig.PRLabels = cfg.Ultraplan.PRLabels
+	}
+	ultraConfig.BranchPrefix = cfg.Ultraplan.BranchPrefix
+
+	// Apply task verification settings from config
+	ultraConfig.MaxTaskRetries = cfg.Ultraplan.MaxTaskRetries
+	ultraConfig.RequireVerifiedCommits = cfg.Ultraplan.RequireVerifiedCommits
 
 	// CLI flags override config file (only if explicitly set)
 	if cmd.Flags().Changed("max-parallel") {
