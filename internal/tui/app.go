@@ -21,6 +21,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/command"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
+	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -559,17 +560,15 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		// Forward the key to the terminal pane's tmux session
-		if m.terminalProcess != nil && m.terminalProcess.IsRunning() {
-			// Check if this is a paste operation
-			if msg.Paste && msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
-				if err := m.terminalProcess.SendPaste(string(msg.Runes)); err != nil {
-					if m.logger != nil {
-						m.logger.Warn("failed to paste to terminal", "error", err)
-					}
+		// Check if this is a paste operation
+		if msg.Paste && msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+			if err := m.terminalManager.SendPaste(string(msg.Runes)); err != nil {
+				if m.logger != nil {
+					m.logger.Warn("failed to paste to terminal", "error", err)
 				}
-			} else {
-				m.sendKeyToTerminal(msg)
 			}
+		} else {
+			m.terminalManager.SendKey(msg)
 		}
 		return m, nil
 	}
@@ -1280,34 +1279,32 @@ func (m *Model) applyCommandResult(result command.Result) {
 		}
 	}
 	if result.TerminalDirMode != nil {
-		newMode := TerminalDirMode(*result.TerminalDirMode)
-		if newMode == TerminalDirWorktree && m.terminalDirMode != TerminalDirWorktree {
-			m.terminalDirMode = TerminalDirWorktree
-			if m.terminalProcess != nil && m.terminalProcess.IsRunning() {
+		newMode := terminal.DirMode(*result.TerminalDirMode)
+		currentMode := m.terminalManager.DirMode()
+		if newMode != currentMode {
+			m.terminalManager.SetDirMode(newMode)
+			process := m.terminalManager.Process()
+			if process != nil && process.IsRunning() {
 				targetDir := m.getTerminalDir()
-				if err := m.terminalProcess.ChangeDirectory(targetDir); err != nil {
+				if err := process.ChangeDirectory(targetDir); err != nil {
 					m.errorMessage = "Failed to change directory: " + err.Error()
 				} else {
-					m.infoMessage = "Terminal: switched to worktree"
+					if newMode == terminal.DirWorktree {
+						m.infoMessage = "Terminal: switched to worktree"
+					} else {
+						m.infoMessage = "Terminal: switched to invocation directory"
+					}
 				}
 			} else {
-				m.infoMessage = "Terminal will use worktree when opened."
-			}
-		} else if newMode == TerminalDirInvocation && m.terminalDirMode != TerminalDirInvocation {
-			m.terminalDirMode = TerminalDirInvocation
-			if m.terminalProcess != nil && m.terminalProcess.IsRunning() {
-				targetDir := m.getTerminalDir()
-				if err := m.terminalProcess.ChangeDirectory(targetDir); err != nil {
-					m.errorMessage = "Failed to change directory: " + err.Error()
+				if newMode == terminal.DirWorktree {
+					m.infoMessage = "Terminal will use worktree when opened."
 				} else {
-					m.infoMessage = "Terminal: switched to invocation directory"
+					m.infoMessage = "Terminal will use invocation directory when opened."
 				}
-			} else {
-				m.infoMessage = "Terminal will use invocation directory when opened."
 			}
 		} else {
 			// Already in the requested mode
-			if newMode == TerminalDirWorktree {
+			if newMode == terminal.DirWorktree {
 				m.infoMessage = "Terminal is already in worktree mode."
 			} else {
 				m.infoMessage = "Terminal is already in invocation directory mode."
@@ -1521,203 +1518,6 @@ func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
 			mgr.SendLiteral(key)
 		} else {
 			mgr.SendKey(key)
-		}
-	}
-}
-
-// sendKeyToTerminal sends a key event to the terminal pane's tmux session.
-// This mirrors sendKeyToTmux but targets the terminal process instead of an instance.
-func (m *Model) sendKeyToTerminal(msg tea.KeyMsg) {
-	if m.terminalProcess == nil {
-		return
-	}
-
-	// Helper to log terminal key send errors
-	logKeyErr := func(op, key string, err error) {
-		if err != nil && m.logger != nil {
-			m.logger.Warn("failed to send key to terminal", "op", op, "key", key, "error", err)
-		}
-	}
-
-	var key string
-	literal := false
-
-	switch msg.Type {
-	// Basic keys
-	case tea.KeyEnter:
-		key = "Enter"
-	case tea.KeyBackspace:
-		key = "BSpace"
-	case tea.KeyTab:
-		key = "Tab"
-	case tea.KeyShiftTab:
-		key = "BTab"
-	case tea.KeySpace:
-		key = " "
-		literal = true
-	case tea.KeyEsc:
-		key = "Escape"
-
-	// Arrow keys
-	case tea.KeyUp:
-		key = "Up"
-	case tea.KeyDown:
-		key = "Down"
-	case tea.KeyRight:
-		key = "Right"
-	case tea.KeyLeft:
-		key = "Left"
-
-	// Navigation keys
-	case tea.KeyPgUp:
-		key = "PageUp"
-	case tea.KeyPgDown:
-		key = "PageDown"
-	case tea.KeyHome:
-		key = "Home"
-	case tea.KeyEnd:
-		key = "End"
-	case tea.KeyDelete:
-		key = "DC"
-	case tea.KeyInsert:
-		key = "IC"
-
-	// Ctrl+letter combinations
-	case tea.KeyCtrlA:
-		key = "C-a"
-	case tea.KeyCtrlB:
-		key = "C-b"
-	case tea.KeyCtrlC:
-		key = "C-c"
-	case tea.KeyCtrlD:
-		key = "C-d"
-	case tea.KeyCtrlE:
-		key = "C-e"
-	case tea.KeyCtrlF:
-		key = "C-f"
-	case tea.KeyCtrlG:
-		key = "C-g"
-	case tea.KeyCtrlH:
-		key = "C-h"
-	case tea.KeyCtrlJ:
-		key = "C-j"
-	case tea.KeyCtrlK:
-		key = "C-k"
-	case tea.KeyCtrlL:
-		key = "C-l"
-	case tea.KeyCtrlN:
-		key = "C-n"
-	case tea.KeyCtrlO:
-		key = "C-o"
-	case tea.KeyCtrlP:
-		key = "C-p"
-	case tea.KeyCtrlQ:
-		key = "C-q"
-	case tea.KeyCtrlR:
-		key = "C-r"
-	case tea.KeyCtrlS:
-		key = "C-s"
-	case tea.KeyCtrlT:
-		key = "C-t"
-	case tea.KeyCtrlU:
-		key = "C-u"
-	case tea.KeyCtrlV:
-		key = "C-v"
-	case tea.KeyCtrlW:
-		key = "C-w"
-	case tea.KeyCtrlX:
-		key = "C-x"
-	case tea.KeyCtrlY:
-		key = "C-y"
-	case tea.KeyCtrlZ:
-		key = "C-z"
-
-	// Function keys
-	case tea.KeyF1:
-		key = "F1"
-	case tea.KeyF2:
-		key = "F2"
-	case tea.KeyF3:
-		key = "F3"
-	case tea.KeyF4:
-		key = "F4"
-	case tea.KeyF5:
-		key = "F5"
-	case tea.KeyF6:
-		key = "F6"
-	case tea.KeyF7:
-		key = "F7"
-	case tea.KeyF8:
-		key = "F8"
-	case tea.KeyF9:
-		key = "F9"
-	case tea.KeyF10:
-		key = "F10"
-	case tea.KeyF11:
-		key = "F11"
-	case tea.KeyF12:
-		key = "F12"
-
-	case tea.KeyRunes:
-		if msg.Alt {
-			key = string(msg.Runes)
-			logKeyErr("SendKey", "Escape", m.terminalProcess.SendKey("Escape"))
-			logKeyErr("SendLiteral", key, m.terminalProcess.SendLiteral(key))
-			return
-		}
-		key = string(msg.Runes)
-		literal = true
-
-	default:
-		keyStr := msg.String()
-		switch {
-		case strings.HasPrefix(keyStr, "shift+"):
-			baseKey := strings.TrimPrefix(keyStr, "shift+")
-			switch baseKey {
-			case "up":
-				key = "S-Up"
-			case "down":
-				key = "S-Down"
-			case "left":
-				key = "S-Left"
-			case "right":
-				key = "S-Right"
-			case "home":
-				key = "S-Home"
-			case "end":
-				key = "S-End"
-			default:
-				key = keyStr
-			}
-		case strings.HasPrefix(keyStr, "alt+"):
-			baseKey := strings.TrimPrefix(keyStr, "alt+")
-			logKeyErr("SendKey", "Escape", m.terminalProcess.SendKey("Escape"))
-			if len(baseKey) == 1 {
-				logKeyErr("SendLiteral", baseKey, m.terminalProcess.SendLiteral(baseKey))
-			} else {
-				logKeyErr("SendKey", baseKey, m.terminalProcess.SendKey(baseKey))
-			}
-			return
-		case strings.HasPrefix(keyStr, "ctrl+"):
-			baseKey := strings.TrimPrefix(keyStr, "ctrl+")
-			if len(baseKey) == 1 {
-				key = "C-" + baseKey
-			} else {
-				key = keyStr
-			}
-		default:
-			key = keyStr
-			if len(key) == 1 {
-				literal = true
-			}
-		}
-	}
-
-	if key != "" {
-		if literal {
-			logKeyErr("SendLiteral", key, m.terminalProcess.SendLiteral(key))
-		} else {
-			logKeyErr("SendKey", key, m.terminalProcess.SendKey(key))
 		}
 	}
 }
@@ -2344,18 +2144,19 @@ func (m Model) renderTerminalPane() string {
 	}
 
 	// Build the terminal state for the view
+	process := m.terminalManager.Process()
 	state := view.TerminalState{
-		Output:         m.terminalOutput,
+		Output:         m.terminalManager.Output(),
 		TerminalMode:   m.terminalManager.IsFocused(),
-		InvocationDir:  m.invocationDir,
-		IsWorktreeMode: m.terminalDirMode == TerminalDirWorktree,
+		InvocationDir:  m.terminalManager.GetDir(nil), // Pass nil to get invocation dir
+		IsWorktreeMode: m.terminalManager.DirMode() == terminal.DirWorktree,
 	}
 
 	// Set current directory
-	if m.terminalProcess != nil {
-		state.CurrentDir = m.terminalProcess.CurrentDir()
+	if process != nil {
+		state.CurrentDir = process.CurrentDir()
 	} else {
-		state.CurrentDir = m.invocationDir
+		state.CurrentDir = state.InvocationDir
 	}
 
 	// Set instance ID if in worktree mode
@@ -2922,7 +2723,7 @@ func (m Model) renderHelp() string {
 
 	if m.terminalManager.IsFocused() {
 		dirMode := "invoke"
-		if m.terminalDirMode == TerminalDirWorktree {
+		if m.terminalManager.DirMode() == terminal.DirWorktree {
 			dirMode = "worktree"
 		}
 		return styles.HelpBar.Render(

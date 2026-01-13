@@ -490,3 +490,290 @@ func TestGetPaneDimensions_ExtraFooterLinesWithTerminalPane(t *testing.T) {
 		t.Errorf("MainAreaHeight = %d, want %d", dims.MainAreaHeight, expectedMainArea)
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Tests for new Manager methods
+// -----------------------------------------------------------------------------
+
+func TestNewManagerWithConfig(t *testing.T) {
+	cfg := ManagerConfig{
+		InvocationDir: "/home/user/project",
+		Logger:        nil,
+	}
+
+	m := NewManagerWithConfig(cfg)
+
+	if m.invocationDir != cfg.InvocationDir {
+		t.Errorf("invocationDir = %q, want %q", m.invocationDir, cfg.InvocationDir)
+	}
+	if m.paneHeight != DefaultPaneHeight {
+		t.Errorf("paneHeight = %d, want %d", m.paneHeight, DefaultPaneHeight)
+	}
+	if m.layout != LayoutHidden {
+		t.Errorf("layout = %v, want LayoutHidden", m.layout)
+	}
+	if m.dirMode != DirInvocation {
+		t.Errorf("dirMode = %v, want DirInvocation", m.dirMode)
+	}
+}
+
+func TestSetInvocationDir(t *testing.T) {
+	m := NewManager()
+	m.SetInvocationDir("/test/dir")
+
+	if m.invocationDir != "/test/dir" {
+		t.Errorf("invocationDir = %q, want %q", m.invocationDir, "/test/dir")
+	}
+}
+
+func TestDirMode(t *testing.T) {
+	m := NewManager()
+
+	// Initially in invocation mode
+	if m.DirMode() != DirInvocation {
+		t.Errorf("initial DirMode() = %v, want DirInvocation", m.DirMode())
+	}
+
+	// Set to worktree mode
+	m.SetDirMode(DirWorktree)
+	if m.DirMode() != DirWorktree {
+		t.Errorf("DirMode() = %v, want DirWorktree", m.DirMode())
+	}
+
+	// Set back to invocation mode
+	m.SetDirMode(DirInvocation)
+	if m.DirMode() != DirInvocation {
+		t.Errorf("DirMode() = %v, want DirInvocation", m.DirMode())
+	}
+}
+
+// mockInstanceProvider implements ActiveInstanceProvider for testing
+type mockInstanceProvider struct {
+	worktreePath string
+}
+
+func (p mockInstanceProvider) WorktreePath() string {
+	return p.worktreePath
+}
+
+func TestGetDir(t *testing.T) {
+	tests := []struct {
+		name          string
+		dirMode       DirMode
+		invocationDir string
+		worktreePath  string
+		expectedDir   string
+	}{
+		{
+			name:          "invocation mode returns invocation dir",
+			dirMode:       DirInvocation,
+			invocationDir: "/home/user/project",
+			worktreePath:  "/tmp/worktree",
+			expectedDir:   "/home/user/project",
+		},
+		{
+			name:          "worktree mode returns worktree path",
+			dirMode:       DirWorktree,
+			invocationDir: "/home/user/project",
+			worktreePath:  "/tmp/worktree",
+			expectedDir:   "/tmp/worktree",
+		},
+		{
+			name:          "worktree mode with empty path falls back to invocation",
+			dirMode:       DirWorktree,
+			invocationDir: "/home/user/project",
+			worktreePath:  "",
+			expectedDir:   "/home/user/project",
+		},
+		{
+			name:          "worktree mode with nil provider falls back to invocation",
+			dirMode:       DirWorktree,
+			invocationDir: "/home/user/project",
+			worktreePath:  "", // nil provider scenario
+			expectedDir:   "/home/user/project",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewManagerWithConfig(ManagerConfig{
+				InvocationDir: tt.invocationDir,
+			})
+			m.SetDirMode(tt.dirMode)
+
+			var provider ActiveInstanceProvider
+			if tt.worktreePath != "" {
+				provider = mockInstanceProvider{worktreePath: tt.worktreePath}
+			}
+
+			got := m.GetDir(provider)
+			if got != tt.expectedDir {
+				t.Errorf("GetDir() = %q, want %q", got, tt.expectedDir)
+			}
+		})
+	}
+}
+
+func TestEnterMode(t *testing.T) {
+	m := NewManager()
+
+	// Cannot enter mode when not visible
+	m.EnterMode()
+	if m.IsFocused() {
+		t.Error("EnterMode() should not focus when pane is hidden")
+	}
+
+	// Make visible but no process - still cannot enter
+	m.SetLayout(LayoutVisible)
+	m.EnterMode()
+	if m.IsFocused() {
+		t.Error("EnterMode() should not focus when no process exists")
+	}
+}
+
+func TestExitMode(t *testing.T) {
+	m := NewManager()
+	m.SetLayout(LayoutVisible)
+	m.SetFocused(true)
+
+	if !m.IsFocused() {
+		t.Error("precondition: manager should be focused")
+	}
+
+	m.ExitMode()
+	if m.IsFocused() {
+		t.Error("ExitMode() should clear focus")
+	}
+}
+
+func TestSwitchDir(t *testing.T) {
+	tests := []struct {
+		name            string
+		initialMode     DirMode
+		expectedMode    DirMode
+		expectedInfoMsg string
+	}{
+		{
+			name:            "switch from invocation to worktree without process",
+			initialMode:     DirInvocation,
+			expectedMode:    DirWorktree,
+			expectedInfoMsg: "Terminal will use worktree when opened",
+		},
+		{
+			name:            "switch from worktree to invocation without process",
+			initialMode:     DirWorktree,
+			expectedMode:    DirInvocation,
+			expectedInfoMsg: "Terminal will use invocation directory when opened",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewManager()
+			m.SetDirMode(tt.initialMode)
+			m.SetInvocationDir("/home/user/project")
+
+			infoMsg, errMsg := m.SwitchDir(nil)
+
+			if m.DirMode() != tt.expectedMode {
+				t.Errorf("DirMode() = %v, want %v", m.DirMode(), tt.expectedMode)
+			}
+			if errMsg != "" {
+				t.Errorf("SwitchDir() errMsg = %q, want empty", errMsg)
+			}
+			if infoMsg != tt.expectedInfoMsg {
+				t.Errorf("SwitchDir() infoMsg = %q, want %q", infoMsg, tt.expectedInfoMsg)
+			}
+		})
+	}
+}
+
+func TestUpdateOutput_NoProcess(t *testing.T) {
+	m := NewManager()
+
+	// Should not panic with no process
+	m.UpdateOutput()
+
+	if m.Output() != "" {
+		t.Error("Output() should be empty when no process exists")
+	}
+}
+
+func TestOutput(t *testing.T) {
+	m := NewManager()
+
+	// Initially empty
+	if m.Output() != "" {
+		t.Error("initial Output() should be empty")
+	}
+
+	// Set output directly (simulating what UpdateOutput would do)
+	m.output = "test output"
+	if m.Output() != "test output" {
+		t.Errorf("Output() = %q, want %q", m.Output(), "test output")
+	}
+}
+
+func TestResize_NoProcess(t *testing.T) {
+	m := NewManager()
+
+	// Should not panic with no process
+	m.Resize()
+}
+
+func TestCleanup_NoProcess(t *testing.T) {
+	m := NewManager()
+
+	// Should not panic with no process
+	m.Cleanup()
+}
+
+func TestProcess(t *testing.T) {
+	m := NewManager()
+
+	// Initially nil
+	if m.Process() != nil {
+		t.Error("Process() should be nil initially")
+	}
+}
+
+func TestUpdateOnInstanceChange_NotInWorktreeMode(t *testing.T) {
+	m := NewManager()
+	m.SetDirMode(DirInvocation)
+
+	// Should return empty string and not attempt any changes
+	errMsg := m.UpdateOnInstanceChange(nil)
+	if errMsg != "" {
+		t.Errorf("UpdateOnInstanceChange() = %q, want empty", errMsg)
+	}
+}
+
+func TestUpdateOnInstanceChange_NoProcess(t *testing.T) {
+	m := NewManager()
+	m.SetDirMode(DirWorktree)
+
+	// Should return empty string when no process
+	errMsg := m.UpdateOnInstanceChange(nil)
+	if errMsg != "" {
+		t.Errorf("UpdateOnInstanceChange() = %q, want empty", errMsg)
+	}
+}
+
+func TestDirModeConstants(t *testing.T) {
+	// Verify DirInvocation is zero value (default)
+	if DirInvocation != 0 {
+		t.Errorf("DirInvocation = %d, want 0", DirInvocation)
+	}
+	if DirWorktree != 1 {
+		t.Errorf("DirWorktree = %d, want 1", DirWorktree)
+	}
+}
+
+func TestSendPaste_NoProcess(t *testing.T) {
+	m := NewManager()
+
+	err := m.SendPaste("test text")
+	if err != ErrNotRunning {
+		t.Errorf("SendPaste() error = %v, want ErrNotRunning", err)
+	}
+}
