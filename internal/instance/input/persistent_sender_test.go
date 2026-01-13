@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestNewPersistentTmuxSender(t *testing.T) {
@@ -372,5 +373,97 @@ func TestPersistentTmuxSender_MultipleReconnectAttempts(t *testing.T) {
 	calls := mock.getCalls()
 	if len(calls) != 5 {
 		t.Errorf("got %d fallback calls, want 5", len(calls))
+	}
+}
+
+// TestPersistentTmuxSender_GoroutineLifecycle tests that goroutines are properly
+// managed across connect/disconnect cycles.
+func TestPersistentTmuxSender_GoroutineLifecycle(t *testing.T) {
+	mock := &mockTmuxSender{}
+	p := NewPersistentTmuxSender("nonexistent-lifecycle-test", WithFallbackSender(mock))
+
+	// Perform multiple operations that would trigger connection attempts
+	// Each failed connection should properly clean up
+	for i := 0; i < 10; i++ {
+		err := p.SendKeys("nonexistent-lifecycle-test", "key", false)
+		if err != nil {
+			t.Fatalf("SendKeys call %d failed: %v", i, err)
+		}
+	}
+
+	// Close should complete without hanging (would hang if goroutines leak)
+	done := make(chan struct{})
+	go func() {
+		_ = p.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Close completed successfully
+	case <-time.After(2 * time.Second):
+		t.Error("Close timed out - possible goroutine leak")
+	}
+
+	// Should not be connected after close
+	if p.Connected() {
+		t.Error("should not be connected after Close")
+	}
+}
+
+// TestPersistentTmuxSender_RepeatedCloseIsSafe tests that calling Close
+// multiple times is safe and doesn't cause panics.
+func TestPersistentTmuxSender_RepeatedCloseIsSafe(t *testing.T) {
+	p := NewPersistentTmuxSender("test-session")
+
+	// Close multiple times - should not panic
+	for i := 0; i < 5; i++ {
+		err := p.Close()
+		if err != nil {
+			t.Fatalf("Close call %d failed: %v", i, err)
+		}
+	}
+}
+
+// TestPersistentTmuxSender_CloseWhileNotConnected tests that Close handles
+// the case where the sender was never connected.
+func TestPersistentTmuxSender_CloseWhileNotConnected(t *testing.T) {
+	p := NewPersistentTmuxSender("test-session")
+
+	// Never attempt to connect, just close
+	err := p.Close()
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// WaitGroups should still be in valid state
+	// (no panic on subsequent operations)
+	if p.Connected() {
+		t.Error("should not be connected")
+	}
+}
+
+// TestPersistentTmuxSender_DisconnectCleansUp tests that disconnectLocked
+// properly waits for goroutines to exit.
+func TestPersistentTmuxSender_DisconnectCleansUp(t *testing.T) {
+	mock := &mockTmuxSender{}
+	p := NewPersistentTmuxSender("nonexistent-cleanup-test", WithFallbackSender(mock))
+
+	// Trigger a connection attempt (will fail, but tests the code path)
+	_ = p.SendKeys("nonexistent-cleanup-test", "key", false)
+
+	// Close should complete quickly since connection failed
+	start := time.Now()
+	err := p.Close()
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Close should be fast (< 1 second) since there's no real connection
+	// If goroutines were leaking, the WaitGroup wait would timeout
+	if elapsed > 1*time.Second {
+		t.Errorf("Close took %v, expected < 1s", elapsed)
 	}
 }
