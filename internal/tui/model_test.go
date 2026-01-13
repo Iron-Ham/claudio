@@ -2,6 +2,9 @@ package tui
 
 import (
 	"testing"
+
+	"github.com/Iron-Ham/claudio/internal/conflict"
+	"github.com/spf13/viper"
 )
 
 func TestTaskInputInsert(t *testing.T) {
@@ -537,6 +540,96 @@ func TestRenderAddTaskCursorBounds(t *testing.T) {
 			result := m.renderAddTask(80)
 			if result == "" {
 				t.Error("renderAddTask returned empty string")
+			}
+		})
+	}
+}
+
+func TestCalculateExtraFooterLines(t *testing.T) {
+	tests := []struct {
+		name               string
+		errorMessage       string
+		infoMessage        string
+		conflicts          []conflict.FileConflict
+		commandMode        bool
+		verboseCommandHelp bool
+		expectedLines      int
+	}{
+		{
+			name:          "no extra elements",
+			expectedLines: 0,
+		},
+		{
+			name:          "error message only",
+			errorMessage:  "Something went wrong",
+			expectedLines: 1,
+		},
+		{
+			name:          "info message only",
+			infoMessage:   "Task started",
+			expectedLines: 1,
+		},
+		{
+			name:          "conflicts only",
+			conflicts:     []conflict.FileConflict{{RelativePath: "test.go"}},
+			expectedLines: 1,
+		},
+		{
+			name:          "error message and conflicts",
+			errorMessage:  "Something went wrong",
+			conflicts:     []conflict.FileConflict{{RelativePath: "test.go"}},
+			expectedLines: 2,
+		},
+		{
+			name:          "info message and conflicts",
+			infoMessage:   "Task started",
+			conflicts:     []conflict.FileConflict{{RelativePath: "test.go"}},
+			expectedLines: 2,
+		},
+		{
+			name:               "command mode with verbose help",
+			commandMode:        true,
+			verboseCommandHelp: true,
+			expectedLines:      2, // verbose help adds 2 extra lines
+		},
+		{
+			name:               "command mode with compact help",
+			commandMode:        true,
+			verboseCommandHelp: false,
+			expectedLines:      0, // compact help doesn't add extra lines
+		},
+		{
+			name:               "verbose help only when in command mode",
+			commandMode:        false,
+			verboseCommandHelp: true,
+			expectedLines:      0, // verbose setting doesn't matter if not in command mode
+		},
+		{
+			name:               "all elements combined",
+			errorMessage:       "Something went wrong",
+			conflicts:          []conflict.FileConflict{{RelativePath: "test.go"}},
+			commandMode:        true,
+			verboseCommandHelp: true,
+			expectedLines:      4, // 1 (error) + 1 (conflicts) + 2 (verbose help)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up viper config for verbose command help
+			viper.Set("tui.verbose_command_help", tt.verboseCommandHelp)
+			defer viper.Set("tui.verbose_command_help", false)
+
+			m := Model{
+				errorMessage: tt.errorMessage,
+				infoMessage:  tt.infoMessage,
+				conflicts:    tt.conflicts,
+				commandMode:  tt.commandMode,
+			}
+
+			got := m.calculateExtraFooterLines()
+			if got != tt.expectedLines {
+				t.Errorf("calculateExtraFooterLines() = %d, want %d", got, tt.expectedLines)
 			}
 		})
 	}

@@ -2148,9 +2148,8 @@ func (m Model) View() string {
 	b.WriteString(header)
 	b.WriteString("\n")
 
-	// Calculate widths for sidebar and main content
-	// Get pane dimensions from terminal manager
-	dims := m.terminalManager.GetPaneDimensions()
+	// Get pane dimensions, accounting for dynamic footer elements
+	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
 	effectiveSidebarWidth := SidebarWidth
 	if dims.TerminalWidth < 80 {
 		effectiveSidebarWidth = SidebarMinWidth
@@ -2240,7 +2239,7 @@ func (m Model) renderHeader() string {
 
 // renderTerminalPane renders the terminal pane at the bottom of the screen.
 func (m Model) renderTerminalPane() string {
-	dims := m.terminalManager.GetPaneDimensions()
+	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
 	if dims.TerminalPaneHeight == 0 {
 		return ""
 	}
@@ -2678,6 +2677,29 @@ func (m Model) highlightDiffLine(line string) string {
 	default:
 		return styles.DiffContext.Render(line)
 	}
+}
+
+// calculateExtraFooterLines returns the number of extra lines needed in the footer
+// beyond the base help bar. This accounts for conflict warnings and error/info messages.
+func (m Model) calculateExtraFooterLines() int {
+	extra := 0
+
+	// Conflict warning adds 1 line when present
+	if len(m.conflicts) > 0 {
+		extra++
+	}
+
+	// Error or info message adds 1 line when present (they are mutually exclusive)
+	if m.errorMessage != "" || m.infoMessage != "" {
+		extra++
+	}
+
+	// Verbose command help adds 2 extra lines (3 total vs 1 base)
+	if m.commandMode && viper.GetBool("tui.verbose_command_help") {
+		extra += 2
+	}
+
+	return extra
 }
 
 // renderConflictWarning renders the file conflict warning banner

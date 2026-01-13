@@ -33,7 +33,7 @@ func TestGetPaneDimensions_Hidden(t *testing.T) {
 	m.SetSize(120, 40)
 	m.SetLayout(LayoutHidden)
 
-	dims := m.GetPaneDimensions()
+	dims := m.GetPaneDimensions(0)
 
 	if dims.TerminalPaneHeight != 0 {
 		t.Errorf("TerminalPaneHeight = %d, want 0 when hidden", dims.TerminalPaneHeight)
@@ -57,7 +57,7 @@ func TestGetPaneDimensions_Visible(t *testing.T) {
 	m.SetSize(120, 40)
 	m.SetLayout(LayoutVisible)
 
-	dims := m.GetPaneDimensions()
+	dims := m.GetPaneDimensions(0)
 
 	// Terminal pane should have default height
 	if dims.TerminalPaneHeight != DefaultPaneHeight {
@@ -90,7 +90,7 @@ func TestGetPaneDimensions_MinMainAreaHeight(t *testing.T) {
 	m.SetLayout(LayoutVisible)
 	m.SetPaneHeight(30) // Try to set huge pane height
 
-	dims := m.GetPaneDimensions()
+	dims := m.GetPaneDimensions(0)
 
 	// Main area should be at least 10
 	if dims.MainAreaHeight < 10 {
@@ -105,7 +105,7 @@ func TestGetPaneDimensions_MinContentDimensions(t *testing.T) {
 	m.SetLayout(LayoutVisible)
 	m.SetPaneHeight(MinPaneHeight)
 
-	dims := m.GetPaneDimensions()
+	dims := m.GetPaneDimensions(0)
 
 	// Content height should be at least 3
 	if dims.TerminalPaneContentHeight < 3 {
@@ -316,7 +316,7 @@ func TestEffectivePaneHeight(t *testing.T) {
 			m.SetPaneHeight(tt.setPaneHeight)
 			m.SetLayout(LayoutVisible)
 
-			dims := m.GetPaneDimensions()
+			dims := m.GetPaneDimensions(0)
 			if dims.TerminalPaneHeight != tt.expectedEffectv {
 				t.Errorf("TerminalPaneHeight = %d, want %d", dims.TerminalPaneHeight, tt.expectedEffectv)
 			}
@@ -384,7 +384,7 @@ func TestPaneDimensions_TerminalDimensions(t *testing.T) {
 	m := NewManager()
 	m.SetSize(120, 40)
 
-	dims := m.GetPaneDimensions()
+	dims := m.GetPaneDimensions(0)
 
 	if dims.TerminalWidth != 120 {
 		t.Errorf("TerminalWidth = %d, want 120", dims.TerminalWidth)
@@ -419,5 +419,74 @@ func TestIsFocused_RequiresBothFocusAndVisible(t *testing.T) {
 	// Note: SetLayout clears focused when hiding
 	if m.IsFocused() {
 		t.Error("IsFocused() = true when focused flag set but hidden")
+	}
+}
+
+func TestGetPaneDimensions_WithExtraFooterLines(t *testing.T) {
+	tests := []struct {
+		name             string
+		terminalHeight   int
+		extraFooterLines int
+		expectedMainArea int
+	}{
+		{
+			name:             "no extra lines",
+			terminalHeight:   40,
+			extraFooterLines: 0,
+			expectedMainArea: 40 - 6, // height - base headerFooterReserved
+		},
+		{
+			name:             "one extra line for error message",
+			terminalHeight:   40,
+			extraFooterLines: 1,
+			expectedMainArea: 40 - 6 - 1,
+		},
+		{
+			name:             "two extra lines for error and conflicts",
+			terminalHeight:   40,
+			extraFooterLines: 2,
+			expectedMainArea: 40 - 6 - 2,
+		},
+		{
+			name:             "three extra lines for verbose help",
+			terminalHeight:   40,
+			extraFooterLines: 3,
+			expectedMainArea: 40 - 6 - 3,
+		},
+		{
+			name:             "negative lines clamped to zero",
+			terminalHeight:   40,
+			extraFooterLines: -5,
+			expectedMainArea: 40 - 6, // negative clamped to 0
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewManager()
+			m.SetSize(80, tt.terminalHeight)
+			m.SetLayout(LayoutHidden) // Keep terminal pane hidden for simplicity
+
+			dims := m.GetPaneDimensions(tt.extraFooterLines)
+
+			if dims.MainAreaHeight != tt.expectedMainArea {
+				t.Errorf("MainAreaHeight = %d, want %d", dims.MainAreaHeight, tt.expectedMainArea)
+			}
+		})
+	}
+}
+
+func TestGetPaneDimensions_ExtraFooterLinesWithTerminalPane(t *testing.T) {
+	m := NewManager()
+	m.SetSize(120, 50)
+	m.SetLayout(LayoutVisible)
+
+	dims := m.GetPaneDimensions(2) // error message + conflict warning
+
+	// Expected: height - headerFooterReserved - extraFooterLines - terminalPaneHeight - spacing
+	// 50 - 6 - 2 - 15 - 1 = 26
+	expectedMainArea := 50 - 6 - 2 - DefaultPaneHeight - TerminalPaneSpacing
+	if dims.MainAreaHeight != expectedMainArea {
+		t.Errorf("MainAreaHeight = %d, want %d", dims.MainAreaHeight, expectedMainArea)
 	}
 }

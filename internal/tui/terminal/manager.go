@@ -89,8 +89,10 @@ func (m *Manager) Height() int {
 }
 
 // GetPaneDimensions calculates and returns the dimensions for all UI panes
-// based on the current terminal size and layout mode.
-func (m *Manager) GetPaneDimensions() PaneDimensions {
+// based on the current terminal size and layout mode. The extraFooterLines
+// parameter specifies additional lines to reserve for dynamic footer elements
+// such as error messages, info messages, and conflict warnings.
+func (m *Manager) GetPaneDimensions(extraFooterLines int) PaneDimensions {
 	dims := PaneDimensions{
 		TerminalWidth:  m.width,
 		TerminalHeight: m.height,
@@ -109,8 +111,9 @@ func (m *Manager) GetPaneDimensions() PaneDimensions {
 
 	// Calculate main area height
 	// Base height minus header (2 lines), help bar (2 lines), and margins (2 lines) = 6
+	// Plus any extra footer lines for dynamic elements (error messages, conflict warnings)
 	const headerFooterReserved = 6
-	dims.MainAreaHeight = m.height - headerFooterReserved
+	dims.MainAreaHeight = m.height - headerFooterReserved - max(extraFooterLines, 0)
 
 	// Reduce main area when terminal pane is visible
 	if m.layout == LayoutVisible && dims.TerminalPaneHeight > 0 {
