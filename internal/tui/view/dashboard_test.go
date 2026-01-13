@@ -122,9 +122,9 @@ func TestRenderSidebar_EmptyState(t *testing.T) {
 		t.Error("empty state should show 'No instances' message")
 	}
 
-	// Should contain add hint
-	if !strings.Contains(result, "[a]") {
-		t.Error("empty state should show '[a]' hint")
+	// Should contain add hint (with colon prefix for command mode)
+	if !strings.Contains(result, "[:a]") {
+		t.Error("empty state should show '[:a]' hint")
 	}
 }
 
