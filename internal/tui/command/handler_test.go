@@ -1,5 +1,21 @@
 package command
 
+// Coverage Note:
+// Many command implementations (cmdStart, cmdStop, cmdPause, etc.) require
+// interaction with the concrete orchestrator.Orchestrator type, which cannot
+// be easily mocked without significant refactoring.
+//
+// These tests cover:
+// 1. Handler infrastructure (New, Execute, Categories)
+// 2. Error paths (nil instance, nil orchestrator, nil session)
+// 3. Commands that don't require orchestrator (cmdAdd, cmdHelp, cmdFilter, etc.)
+// 4. Nil logger safety (commands don't panic with nil logger)
+//
+// Not covered (would require interface extraction or integration tests):
+// - Status guard branches (orchestrator nil check happens first)
+// - Orchestrator method calls (StartInstance, StopInstance, etc.)
+// - Instance manager interactions (Pause, Resume, etc.)
+
 import (
 	"testing"
 	"time"
@@ -741,6 +757,163 @@ func TestResultEnsureActiveVisible(t *testing.T) {
 		if result.ErrorMessage != "" && len(result.ErrorMessage) >= 15 &&
 			result.ErrorMessage[:15] == "Unknown command" {
 			t.Error("kill command not recognized")
+		}
+	})
+}
+
+// TestRestartUltraPlanMode tests cmdRestart behavior in ultraplan mode
+func TestRestartUltraPlanMode(t *testing.T) {
+	t.Run("ultraplan mode without coordinator falls through", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{
+			ID:     "test-123",
+			Status: orchestrator.StatusPending,
+		}
+		deps.ultraPlanMode = true
+		deps.ultraCoordinator = nil // No coordinator
+
+		result := h.Execute("restart", deps)
+
+		// Should fall through to regular restart path (which needs orchestrator)
+		if result.ErrorMessage == "" {
+			t.Error("expected error without orchestrator")
+		}
+	})
+}
+
+// TestTmuxCommandNoOrchestrator tests cmdTmux when orchestrator is nil
+func TestTmuxCommandNoOrchestrator(t *testing.T) {
+	t.Run("no orchestrator returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{ID: "test-123"}
+		deps.orchestrator = nil
+
+		result := h.Execute("tmux", deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error without orchestrator")
+		}
+	})
+}
+
+// TestRemoveCommandNoSession tests cmdRemove when session is nil
+func TestRemoveCommandNoSession(t *testing.T) {
+	t.Run("no session returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{ID: "test-123"}
+		deps.session = nil
+		deps.orchestrator = nil
+
+		result := h.Execute("remove", deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error without session/orchestrator")
+		}
+	})
+}
+
+// TestKillCommandNoSession tests cmdKill when session is nil
+func TestKillCommandNoSession(t *testing.T) {
+	t.Run("no session returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{ID: "test-123"}
+		deps.session = nil
+		deps.orchestrator = nil
+
+		result := h.Execute("kill", deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error without session/orchestrator")
+		}
+	})
+}
+
+// TestQuitCommandHandlesNilLogger tests cmdQuit works with nil logger
+func TestQuitCommandHandlesNilLogger(t *testing.T) {
+	t.Run("quit with nil logger doesn't panic", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.startTime = time.Now().Add(-5 * time.Minute)
+		deps.logger = nil
+
+		result := h.Execute("quit", deps)
+
+		if result.Quitting == nil || !*result.Quitting {
+			t.Error("expected Quitting to be set to true")
+		}
+		if result.TeaCmd == nil {
+			t.Error("expected tea.Quit command")
+		}
+	})
+}
+
+// TestStopCommandHandlesNilLogger tests cmdStop doesn't panic with nil logger
+func TestStopCommandHandlesNilLogger(t *testing.T) {
+	t.Run("stop with nil logger doesn't panic", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{ID: "test-123"}
+		deps.logger = nil
+		deps.orchestrator = nil
+
+		// Should not panic even with nil logger
+		result := h.Execute("stop", deps)
+
+		// We get error because orchestrator is nil, but no panic from nil logger
+		if result.ErrorMessage != "No orchestrator available" {
+			t.Errorf("expected 'No orchestrator available', got %q", result.ErrorMessage)
+		}
+	})
+}
+
+// TestExitCommandHandlesNilLogger tests cmdExit doesn't panic with nil logger
+func TestExitCommandHandlesNilLogger(t *testing.T) {
+	t.Run("exit with nil logger doesn't panic", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{ID: "test-123"}
+		deps.logger = nil
+		deps.orchestrator = nil
+
+		// Should not panic even with nil logger
+		result := h.Execute("exit", deps)
+
+		// We get error because orchestrator is nil, but no panic from nil logger
+		if result.ErrorMessage != "No orchestrator available" {
+			t.Errorf("expected 'No orchestrator available', got %q", result.ErrorMessage)
+		}
+	})
+}
+
+// TestClearCompletedNoOrchestrator tests cmdClearCompleted without orchestrator
+func TestClearCompletedNoOrchestrator(t *testing.T) {
+	t.Run("no orchestrator returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.orchestrator = nil
+		deps.session = &orchestrator.Session{}
+
+		result := h.Execute("clear", deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error without orchestrator")
+		}
+	})
+
+	t.Run("no session returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.orchestrator = nil
+		deps.session = nil
+
+		result := h.Execute("clear", deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error without session")
 		}
 	})
 }
