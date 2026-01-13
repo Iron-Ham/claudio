@@ -342,7 +342,7 @@ func (m *Model) ensureActiveVisible() {
 	// Calculate visible slots (same calculation as in renderSidebar)
 	// Reserve: 1 for title, 1 for blank line, 1 for add hint, 2 for scroll indicators, plus border padding
 	reservedLines := 6
-	dims := m.terminalManager.GetPaneDimensions()
+	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
 	availableSlots := dims.MainAreaHeight - reservedLines
 	if availableSlots < 3 {
 		availableSlots = 3
@@ -375,7 +375,7 @@ func (m *Model) ensureActiveVisible() {
 
 // getOutputMaxLines returns the maximum number of lines visible in the output area
 func (m Model) getOutputMaxLines() int {
-	dims := m.terminalManager.GetPaneDimensions()
+	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
 	// Output area is within main area, minus some reserved lines for header/status
 	maxLines := dims.MainAreaHeight - 6
 	if maxLines < 5 {
@@ -565,7 +565,7 @@ func (m Model) IsTerminalVisible() bool {
 
 // TerminalPaneHeight returns the current terminal pane height (0 if hidden).
 func (m Model) TerminalPaneHeight() int {
-	dims := m.terminalManager.GetPaneDimensions()
+	dims := m.terminalManager.GetPaneDimensions(0)
 	return dims.TerminalPaneHeight
 }
 
@@ -590,8 +590,8 @@ func (m *Model) toggleTerminalVisibility(sessionID string) {
 	if nowVisible {
 		// Initialize terminal process if needed (lazy initialization)
 		if m.terminalProcess == nil {
-			// Get content dimensions from manager
-			dims := m.terminalManager.GetPaneDimensions()
+			// Get content dimensions from manager (extra footer lines don't affect terminal pane size)
+			dims := m.terminalManager.GetPaneDimensions(0)
 			m.terminalProcess = terminal.NewProcess(sessionID, m.invocationDir, dims.TerminalPaneContentWidth, dims.TerminalPaneContentHeight)
 		}
 
@@ -676,7 +676,8 @@ func (m *Model) resizeTerminal() {
 	}
 
 	// Get content dimensions from manager (accounts for borders, padding, header)
-	dims := m.terminalManager.GetPaneDimensions()
+	// Extra footer lines don't affect terminal pane dimensions
+	dims := m.terminalManager.GetPaneDimensions(0)
 
 	if err := m.terminalProcess.Resize(dims.TerminalPaneContentWidth, dims.TerminalPaneContentHeight); err != nil {
 		if m.logger != nil {
