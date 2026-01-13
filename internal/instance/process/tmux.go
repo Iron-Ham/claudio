@@ -80,6 +80,16 @@ func (p *TmuxProcess) Start(ctx context.Context) error {
 	if height == 0 {
 		height = 30
 	}
+	historyLimit := p.config.HistoryLimit
+	if historyLimit == 0 {
+		historyLimit = 50000
+	}
+
+	// Set history-limit BEFORE creating session so the new pane inherits it.
+	// tmux's history-limit only affects newly created panes, not existing ones.
+	if err := exec.Command("tmux", "set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
+		log.Printf("WARNING: failed to set global history-limit for tmux: %v", err)
+	}
 
 	// Create a new detached tmux session
 	createCmd := exec.CommandContext(ctx, "tmux",
@@ -95,10 +105,7 @@ func (p *TmuxProcess) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
-	// Set up tmux session options (log failures but don't abort - session will still work)
-	if err := exec.Command("tmux", "set-option", "-t", p.sessionName, "history-limit", "10000").Run(); err != nil {
-		log.Printf("WARNING: failed to set history-limit for tmux session %s: %v", p.sessionName, err)
-	}
+	// Set up additional tmux session options (log failures but don't abort - session will still work)
 	if err := exec.Command("tmux", "set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run(); err != nil {
 		log.Printf("WARNING: failed to set default-terminal for tmux session %s: %v", p.sessionName, err)
 	}

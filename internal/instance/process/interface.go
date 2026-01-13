@@ -42,13 +42,17 @@ type Config struct {
 
 	// Height is the terminal height in rows (default: 30).
 	Height int
+
+	// HistoryLimit is the number of lines of scrollback to keep in tmux (default: 50000).
+	HistoryLimit int
 }
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() Config {
 	return Config{
-		Width:  200,
-		Height: 30,
+		Width:        200,
+		Height:       30,
+		HistoryLimit: 50000,
 	}
 }
 

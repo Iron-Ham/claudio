@@ -73,6 +73,13 @@ func (p *Process) startLocked() error {
 		height = 10
 	}
 
+	// Set history-limit BEFORE creating session so the new pane inherits it.
+	// tmux's history-limit only affects newly created panes, not existing ones.
+	// Use 50000 lines for generous scrollback in the terminal pane.
+	if err := exec.Command("tmux", "set-option", "-g", "history-limit", "50000").Run(); err != nil {
+		log.Printf("WARNING: failed to set global history-limit for tmux: %v", err)
+	}
+
 	// Create a new detached tmux session
 	createCmd := exec.Command("tmux",
 		"new-session",
@@ -86,10 +93,7 @@ func (p *Process) startLocked() error {
 		return fmt.Errorf("failed to create terminal tmux session: %w", err)
 	}
 
-	// Set up tmux session options
-	if err := exec.Command("tmux", "set-option", "-t", p.sessionName, "history-limit", "10000").Run(); err != nil {
-		log.Printf("WARNING: failed to set history-limit for terminal tmux session %s: %v", p.sessionName, err)
-	}
+	// Set up additional tmux session options
 	if err := exec.Command("tmux", "set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run(); err != nil {
 		log.Printf("WARNING: failed to set default-terminal for terminal tmux session %s: %v", p.sessionName, err)
 	}

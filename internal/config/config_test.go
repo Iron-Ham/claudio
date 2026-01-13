@@ -45,6 +45,9 @@ func TestDefault(t *testing.T) {
 	if cfg.Instance.TmuxHeight != 50 {
 		t.Errorf("Instance.TmuxHeight = %d, want 50", cfg.Instance.TmuxHeight)
 	}
+	if cfg.Instance.TmuxHistoryLimit != 50000 {
+		t.Errorf("Instance.TmuxHistoryLimit = %d, want 50000", cfg.Instance.TmuxHistoryLimit)
+	}
 
 	// Verify default PR config
 	if cfg.PR.Draft {

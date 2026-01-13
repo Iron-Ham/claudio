@@ -113,6 +113,9 @@ type InstanceConfig struct {
 
 	// TmuxHeight is the terminal height in rows.
 	TmuxHeight int
+
+	// TmuxHistoryLimit is the number of lines of scrollback to keep (default: 50000).
+	TmuxHistoryLimit int
 }
 
 // ReadinessChecker is a function that checks if an instance is ready.
@@ -203,6 +206,20 @@ func (m *Manager) Start(inst Instance) error {
 	if height == 0 {
 		height = 30
 	}
+	historyLimit := cfg.TmuxHistoryLimit
+	if historyLimit == 0 {
+		historyLimit = 50000
+	}
+
+	// Set history-limit BEFORE creating session so the new pane inherits it.
+	// tmux's history-limit only affects newly created panes, not existing ones.
+	if err := exec.Command("tmux", "set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
+		if m.logger != nil {
+			m.logger.Warn("failed to set global history-limit for tmux",
+				"history_limit", historyLimit,
+				"error", err.Error())
+		}
+	}
 
 	// Create a new detached tmux session with color support
 	createCmd := exec.Command("tmux",
@@ -225,8 +242,7 @@ func (m *Manager) Start(inst Instance) error {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
-	// Set up the tmux session for color support and large history
-	_ = exec.Command("tmux", "set-option", "-t", sessionName, "history-limit", "10000").Run()
+	// Set up additional tmux session options for color support
 	_ = exec.Command("tmux", "set-option", "-t", sessionName, "default-terminal", "xterm-256color").Run()
 	// Enable bell monitoring for detecting terminal bells
 	_ = exec.Command("tmux", "set-option", "-t", sessionName, "-w", "monitor-bell", "on").Run()
