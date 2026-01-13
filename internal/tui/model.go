@@ -90,6 +90,9 @@ type Model struct {
 	// Ultra-plan mode (nil if not in ultra-plan mode)
 	ultraPlan *UltraPlanState
 
+	// Triple-shot mode (nil if not in triple-shot mode)
+	tripleShot *TripleShotState
+
 	// Plan editor mode (nil if not in plan editor mode)
 	planEditor *PlanEditorState
 
@@ -107,9 +110,13 @@ type Model struct {
 	// Dependent task state (for :chain command - adding a task that depends on another)
 	addingDependentTask   bool   // When true, taskInput will create a dependent task
 	dependentOnInstanceID string // The instance ID that the new task will depend on
-	errorMessage          string
-	infoMessage           string // Non-error status message
-	inputMode             bool   // When true, all keys are forwarded to the active instance's tmux session
+
+	// Triple-shot task state (for :tripleshot command)
+	startingTripleShot bool // When true, taskInput will start a triple-shot session
+
+	errorMessage string
+	infoMessage  string // Non-error status message
+	inputMode    bool   // When true, all keys are forwarded to the active instance's tmux session
 
 	// Command mode state (vim-style ex commands with ':' prefix)
 	commandMode   bool   // When true, we're typing a command after ':'
@@ -161,6 +168,11 @@ type Model struct {
 // IsUltraPlanMode returns true if the model is in ultra-plan mode
 func (m Model) IsUltraPlanMode() bool {
 	return m.ultraPlan != nil
+}
+
+// IsTripleShotMode returns true if the model is in triple-shot mode
+func (m Model) IsTripleShotMode() bool {
+	return m.tripleShot != nil
 }
 
 // IsPlanEditorActive returns true if the plan editor is currently active and visible

@@ -186,6 +186,11 @@ type ExperimentalConfig struct {
 	// for the sidebar based on the task and Claude's initial output.
 	// Requires ANTHROPIC_API_KEY to be set. (default: false)
 	IntelligentNaming bool `mapstructure:"intelligent_naming"`
+
+	// TripleShot enables the triple-shot mode which spawns three parallel instances
+	// working on the same problem, then uses a judge instance to evaluate and select
+	// the best solution. (default: false)
+	TripleShot bool `mapstructure:"triple_shot"`
 }
 
 // ResolveWorktreeDir returns the resolved worktree directory path.
@@ -294,6 +299,7 @@ func Default() *Config {
 		},
 		Experimental: ExperimentalConfig{
 			IntelligentNaming: false, // Disabled by default until stable
+			TripleShot:        false, // Disabled by default until stable
 		},
 	}
 }
@@ -385,6 +391,7 @@ func SetDefaults() {
 
 	// Experimental defaults
 	viper.SetDefault("experimental.intelligent_naming", defaults.Experimental.IntelligentNaming)
+	viper.SetDefault("experimental.triple_shot", defaults.Experimental.TripleShot)
 }
 
 // Load reads the configuration from viper into a Config struct and validates it

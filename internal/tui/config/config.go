@@ -333,6 +333,13 @@ func New() Model {
 					Type:        "bool",
 					Category:    "experimental",
 				},
+				{
+					Key:         "experimental.triple_shot",
+					Label:       "Triple-Shot Mode",
+					Description: "Enable :tripleshot command to spawn 3 parallel attempts with a judge evaluator",
+					Type:        "bool",
+					Category:    "experimental",
+				},
 			},
 		},
 	}
@@ -802,6 +809,7 @@ func (m *Model) resetCurrentToDefault() {
 		"paths.worktree_dir": defaults.Paths.WorktreeDir,
 		// Experimental
 		"experimental.intelligent_naming": defaults.Experimental.IntelligentNaming,
+		"experimental.triple_shot":        defaults.Experimental.TripleShot,
 	}
 
 	if defaultVal, ok := defaultValues[item.Key]; ok {
