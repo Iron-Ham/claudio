@@ -170,6 +170,38 @@ Glob patterns are supported:
 
 ---
 
+### paths
+
+Controls where Claudio stores data.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `paths.worktree_dir` | string | `""` | Directory for git worktrees |
+
+**worktree_dir behavior:**
+- Empty string (default): Uses `.claudio/worktrees` relative to repository root
+- Absolute path: Uses the path as-is (e.g., `/fast-drive/worktrees`)
+- Relative path: Resolved relative to repository root (e.g., `.worktrees`)
+- Home expansion: Supports `~` prefix (e.g., `~/claudio-worktrees`)
+
+**Use cases:**
+- Store worktrees on a faster drive for better performance
+- Keep worktrees outside the repository to avoid cluttering project directory
+- Use a different directory convention (e.g., `.worktrees/` instead of `.claudio/worktrees/`)
+
+```yaml
+paths:
+  # Use default (.claudio/worktrees relative to repo root)
+  worktree_dir: ""
+
+  # Or use a custom location:
+  # worktree_dir: ~/claudio-worktrees
+  # worktree_dir: /fast-ssd/worktrees
+  # worktree_dir: .worktrees
+```
+
+---
+
 ### cleanup
 
 Controls cleanup behavior.
@@ -253,6 +285,7 @@ Replace dots with underscores and use uppercase:
 | `pr.use_ai` | `CLAUDIO_PR_USE_AI` |
 | `resources.cost_limit` | `CLAUDIO_RESOURCES_COST_LIMIT` |
 | `ultraplan.max_parallel` | `CLAUDIO_ULTRAPLAN_MAX_PARALLEL` |
+| `paths.worktree_dir` | `CLAUDIO_PATHS_WORKTREE_DIR` |
 
 **Priority:** Environment variables override config file values.
 
@@ -297,6 +330,10 @@ pr:
     by_path:
       "src/api/**": [backend-team]
       "src/frontend/**": [frontend-team]
+
+# File paths
+paths:
+  worktree_dir: ""  # Default: .claudio/worktrees
 
 # Cleanup behavior
 cleanup:

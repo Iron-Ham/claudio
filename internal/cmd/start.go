@@ -572,7 +572,12 @@ func shutdownAllSessions() {
 
 // checkStaleResourcesWarning checks for stale resources and prints a warning if found
 func checkStaleResourcesWarning(baseDir string) {
-	worktreesDir := filepath.Join(baseDir, ".claudio", "worktrees")
+	cfg := config.Get()
+	worktreesDir := cfg.Paths.ResolveWorktreeDir(baseDir)
+	branchPrefix := cfg.Branch.Prefix
+	if branchPrefix == "" {
+		branchPrefix = "claudio"
+	}
 
 	var staleCount int
 
@@ -583,7 +588,7 @@ func checkStaleResourcesWarning(baseDir string) {
 	}
 
 	// Count stale branches
-	cmd := exec.Command("git", "-C", baseDir, "branch", "--list", "claudio/*")
+	cmd := exec.Command("git", "-C", baseDir, "branch", "--list", branchPrefix+"/*")
 	if output, err := cmd.Output(); err == nil {
 		branches := strings.Split(strings.TrimSpace(string(output)), "\n")
 		for _, b := range branches {

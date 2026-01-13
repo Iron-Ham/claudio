@@ -311,6 +311,18 @@ func New() Model {
 				},
 			},
 		},
+		{
+			Name: "Paths",
+			Items: []ConfigItem{
+				{
+					Key:         "paths.worktree_dir",
+					Label:       "Worktree Directory",
+					Description: "Where git worktrees are created (empty = .claudio/worktrees, supports ~ and relative paths)",
+					Type:        "string",
+					Category:    "paths",
+				},
+			},
+		},
 	}
 
 	return Model{
@@ -774,6 +786,8 @@ func (m *Model) resetCurrentToDefault() {
 		"plan.output_format": defaults.Plan.OutputFormat,
 		"plan.multi_pass":    defaults.Plan.MultiPass,
 		"plan.output_file":   defaults.Plan.OutputFile,
+		// Paths
+		"paths.worktree_dir": defaults.Paths.WorktreeDir,
 	}
 
 	if defaultVal, ok := defaultValues[item.Key]; ok {
