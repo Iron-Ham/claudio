@@ -1434,6 +1434,11 @@ func (m *Model) applyCommandResult(result command.Result) {
 		m.taskInputCursor = 0
 	}
 
+	// Handle triple-shot accept
+	if result.AcceptTripleShot != nil && *result.AcceptTripleShot {
+		m.handleTripleShotAccept()
+	}
+
 	// Handle inline plan mode transition
 	if result.StartPlanMode != nil && *result.StartPlanMode {
 		m.initInlinePlanMode()
@@ -2611,6 +2616,7 @@ func (m Model) renderHelpPanel(width int) string {
 	lines = append(lines, helpLine(":plan", "Start inline plan mode"))
 	lines = append(lines, helpLine(":ultraplan  :up", "Start ultraplan mode"))
 	lines = append(lines, helpLine(":tripleshot", "Run 3 parallel attempts + judge"))
+	lines = append(lines, helpLine(":accept", "Accept winning triple-shot solution"))
 	lines = append(lines, helpLine(":cancel", "Cancel ultraplan execution"))
 	lines = append(lines, helpLine(":group", "Manage instance groups"))
 	lines = append(lines, "")

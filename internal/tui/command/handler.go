@@ -35,6 +35,7 @@ type Dependencies interface {
 	IsUltraPlanMode() bool
 	IsTripleShotMode() bool
 	GetUltraPlanCoordinator() *orchestrator.Coordinator
+	GetTripleShotCoordinator() *orchestrator.TripleShotCoordinator
 
 	// Logger access
 	GetLogger() *logging.Logger
@@ -80,7 +81,8 @@ type Result struct {
 	TerminalDirMode   *int // 0 = invocation, 1 = worktree
 
 	// Mode transition - Triple-Shot
-	StartTripleShot *bool // Request to switch to triple-shot mode
+	StartTripleShot  *bool // Request to switch to triple-shot mode
+	AcceptTripleShot *bool // Request to accept/apply the winning triple-shot solution
 
 	// Mode transition - Plan Mode
 	StartPlanMode *bool // Request to switch to inline plan mode
@@ -245,6 +247,7 @@ func (h *Handler) registerCommands() {
 	h.commands["tripleshot"] = cmdTripleShot
 	h.commands["triple"] = cmdTripleShot
 	h.commands["3shot"] = cmdTripleShot
+	h.commands["accept"] = cmdAccept
 
 	// Plan mode commands
 	h.commands["plan"] = cmdPlan
@@ -310,6 +313,7 @@ func (h *Handler) buildCategories() {
 				{ShortKey: "", LongKey: "pr --group=single", Description: "Create PR for current group only", Category: "utility"},
 				{ShortKey: "", LongKey: "cancel", Description: "Cancel ultra-plan execution", Category: "utility"},
 				{ShortKey: "", LongKey: "tripleshot", Description: "Start triple-shot mode (3 parallel attempts + judge)", Category: "utility"},
+				{ShortKey: "", LongKey: "accept", Description: "Accept winning triple-shot solution", Category: "utility"},
 				{ShortKey: "", LongKey: "plan", Description: "Start inline plan mode for structured task planning", Category: "utility"},
 				{ShortKey: "", LongKey: "ultraplan", Description: "Start ultraplan mode for parallel task execution", Category: "utility"},
 			},
@@ -941,6 +945,40 @@ func cmdTripleShot(deps Dependencies) Result {
 	return Result{
 		StartTripleShot: &startTripleShot,
 		InfoMessage:     "Enter a task for triple-shot mode",
+	}
+}
+
+func cmdAccept(deps Dependencies) Result {
+	// Only valid in triple-shot mode
+	if !deps.IsTripleShotMode() {
+		return Result{ErrorMessage: "Not in triple-shot mode. Use :tripleshot to start a new session."}
+	}
+
+	coordinator := deps.GetTripleShotCoordinator()
+	if coordinator == nil {
+		return Result{ErrorMessage: "No active triple-shot session"}
+	}
+
+	session := coordinator.Session()
+	if session == nil {
+		return Result{ErrorMessage: "No active triple-shot session"}
+	}
+
+	// Check if triple-shot is complete
+	if session.Phase != orchestrator.PhaseTripleShotComplete {
+		return Result{ErrorMessage: fmt.Sprintf("Triple-shot not complete (current phase: %s)", session.Phase)}
+	}
+
+	// Check if we have an evaluation
+	if session.Evaluation == nil {
+		return Result{ErrorMessage: "No evaluation available"}
+	}
+
+	// Signal to the model that we want to accept the winning solution
+	acceptTripleShot := true
+	return Result{
+		AcceptTripleShot: &acceptTripleShot,
+		InfoMessage:      "Accepting triple-shot solution...",
 	}
 }
 

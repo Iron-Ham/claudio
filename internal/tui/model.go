@@ -908,6 +908,14 @@ func (m Model) GetUltraPlanCoordinator() *orchestrator.Coordinator {
 	return m.ultraPlan.Coordinator
 }
 
+// GetTripleShotCoordinator returns the triple-shot coordinator if in triple-shot mode.
+func (m Model) GetTripleShotCoordinator() *orchestrator.TripleShotCoordinator {
+	if m.tripleShot == nil {
+		return nil
+	}
+	return m.tripleShot.Coordinator
+}
+
 // GetLogger returns the logger instance.
 func (m Model) GetLogger() *logging.Logger {
 	return m.logger

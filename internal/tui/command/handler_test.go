@@ -28,19 +28,20 @@ import (
 
 // mockDeps implements Dependencies for testing
 type mockDeps struct {
-	orchestrator     *orchestrator.Orchestrator
-	session          *orchestrator.Session
-	activeInstance   *orchestrator.Instance
-	instanceCount    int
-	conflicts        int
-	terminalVisible  bool
-	diffVisible      bool
-	diffContent      string
-	ultraPlanMode    bool
-	tripleShotMode   bool
-	ultraCoordinator *orchestrator.Coordinator
-	logger           *logging.Logger
-	startTime        time.Time
+	orchestrator          *orchestrator.Orchestrator
+	session               *orchestrator.Session
+	activeInstance        *orchestrator.Instance
+	instanceCount         int
+	conflicts             int
+	terminalVisible       bool
+	diffVisible           bool
+	diffContent           string
+	ultraPlanMode         bool
+	tripleShotMode        bool
+	ultraCoordinator      *orchestrator.Coordinator
+	tripleShotCoordinator *orchestrator.TripleShotCoordinator
+	logger                *logging.Logger
+	startTime             time.Time
 }
 
 func (m *mockDeps) GetOrchestrator() *orchestrator.Orchestrator { return m.orchestrator }
@@ -55,6 +56,9 @@ func (m *mockDeps) IsUltraPlanMode() bool                       { return m.ultra
 func (m *mockDeps) IsTripleShotMode() bool                      { return m.tripleShotMode }
 func (m *mockDeps) GetUltraPlanCoordinator() *orchestrator.Coordinator {
 	return m.ultraCoordinator
+}
+func (m *mockDeps) GetTripleShotCoordinator() *orchestrator.TripleShotCoordinator {
+	return m.tripleShotCoordinator
 }
 func (m *mockDeps) GetLogger() *logging.Logger { return m.logger }
 func (m *mockDeps) GetStartTime() time.Time    { return m.startTime }
@@ -1048,6 +1052,65 @@ func TestTripleShotCommand(t *testing.T) {
 		}
 
 		viper.Reset()
+	})
+}
+
+// TestAcceptCommand tests the accept command for triple-shot mode
+//
+// Note: Testing the full success path requires creating a TripleShotCoordinator
+// with a complete session and evaluation. This requires complex orchestrator setup
+// that is better suited for integration tests. The acceptance logic in
+// handleTripleShotAccept is tested through the TUI model tests.
+func TestAcceptCommand(t *testing.T) {
+	t.Run("fails when not in triple-shot mode", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.tripleShotMode = false
+
+		result := h.Execute("accept", deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error when not in triple-shot mode")
+		}
+		if result.ErrorMessage != "Not in triple-shot mode. Use :tripleshot to start a new session." {
+			t.Errorf("unexpected error message: %q", result.ErrorMessage)
+		}
+		if result.AcceptTripleShot != nil {
+			t.Error("AcceptTripleShot should be nil on error")
+		}
+	})
+
+	t.Run("fails when no coordinator", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.tripleShotMode = true
+		deps.tripleShotCoordinator = nil
+
+		result := h.Execute("accept", deps)
+
+		if result.ErrorMessage != "No active triple-shot session" {
+			t.Errorf("expected 'No active triple-shot session', got: %q", result.ErrorMessage)
+		}
+		if result.AcceptTripleShot != nil {
+			t.Error("AcceptTripleShot should be nil on error")
+		}
+	})
+
+	t.Run("returns no result changes when not in mode and no coordinator", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.tripleShotMode = false
+		deps.tripleShotCoordinator = nil
+
+		result := h.Execute("accept", deps)
+
+		// Verify no state changes are requested on error
+		if result.AcceptTripleShot != nil {
+			t.Error("AcceptTripleShot should be nil")
+		}
+		if result.InfoMessage != "" {
+			t.Errorf("InfoMessage should be empty on error, got: %q", result.InfoMessage)
+		}
 	})
 }
 
