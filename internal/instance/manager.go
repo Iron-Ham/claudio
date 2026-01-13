@@ -76,9 +76,9 @@ func DefaultManagerConfig() ManagerConfig {
 		OutputBufferSize:         100000, // 100KB
 		CaptureIntervalMs:        100,
 		TmuxWidth:                200,
-		TmuxHeight:               30,  // Shorter height so prompts scroll off and users see actual work
-		ActivityTimeoutMinutes:   30,  // 30 minutes of no activity
-		CompletionTimeoutMinutes: 120, // 2 hours max runtime
+		TmuxHeight:               30, // Shorter height so prompts scroll off and users see actual work
+		ActivityTimeoutMinutes:   30, // 30 minutes of no activity
+		CompletionTimeoutMinutes: 0,  // Disabled by default (no max runtime limit)
 		StaleDetection:           true,
 	}
 }

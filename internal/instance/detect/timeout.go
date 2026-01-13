@@ -53,9 +53,9 @@ type TimeoutConfig struct {
 // DefaultTimeoutConfig returns sensible default timeout thresholds.
 func DefaultTimeoutConfig() TimeoutConfig {
 	return TimeoutConfig{
-		ActivityTimeout:   30 * time.Minute,  // 30 minutes of no activity
-		CompletionTimeout: 120 * time.Minute, // 2 hours max runtime
-		StaleThreshold:    3000,              // ~5 minutes at 100ms capture interval
+		ActivityTimeout:   30 * time.Minute, // 30 minutes of no activity
+		CompletionTimeout: 0,                // Disabled by default (no max runtime limit)
+		StaleThreshold:    3000,             // ~5 minutes at 100ms capture interval
 	}
 }
 
