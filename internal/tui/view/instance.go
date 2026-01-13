@@ -57,6 +57,27 @@ type RenderState struct {
 	SearchCurrent int
 	// SearchMode indicates if the search input is active
 	SearchMode bool
+	// GroupedViewEnabled indicates if the grouped view mode is active
+	GroupedViewEnabled bool
+}
+
+// GroupContext holds information about an instance's group membership.
+// This is used to render the group status header in the instance view.
+type GroupContext struct {
+	// Group is the group this instance belongs to
+	Group *orchestrator.InstanceGroup
+	// TaskIndex is the 1-based index of this task within the group
+	TaskIndex int
+	// TotalTasks is the total number of tasks in the group
+	TotalTasks int
+	// SiblingTasks are the other instances in the same group
+	SiblingTasks []*orchestrator.Instance
+	// DependencyGroups are the groups this group depends on
+	DependencyGroups []*orchestrator.InstanceGroup
+	// PendingDependencies are dependency instances that haven't completed
+	PendingDependencies []*orchestrator.Instance
+	// AllDependenciesMet is true when all group dependencies are satisfied
+	AllDependenciesMet bool
 }
 
 // Render renders the complete instance detail view.
@@ -75,11 +96,20 @@ func (v *InstanceView) RenderWithSession(inst *orchestrator.Instance, state Rend
 	b.WriteString(v.RenderHeader(inst))
 	b.WriteString("\n")
 
+	// Render group status header if in grouped mode
+	if state.GroupedViewEnabled && session != nil {
+		groupCtx := v.BuildGroupContext(inst, session)
+		if groupCtx != nil {
+			b.WriteString(v.RenderGroupStatusHeader(groupCtx))
+			b.WriteString("\n")
+		}
+	}
+
 	// Render task description
 	b.WriteString(v.RenderTask(inst.Task))
 	b.WriteString("\n")
 
-	// Render dependency information if available
+	// Render dependency information if available (individual instance dependencies)
 	if session != nil {
 		depInfo := v.RenderDependencies(inst, session)
 		if depInfo != "" {
@@ -119,6 +149,159 @@ func (v *InstanceView) RenderHeader(inst *orchestrator.Instance) string {
 	statusBadge := styles.StatusBadge.Background(statusColor).Render(string(inst.Status))
 	info := fmt.Sprintf("%s  Branch: %s", statusBadge, inst.Branch)
 	return styles.InstanceInfo.Render(info)
+}
+
+// BuildGroupContext builds the group context for an instance.
+// Returns nil if the instance is not part of any group.
+func (v *InstanceView) BuildGroupContext(inst *orchestrator.Instance, session *orchestrator.Session) *GroupContext {
+	if session == nil || len(session.Groups) == 0 {
+		return nil
+	}
+
+	// Find the group containing this instance
+	group := session.GetGroupForInstance(inst.ID)
+	if group == nil {
+		return nil
+	}
+
+	ctx := &GroupContext{
+		Group:      group,
+		TotalTasks: len(group.Instances),
+	}
+
+	// Find task index within group and collect siblings
+	for i, instID := range group.Instances {
+		if instID == inst.ID {
+			ctx.TaskIndex = i + 1 // 1-based
+		}
+		sibling := session.GetInstance(instID)
+		if sibling != nil && sibling.ID != inst.ID {
+			ctx.SiblingTasks = append(ctx.SiblingTasks, sibling)
+		}
+	}
+
+	// Collect dependency groups and check their status
+	ctx.AllDependenciesMet = true
+	for _, depGroupID := range group.DependsOn {
+		depGroup := session.GetGroup(depGroupID)
+		if depGroup != nil {
+			ctx.DependencyGroups = append(ctx.DependencyGroups, depGroup)
+			// Check if this dependency group is complete
+			if depGroup.Phase != orchestrator.GroupPhaseCompleted {
+				ctx.AllDependenciesMet = false
+				// Collect pending instances from this dependency group
+				for _, depInstID := range depGroup.AllInstanceIDs() {
+					depInst := session.GetInstance(depInstID)
+					if depInst != nil && depInst.Status != orchestrator.StatusCompleted {
+						ctx.PendingDependencies = append(ctx.PendingDependencies, depInst)
+					}
+				}
+			}
+		}
+	}
+
+	return ctx
+}
+
+// RenderGroupStatusHeader renders the group status line for an instance.
+// Shows group membership, task position, and dependency status.
+func (v *InstanceView) RenderGroupStatusHeader(ctx *GroupContext) string {
+	if ctx == nil || ctx.Group == nil {
+		return ""
+	}
+
+	var b strings.Builder
+
+	// Build group info line: "Group 2: Core Logic • Task 1 of 3"
+	phaseColor := PhaseColor(ctx.Group.Phase)
+	phaseIcon := PhaseIndicator(ctx.Group.Phase)
+
+	groupStyle := lipgloss.NewStyle().Foreground(phaseColor).Bold(true)
+	b.WriteString(groupStyle.Render(ctx.Group.Name))
+
+	// Add phase indicator
+	b.WriteString(" ")
+	b.WriteString(lipgloss.NewStyle().Foreground(phaseColor).Render(phaseIcon))
+
+	// Add task position
+	b.WriteString(styles.Muted.Render(fmt.Sprintf(" • Task %d of %d", ctx.TaskIndex, ctx.TotalTasks)))
+
+	// Add dependency group names if any
+	if len(ctx.DependencyGroups) > 0 {
+		var depNames []string
+		for _, dg := range ctx.DependencyGroups {
+			depNames = append(depNames, dg.Name)
+		}
+		b.WriteString(styles.Muted.Render(" • Depends on: "))
+		b.WriteString(styles.Muted.Render(strings.Join(depNames, ", ")))
+	}
+
+	b.WriteString("\n")
+
+	// Show dependency status line
+	if len(ctx.DependencyGroups) > 0 {
+		if ctx.AllDependenciesMet {
+			checkStyle := lipgloss.NewStyle().Foreground(styles.GreenColor)
+			b.WriteString(checkStyle.Render("Dependencies satisfied ✓"))
+		} else if len(ctx.PendingDependencies) > 0 {
+			// Show waiting status with pending task names
+			waitStyle := lipgloss.NewStyle().Foreground(styles.YellowColor)
+			b.WriteString(waitStyle.Render("Waiting for: "))
+			var pendingNames []string
+			maxPending := 3 // Limit to avoid very long lines
+			for i, dep := range ctx.PendingDependencies {
+				if i >= maxPending {
+					pendingNames = append(pendingNames, fmt.Sprintf("+%d more", len(ctx.PendingDependencies)-maxPending))
+					break
+				}
+				pendingNames = append(pendingNames, truncateTask(dep.EffectiveName(), 25))
+			}
+			b.WriteString(styles.Muted.Render(strings.Join(pendingNames, ", ")))
+		}
+	}
+
+	// Show sibling task connector if there are siblings
+	if len(ctx.SiblingTasks) > 0 {
+		b.WriteString("\n")
+		b.WriteString(v.RenderSiblingConnector(ctx))
+	}
+
+	return b.String()
+}
+
+// RenderSiblingConnector renders a visual connector showing sibling tasks.
+// This helps users understand the relationship between tasks in the same group.
+func (v *InstanceView) RenderSiblingConnector(ctx *GroupContext) string {
+	if ctx == nil || len(ctx.SiblingTasks) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+
+	// Use box-drawing characters for visual connection
+	connectorStyle := lipgloss.NewStyle().Foreground(styles.MutedColor)
+
+	// Show "Siblings:" label with sibling count
+	b.WriteString(connectorStyle.Render("├─ Siblings: "))
+
+	// Show sibling tasks with status indicators
+	var siblingStrs []string
+	maxSiblings := 4 // Limit display
+	for i, sib := range ctx.SiblingTasks {
+		if i >= maxSiblings {
+			siblingStrs = append(siblingStrs, fmt.Sprintf("+%d more", len(ctx.SiblingTasks)-maxSiblings))
+			break
+		}
+		statusIcon := styles.StatusIcon(string(sib.Status))
+		statusColor := styles.StatusColor(string(sib.Status))
+		iconStyle := lipgloss.NewStyle().Foreground(statusColor)
+		name := truncateTask(sib.EffectiveName(), 20)
+		siblingStrs = append(siblingStrs, iconStyle.Render(statusIcon)+" "+name)
+	}
+
+	b.WriteString(strings.Join(siblingStrs, connectorStyle.Render(" │ ")))
+
+	return b.String()
 }
 
 // RenderDependencies renders the dependency chain information for an instance.
@@ -210,16 +393,36 @@ type OverheadParams struct {
 	HasSearchActive bool
 	// HasScrollIndicator indicates if the output needs a scroll indicator
 	HasScrollIndicator bool
+	// HasGroupHeader indicates if the group status header should be shown
+	HasGroupHeader bool
+	// HasGroupDependencies indicates if the group has dependencies (adds dependency status line)
+	HasGroupDependencies bool
+	// HasSiblings indicates if the instance has sibling tasks in the same group
+	HasSiblings bool
 }
 
 // CalculateOverheadLines calculates the number of lines used by the instance view
-// above the output area. This accounts for header, task, dependencies, metrics,
-// status banner, scroll indicator, and search bar.
+// above the output area. This accounts for header, group status, task, dependencies,
+// metrics, status banner, scroll indicator, and search bar.
 func (v *InstanceView) CalculateOverheadLines(params OverheadParams) int {
 	lines := 0
 
 	// Header section: 1 line rendered + 1 for newline separator
 	lines += 2
+
+	// Group status header (if in grouped mode and instance is part of a group)
+	if params.HasGroupHeader {
+		// Group name line + newline
+		lines += 2
+		// Dependency status line (if group has dependencies)
+		if params.HasGroupDependencies {
+			lines++
+		}
+		// Sibling connector line (if instance has siblings)
+		if params.HasSiblings {
+			lines++
+		}
+	}
 
 	// Task section: 1 to MaxTaskDisplayLines+1 lines (extra for "..." when truncated), plus newline
 	taskLines := strings.Count(params.Task, "\n") + 1
