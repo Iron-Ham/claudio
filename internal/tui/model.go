@@ -45,6 +45,10 @@ type PlanEditorState struct {
 	// active indicates whether the plan editor is currently shown
 	active bool
 
+	// inlineMode indicates whether this is an inline plan (from :plan command) vs ultraplan mode
+	// When true, the plan editor works with InlinePlanState instead of UltraPlanState
+	inlineMode bool
+
 	// selectedTaskIdx is the index of the currently selected task in the task list
 	selectedTaskIdx int
 
@@ -72,6 +76,35 @@ type PlanEditorState struct {
 
 	// tasksInCycle contains task IDs that are part of a dependency cycle (for highlighting)
 	tasksInCycle map[string]bool
+
+	// pendingConfirmDelete tracks the task ID awaiting deletion confirmation for started instances
+	pendingConfirmDelete string
+}
+
+// InlinePlanState holds state for inline plan mode (from :plan command).
+// Unlike UltraPlanState which uses the orchestrator.Coordinator for ultraplan workflows,
+// InlinePlanState manages a simpler planning flow directly within the TUI.
+type InlinePlanState struct {
+	// Plan holds the current plan being edited
+	Plan *orchestrator.PlanSpec
+
+	// Objective is the user-provided goal for this plan
+	Objective string
+
+	// GroupID is the instance group ID created for this plan's tasks
+	GroupID string
+
+	// TaskToInstance maps task IDs to instance IDs for tasks that have been materialized
+	TaskToInstance map[string]string
+
+	// AwaitingObjective indicates we're waiting for user to input the plan objective
+	AwaitingObjective bool
+
+	// AwaitingPlanCreation indicates we're waiting for the planning instance to generate a plan
+	AwaitingPlanCreation bool
+
+	// PlanningInstanceID is the instance ID of the Claude instance creating the plan (if any)
+	PlanningInstanceID string
 }
 
 // Model holds the TUI application state
@@ -97,6 +130,10 @@ type Model struct {
 
 	// Plan editor mode (nil if not in plan editor mode)
 	planEditor *PlanEditorState
+
+	// Inline plan mode (nil if not in inline plan mode)
+	// Used for simpler :plan command workflow, separate from ultraPlan
+	inlinePlan *InlinePlanState
 
 	// UI state
 	activeTab       int
@@ -177,15 +214,26 @@ func (m Model) IsTripleShotMode() bool {
 	return m.tripleShot != nil
 }
 
+// IsInlinePlanMode returns true if the model is in inline plan mode
+func (m Model) IsInlinePlanMode() bool {
+	return m.inlinePlan != nil
+}
+
 // IsPlanEditorActive returns true if the plan editor is currently active and visible
 func (m Model) IsPlanEditorActive() bool {
 	return m.planEditor != nil && m.planEditor.active
+}
+
+// IsPlanEditorInlineMode returns true if the plan editor is in inline mode (from :plan command)
+func (m Model) IsPlanEditorInlineMode() bool {
+	return m.planEditor != nil && m.planEditor.inlineMode
 }
 
 // enterPlanEditor initializes the plan editor state when entering edit mode
 func (m *Model) enterPlanEditor() {
 	m.planEditor = &PlanEditorState{
 		active:              true,
+		inlineMode:          false, // Default to ultraplan mode
 		selectedTaskIdx:     0,
 		editingField:        "",
 		editBuffer:          "",
@@ -198,9 +246,55 @@ func (m *Model) enterPlanEditor() {
 	m.updatePlanValidation()
 }
 
-// updatePlanValidation runs validation on the current plan and updates the editor state
+// enterInlinePlanEditor initializes the plan editor for inline plan mode
+func (m *Model) enterInlinePlanEditor() {
+	m.planEditor = &PlanEditorState{
+		active:              true,
+		inlineMode:          true,
+		selectedTaskIdx:     0,
+		editingField:        "",
+		editBuffer:          "",
+		editCursor:          0,
+		scrollOffset:        0,
+		showValidationPanel: true,
+		tasksInCycle:        make(map[string]bool),
+	}
+	// Run initial validation for inline plan
+	m.updateInlinePlanValidation()
+}
+
+// updateInlinePlanValidation runs validation on the inline plan and updates the editor state
+func (m *Model) updateInlinePlanValidation() {
+	if m.planEditor == nil || m.inlinePlan == nil || m.inlinePlan.Plan == nil {
+		return
+	}
+
+	// Run validation
+	m.planEditor.validation = orchestrator.ValidatePlanForEditor(m.inlinePlan.Plan)
+
+	// Update tasks in cycle map for highlighting
+	m.planEditor.tasksInCycle = make(map[string]bool)
+	cycleTasks := orchestrator.GetTasksInCycle(m.inlinePlan.Plan)
+	for _, taskID := range cycleTasks {
+		m.planEditor.tasksInCycle[taskID] = true
+	}
+}
+
+// updatePlanValidation runs validation on the current plan and updates the editor state.
+// This supports both inline plan mode and ultra-plan mode.
 func (m *Model) updatePlanValidation() {
-	if m.planEditor == nil || m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
+	if m.planEditor == nil {
+		return
+	}
+
+	// Handle inline plan mode
+	if m.planEditor.inlineMode {
+		m.updateInlinePlanValidation()
+		return
+	}
+
+	// Ultra-plan mode
+	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
 		return
 	}
 
@@ -236,18 +330,20 @@ func (m *Model) canConfirmPlan() bool {
 	return !m.planEditor.validation.HasErrors()
 }
 
-// getValidationMessagesForSelectedTask returns validation messages for the currently selected task
+// getValidationMessagesForSelectedTask returns validation messages for the currently selected task.
+// This supports both inline plan mode and ultra-plan mode.
 func (m *Model) getValidationMessagesForSelectedTask() []orchestrator.ValidationMessage {
-	if m.planEditor == nil || m.planEditor.validation == nil || m.ultraPlan == nil {
+	if m.planEditor == nil || m.planEditor.validation == nil {
 		return nil
 	}
 
-	session := m.ultraPlan.Coordinator.Session()
-	if session == nil || session.Plan == nil || m.planEditor.selectedTaskIdx >= len(session.Plan.Tasks) {
+	// Get the plan using the unified getter
+	plan := m.getPlanForEditor()
+	if plan == nil || m.planEditor.selectedTaskIdx >= len(plan.Tasks) {
 		return nil
 	}
 
-	taskID := session.Plan.Tasks[m.planEditor.selectedTaskIdx].ID
+	taskID := plan.Tasks[m.planEditor.selectedTaskIdx].ID
 	return m.planEditor.validation.GetMessagesForTask(taskID)
 }
 

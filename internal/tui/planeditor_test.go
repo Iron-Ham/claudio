@@ -1415,3 +1415,412 @@ func TestGetValidationMessagesForSelectedTask_NilState(t *testing.T) {
 		})
 	}
 }
+
+// Tests for inline plan mode support
+
+func TestInlinePlanState_Initialization(t *testing.T) {
+	state := &InlinePlanState{
+		Objective:         "Test objective",
+		AwaitingObjective: true,
+		TaskToInstance:    make(map[string]string),
+	}
+
+	if state.Objective != "Test objective" {
+		t.Errorf("expected objective to be 'Test objective', got '%s'", state.Objective)
+	}
+	if !state.AwaitingObjective {
+		t.Error("expected AwaitingObjective to be true")
+	}
+	if state.TaskToInstance == nil {
+		t.Error("expected TaskToInstance to be non-nil map")
+	}
+}
+
+func TestPlanEditorState_InlineMode(t *testing.T) {
+	// Test that inline mode flag is properly set
+	state := &PlanEditorState{
+		active:     true,
+		inlineMode: true,
+	}
+
+	if !state.inlineMode {
+		t.Error("expected inlineMode to be true")
+	}
+
+	// Test default (ultraplan) mode
+	stateDefault := &PlanEditorState{
+		active:     true,
+		inlineMode: false,
+	}
+
+	if stateDefault.inlineMode {
+		t.Error("expected inlineMode to be false by default")
+	}
+}
+
+func TestGetPlanForEditor_InlineMode(t *testing.T) {
+	plan := createTestPlanForTUI()
+
+	m := Model{
+		planEditor: &PlanEditorState{
+			active:     true,
+			inlineMode: true,
+		},
+		inlinePlan: &InlinePlanState{
+			Plan: plan,
+		},
+	}
+
+	result := m.getPlanForEditor()
+	if result == nil {
+		t.Fatal("expected plan to be returned for inline mode")
+	}
+	if result != plan {
+		t.Error("expected returned plan to be the inline plan")
+	}
+}
+
+func TestGetPlanForEditor_InlineModeNoPlan(t *testing.T) {
+	m := Model{
+		planEditor: &PlanEditorState{
+			active:     true,
+			inlineMode: true,
+		},
+		inlinePlan: nil,
+	}
+
+	result := m.getPlanForEditor()
+	if result != nil {
+		t.Error("expected nil when inlinePlan is nil")
+	}
+}
+
+func TestGetPlanForEditor_InlineModePlanNil(t *testing.T) {
+	m := Model{
+		planEditor: &PlanEditorState{
+			active:     true,
+			inlineMode: true,
+		},
+		inlinePlan: &InlinePlanState{
+			Plan: nil,
+		},
+	}
+
+	result := m.getPlanForEditor()
+	if result != nil {
+		t.Error("expected nil when plan is nil")
+	}
+}
+
+func TestEnterInlinePlanEditor(t *testing.T) {
+	plan := createTestPlanForTUI()
+
+	m := Model{
+		inlinePlan: &InlinePlanState{
+			Plan:      plan,
+			Objective: "Test objective",
+		},
+		terminalManager: terminal.NewManager(),
+	}
+
+	m.enterInlinePlanEditor()
+
+	if m.planEditor == nil {
+		t.Fatal("expected planEditor to be initialized")
+	}
+	if !m.planEditor.active {
+		t.Error("expected planEditor.active to be true")
+	}
+	if !m.planEditor.inlineMode {
+		t.Error("expected planEditor.inlineMode to be true")
+	}
+	if m.planEditor.selectedTaskIdx != 0 {
+		t.Error("expected selectedTaskIdx to be 0")
+	}
+}
+
+func TestCanStartExecution_InlineMode(t *testing.T) {
+	plan := createTestPlanForTUI()
+
+	tests := []struct {
+		name     string
+		model    Model
+		expected bool
+	}{
+		{
+			name: "inline mode with valid plan",
+			model: Model{
+				planEditor: &PlanEditorState{
+					active:     true,
+					inlineMode: true,
+				},
+				inlinePlan: &InlinePlanState{
+					Plan: plan,
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "inline mode with nil plan",
+			model: Model{
+				planEditor: &PlanEditorState{
+					active:     true,
+					inlineMode: true,
+				},
+				inlinePlan: &InlinePlanState{
+					Plan: nil,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "inline mode with nil inlinePlan",
+			model: Model{
+				planEditor: &PlanEditorState{
+					active:     true,
+					inlineMode: true,
+				},
+				inlinePlan: nil,
+			},
+			expected: false,
+		},
+		{
+			name: "not inline mode (ultraplan), nil ultraplan",
+			model: Model{
+				planEditor: &PlanEditorState{
+					active:     true,
+					inlineMode: false,
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.model.canStartExecution()
+			if result != tt.expected {
+				t.Errorf("expected canStartExecution() = %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestIsInlinePlanMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		model    Model
+		expected bool
+	}{
+		{
+			name: "inline plan mode active",
+			model: Model{
+				inlinePlan: &InlinePlanState{},
+			},
+			expected: true,
+		},
+		{
+			name: "inline plan mode not active",
+			model: Model{
+				inlinePlan: nil,
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.model.IsInlinePlanMode()
+			if result != tt.expected {
+				t.Errorf("expected IsInlinePlanMode() = %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestIsPlanEditorInlineMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		model    Model
+		expected bool
+	}{
+		{
+			name: "plan editor in inline mode",
+			model: Model{
+				planEditor: &PlanEditorState{
+					active:     true,
+					inlineMode: true,
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "plan editor not in inline mode",
+			model: Model{
+				planEditor: &PlanEditorState{
+					active:     true,
+					inlineMode: false,
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "no plan editor",
+			model: Model{
+				planEditor: nil,
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.model.IsPlanEditorInlineMode()
+			if result != tt.expected {
+				t.Errorf("expected IsPlanEditorInlineMode() = %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestRenderPlanEditorView_InlineMode(t *testing.T) {
+	plan := createTestPlanForTUI()
+
+	m := Model{
+		planEditor: &PlanEditorState{
+			active:     true,
+			inlineMode: true,
+		},
+		inlinePlan: &InlinePlanState{
+			Plan: plan,
+		},
+		terminalManager: terminal.NewManager(),
+	}
+
+	// Should not panic and return something
+	result := m.renderPlanEditorView(80)
+	if result == "" {
+		t.Error("expected non-empty render output")
+	}
+}
+
+func TestRenderPlanEditorView_NoPlan(t *testing.T) {
+	m := Model{
+		planEditor: &PlanEditorState{
+			active:     true,
+			inlineMode: true,
+		},
+		inlinePlan:      nil,
+		terminalManager: terminal.NewManager(),
+	}
+
+	result := m.renderPlanEditorView(80)
+	if result != "No plan available" {
+		t.Errorf("expected 'No plan available', got '%s'", result)
+	}
+}
+
+func TestGetValidationMessagesForSelectedTask_InlineMode(t *testing.T) {
+	plan := createTestPlanForTUI()
+
+	m := Model{
+		planEditor: &PlanEditorState{
+			active:          true,
+			inlineMode:      true,
+			selectedTaskIdx: 0,
+			validation: &orchestrator.ValidationResult{
+				Messages: []orchestrator.ValidationMessage{
+					{TaskID: "task-1", Message: "Error for task 1"},
+					{TaskID: "task-2", Message: "Error for task 2"},
+				},
+			},
+		},
+		inlinePlan: &InlinePlanState{
+			Plan: plan,
+		},
+	}
+
+	messages := m.getValidationMessagesForSelectedTask()
+	if messages == nil {
+		t.Fatal("expected non-nil messages")
+	}
+	if len(messages) != 1 {
+		t.Errorf("expected 1 message for task-1, got %d", len(messages))
+	}
+}
+
+func TestUpdateInlinePlanValidation(t *testing.T) {
+	plan := createTestPlanForTUI()
+
+	m := Model{
+		planEditor: &PlanEditorState{
+			active:       true,
+			inlineMode:   true,
+			tasksInCycle: make(map[string]bool),
+		},
+		inlinePlan: &InlinePlanState{
+			Plan: plan,
+		},
+	}
+
+	m.updateInlinePlanValidation()
+
+	if m.planEditor.validation == nil {
+		t.Error("expected validation to be set")
+	}
+}
+
+func TestPendingConfirmDelete(t *testing.T) {
+	// Test that pendingConfirmDelete field is properly used
+	state := &PlanEditorState{
+		active:               true,
+		pendingConfirmDelete: "task-1",
+	}
+
+	if state.pendingConfirmDelete != "task-1" {
+		t.Errorf("expected pendingConfirmDelete to be 'task-1', got '%s'", state.pendingConfirmDelete)
+	}
+}
+
+func TestTruncateString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{
+			name:     "no truncation needed",
+			input:    "hello",
+			maxLen:   10,
+			expected: "hello",
+		},
+		{
+			name:     "exact length",
+			input:    "hello",
+			maxLen:   5,
+			expected: "hello",
+		},
+		{
+			name:     "needs truncation",
+			input:    "hello world",
+			maxLen:   8,
+			expected: "hello...",
+		},
+		{
+			name:     "very short max",
+			input:    "hello",
+			maxLen:   3,
+			expected: "hel",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := truncateString(tt.input, tt.maxLen)
+			if result != tt.expected {
+				t.Errorf("expected '%s', got '%s'", tt.expected, result)
+			}
+		})
+	}
+}
