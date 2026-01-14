@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-01-14
+
+This release introduces **Intelligent Task Decomposition** - a comprehensive analysis system that makes UltraPlan significantly smarter about breaking down complex projects into well-ordered, risk-aware execution plans.
+
 ### Added
 
 - **Enhanced Task Decomposition** - Comprehensive `decomposition` package provides intelligent task breakdown for UltraPlan with multiple analysis strategies:
@@ -312,6 +316,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.6.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.6.0
 [0.5.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.5.1
 [0.5.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.4.0
