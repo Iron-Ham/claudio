@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Triple-Shot Accept Command** - Implement missing `:accept` command that was referenced in UI message but never implemented. Users can now accept winning triple-shot solutions after evaluation completes.
 - **Grouped Sidebar Shows All Instances** - Fixed bug where instances not belonging to a group (e.g., pre-existing instances) would disappear from the sidebar when a tripleshot or other grouped session was active. Ungrouped instances now appear at the top of the sidebar in grouped mode.
+- **TUI Freeze from File I/O** - Fixed UI freeze that could occur during triple-shot and ultraplan modes when checking for completion files or plan files. All file I/O operations in the tick handler are now performed asynchronously, keeping the UI responsive.
 
 ### Changed
 

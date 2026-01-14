@@ -20,6 +20,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
+	"github.com/Iron-Ham/claudio/internal/tui/output"
 	"github.com/Iron-Ham/claudio/internal/tui/panel"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
@@ -437,12 +438,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.terminalManager.IsVisible() {
 			m.updateTerminalOutput()
 		}
-		// Check for plan file during planning phase (proactive detection)
-		m.checkForPlanFile()
-		// Check for multi-pass plan files (most reliable detection for multi-pass mode)
-		m.checkForMultiPassPlanFiles()
-		// Check for plan manager plan file during plan selection phase (most reliable detection)
-		m.checkForPlanManagerPlanFile()
 		// Check for phase changes that need notification (synthesis, consolidation pause)
 		m.checkForPhaseNotification()
 
@@ -453,6 +448,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Dispatch async commands to check tripleshot completion files
 		// This avoids blocking the UI with file I/O
 		cmds = append(cmds, m.dispatchTripleShotCompletionChecks()...)
+
+		// Dispatch async commands to check ultraplan files
+		// This avoids blocking the UI with file I/O during planning phases
+		cmds = append(cmds, m.dispatchUltraPlanFileChecks()...)
 
 		// Check if ultraplan needs user notification
 		if m.ultraPlan != nil && m.ultraPlan.NeedsNotification {
@@ -626,6 +625,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tripleShotCheckResultMsg:
 		// Handle async completion check results
 		return m.handleTripleShotCheckResult(msg)
+
+	case tripleShotAttemptProcessedMsg:
+		// Handle async attempt completion processing result
+		return m.handleTripleShotAttemptProcessed(msg)
+
+	case tripleShotJudgeProcessedMsg:
+		// Handle async judge completion processing result
+		return m.handleTripleShotJudgeProcessed(msg)
+
+	case planFileCheckResultMsg:
+		// Handle async plan file check result (single-pass mode)
+		return m.handlePlanFileCheckResult(msg)
+
+	case multiPassPlanFileCheckResultMsg:
+		// Handle async multi-pass plan file check result
+		return m.handleMultiPassPlanFileCheckResult(msg)
+
+	case planManagerFileCheckResultMsg:
+		// Handle async plan manager file check result
+		return m.handlePlanManagerFileCheckResult(msg)
 	}
 
 	return m, nil
@@ -3201,5 +3220,286 @@ func checkTripleShotCompletionAsync(
 		}
 
 		return result
+	}
+}
+
+// tripleShotAttemptProcessedMsg contains the result of processing an attempt completion file.
+// This is returned by processAttemptCompletionAsync after reading and parsing the file.
+type tripleShotAttemptProcessedMsg struct {
+	GroupID      string
+	AttemptIndex int
+	Err          error
+}
+
+// tripleShotJudgeProcessedMsg contains the result of processing a judge completion file.
+// This is returned by processJudgeCompletionAsync after reading and parsing the file.
+type tripleShotJudgeProcessedMsg struct {
+	GroupID     string
+	Err         error
+	TaskPreview string
+}
+
+// processAttemptCompletionAsync returns a command that processes an attempt completion file
+// in a goroutine, avoiding blocking the UI event loop with file I/O.
+func processAttemptCompletionAsync(
+	coordinator *orchestrator.TripleShotCoordinator,
+	groupID string,
+	attemptIndex int,
+) tea.Cmd {
+	return func() tea.Msg {
+		err := coordinator.ProcessAttemptCompletion(attemptIndex)
+		return tripleShotAttemptProcessedMsg{
+			GroupID:      groupID,
+			AttemptIndex: attemptIndex,
+			Err:          err,
+		}
+	}
+}
+
+// processJudgeCompletionAsync returns a command that processes a judge completion file
+// in a goroutine, avoiding blocking the UI event loop with file I/O.
+func processJudgeCompletionAsync(
+	coordinator *orchestrator.TripleShotCoordinator,
+	groupID string,
+) tea.Cmd {
+	return func() tea.Msg {
+		err := coordinator.ProcessJudgeCompletion()
+
+		// Build task preview for success message
+		taskPreview := ""
+		if err == nil {
+			session := coordinator.Session()
+			if session != nil && len(session.Task) > 30 {
+				taskPreview = session.Task[:27] + "..."
+			} else if session != nil {
+				taskPreview = session.Task
+			}
+		}
+
+		return tripleShotJudgeProcessedMsg{
+			GroupID:     groupID,
+			Err:         err,
+			TaskPreview: taskPreview,
+		}
+	}
+}
+
+// planFileCheckResultMsg contains the result of async plan file checking.
+// Used for single-pass mode during planning phase.
+type planFileCheckResultMsg struct {
+	Found        bool
+	Plan         *orchestrator.PlanSpec
+	InstanceID   string
+	WorktreePath string
+	Err          error
+}
+
+// multiPassPlanFileCheckResultMsg contains the result of async multi-pass plan file checking.
+// Returned for each coordinator that has a new plan file detected.
+type multiPassPlanFileCheckResultMsg struct {
+	Index        int
+	Plan         *orchestrator.PlanSpec
+	StrategyName string
+	Err          error
+}
+
+// planManagerFileCheckResultMsg contains the result of async plan manager file checking.
+// Used during plan selection phase in multi-pass mode.
+type planManagerFileCheckResultMsg struct {
+	Found    bool
+	Plan     *orchestrator.PlanSpec
+	Decision *orchestrator.PlanDecision
+	Err      error
+}
+
+// checkPlanFileAsync returns a command that checks for a plan file asynchronously.
+// This avoids blocking the UI event loop with file I/O during the planning phase.
+func checkPlanFileAsync(
+	orc *orchestrator.Orchestrator,
+	ultraPlan *view.UltraPlanState,
+) tea.Cmd {
+	return func() tea.Msg {
+		if ultraPlan == nil || ultraPlan.Coordinator == nil {
+			return nil
+		}
+
+		session := ultraPlan.Coordinator.Session()
+		if session == nil || session.Phase != orchestrator.PhasePlanning || session.Plan != nil {
+			return nil
+		}
+
+		// Get the coordinator instance
+		inst := orc.GetInstance(session.CoordinatorID)
+		if inst == nil {
+			return nil
+		}
+
+		// Check if plan file exists
+		planPath := orchestrator.PlanFilePath(inst.WorktreePath)
+		if _, err := os.Stat(planPath); err != nil {
+			return nil
+		}
+
+		// Parse the plan
+		plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
+		if err != nil {
+			// Don't return error yet - file might be partially written
+			return nil
+		}
+
+		return planFileCheckResultMsg{
+			Found:        true,
+			Plan:         plan,
+			InstanceID:   inst.ID,
+			WorktreePath: inst.WorktreePath,
+		}
+	}
+}
+
+// checkMultiPassPlanFilesAsync returns commands that check for plan files from multi-pass coordinators.
+// Each returned command checks one coordinator's plan file asynchronously.
+func checkMultiPassPlanFilesAsync(
+	orc *orchestrator.Orchestrator,
+	ultraPlan *view.UltraPlanState,
+) []tea.Cmd {
+	if ultraPlan == nil || ultraPlan.Coordinator == nil {
+		return nil
+	}
+
+	session := ultraPlan.Coordinator.Session()
+	if session == nil {
+		return nil
+	}
+
+	// Only check during planning phase in multi-pass mode
+	if session.Phase != orchestrator.PhasePlanning || !session.Config.MultiPass {
+		return nil
+	}
+
+	// Skip if we don't have coordinator IDs yet
+	numCoordinators := len(session.PlanCoordinatorIDs)
+	if numCoordinators == 0 {
+		return nil
+	}
+
+	// Skip if plan manager is already running
+	if session.PlanManagerID != "" {
+		return nil
+	}
+
+	strategyNames := orchestrator.GetMultiPassStrategyNames()
+	var cmds []tea.Cmd
+
+	// Create async check command for each coordinator that doesn't have a plan yet
+	for i, coordID := range session.PlanCoordinatorIDs {
+		// Skip if we already have a plan for this coordinator
+		if i < len(session.CandidatePlans) && session.CandidatePlans[i] != nil {
+			continue
+		}
+
+		// Capture loop variables for closure
+		idx := i
+		instID := coordID
+		strategyName := "unknown"
+		if idx < len(strategyNames) {
+			strategyName = strategyNames[idx]
+		}
+
+		cmds = append(cmds, func() tea.Msg {
+			// Get the coordinator instance
+			inst := orc.GetInstance(instID)
+			if inst == nil {
+				return nil
+			}
+
+			// Check if plan file exists
+			planPath := orchestrator.PlanFilePath(inst.WorktreePath)
+			if _, err := os.Stat(planPath); err != nil {
+				return nil
+			}
+
+			// Parse the plan
+			plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
+			if err != nil {
+				// File might be partially written, skip for now
+				return nil
+			}
+
+			return multiPassPlanFileCheckResultMsg{
+				Index:        idx,
+				Plan:         plan,
+				StrategyName: strategyName,
+			}
+		})
+	}
+
+	return cmds
+}
+
+// checkPlanManagerFileAsync returns a command that checks for the plan manager's output file.
+// This avoids blocking the UI during plan selection phase in multi-pass mode.
+func checkPlanManagerFileAsync(
+	orc *orchestrator.Orchestrator,
+	outputManager *output.Manager,
+	ultraPlan *view.UltraPlanState,
+) tea.Cmd {
+	return func() tea.Msg {
+		if ultraPlan == nil || ultraPlan.Coordinator == nil {
+			return nil
+		}
+
+		session := ultraPlan.Coordinator.Session()
+		if session == nil {
+			return nil
+		}
+
+		// Only check during plan selection phase in multi-pass mode
+		if session.Phase != orchestrator.PhasePlanSelection || !session.Config.MultiPass {
+			return nil
+		}
+
+		// Need a plan manager ID to check
+		if session.PlanManagerID == "" {
+			return nil
+		}
+
+		// Skip if we already have a plan set
+		if session.Plan != nil {
+			return nil
+		}
+
+		// Get the plan manager instance
+		inst := orc.GetInstance(session.PlanManagerID)
+		if inst == nil {
+			return nil
+		}
+
+		// Check if plan file exists
+		planPath := orchestrator.PlanFilePath(inst.WorktreePath)
+		if _, err := os.Stat(planPath); err != nil {
+			return nil
+		}
+
+		// Parse the plan from the file
+		plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
+		if err != nil {
+			return planManagerFileCheckResultMsg{
+				Found: true,
+				Err:   err,
+			}
+		}
+
+		// Try to parse the plan decision from the output (for display purposes)
+		var decision *orchestrator.PlanDecision
+		if outputManager != nil {
+			output := outputManager.GetOutput(inst.ID)
+			decision, _ = orchestrator.ParsePlanDecisionFromOutput(output)
+		}
+
+		return planManagerFileCheckResultMsg{
+			Found:    true,
+			Plan:     plan,
+			Decision: decision,
+		}
 	}
 }
