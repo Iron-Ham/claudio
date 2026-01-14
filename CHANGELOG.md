@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Changelog CI Check** - PRs now require a CHANGELOG.md entry. Add the `skip-changelog` label to bypass for trivial changes (test-only, internal refactors, docs-only, dependency updates).
 - **Multi-Pass Plan Mode** (Experimental) - New `:multiplan` (or `:mp`) command launches competitive multi-pass planning with 3 parallel planners using different strategies (maximize-parallelism, minimize-complexity, balanced-approach) plus a plan manager/assessor that evaluates and merges the best plan. This provides the same competitive planning approach as `:ultraplan --multi-pass` but within the simpler inline plan workflow.
 
+### Fixed
+
+- **Multiplan Evaluator Not Starting** - Fixed `:multiplan` command not triggering the evaluator/assessor instance. The issue was that plan completion was only detected when planner processes exited, not when they created their plan files. Added async plan file polling (similar to `:ultraplan`) to detect plan creation and properly trigger the evaluator once all 3 planners complete.
+
 ## [0.6.1] - 2026-01-14
 
 ### Added

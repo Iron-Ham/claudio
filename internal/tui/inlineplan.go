@@ -2,7 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
@@ -1115,4 +1118,163 @@ func (m *Model) handleInlinePlanTaskReorder(plan *orchestrator.PlanSpec) error {
 	}
 
 	return nil
+}
+
+// dispatchInlineMultiPlanFileChecks returns commands that check for plan files from inline multiplan planners.
+// This enables plan file detection for the :multiplan command, similar to how checkMultiPassPlanFilesAsync
+// works for :ultraplan. Each returned command checks one planner's plan file asynchronously.
+func (m *Model) dispatchInlineMultiPlanFileChecks() []tea.Cmd {
+	// Only check during inline multiplan mode when awaiting plan creation
+	if m.inlinePlan == nil || !m.inlinePlan.MultiPass || !m.inlinePlan.AwaitingPlanCreation {
+		return nil
+	}
+
+	// Skip if we don't have planner IDs yet
+	numPlanners := len(m.inlinePlan.PlanningInstanceIDs)
+	if numPlanners == 0 {
+		return nil
+	}
+
+	// Capture needed data for async operations
+	// (avoid accessing m.inlinePlan inside closures)
+	plannerIDs := make([]string, len(m.inlinePlan.PlanningInstanceIDs))
+	copy(plannerIDs, m.inlinePlan.PlanningInstanceIDs)
+
+	processedPlanners := make(map[int]bool)
+	for k, v := range m.inlinePlan.ProcessedPlanners {
+		processedPlanners[k] = v
+	}
+
+	objective := m.inlinePlan.Objective
+	strategyNames := orchestrator.GetMultiPassStrategyNames()
+	orc := m.orchestrator
+
+	var cmds []tea.Cmd
+
+	// Create async check command for each planner that we haven't processed yet
+	for i, plannerID := range plannerIDs {
+		// Skip if we already processed this planner
+		if processedPlanners[i] {
+			continue
+		}
+
+		// Capture loop variables for closure
+		idx := i
+		instID := plannerID
+		strategyName := "unknown"
+		if idx < len(strategyNames) {
+			strategyName = strategyNames[idx]
+		}
+
+		cmds = append(cmds, checkInlineMultiPlanFileAsync(orc, instID, idx, strategyName, objective))
+	}
+
+	return cmds
+}
+
+// checkInlineMultiPlanFileAsync returns a command that checks for a plan file from an inline multiplan planner.
+// This runs async to avoid blocking the UI event loop.
+func checkInlineMultiPlanFileAsync(
+	orc *orchestrator.Orchestrator,
+	instID string,
+	idx int,
+	strategyName string,
+	objective string,
+) tea.Cmd {
+	return func() tea.Msg {
+		// Get the planner instance
+		inst := orc.GetInstance(instID)
+		if inst == nil {
+			return nil
+		}
+
+		// Check if plan file exists (async-safe)
+		planPath := orchestrator.PlanFilePath(inst.WorktreePath)
+		if _, err := statFile(planPath); err != nil {
+			return nil
+		}
+
+		// Parse the plan
+		plan, err := orchestrator.ParsePlanFromFile(planPath, objective)
+		if err != nil {
+			// File might be partially written, skip for now
+			return nil
+		}
+
+		return inlineMultiPlanFileCheckResultMsg{
+			Index:        idx,
+			Plan:         plan,
+			StrategyName: strategyName,
+		}
+	}
+}
+
+// statFile wraps os.Stat for testing purposes
+var statFile = func(path string) (any, error) {
+	return os.Stat(path)
+}
+
+// handleInlineMultiPlanFileCheckResult handles the result of async inline multiplan file checking.
+// When a plan file is detected, this processes it and potentially triggers the evaluator.
+func (m *Model) handleInlineMultiPlanFileCheckResult(msg inlineMultiPlanFileCheckResultMsg) (tea.Model, tea.Cmd) {
+	// Verify we're still in inline multiplan mode
+	if m.inlinePlan == nil || !m.inlinePlan.MultiPass || !m.inlinePlan.AwaitingPlanCreation {
+		return m, nil
+	}
+
+	// Verify index is valid
+	if msg.Index < 0 || msg.Index >= len(m.inlinePlan.PlanningInstanceIDs) {
+		return m, nil
+	}
+
+	// Skip if already processed
+	if m.inlinePlan.ProcessedPlanners[msg.Index] {
+		return m, nil
+	}
+
+	// Mark this planner as processed
+	m.inlinePlan.ProcessedPlanners[msg.Index] = true
+
+	// Store the plan (may be nil if parsing failed)
+	if msg.Index < len(m.inlinePlan.CandidatePlans) {
+		m.inlinePlan.CandidatePlans[msg.Index] = msg.Plan
+	}
+
+	numPlanners := len(m.inlinePlan.PlanningInstanceIDs)
+	taskCount := 0
+	if msg.Plan != nil {
+		taskCount = len(msg.Plan.Tasks)
+	}
+	m.infoMessage = fmt.Sprintf("Plan %d/%d collected (%s): %d tasks",
+		len(m.inlinePlan.ProcessedPlanners), numPlanners,
+		msg.StrategyName, taskCount)
+
+	if m.logger != nil {
+		m.logger.Info("inline multiplan: plan file detected",
+			"planner_index", msg.Index,
+			"strategy", msg.StrategyName,
+			"task_count", taskCount)
+	}
+
+	// Check if all planners have completed
+	if len(m.inlinePlan.ProcessedPlanners) >= numPlanners {
+		// Count valid plans
+		validPlans := 0
+		for _, p := range m.inlinePlan.CandidatePlans {
+			if p != nil {
+				validPlans++
+			}
+		}
+
+		if validPlans == 0 {
+			m.errorMessage = "All multiplan planners failed to produce valid plans"
+			m.inlinePlan = nil
+			return m, nil
+		}
+
+		// Start the plan manager to evaluate and merge plans
+		m.startInlineMultiPlanManager()
+	}
+
+	return m, nil
 }
