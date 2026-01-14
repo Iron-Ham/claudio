@@ -153,7 +153,7 @@ func (v *InstanceView) RenderHeader(inst *orchestrator.Instance) string {
 // BuildGroupContext builds the group context for an instance.
 // Returns nil if the instance is not part of any group.
 func (v *InstanceView) BuildGroupContext(inst *orchestrator.Instance, session *orchestrator.Session) *GroupContext {
-	if session == nil || len(session.Groups) == 0 {
+	if session == nil || !session.HasGroups() {
 		return nil
 	}
 

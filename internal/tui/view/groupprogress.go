@@ -121,19 +121,23 @@ func CalculateGroupMetrics(group *orchestrator.InstanceGroup, session *orchestra
 }
 
 // CalculateSessionGroupMetrics calculates metrics for all groups in a session.
+// This function is thread-safe with respect to session.Groups access.
 func CalculateSessionGroupMetrics(session *orchestrator.Session) *SessionGroupMetrics {
-	if session == nil || len(session.Groups) == 0 {
+	if session == nil || !session.HasGroups() {
 		return nil
 	}
 
+	// Get thread-safe snapshot of groups
+	groups := session.GetGroups()
+
 	sgm := &SessionGroupMetrics{
-		Groups: make([]*GroupMetrics, 0, len(session.Groups)),
+		Groups: make([]*GroupMetrics, 0, len(groups)),
 	}
 
 	var totalAvgDuration time.Duration
 	avgCount := 0
 
-	for _, group := range session.Groups {
+	for _, group := range groups {
 		gm := CalculateGroupMetrics(group, session)
 		if gm != nil {
 			sgm.Groups = append(sgm.Groups, gm)

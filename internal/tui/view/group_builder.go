@@ -32,9 +32,12 @@ func BuildGroupedSidebarData(session *orchestrator.Session) *GroupedSidebarData 
 		SharedGroups:       make([]*orchestrator.InstanceGroup, 0),
 	}
 
+	// Get thread-safe snapshot of groups
+	groups := session.GetGroups()
+
 	// Build a set of instance IDs that belong to groups
 	groupedInstanceIDs := make(map[string]bool)
-	for _, group := range session.Groups {
+	for _, group := range groups {
 		for _, instID := range group.AllInstanceIDs() {
 			groupedInstanceIDs[instID] = true
 		}
@@ -48,7 +51,7 @@ func BuildGroupedSidebarData(session *orchestrator.Session) *GroupedSidebarData 
 	}
 
 	// Categorize groups by type
-	for _, group := range session.Groups {
+	for _, group := range groups {
 		if group.SessionType.GroupingMode() == "shared" {
 			data.SharedGroups = append(data.SharedGroups, group)
 		} else {
@@ -134,9 +137,10 @@ func BuildSidebarSections(session *orchestrator.Session) []SidebarSection {
 
 // ShouldUseGroupedMode determines if the sidebar should switch to grouped mode.
 // Returns true if there are any groups defined in the session.
+// This function is thread-safe.
 func ShouldUseGroupedMode(session *orchestrator.Session) bool {
 	if session == nil {
 		return false
 	}
-	return len(session.Groups) > 0
+	return session.HasGroups()
 }

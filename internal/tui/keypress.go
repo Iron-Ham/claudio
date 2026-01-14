@@ -58,7 +58,7 @@ type GroupKeyResult struct {
 // HandleGroupKey handles a key press in group command mode (after 'g' prefix).
 // Returns the action to take and whether the key was handled.
 func (h *GroupKeyHandler) HandleGroupKey(key tea.KeyMsg) GroupKeyResult {
-	if h.session == nil || len(h.session.Groups) == 0 || h.groupState == nil {
+	if h.session == nil || !h.session.HasGroups() || h.groupState == nil {
 		return GroupKeyResult{Handled: false}
 	}
 
@@ -243,8 +243,8 @@ func (h *GroupKeyHandler) handleRetryGroup() GroupKeyResult {
 
 // handleForceStart returns a force-start action to bypass group dependencies.
 func (h *GroupKeyHandler) handleForceStart() GroupKeyResult {
-	// Find the next pending group
-	for _, group := range h.session.Groups {
+	// Find the next pending group (thread-safe)
+	for _, group := range h.session.GetGroups() {
 		if group.Phase == orchestrator.GroupPhasePending {
 			return GroupKeyResult{
 				Action:  GroupActionForceStart,
@@ -258,7 +258,7 @@ func (h *GroupKeyHandler) handleForceStart() GroupKeyResult {
 
 // findGroup finds a group by ID in the session.
 func (h *GroupKeyHandler) findGroup(groupID string) *orchestrator.InstanceGroup {
-	for _, group := range h.session.Groups {
+	for _, group := range h.session.GetGroups() {
 		if group.ID == groupID {
 			return group
 		}
@@ -307,5 +307,5 @@ func isRestartableStatus(status orchestrator.InstanceStatus) bool {
 // HasGroupViewState returns true if the model has groups available in the session.
 // This is used to determine if group-related keyboard shortcuts should be active.
 func (m Model) HasGroupViewState() bool {
-	return m.session != nil && len(m.session.Groups) > 0
+	return m.session != nil && m.session.HasGroups()
 }

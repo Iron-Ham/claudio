@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -126,7 +127,10 @@ type Session struct {
 	// When GroupedInstanceView is enabled, instances are organized into groups
 	// rather than displayed as a flat list. Groups can have sub-groups for
 	// representing nested dependencies (e.g., in Plan/UltraPlan workflows).
-	Groups []*InstanceGroup `json:"groups,omitempty"`
+	// IMPORTANT: Always use thread-safe accessor methods (GetGroups, AddGroup, etc.)
+	// instead of direct access to avoid race conditions with TUI rendering.
+	Groups   []*InstanceGroup `json:"groups,omitempty"`
+	groupsMu sync.RWMutex     `json:"-"` // Protects Groups slice for concurrent access
 
 	// UltraPlan holds the ultra-plan session state (nil for regular sessions)
 	UltraPlan *UltraPlanSession `json:"ultra_plan,omitempty"`
