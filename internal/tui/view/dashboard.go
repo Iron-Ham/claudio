@@ -218,8 +218,12 @@ func (dv *DashboardView) renderExpandedInstance(
 
 	// Calculate how much fits on the first line
 	// Format: "● N prefix<name>" where N is the instance number
+	// Width deductions:
+	// - 2 chars: sidebar Padding(1, 1) horizontal
+	// - 2 chars: itemStyle Padding(0, 1) horizontal (from SidebarItemActive)
+	// - 2 chars: safety buffer for border/edge alignment
 	firstLineOverhead := 2 + len(fmt.Sprintf("%d ", i+1)) + prefixLen // "● " + "N " + prefix
-	firstLineAvailable := max(width-firstLineOverhead-2, 10)          // -2 for padding
+	firstLineAvailable := max(width-firstLineOverhead-6, 10)
 
 	if len(nameRunes) <= firstLineAvailable {
 		// Fits on one line even when expanded
@@ -243,7 +247,8 @@ func (dv *DashboardView) renderExpandedInstance(
 	}
 	// Use firstLineOverhead as indent to align continuation text with the name start position
 	continuationIndent := firstLineOverhead
-	continuationAvailable := max(width-continuationIndent-2, 10) // indent + padding
+	// Same width deductions as first line: sidebar padding (2) + item padding (2) + buffer (2)
+	continuationAvailable := max(width-continuationIndent-6, 10)
 
 	for len(remaining) > 0 {
 		chunk := wrapAtWordBoundary(remaining, continuationAvailable)

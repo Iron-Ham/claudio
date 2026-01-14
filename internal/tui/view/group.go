@@ -144,12 +144,15 @@ func RenderGroupHeaderWrapped(group *orchestrator.InstanceGroup, progress GroupP
 
 	// Calculate how much space we have for the name on the first line
 	// Format: "V I <name> [x/y] P" where V=collapse, I=session icon, P=phase indicator
-	// Suffix: " [x/y] P"
-	suffixLen := 1 + len(progressStr) + 1 + 1                // space + progress + space + indicator
-	maxFirstLineNameLen := width - prefixLen - suffixLen - 2 // some padding
+	// Width deductions:
+	// - 2 chars: sidebar Padding(1, 1) horizontal
+	// - 2 chars: safety buffer for border/edge alignment
+	suffixLen := 1 + len(progressStr) + 1 + 1 // space + progress + space + indicator
+	maxFirstLineNameLen := width - prefixLen - suffixLen - 4
 
 	// Calculate max name length for continuation lines (full width minus indent)
-	maxContinuationNameLen := width - prefixLen - 2
+	// Same deductions: sidebar padding (2) + buffer (2)
+	maxContinuationNameLen := width - prefixLen - 4
 
 	// Wrap the group name with different widths for first line vs continuation
 	nameLines := wrapGroupNameWithWidths(group.Name, maxFirstLineNameLen, maxContinuationNameLen)
