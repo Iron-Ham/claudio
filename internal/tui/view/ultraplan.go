@@ -347,10 +347,10 @@ func (v *UltraplanView) RenderSidebar(width int, height int) string {
 					instID := v.findInstanceIDForTask(session, taskID)
 					selected := v.ctx.IsSelected(instID)
 					navigable := instID != ""
-					taskLine := v.renderExecutionTaskLine(session, task, instID, selected, navigable, width-6)
-					b.WriteString(taskLine)
+					taskResult := v.renderExecutionTaskLine(session, task, instID, selected, navigable, width-6)
+					b.WriteString(taskResult.Content)
 					b.WriteString("\n")
-					lineCount++
+					lineCount += taskResult.LineCount
 				}
 
 				if groupIdx < len(session.GroupConsolidatorIDs) && session.GroupConsolidatorIDs[groupIdx] != "" {
@@ -628,8 +628,15 @@ func (v *UltraplanView) renderPhaseInstanceLine(inst *orchestrator.Instance, nam
 	return line
 }
 
-// renderExecutionTaskLine renders a task line in the execution section
-func (v *UltraplanView) renderExecutionTaskLine(session *orchestrator.UltraPlanSession, task *orchestrator.PlannedTask, instanceID string, selected, navigable bool, maxWidth int) string {
+// ExecutionTaskResult holds the rendered task line(s) and the number of lines used.
+type ExecutionTaskResult struct {
+	Content   string // Rendered content (may contain newlines for wrapped text)
+	LineCount int    // Number of lines this task occupies
+}
+
+// renderExecutionTaskLine renders a task line in the execution section.
+// When the task is selected, the title may wrap to multiple lines for better readability.
+func (v *UltraplanView) renderExecutionTaskLine(session *orchestrator.UltraPlanSession, task *orchestrator.PlannedTask, instanceID string, selected, navigable bool, maxWidth int) ExecutionTaskResult {
 	var statusIcon string
 	var statusStyle lipgloss.Style
 
@@ -661,7 +668,16 @@ func (v *UltraplanView) renderExecutionTaskLine(session *orchestrator.UltraPlanS
 		statusStyle = styles.Muted
 	}
 
+	// Calculate available space for title
+	// Format: "    X title" where X is the status icon (4 spaces indent + icon + space)
 	titleLen := maxWidth - 6
+
+	// For selected tasks, wrap the title across multiple lines instead of truncating
+	if selected && len([]rune(task.Title)) > titleLen {
+		return v.renderWrappedTaskLine(task.Title, statusIcon, statusStyle, titleLen, maxWidth)
+	}
+
+	// Standard single-line rendering (truncate if needed)
 	title := truncate(task.Title, titleLen)
 	line := fmt.Sprintf("    %s %s", statusStyle.Render(statusIcon), title)
 
@@ -674,7 +690,73 @@ func (v *UltraplanView) renderExecutionTaskLine(session *orchestrator.UltraPlanS
 		line = styles.Muted.Render(line)
 	}
 
-	return line
+	return ExecutionTaskResult{Content: line, LineCount: 1}
+}
+
+// renderWrappedTaskLine renders a task title that wraps across multiple lines.
+// Used for selected tasks to show the full title instead of truncating.
+func (v *UltraplanView) renderWrappedTaskLine(title, statusIcon string, statusStyle lipgloss.Style, firstLineLen, maxWidth int) ExecutionTaskResult {
+	// Guard against pathologically small widths (e.g., during window resizing)
+	if firstLineLen <= 0 || maxWidth <= 6 {
+		line := fmt.Sprintf("    %s %s", statusStyle.Render(statusIcon), truncate(title, 3))
+		selectedStyle := lipgloss.NewStyle().
+			Background(styles.PrimaryColor).
+			Foreground(styles.TextColor)
+		return ExecutionTaskResult{Content: selectedStyle.Render(line), LineCount: 1}
+	}
+
+	selectedStyle := lipgloss.NewStyle().
+		Background(styles.PrimaryColor).
+		Foreground(styles.TextColor)
+
+	remaining := []rune(title)
+	var lines []string
+
+	// First line: "    X <part of title>"
+	firstPart := wrapAtWordBoundary(remaining, firstLineLen)
+	firstLine := fmt.Sprintf("    %s %s", statusStyle.Render(statusIcon), firstPart)
+	lines = append(lines, selectedStyle.Render(padToWidth(firstLine, maxWidth)))
+
+	remaining = trimLeadingSpaces(remaining[len([]rune(firstPart)):])
+
+	// Continuation lines: indented to align with title text (4 spaces + icon + space = 6 characters)
+	const continuationIndent = 6
+	continuationLen := maxWidth - continuationIndent
+	indent := strings.Repeat(" ", continuationIndent)
+
+	for len(remaining) > 0 {
+		chunk := wrapAtWordBoundary(remaining, continuationLen)
+		if len(chunk) == 0 {
+			// Safety: prevent infinite loop if wrapAtWordBoundary returns empty.
+			// This should not happen under normal conditions since we guard against
+			// small widths above. If triggered, it indicates a bug in the wrapping logic.
+			break
+		}
+		remaining = trimLeadingSpaces(remaining[len([]rune(chunk)):])
+		lines = append(lines, selectedStyle.Render(indent+padToWidth(chunk, continuationLen)))
+	}
+
+	return ExecutionTaskResult{
+		Content:   strings.Join(lines, "\n"),
+		LineCount: len(lines),
+	}
+}
+
+// trimLeadingSpaces removes leading space characters from a rune slice.
+func trimLeadingSpaces(runes []rune) []rune {
+	for len(runes) > 0 && runes[0] == ' ' {
+		runes = runes[1:]
+	}
+	return runes
+}
+
+// padToWidth pads a string with spaces to reach the target width.
+func padToWidth(s string, width int) string {
+	currentWidth := lipgloss.Width(s)
+	if currentWidth >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-currentWidth)
 }
 
 // renderGroupConsolidatorLine renders a consolidator line in the execution section
