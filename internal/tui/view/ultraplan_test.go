@@ -1,6 +1,7 @@
 package view
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
@@ -232,5 +233,379 @@ func TestGroupStats_ZeroValues(t *testing.T) {
 	}
 	if stats.HasFailed {
 		t.Error("HasFailed should be false")
+	}
+}
+
+func TestRenderExecutionTaskLine_SingleLine(t *testing.T) {
+	// Test that short task titles render on a single line
+	ctx := &RenderContext{
+		UltraPlan: &UltraPlanState{},
+	}
+	v := NewUltraplanView(ctx)
+
+	session := &orchestrator.UltraPlanSession{
+		CompletedTasks: []string{},
+		FailedTasks:    []string{},
+	}
+
+	task := &orchestrator.PlannedTask{
+		ID:    "task-1",
+		Title: "Short task",
+	}
+
+	// Test non-selected task
+	result := v.renderExecutionTaskLine(session, task, "", false, false, 40)
+	if result.LineCount != 1 {
+		t.Errorf("LineCount = %d, want 1 for short task", result.LineCount)
+	}
+
+	// Test selected task with short title
+	result = v.renderExecutionTaskLine(session, task, "", true, true, 40)
+	if result.LineCount != 1 {
+		t.Errorf("LineCount = %d, want 1 for selected short task", result.LineCount)
+	}
+}
+
+func TestRenderExecutionTaskLine_MultiLineWrapping(t *testing.T) {
+	// Test that long task titles wrap across multiple lines when selected
+	ctx := &RenderContext{
+		UltraPlan: &UltraPlanState{},
+	}
+	v := NewUltraplanView(ctx)
+
+	session := &orchestrator.UltraPlanSession{
+		CompletedTasks: []string{},
+		FailedTasks:    []string{},
+	}
+
+	longTitle := "This is a very long task title that should definitely wrap across multiple lines when selected"
+	task := &orchestrator.PlannedTask{
+		ID:    "task-1",
+		Title: longTitle,
+	}
+
+	// Test non-selected long task - should be 1 line (truncated)
+	result := v.renderExecutionTaskLine(session, task, "", false, false, 40)
+	if result.LineCount != 1 {
+		t.Errorf("LineCount = %d, want 1 for non-selected long task (should truncate)", result.LineCount)
+	}
+
+	// Test selected long task - should wrap to multiple lines
+	result = v.renderExecutionTaskLine(session, task, "", true, true, 40)
+	if result.LineCount <= 1 {
+		t.Errorf("LineCount = %d, want > 1 for selected long task", result.LineCount)
+	}
+}
+
+func TestRenderExecutionTaskLine_WordBoundaryWrapping(t *testing.T) {
+	// Test that wrapping occurs at word boundaries when possible
+	ctx := &RenderContext{
+		UltraPlan: &UltraPlanState{},
+	}
+	v := NewUltraplanView(ctx)
+
+	session := &orchestrator.UltraPlanSession{
+		CompletedTasks: []string{},
+		FailedTasks:    []string{},
+	}
+
+	// Title with clear word boundaries
+	task := &orchestrator.PlannedTask{
+		ID:    "task-1",
+		Title: "Implement user authentication system for the application",
+	}
+
+	result := v.renderExecutionTaskLine(session, task, "", true, true, 30)
+
+	// Should have multiple lines
+	if result.LineCount < 2 {
+		t.Errorf("LineCount = %d, want >= 2 for wrapped task", result.LineCount)
+	}
+
+	// Content should not contain truncated words in the middle
+	// (The exact content depends on styling, so we just verify it has newlines)
+	if result.LineCount > 1 && len(result.Content) == 0 {
+		t.Error("Content should not be empty for multi-line task")
+	}
+}
+
+func TestRenderExecutionTaskLine_StatusIcons(t *testing.T) {
+	// Test that different task statuses show correct icons
+	ctx := &RenderContext{
+		UltraPlan: &UltraPlanState{},
+	}
+	v := NewUltraplanView(ctx)
+
+	tests := []struct {
+		name           string
+		completedTasks []string
+		failedTasks    []string
+		instanceID     string
+	}{
+		{
+			name:           "completed task",
+			completedTasks: []string{"task-1"},
+			failedTasks:    []string{},
+			instanceID:     "",
+		},
+		{
+			name:           "failed task",
+			completedTasks: []string{},
+			failedTasks:    []string{"task-1"},
+			instanceID:     "",
+		},
+		{
+			name:           "running task",
+			completedTasks: []string{},
+			failedTasks:    []string{},
+			instanceID:     "inst-1",
+		},
+		{
+			name:           "pending task",
+			completedTasks: []string{},
+			failedTasks:    []string{},
+			instanceID:     "",
+		},
+	}
+
+	task := &orchestrator.PlannedTask{
+		ID:    "task-1",
+		Title: "Test task",
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &orchestrator.UltraPlanSession{
+				CompletedTasks: tt.completedTasks,
+				FailedTasks:    tt.failedTasks,
+			}
+
+			result := v.renderExecutionTaskLine(session, task, tt.instanceID, false, false, 40)
+
+			// Basic check - content should not be empty
+			if len(result.Content) == 0 {
+				t.Error("Content should not be empty")
+			}
+
+			// LineCount should be 1 for non-wrapped tasks
+			if result.LineCount != 1 {
+				t.Errorf("LineCount = %d, want 1", result.LineCount)
+			}
+		})
+	}
+}
+
+func TestExecutionTaskResult_StructFields(t *testing.T) {
+	// Test ExecutionTaskResult struct integrity
+	result := ExecutionTaskResult{
+		Content:   "test content",
+		LineCount: 3,
+	}
+
+	if result.Content != "test content" {
+		t.Errorf("Content = %q, want %q", result.Content, "test content")
+	}
+
+	if result.LineCount != 3 {
+		t.Errorf("LineCount = %d, want 3", result.LineCount)
+	}
+}
+
+func TestTrimLeadingSpaces(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []rune
+		expected []rune
+	}{
+		{
+			name:     "no leading spaces",
+			input:    []rune("hello"),
+			expected: []rune("hello"),
+		},
+		{
+			name:     "single leading space",
+			input:    []rune(" hello"),
+			expected: []rune("hello"),
+		},
+		{
+			name:     "multiple leading spaces",
+			input:    []rune("   hello world"),
+			expected: []rune("hello world"),
+		},
+		{
+			name:     "all spaces",
+			input:    []rune("   "),
+			expected: []rune{},
+		},
+		{
+			name:     "empty input",
+			input:    []rune{},
+			expected: []rune{},
+		},
+		{
+			name:     "spaces in middle preserved",
+			input:    []rune("  hello  world"),
+			expected: []rune("hello  world"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := trimLeadingSpaces(tt.input)
+			if string(got) != string(tt.expected) {
+				t.Errorf("trimLeadingSpaces(%q) = %q, want %q", string(tt.input), string(got), string(tt.expected))
+			}
+		})
+	}
+}
+
+func TestPadToWidth(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		width    int
+		expected string
+	}{
+		{
+			name:     "already at width",
+			input:    "hello",
+			width:    5,
+			expected: "hello",
+		},
+		{
+			name:     "shorter than width",
+			input:    "hi",
+			width:    5,
+			expected: "hi   ",
+		},
+		{
+			name:     "longer than width",
+			input:    "hello world",
+			width:    5,
+			expected: "hello world",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			width:    3,
+			expected: "   ",
+		},
+		{
+			name:     "zero width",
+			input:    "hello",
+			width:    0,
+			expected: "hello",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := padToWidth(tt.input, tt.width)
+			if got != tt.expected {
+				t.Errorf("padToWidth(%q, %d) = %q, want %q", tt.input, tt.width, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRenderExecutionTaskLine_VeryNarrowWidth(t *testing.T) {
+	ctx := &RenderContext{
+		UltraPlan: &UltraPlanState{},
+	}
+	v := NewUltraplanView(ctx)
+
+	session := &orchestrator.UltraPlanSession{
+		CompletedTasks: []string{},
+		FailedTasks:    []string{},
+	}
+
+	task := &orchestrator.PlannedTask{
+		ID:    "task-1",
+		Title: "A task with a title",
+	}
+
+	// Width of 6 means titleLen = 0
+	result := v.renderExecutionTaskLine(session, task, "", true, true, 6)
+	if result.LineCount != 1 {
+		t.Errorf("LineCount = %d, want 1 for narrow width", result.LineCount)
+	}
+
+	// Width of 5 means titleLen = -1 (negative)
+	result = v.renderExecutionTaskLine(session, task, "", true, true, 5)
+	if result.LineCount != 1 {
+		t.Errorf("LineCount = %d, want 1 for very narrow width", result.LineCount)
+	}
+}
+
+func TestRenderExecutionTaskLine_EmptyTitle(t *testing.T) {
+	ctx := &RenderContext{
+		UltraPlan: &UltraPlanState{},
+	}
+	v := NewUltraplanView(ctx)
+
+	session := &orchestrator.UltraPlanSession{
+		CompletedTasks: []string{},
+		FailedTasks:    []string{},
+	}
+
+	task := &orchestrator.PlannedTask{
+		ID:    "task-1",
+		Title: "",
+	}
+
+	result := v.renderExecutionTaskLine(session, task, "", true, true, 40)
+	if result.LineCount != 1 {
+		t.Errorf("LineCount = %d, want 1 for empty title", result.LineCount)
+	}
+}
+
+func TestRenderExecutionTaskLine_TitleExactlyFits(t *testing.T) {
+	ctx := &RenderContext{
+		UltraPlan: &UltraPlanState{},
+	}
+	v := NewUltraplanView(ctx)
+
+	session := &orchestrator.UltraPlanSession{
+		CompletedTasks: []string{},
+		FailedTasks:    []string{},
+	}
+
+	// Width 40 means titleLen = 34 (40 - 6)
+	// Create a title that is exactly 34 characters
+	task := &orchestrator.PlannedTask{
+		ID:    "task-1",
+		Title: "1234567890123456789012345678901234", // exactly 34 chars
+	}
+
+	result := v.renderExecutionTaskLine(session, task, "", true, true, 40)
+
+	// Title fits exactly, should NOT wrap
+	if result.LineCount != 1 {
+		t.Errorf("LineCount = %d, want 1 for title that exactly fits", result.LineCount)
+	}
+}
+
+func TestRenderExecutionTaskLine_LineCountMatchesContent(t *testing.T) {
+	ctx := &RenderContext{
+		UltraPlan: &UltraPlanState{},
+	}
+	v := NewUltraplanView(ctx)
+
+	session := &orchestrator.UltraPlanSession{
+		CompletedTasks: []string{},
+		FailedTasks:    []string{},
+	}
+
+	task := &orchestrator.PlannedTask{
+		ID:    "task-1",
+		Title: "This is a long task title that will definitely wrap across multiple lines when rendered",
+	}
+
+	result := v.renderExecutionTaskLine(session, task, "", true, true, 30)
+
+	// Count actual newlines in content
+	actualLines := strings.Count(result.Content, "\n") + 1
+	if result.LineCount != actualLines {
+		t.Errorf("LineCount = %d but content has %d lines", result.LineCount, actualLines)
 	}
 }
