@@ -1824,3 +1824,94 @@ func TestTruncateString(t *testing.T) {
 		})
 	}
 }
+
+func TestInlinePlanState_IsUltraPlan(t *testing.T) {
+	// Test regular plan state (not ultraplan)
+	regularPlan := &InlinePlanState{
+		AwaitingObjective: true,
+		TaskToInstance:    make(map[string]string),
+		IsUltraPlan:       false,
+	}
+
+	if regularPlan.IsUltraPlan {
+		t.Error("expected IsUltraPlan to be false for regular plan")
+	}
+	if regularPlan.UltraPlanConfig != nil {
+		t.Error("expected UltraPlanConfig to be nil for regular plan")
+	}
+
+	// Test ultraplan state
+	cfg := &orchestrator.UltraPlanConfig{
+		AutoApprove: false,
+		Review:      true,
+		MultiPass:   true,
+	}
+	ultraPlan := &InlinePlanState{
+		AwaitingObjective: true,
+		TaskToInstance:    make(map[string]string),
+		IsUltraPlan:       true,
+		UltraPlanConfig:   cfg,
+	}
+
+	if !ultraPlan.IsUltraPlan {
+		t.Error("expected IsUltraPlan to be true for ultraplan")
+	}
+	if ultraPlan.UltraPlanConfig == nil {
+		t.Error("expected UltraPlanConfig to be non-nil for ultraplan")
+	}
+	if !ultraPlan.UltraPlanConfig.MultiPass {
+		t.Error("expected MultiPass to be true")
+	}
+}
+
+func TestInlinePlanState_AwaitingObjective_Differentiation(t *testing.T) {
+	tests := []struct {
+		name        string
+		state       *InlinePlanState
+		expectPlan  bool
+		expectUltra bool
+	}{
+		{
+			name: "regular plan awaiting objective",
+			state: &InlinePlanState{
+				AwaitingObjective: true,
+				IsUltraPlan:       false,
+			},
+			expectPlan:  true,
+			expectUltra: false,
+		},
+		{
+			name: "ultraplan awaiting objective",
+			state: &InlinePlanState{
+				AwaitingObjective: true,
+				IsUltraPlan:       true,
+				UltraPlanConfig:   &orchestrator.UltraPlanConfig{},
+			},
+			expectPlan:  true,
+			expectUltra: true,
+		},
+		{
+			name: "plan not awaiting objective",
+			state: &InlinePlanState{
+				AwaitingObjective: false,
+				IsUltraPlan:       false,
+			},
+			expectPlan:  false,
+			expectUltra: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isAwaitingObjective := tt.state.AwaitingObjective
+			isUltraPlan := tt.state.IsUltraPlan
+
+			if isAwaitingObjective != tt.expectPlan {
+				t.Errorf("AwaitingObjective = %v, want %v", isAwaitingObjective, tt.expectPlan)
+			}
+			if isUltraPlan != tt.expectUltra {
+				t.Errorf("IsUltraPlan = %v, want %v", isUltraPlan, tt.expectUltra)
+			}
+		})
+	}
+}
