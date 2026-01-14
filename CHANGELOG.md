@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-01-14
+
 ### Added
 
 - **Searchable Branch Selector** - Branch selection when adding a new instance now supports real-time search filtering and scrolling. Type to filter branches, use arrow keys to navigate, Page Up/Down for faster scrolling, and scroll indicators show when more branches exist above or below the visible viewport.
+
+### Fixed
+
+- **Layout Calculation** - Fixed layout calculation that could cause UI elements to duplicate under certain terminal sizes
+- **Sidebar Line-Wrapping** - Corrected sidebar width calculations for line-wrapping, ensuring long instance names wrap correctly
+- **Active Instance Capture** - Resume active instance capture after tab adjustment, preventing output display from stopping when switching instances
 
 ## [0.6.0] - 2026-01-14
 
@@ -320,6 +328,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.6.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.6.0
 [0.5.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.5.1
 [0.5.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.5.0
