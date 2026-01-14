@@ -1427,6 +1427,7 @@ func (o *Orchestrator) initNamer() {
 
 	o.namer = namer.New(client, o.logger)
 	o.namer.OnRename(o.handleInstanceRenamed)
+	o.namer.OnGroupRename(o.handleGroupRenamed)
 	o.namer.Start()
 
 	if o.logger != nil {
@@ -1473,6 +1474,50 @@ func (o *Orchestrator) handleInstanceRenamed(instanceID, newName string) {
 		if o.logger != nil {
 			o.logger.Warn("failed to persist renamed instance - name may be lost on restart",
 				"instance_id", instanceID,
+				"display_name", newName,
+				"error", err.Error(),
+			)
+		}
+	}
+}
+
+// RequestGroupRename requests an intelligent name for a group based on its objective.
+// This is non-blocking; if the namer is not available or the queue is full, the request is dropped.
+func (o *Orchestrator) RequestGroupRename(groupID, objective string) {
+	if o.namer == nil || objective == "" {
+		return
+	}
+	o.namer.RequestGroupRename(groupID, objective)
+}
+
+// handleGroupRenamed is called when the namer generates a display name for a group.
+func (o *Orchestrator) handleGroupRenamed(groupID, newName string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.session == nil {
+		return
+	}
+
+	group := o.session.GetGroup(groupID)
+	if group == nil {
+		return
+	}
+
+	group.Name = newName
+
+	if o.logger != nil {
+		o.logger.Debug("group renamed",
+			"group_id", groupID,
+			"display_name", newName,
+		)
+	}
+
+	// Persist the change
+	if err := o.saveSession(); err != nil {
+		if o.logger != nil {
+			o.logger.Warn("failed to persist renamed group - name may be lost on restart",
+				"group_id", groupID,
 				"display_name", newName,
 				"error", err.Error(),
 			)
