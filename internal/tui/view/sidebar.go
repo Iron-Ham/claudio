@@ -115,6 +115,7 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 		endIdx := min(scrollOffset+availableSlots, len(items))
 
 		// Render visible items
+		// ActiveTab returns the index in session.Instances, so compare with AbsoluteIdx
 		activeInstanceIdx := state.ActiveTab()
 		for i := startIdx; i < endIdx; i++ {
 			item := items[i]
@@ -128,8 +129,8 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 				b.WriteString("\n")
 
 			case GroupedInstance:
-				// Render instance
-				isActive := v.GlobalIdx == activeInstanceIdx
+				// Render instance - use AbsoluteIdx to match against activeInstanceIdx
+				isActive := v.AbsoluteIdx == activeInstanceIdx
 				hasConflict := conflictingInstances[v.Instance.ID]
 				line := RenderGroupedInstance(v, isActive, hasConflict, width)
 				b.WriteString(line)

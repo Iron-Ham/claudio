@@ -1057,8 +1057,10 @@ func TestGroupedInstance_AbsoluteIdx_OutOfOrder(t *testing.T) {
 	items := FlattenGroupsForDisplay(session, state)
 
 	// AbsoluteIdx should reflect position in session.Instances, not group order
+	// inst-2 is ungrouped and should appear first with AbsoluteIdx=1
 	expectedAbsoluteIdxs := map[string]int{
 		"inst-1": 0, // First in session.Instances
+		"inst-2": 1, // Second in session.Instances (ungrouped)
 		"inst-3": 2, // Third in session.Instances
 	}
 
@@ -1069,5 +1071,311 @@ func TestGroupedInstance_AbsoluteIdx_OutOfOrder(t *testing.T) {
 				t.Errorf("AbsoluteIdx for %s = %d, want %d (session.Instances position)", gi.Instance.ID, gi.AbsoluteIdx, expected)
 			}
 		}
+	}
+}
+
+func TestFlattenGroupsForDisplay_UngroupedInstances(t *testing.T) {
+	// Test that ungrouped instances appear in the sidebar along with grouped instances
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Grouped Task 1", Status: orchestrator.StatusCompleted},
+			{ID: "inst-2", Task: "Ungrouped Task 1", Status: orchestrator.StatusWorking},
+			{ID: "inst-3", Task: "Grouped Task 2", Status: orchestrator.StatusPending},
+			{ID: "inst-4", Task: "Ungrouped Task 2", Status: orchestrator.StatusPending},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "tripleshot-1",
+				Name:      "Tripleshot",
+				Phase:     orchestrator.GroupPhaseExecuting,
+				Instances: []string{"inst-1", "inst-3"}, // Only inst-1 and inst-3 are grouped
+			},
+		},
+	}
+
+	state := NewGroupViewState()
+	items := FlattenGroupsForDisplay(session, state)
+
+	// Expected order:
+	// 1. GroupedInstance (inst-2) - ungrouped, shown first
+	// 2. GroupedInstance (inst-4) - ungrouped, shown first
+	// 3. GroupHeader (tripleshot-1)
+	// 4. GroupedInstance (inst-1) - in group
+	// 5. GroupedInstance (inst-3) - in group
+
+	if len(items) != 5 {
+		t.Fatalf("expected 5 items, got %d", len(items))
+	}
+
+	// First two should be ungrouped instances with Depth=-1
+	gi0, ok := items[0].(GroupedInstance)
+	if !ok {
+		t.Error("item 0 should be GroupedInstance")
+	} else {
+		if gi0.Instance.ID != "inst-2" {
+			t.Errorf("item 0 should be inst-2, got %s", gi0.Instance.ID)
+		}
+		if gi0.Depth != -1 {
+			t.Errorf("ungrouped instance should have Depth=-1, got %d", gi0.Depth)
+		}
+		if gi0.GroupID != "" {
+			t.Errorf("ungrouped instance should have empty GroupID, got %q", gi0.GroupID)
+		}
+	}
+
+	gi1, ok := items[1].(GroupedInstance)
+	if !ok {
+		t.Error("item 1 should be GroupedInstance")
+	} else {
+		if gi1.Instance.ID != "inst-4" {
+			t.Errorf("item 1 should be inst-4, got %s", gi1.Instance.ID)
+		}
+		if gi1.Depth != -1 {
+			t.Errorf("ungrouped instance should have Depth=-1, got %d", gi1.Depth)
+		}
+	}
+
+	// Third should be group header
+	if _, ok := items[2].(GroupHeaderItem); !ok {
+		t.Error("item 2 should be GroupHeaderItem")
+	}
+
+	// Fourth and fifth should be grouped instances with Depth >= 0
+	gi3, ok := items[3].(GroupedInstance)
+	if !ok {
+		t.Error("item 3 should be GroupedInstance")
+	} else {
+		if gi3.Instance.ID != "inst-1" {
+			t.Errorf("item 3 should be inst-1, got %s", gi3.Instance.ID)
+		}
+		if gi3.Depth < 0 {
+			t.Errorf("grouped instance should have Depth >= 0, got %d", gi3.Depth)
+		}
+		if gi3.GroupID != "tripleshot-1" {
+			t.Errorf("grouped instance should have GroupID=tripleshot-1, got %q", gi3.GroupID)
+		}
+	}
+}
+
+func TestFlattenGroupsForDisplay_OnlyUngroupedInstances(t *testing.T) {
+	// Test with no groups - should still show all instances
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Task 1", Status: orchestrator.StatusWorking},
+			{ID: "inst-2", Task: "Task 2", Status: orchestrator.StatusPending},
+		},
+		Groups: nil,
+	}
+
+	state := NewGroupViewState()
+	items := FlattenGroupsForDisplay(session, state)
+
+	// With no groups, instances should still be shown (as ungrouped)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items for ungrouped instances, got %d", len(items))
+	}
+
+	for i, item := range items {
+		gi, ok := item.(GroupedInstance)
+		if !ok {
+			t.Errorf("item %d should be GroupedInstance", i)
+			continue
+		}
+		if gi.Depth != -1 {
+			t.Errorf("item %d should have Depth=-1 (ungrouped), got %d", i, gi.Depth)
+		}
+	}
+}
+
+func TestGetVisibleInstanceCount_WithUngroupedInstances(t *testing.T) {
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1"},
+			{ID: "inst-2"},
+			{ID: "inst-3"},
+			{ID: "inst-4"},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Instances: []string{"inst-1", "inst-2"},
+			},
+		},
+	}
+
+	// inst-3 and inst-4 are ungrouped
+	state := NewGroupViewState()
+
+	t.Run("all expanded with ungrouped", func(t *testing.T) {
+		count := GetVisibleInstanceCount(session, state)
+		// Should count 2 grouped + 2 ungrouped = 4
+		if count != 4 {
+			t.Errorf("expected 4 visible instances, got %d", count)
+		}
+	})
+
+	t.Run("group collapsed with ungrouped", func(t *testing.T) {
+		state := NewGroupViewState()
+		state.CollapsedGroups["group-1"] = true
+		count := GetVisibleInstanceCount(session, state)
+		// Should count 0 grouped (collapsed) + 2 ungrouped = 2
+		if count != 2 {
+			t.Errorf("expected 2 visible instances (group collapsed), got %d", count)
+		}
+	})
+}
+
+func TestFindInstanceByGlobalIndex_WithUngroupedInstances(t *testing.T) {
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Grouped 1"},
+			{ID: "inst-2", Task: "Ungrouped 1"},
+			{ID: "inst-3", Task: "Grouped 2"},
+			{ID: "inst-4", Task: "Ungrouped 2"},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Instances: []string{"inst-1", "inst-3"},
+			},
+		},
+	}
+
+	state := NewGroupViewState()
+
+	// Global indices: 0=inst-2 (ungrouped), 1=inst-4 (ungrouped), 2=inst-1 (grouped), 3=inst-3 (grouped)
+	tests := []struct {
+		idx    int
+		wantID string
+	}{
+		{0, "inst-2"}, // First ungrouped
+		{1, "inst-4"}, // Second ungrouped
+		{2, "inst-1"}, // First grouped
+		{3, "inst-3"}, // Second grouped
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.wantID, func(t *testing.T) {
+			inst := FindInstanceByGlobalIndex(session, state, tt.idx)
+			if inst == nil {
+				t.Errorf("FindInstanceByGlobalIndex(%d) = nil, want %s", tt.idx, tt.wantID)
+			} else if inst.ID != tt.wantID {
+				t.Errorf("FindInstanceByGlobalIndex(%d) = %s, want %s", tt.idx, inst.ID, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestSidebarView_GroupedModeShowsUngroupedInstances(t *testing.T) {
+	// This is the main test for the bug fix - tripleshot mode should show ungrouped instances
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Tripleshot Task 1", Status: orchestrator.StatusWorking},
+			{ID: "inst-2", Task: "Tripleshot Task 2", Status: orchestrator.StatusPending},
+			{ID: "inst-3", Task: "Regular Instance", Status: orchestrator.StatusWorking},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:          "tripleshot-group",
+				Name:        "Tripleshot",
+				Phase:       orchestrator.GroupPhaseExecuting,
+				SessionType: orchestrator.SessionTypeTripleShot,
+				Instances:   []string{"inst-1", "inst-2"},
+			},
+		},
+	}
+
+	state := &mockSidebarState{
+		session:        session,
+		activeTab:      2, // inst-3 is active (the ungrouped one)
+		terminalWidth:  80,
+		terminalHeight: 30,
+		sidebarMode:    SidebarModeGrouped,
+		groupViewState: NewGroupViewState(),
+	}
+
+	sv := NewSidebarView()
+	result := sv.RenderSidebar(state, 40, 25)
+
+	// Should contain the ungrouped instance
+	if !strings.Contains(result, "Regular Instance") {
+		t.Errorf("grouped mode should show ungrouped instance 'Regular Instance', got:\n%s", result)
+	}
+
+	// Should also contain tripleshot group and its instances
+	if !strings.Contains(result, "Tripleshot") {
+		t.Errorf("grouped mode should show tripleshot group, got:\n%s", result)
+	}
+	if !strings.Contains(result, "Tripleshot Task 1") {
+		t.Errorf("grouped mode should show tripleshot instance 'Tripleshot Task 1', got:\n%s", result)
+	}
+}
+
+func TestRenderGroupedInstance_UngroupedInstance(t *testing.T) {
+	// Test that ungrouped instances (Depth=-1) render without tree connectors
+	gi := GroupedInstance{
+		Instance: &orchestrator.Instance{
+			ID:     "inst-1",
+			Task:   "Ungrouped Task",
+			Status: orchestrator.StatusWorking,
+		},
+		GroupID:     "", // Ungrouped
+		Depth:       -1, // Special ungrouped depth
+		IsLast:      true,
+		GlobalIdx:   0,
+		AbsoluteIdx: 0,
+	}
+
+	result := RenderGroupedInstance(gi, false, false, 40)
+
+	// Should not contain tree connector characters (vertical line or corner)
+	if strings.Contains(result, "\u2502") || strings.Contains(result, "\u2514") {
+		t.Errorf("ungrouped instance should not have tree connectors, got: %s", result)
+	}
+
+	// Should contain the instance number
+	if !strings.Contains(result, "[1]") {
+		t.Errorf("should contain instance number [1], got: %s", result)
+	}
+
+	// Should contain the task name
+	if !strings.Contains(result, "Ungrouped Task") {
+		t.Errorf("should contain task name, got: %s", result)
+	}
+
+	// Should contain status abbreviation
+	if !strings.Contains(result, "WORK") {
+		t.Errorf("should contain status abbreviation WORK, got: %s", result)
+	}
+}
+
+func TestRenderGroupedInstance_GroupedInstance(t *testing.T) {
+	// Test that grouped instances (Depth>=0) render with tree connectors
+	gi := GroupedInstance{
+		Instance: &orchestrator.Instance{
+			ID:     "inst-1",
+			Task:   "Grouped Task",
+			Status: orchestrator.StatusCompleted,
+		},
+		GroupID:     "group-1",
+		Depth:       0, // Top-level group instance
+		IsLast:      false,
+		GlobalIdx:   0,
+		AbsoluteIdx: 0,
+	}
+
+	result := RenderGroupedInstance(gi, false, false, 40)
+
+	// Should contain tree connector (vertical line for non-last)
+	if !strings.Contains(result, "\u2502") {
+		t.Errorf("grouped non-last instance should have vertical line connector, got: %s", result)
+	}
+
+	// Test last instance in group (should have corner connector)
+	gi.IsLast = true
+	result = RenderGroupedInstance(gi, false, false, 40)
+
+	if !strings.Contains(result, "\u2514") {
+		t.Errorf("grouped last instance should have corner connector, got: %s", result)
 	}
 }

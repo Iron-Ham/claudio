@@ -192,14 +192,33 @@ type GroupedInstance struct {
 // FlattenGroupsForDisplay flattens groups into a list of renderable items.
 // This respects collapsed state - collapsed groups won't have their instances expanded.
 // Returns both the group headers and the instances in display order.
+// Ungrouped instances are displayed first, followed by groups.
 func FlattenGroupsForDisplay(session *orchestrator.Session, state *GroupViewState) []any {
-	if session == nil || len(session.Groups) == 0 {
+	if session == nil {
 		return nil
 	}
 
 	var items []any
 	globalIdx := 0
 
+	// Build grouped sidebar data to identify ungrouped instances
+	data := BuildGroupedSidebarData(session)
+
+	// Add ungrouped instances first (they don't have a group header)
+	for i, inst := range data.UngroupedInstances {
+		isLast := i == len(data.UngroupedInstances)-1 && len(session.Groups) == 0
+		items = append(items, GroupedInstance{
+			Instance:    inst,
+			GroupID:     "", // No group
+			Depth:       -1, // Special depth to indicate ungrouped (no tree connector)
+			IsLast:      isLast,
+			GlobalIdx:   globalIdx,
+			AbsoluteIdx: findInstanceIndex(session, inst.ID),
+		})
+		globalIdx++
+	}
+
+	// Add groups
 	for _, group := range session.Groups {
 		items = append(items, flattenGroupRecursive(group, session, state, 0, &globalIdx)...)
 	}
@@ -267,14 +286,22 @@ func flattenGroupRecursive(group *orchestrator.InstanceGroup, session *orchestra
 func RenderGroupedInstance(gi GroupedInstance, isActiveInstance bool, hasConflict bool, width int) string {
 	inst := gi.Instance
 
-	// Calculate indentation based on depth
-	// depth 0 = 2 spaces, depth 1 = 4 spaces, etc.
-	indent := strings.Repeat("  ", gi.Depth+1)
+	// For ungrouped instances (Depth == -1), render without tree connector
+	var indent, connector string
+	if gi.Depth < 0 {
+		// Ungrouped instance - no tree connector, minimal indent
+		indent = ""
+		connector = ""
+	} else {
+		// Calculate indentation based on depth
+		// depth 0 = 2 spaces, depth 1 = 4 spaces, etc.
+		indent = strings.Repeat("  ", gi.Depth+1)
 
-	// Tree connector
-	connector := "\u2502" // vertical line |
-	if gi.IsLast {
-		connector = "\u2514" // corner L
+		// Tree connector
+		connector = "\u2502" // vertical line |
+		if gi.IsLast {
+			connector = "\u2514" // corner L
+		}
 	}
 
 	// Status indicator
@@ -295,8 +322,13 @@ func RenderGroupedInstance(gi GroupedInstance, isActiveInstance bool, hasConflic
 
 	// Calculate available width for name
 	// Format: "indent connector [N] name STAT"
-	overhead := len(indent) + 2 + 1 + len(idxStr) + 1 + 1 + 4 // indent + connector + space + idx + space + dot + space + status(4)
-	maxNameLen := width - overhead - 4                        // padding
+	connectorLen := len([]rune(connector))
+	connectorSpace := 0
+	if connectorLen > 0 {
+		connectorSpace = connectorLen + 1 // connector + space
+	}
+	overhead := len(indent) + connectorSpace + len(idxStr) + 1 + 1 + 4 // indent + connector+space + idx + space + dot + space + status(4)
+	maxNameLen := width - overhead - 4                                 // padding
 
 	displayName := truncate(inst.EffectiveName(), maxNameLen)
 
@@ -321,8 +353,10 @@ func RenderGroupedInstance(gi GroupedInstance, isActiveInstance bool, hasConflic
 
 	var b strings.Builder
 	b.WriteString(indent)
-	b.WriteString(lipgloss.NewStyle().Foreground(styles.MutedColor).Render(connector))
-	b.WriteString(" ")
+	if connector != "" {
+		b.WriteString(lipgloss.NewStyle().Foreground(styles.MutedColor).Render(connector))
+		b.WriteString(" ")
+	}
 	b.WriteString(idxStyle.Render(idxStr))
 	b.WriteString(" ")
 	b.WriteString(nameStyle.Render(displayName))
@@ -362,12 +396,21 @@ func instanceStatusAbbrev(status orchestrator.InstanceStatus) string {
 }
 
 // GetVisibleInstanceCount returns the count of visible (non-collapsed) instances.
+// This includes both ungrouped instances and instances in expanded groups.
 func GetVisibleInstanceCount(session *orchestrator.Session, state *GroupViewState) int {
-	if session == nil || len(session.Groups) == 0 {
+	if session == nil {
+		return 0
+	}
+
+	if len(session.Groups) == 0 {
 		return len(session.Instances) // Fall back to flat list
 	}
 
-	count := 0
+	// Count ungrouped instances
+	data := BuildGroupedSidebarData(session)
+	count := len(data.UngroupedInstances)
+
+	// Count instances in groups (respecting collapsed state)
 	for _, group := range session.Groups {
 		count += countVisibleInstancesRecursive(group, session, state)
 	}
@@ -409,20 +452,28 @@ func getGroupIDsRecursive(group *orchestrator.InstanceGroup) []string {
 
 // FindInstanceByGlobalIndex finds the instance at the given global index.
 // Returns nil if the index is out of bounds.
+// The global index includes ungrouped instances first, then grouped instances.
 func FindInstanceByGlobalIndex(session *orchestrator.Session, state *GroupViewState, targetIdx int) *orchestrator.Instance {
-	if session == nil {
+	if session == nil || targetIdx < 0 {
 		return nil
 	}
 
 	// If no groups, use flat list
 	if len(session.Groups) == 0 {
-		if targetIdx >= 0 && targetIdx < len(session.Instances) {
+		if targetIdx < len(session.Instances) {
 			return session.Instances[targetIdx]
 		}
 		return nil
 	}
 
-	currentIdx := 0
+	// Check ungrouped instances first
+	data := BuildGroupedSidebarData(session)
+	if targetIdx < len(data.UngroupedInstances) {
+		return data.UngroupedInstances[targetIdx]
+	}
+
+	// Adjust index for grouped instances
+	currentIdx := len(data.UngroupedInstances)
 	for _, group := range session.Groups {
 		inst := findInstanceInGroup(group, session, state, targetIdx, &currentIdx)
 		if inst != nil {
