@@ -68,7 +68,7 @@ func (sv *SidebarView) RenderSidebar(state DashboardState, width, height int) st
 
 	// Check if session has groups
 	session := state.Session()
-	if session == nil || len(session.Groups) == 0 {
+	if session == nil || !session.HasGroups() {
 		// No groups defined, fall back to flat view
 		return sv.dashboard.RenderSidebar(state, width, height)
 	}
@@ -263,7 +263,7 @@ func NewGroupNavigator(session *orchestrator.Session, groupState *GroupViewState
 // MoveToNextGroup moves selection to the next group (Shift+J).
 // Returns the new selected group ID.
 func (n *GroupNavigator) MoveToNextGroup() string {
-	if n.session == nil || len(n.session.Groups) == 0 {
+	if n.session == nil || !n.session.HasGroups() {
 		return ""
 	}
 
@@ -300,7 +300,7 @@ func (n *GroupNavigator) MoveToNextGroup() string {
 // MoveToPrevGroup moves selection to the previous group (Shift+K).
 // Returns the new selected group ID.
 func (n *GroupNavigator) MoveToPrevGroup() string {
-	if n.session == nil || len(n.session.Groups) == 0 {
+	if n.session == nil || !n.session.HasGroups() {
 		return ""
 	}
 

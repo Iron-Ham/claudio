@@ -397,16 +397,18 @@ func (m Model) handleGroupCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.groupViewState.ToggleCollapse(result.GroupID)
 			}
 		case GroupActionCollapseAll:
+			// Get a thread-safe snapshot of groups
+			groups := m.session.GetGroups()
 			if result.AllCollapsed {
 				// Collapse all groups
-				for _, g := range m.session.Groups {
+				for _, g := range groups {
 					if !m.groupViewState.IsCollapsed(g.ID) {
 						m.groupViewState.ToggleCollapse(g.ID)
 					}
 				}
 			} else {
 				// Expand all groups
-				for _, g := range m.session.Groups {
+				for _, g := range groups {
 					if m.groupViewState.IsCollapsed(g.ID) {
 						m.groupViewState.ToggleCollapse(g.ID)
 					}
@@ -775,7 +777,7 @@ func (m Model) handleKillInstance() (tea.Model, tea.Cmd) {
 // handleGoToTop goes to the top of diff, help panel, or output.
 func (m Model) handleGoToTop() (tea.Model, tea.Cmd) {
 	// In grouped sidebar mode with groups, enter group command mode
-	if m.sidebarMode == view.SidebarModeGrouped && m.session != nil && len(m.session.Groups) > 0 {
+	if m.sidebarMode == view.SidebarModeGrouped && m.session != nil && m.session.HasGroups() {
 		m.inputRouter.SetGroupCommandPending(true)
 		return m, nil
 	}

@@ -322,7 +322,7 @@ func FlattenGroupsForDisplay(session *orchestrator.Session, state *GroupViewStat
 
 	// Add ungrouped instances first (they don't have a group header)
 	for i, inst := range data.UngroupedInstances {
-		isLast := i == len(data.UngroupedInstances)-1 && len(session.Groups) == 0
+		isLast := i == len(data.UngroupedInstances)-1 && !session.HasGroups()
 		items = append(items, GroupedInstance{
 			Instance:    inst,
 			GroupID:     "", // No group
@@ -334,8 +334,8 @@ func FlattenGroupsForDisplay(session *orchestrator.Session, state *GroupViewStat
 		globalIdx++
 	}
 
-	// Add groups
-	for _, group := range session.Groups {
+	// Add groups (thread-safe)
+	for _, group := range session.GetGroups() {
 		items = append(items, flattenGroupRecursive(group, session, state, 0, &globalIdx)...)
 	}
 
@@ -368,7 +368,7 @@ func FlattenGroupsForDisplayWithUltraPlan(session *orchestrator.Session, state *
 
 	// Add ungrouped instances first (they don't have a group header)
 	for i, inst := range data.UngroupedInstances {
-		isLast := i == len(data.UngroupedInstances)-1 && len(session.Groups) == 0
+		isLast := i == len(data.UngroupedInstances)-1 && !session.HasGroups()
 		items = append(items, GroupedInstance{
 			Instance:    inst,
 			GroupID:     "", // No group
@@ -380,8 +380,8 @@ func FlattenGroupsForDisplayWithUltraPlan(session *orchestrator.Session, state *
 		globalIdx++
 	}
 
-	// Add groups
-	for _, group := range session.Groups {
+	// Add groups (thread-safe)
+	for _, group := range session.GetGroups() {
 		items = append(items, flattenGroupRecursiveWithUltraPlan(group, session, state, 0, &globalIdx, ultraPlanGroupID, ultraPlan)...)
 	}
 
@@ -607,7 +607,7 @@ func GetVisibleInstanceCount(session *orchestrator.Session, state *GroupViewStat
 		return 0
 	}
 
-	if len(session.Groups) == 0 {
+	if !session.HasGroups() {
 		return len(session.Instances) // Fall back to flat list
 	}
 
@@ -615,8 +615,8 @@ func GetVisibleInstanceCount(session *orchestrator.Session, state *GroupViewStat
 	data := BuildGroupedSidebarData(session)
 	count := len(data.UngroupedInstances)
 
-	// Count instances in groups (respecting collapsed state)
-	for _, group := range session.Groups {
+	// Count instances in groups (respecting collapsed state, thread-safe)
+	for _, group := range session.GetGroups() {
 		count += countVisibleInstancesRecursive(group, session, state)
 	}
 	return count
@@ -635,13 +635,14 @@ func countVisibleInstancesRecursive(group *orchestrator.InstanceGroup, session *
 }
 
 // GetGroupIDs returns all group IDs in display order (for J/K navigation).
+// This function is thread-safe with respect to session.Groups access.
 func GetGroupIDs(session *orchestrator.Session) []string {
-	if session == nil || len(session.Groups) == 0 {
+	if session == nil || !session.HasGroups() {
 		return nil
 	}
 
 	var ids []string
-	for _, group := range session.Groups {
+	for _, group := range session.GetGroups() {
 		ids = append(ids, getGroupIDsRecursive(group)...)
 	}
 	return ids
@@ -664,7 +665,7 @@ func FindInstanceByGlobalIndex(session *orchestrator.Session, state *GroupViewSt
 	}
 
 	// If no groups, use flat list
-	if len(session.Groups) == 0 {
+	if !session.HasGroups() {
 		if targetIdx < len(session.Instances) {
 			return session.Instances[targetIdx]
 		}
@@ -677,9 +678,9 @@ func FindInstanceByGlobalIndex(session *orchestrator.Session, state *GroupViewSt
 		return data.UngroupedInstances[targetIdx]
 	}
 
-	// Adjust index for grouped instances
+	// Adjust index for grouped instances (thread-safe)
 	currentIdx := len(data.UngroupedInstances)
-	for _, group := range session.Groups {
+	for _, group := range session.GetGroups() {
 		inst := findInstanceInGroup(group, session, state, targetIdx, &currentIdx)
 		if inst != nil {
 			return inst

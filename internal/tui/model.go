@@ -307,7 +307,7 @@ func (m Model) IsInstanceSelected(instanceID string) bool {
 // autoEnableGroupedMode switches to grouped sidebar mode when groups exist.
 // Call this after creating a new group to automatically show the grouped view.
 func (m *Model) autoEnableGroupedMode() {
-	if m.session != nil && len(m.session.Groups) > 0 && m.sidebarMode == view.SidebarModeFlat {
+	if m.session != nil && m.session.HasGroups() && m.sidebarMode == view.SidebarModeFlat {
 		m.sidebarMode = view.SidebarModeGrouped
 		if m.groupViewState == nil {
 			m.groupViewState = view.NewGroupViewState()
