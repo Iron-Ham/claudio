@@ -41,6 +41,9 @@ type Dependencies interface {
 	// Logger access
 	GetLogger() *logging.Logger
 	GetStartTime() time.Time
+
+	// IsInstanceTripleShotJudge checks if an instance is a judge in any active triple-shot session
+	IsInstanceTripleShotJudge(instanceID string) bool
 }
 
 // Result represents the outcome of executing a command.
@@ -82,8 +85,11 @@ type Result struct {
 	TerminalDirMode   *int // 0 = invocation, 1 = worktree
 
 	// Mode transition - Triple-Shot
-	StartTripleShot  *bool // Request to switch to triple-shot mode
-	AcceptTripleShot *bool // Request to accept/apply the winning triple-shot solution
+	StartTripleShot *bool // Request to switch to triple-shot mode
+
+	// StoppedTripleShotJudgeID is set when a stopped instance was a triple-shot judge.
+	// The TUI should clean up the corresponding triple-shot session.
+	StoppedTripleShotJudgeID *string
 
 	// Mode transition - Plan Mode
 	StartPlanMode *bool // Request to switch to inline plan mode
@@ -248,7 +254,6 @@ func (h *Handler) registerCommands() {
 	h.commands["tripleshot"] = cmdTripleShot
 	h.commands["triple"] = cmdTripleShot
 	h.commands["3shot"] = cmdTripleShot
-	h.commands["accept"] = cmdAccept
 
 	// Plan mode commands
 	h.commands["plan"] = cmdPlan
@@ -314,7 +319,6 @@ func (h *Handler) buildCategories() {
 				{ShortKey: "", LongKey: "pr --group=single", Description: "Create PR for current group only", Category: "utility"},
 				{ShortKey: "", LongKey: "cancel", Description: "Cancel ultra-plan execution", Category: "utility"},
 				{ShortKey: "", LongKey: "tripleshot", Description: "Start triple-shot mode (3 parallel attempts + judge)", Category: "utility"},
-				{ShortKey: "", LongKey: "accept", Description: "Accept winning triple-shot solution", Category: "utility"},
 				{ShortKey: "", LongKey: "plan", Description: "Start inline plan mode for structured task planning", Category: "utility"},
 				{ShortKey: "", LongKey: "ultraplan", Description: "Start ultraplan mode for parallel task execution", Category: "utility"},
 			},
@@ -379,6 +383,9 @@ func cmdStop(deps Dependencies) Result {
 		return Result{ErrorMessage: "No orchestrator available"}
 	}
 
+	// Check if this is a triple-shot judge before stopping
+	isJudge := deps.IsInstanceTripleShotJudge(inst.ID)
+
 	// Log user stopping instance
 	if logger := deps.GetLogger(); logger != nil {
 		logger.Info("user stopped instance", "instance_id", inst.ID)
@@ -388,10 +395,20 @@ func cmdStop(deps Dependencies) Result {
 	if err != nil {
 		return Result{ErrorMessage: err.Error()}
 	}
+
+	result := Result{}
 	if prStarted {
-		return Result{InfoMessage: fmt.Sprintf("Instance stopped. Creating PR for %s...", inst.ID)}
+		result.InfoMessage = fmt.Sprintf("Instance stopped. Creating PR for %s...", inst.ID)
+	} else {
+		result.InfoMessage = fmt.Sprintf("Instance stopped. Create PR with: claudio pr %s", inst.ID)
 	}
-	return Result{InfoMessage: fmt.Sprintf("Instance stopped. Create PR with: claudio pr %s", inst.ID)}
+
+	// If this was a triple-shot judge, signal to clean up the triple-shot session
+	if isJudge {
+		result.StoppedTripleShotJudgeID = &inst.ID
+	}
+
+	return result
 }
 
 func cmdExit(deps Dependencies) Result {
@@ -405,6 +422,9 @@ func cmdExit(deps Dependencies) Result {
 		return Result{ErrorMessage: "No orchestrator available"}
 	}
 
+	// Check if this is a triple-shot judge before stopping
+	isJudge := deps.IsInstanceTripleShotJudge(inst.ID)
+
 	// Log user exiting instance
 	if logger := deps.GetLogger(); logger != nil {
 		logger.Info("user exited instance (no auto-PR)", "instance_id", inst.ID)
@@ -414,7 +434,17 @@ func cmdExit(deps Dependencies) Result {
 	if err := orch.StopInstance(inst); err != nil {
 		return Result{ErrorMessage: err.Error()}
 	}
-	return Result{InfoMessage: fmt.Sprintf("Instance %s stopped (no PR workflow). Create PR manually with: claudio pr %s", inst.ID, inst.ID)}
+
+	result := Result{
+		InfoMessage: fmt.Sprintf("Instance %s stopped (no PR workflow). Create PR manually with: claudio pr %s", inst.ID, inst.ID),
+	}
+
+	// If this was a triple-shot judge, signal to clean up the triple-shot session
+	if isJudge {
+		result.StoppedTripleShotJudgeID = &inst.ID
+	}
+
+	return result
 }
 
 func cmdPause(deps Dependencies) Result {
@@ -949,50 +979,6 @@ func cmdTripleShot(deps Dependencies) Result {
 	return Result{
 		StartTripleShot: &startTripleShot,
 		InfoMessage:     infoMsg,
-	}
-}
-
-func cmdAccept(deps Dependencies) Result {
-	// Only valid in triple-shot mode
-	if !deps.IsTripleShotMode() {
-		return Result{ErrorMessage: "Not in triple-shot mode. Use :tripleshot to start a new session."}
-	}
-
-	// The model will find the appropriate tripleshot based on the currently
-	// selected instance. We just need to verify at least one is complete.
-	hasComplete := false
-	for _, coord := range deps.GetTripleShotCoordinators() {
-		if coord == nil {
-			continue
-		}
-		session := coord.Session()
-		if session != nil && session.Phase == orchestrator.PhaseTripleShotComplete && session.Evaluation != nil {
-			hasComplete = true
-			break
-		}
-	}
-
-	if !hasComplete {
-		// Fall back to deprecated single coordinator for backward compatibility
-		coordinator := deps.GetTripleShotCoordinator()
-		if coordinator != nil {
-			session := coordinator.Session()
-			if session != nil && session.Phase == orchestrator.PhaseTripleShotComplete && session.Evaluation != nil {
-				hasComplete = true
-			}
-		}
-	}
-
-	if !hasComplete {
-		return Result{ErrorMessage: "No complete triple-shot session. Wait for evaluation to finish."}
-	}
-
-	// Signal to the model that we want to accept the winning solution
-	// The model will determine which tripleshot to accept based on active instance
-	acceptTripleShot := true
-	return Result{
-		AcceptTripleShot: &acceptTripleShot,
-		InfoMessage:      "Accepting triple-shot solution...",
 	}
 }
 

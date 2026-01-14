@@ -42,6 +42,7 @@ type mockDeps struct {
 	tripleShotCoordinator *orchestrator.TripleShotCoordinator
 	logger                *logging.Logger
 	startTime             time.Time
+	isTripleShotJudge     bool
 }
 
 func (m *mockDeps) GetOrchestrator() *orchestrator.Orchestrator { return m.orchestrator }
@@ -66,8 +67,9 @@ func (m *mockDeps) GetTripleShotCoordinators() []*orchestrator.TripleShotCoordin
 	}
 	return nil
 }
-func (m *mockDeps) GetLogger() *logging.Logger { return m.logger }
-func (m *mockDeps) GetStartTime() time.Time    { return m.startTime }
+func (m *mockDeps) GetLogger() *logging.Logger            { return m.logger }
+func (m *mockDeps) GetStartTime() time.Time               { return m.startTime }
+func (m *mockDeps) IsInstanceTripleShotJudge(string) bool { return m.isTripleShotJudge }
 
 func newMockDeps() *mockDeps {
 	return &mockDeps{
@@ -933,6 +935,28 @@ func TestExitCommandHandlesNilLogger(t *testing.T) {
 	})
 }
 
+// TestIsInstanceTripleShotJudgeMock verifies the mock properly returns the isTripleShotJudge value.
+// The full integration of StoppedTripleShotJudgeID requires a working orchestrator which is
+// tested through integration tests. This test verifies the mock interface works correctly.
+func TestIsInstanceTripleShotJudgeMock(t *testing.T) {
+	t.Run("mock returns false by default", func(t *testing.T) {
+		deps := newMockDeps()
+
+		if deps.IsInstanceTripleShotJudge("any-id") {
+			t.Error("expected false by default")
+		}
+	})
+
+	t.Run("mock returns configured value", func(t *testing.T) {
+		deps := newMockDeps()
+		deps.isTripleShotJudge = true
+
+		if !deps.IsInstanceTripleShotJudge("any-id") {
+			t.Error("expected true when configured")
+		}
+	})
+}
+
 // TestClearCompletedNoOrchestrator tests cmdClearCompleted without orchestrator
 func TestClearCompletedNoOrchestrator(t *testing.T) {
 	t.Run("no orchestrator returns error", func(t *testing.T) {
@@ -1065,66 +1089,6 @@ func TestTripleShotCommand(t *testing.T) {
 		}
 
 		viper.Reset()
-	})
-}
-
-// TestAcceptCommand tests the accept command for triple-shot mode
-//
-// Note: Testing the full success path requires creating a TripleShotCoordinator
-// with a complete session and evaluation. This requires complex orchestrator setup
-// that is better suited for integration tests. The acceptance logic in
-// handleTripleShotAccept is tested through the TUI model tests.
-func TestAcceptCommand(t *testing.T) {
-	t.Run("fails when not in triple-shot mode", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-		deps.tripleShotMode = false
-
-		result := h.Execute("accept", deps)
-
-		if result.ErrorMessage == "" {
-			t.Error("expected error when not in triple-shot mode")
-		}
-		if result.ErrorMessage != "Not in triple-shot mode. Use :tripleshot to start a new session." {
-			t.Errorf("unexpected error message: %q", result.ErrorMessage)
-		}
-		if result.AcceptTripleShot != nil {
-			t.Error("AcceptTripleShot should be nil on error")
-		}
-	})
-
-	t.Run("fails when no complete session", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-		deps.tripleShotMode = true
-		deps.tripleShotCoordinator = nil
-
-		result := h.Execute("accept", deps)
-
-		// With multiple tripleshots support, we now check for any complete session
-		if result.ErrorMessage != "No complete triple-shot session. Wait for evaluation to finish." {
-			t.Errorf("expected 'No complete triple-shot session. Wait for evaluation to finish.', got: %q", result.ErrorMessage)
-		}
-		if result.AcceptTripleShot != nil {
-			t.Error("AcceptTripleShot should be nil on error")
-		}
-	})
-
-	t.Run("returns no result changes when not in mode and no coordinator", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-		deps.tripleShotMode = false
-		deps.tripleShotCoordinator = nil
-
-		result := h.Execute("accept", deps)
-
-		// Verify no state changes are requested on error
-		if result.AcceptTripleShot != nil {
-			t.Error("AcceptTripleShot should be nil")
-		}
-		if result.InfoMessage != "" {
-			t.Errorf("InfoMessage should be empty on error, got: %q", result.InfoMessage)
-		}
 	})
 }
 

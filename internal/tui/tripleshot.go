@@ -12,157 +12,6 @@ import (
 // This allows the main tui package to use the state without importing view.
 type TripleShotState = view.TripleShotState
 
-// handleTripleShotAccept handles accepting the winning triple-shot solution.
-// For multiple tripleshots, accepts the one whose instance is currently focused.
-// On error, the user remains in triple-shot mode so they can investigate or retry.
-func (m *Model) handleTripleShotAccept() {
-	if m.tripleShot == nil || !m.tripleShot.HasActiveCoordinators() {
-		if m.logger != nil {
-			m.logger.Warn("triple-shot accept failed", "reason", "no active session")
-		}
-		m.errorMessage = "No active triple-shot session"
-		return
-	}
-
-	// Find the tripleshot session for the currently active instance
-	session := m.findActiveTripleShotSession()
-	if session == nil {
-		m.errorMessage = "No triple-shot session found for the selected instance"
-		return
-	}
-
-	if session.Evaluation == nil {
-		if m.logger != nil {
-			m.logger.Warn("triple-shot accept failed", "reason", "no evaluation available")
-		}
-		m.errorMessage = "No evaluation available for this triple-shot"
-		return
-	}
-
-	eval := session.Evaluation
-
-	// Handle different merge strategies
-	switch eval.MergeStrategy {
-	case orchestrator.MergeStrategySelect:
-		// Direct selection - identify the winning branch
-		if eval.WinnerIndex < 0 || eval.WinnerIndex >= 3 {
-			if m.logger != nil {
-				m.logger.Warn("triple-shot accept failed",
-					"reason", "invalid winner index",
-					"winner_index", eval.WinnerIndex,
-				)
-			}
-			m.errorMessage = "Invalid winner index in evaluation"
-			return
-		}
-
-		winnerAttempt := session.Attempts[eval.WinnerIndex]
-		winningBranch := winnerAttempt.Branch
-
-		if m.logger != nil {
-			m.logger.Info("accepting triple-shot solution",
-				"strategy", eval.MergeStrategy,
-				"winner_index", eval.WinnerIndex,
-				"branch", winningBranch,
-			)
-		}
-
-		m.infoMessage = fmt.Sprintf("Accepted winning solution from attempt %d. Use 'git checkout %s' to switch to the winning branch, or create a PR with 'claudio pr %s'",
-			eval.WinnerIndex+1, winningBranch, winnerAttempt.InstanceID)
-
-	case orchestrator.MergeStrategyMerge, orchestrator.MergeStrategyCombine:
-		// Merge/combine strategies require manual intervention
-		if m.logger != nil {
-			m.logger.Info("accepting triple-shot solution",
-				"strategy", eval.MergeStrategy,
-			)
-		}
-
-		m.infoMessage = fmt.Sprintf("Evaluation recommends %s strategy. Review the attempts and suggested changes manually.",
-			eval.MergeStrategy)
-
-	default:
-		if m.logger != nil {
-			m.logger.Warn("triple-shot accept failed",
-				"reason", "unknown merge strategy",
-				"strategy", eval.MergeStrategy,
-			)
-		}
-		m.errorMessage = fmt.Sprintf("Unknown merge strategy: %s", eval.MergeStrategy)
-		return
-	}
-
-	// Find and stop the coordinator for this session
-	var coordinatorToStop *orchestrator.TripleShotCoordinator
-	for groupID, coord := range m.tripleShot.Coordinators {
-		if coord.Session() == session {
-			coordinatorToStop = coord
-			delete(m.tripleShot.Coordinators, groupID)
-			break
-		}
-	}
-
-	// Stop the coordinator's context
-	if coordinatorToStop != nil {
-		coordinatorToStop.Stop()
-	}
-
-	// If no more coordinators, fully clean up tripleshot state
-	if !m.tripleShot.HasActiveCoordinators() {
-		m.cleanupTripleShot()
-	}
-}
-
-// findActiveTripleShotSession finds the tripleshot session that contains
-// the currently active instance (based on activeTab). Falls back to the
-// first coordinator's session if no match is found or no instance is selected.
-func (m *Model) findActiveTripleShotSession() *orchestrator.TripleShotSession {
-	if m.tripleShot == nil {
-		return nil
-	}
-
-	if m.session == nil || m.activeTab >= len(m.session.Instances) {
-		// If no instance is selected, return the first coordinator's session
-		coords := m.tripleShot.GetAllCoordinators()
-		if len(coords) > 0 {
-			return coords[0].Session()
-		}
-		return nil
-	}
-
-	activeInst := m.session.Instances[m.activeTab]
-	if activeInst == nil {
-		return nil
-	}
-
-	// Search through all coordinators to find which tripleshot owns this instance
-	for _, coord := range m.tripleShot.GetAllCoordinators() {
-		session := coord.Session()
-		if session == nil {
-			continue
-		}
-
-		// Check if active instance is one of the attempts
-		for _, attempt := range session.Attempts {
-			if attempt.InstanceID == activeInst.ID {
-				return session
-			}
-		}
-
-		// Check if active instance is the judge
-		if session.JudgeID == activeInst.ID {
-			return session
-		}
-	}
-
-	// Default to first coordinator's session if no match
-	coords := m.tripleShot.GetAllCoordinators()
-	if len(coords) > 0 {
-		return coords[0].Session()
-	}
-	return nil
-}
-
 // dispatchTripleShotCompletionChecks returns commands to check tripleshot completion
 // files asynchronously. This avoids blocking the UI event loop with file I/O.
 func (m *Model) dispatchTripleShotCompletionChecks() []tea.Cmd {
@@ -342,12 +191,74 @@ func (m *Model) processJudgeCheckResult(
 			} else if session != nil {
 				taskPreview = session.Task
 			}
-			m.infoMessage = fmt.Sprintf("Triple-shot complete! (%s) Use :accept to apply the solution", taskPreview)
+			m.infoMessage = fmt.Sprintf("Triple-shot complete! (%s)", taskPreview)
 			m.tripleShot.NeedsNotification = true
 		}
 	}
 
 	return m, nil
+}
+
+// handleTripleShotJudgeStopped handles cleanup when a triple-shot judge instance is stopped.
+// This cleans up the entire triple-shot session associated with the judge.
+func (m *Model) handleTripleShotJudgeStopped(judgeID string) {
+	if m.tripleShot == nil {
+		return
+	}
+
+	// Find the coordinator whose session has this judge
+	var coordinatorToStop *orchestrator.TripleShotCoordinator
+	var groupIDToRemove string
+	for groupID, coord := range m.tripleShot.Coordinators {
+		session := coord.Session()
+		if session != nil && session.JudgeID == judgeID {
+			coordinatorToStop = coord
+			groupIDToRemove = groupID
+			break
+		}
+	}
+
+	if coordinatorToStop == nil {
+		// Check deprecated single coordinator
+		if m.tripleShot.Coordinator != nil {
+			session := m.tripleShot.Coordinator.Session()
+			if session != nil && session.JudgeID == judgeID {
+				coordinatorToStop = m.tripleShot.Coordinator
+				m.tripleShot.Coordinator = nil
+			}
+		}
+	}
+
+	if coordinatorToStop == nil {
+		if m.logger != nil {
+			m.logger.Warn("triple-shot judge stop requested but no matching coordinator found",
+				"judge_id", judgeID,
+				"coordinators_count", len(m.tripleShot.Coordinators),
+				"has_deprecated_coordinator", m.tripleShot.Coordinator != nil,
+			)
+		}
+		return
+	}
+
+	if m.logger != nil {
+		m.logger.Info("cleaning up triple-shot session after judge stopped", "judge_id", judgeID)
+	}
+
+	// Stop the coordinator
+	coordinatorToStop.Stop()
+
+	// Remove from coordinators map
+	if groupIDToRemove != "" {
+		delete(m.tripleShot.Coordinators, groupIDToRemove)
+	}
+
+	// If no more coordinators, fully clean up tripleshot state
+	if !m.tripleShot.HasActiveCoordinators() {
+		m.cleanupTripleShot()
+		m.infoMessage = "Triple-shot session ended"
+	} else {
+		m.infoMessage = "Triple-shot session ended (other sessions still active)"
+	}
 }
 
 // cleanupTripleShot stops all tripleshot coordinators and clears the tripleshot state.
