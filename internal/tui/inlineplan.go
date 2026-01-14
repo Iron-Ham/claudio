@@ -203,6 +203,8 @@ func (m *Model) handleInlinePlanObjectiveSubmit(objective string) {
 		if orchGroup := m.session.GetGroup(planGroup.ID); orchGroup != nil {
 			orchGroup.SessionType = orchestrator.SessionTypePlan
 			orchGroup.Objective = objective
+			// Add the planning instance to the group for sidebar display
+			orchGroup.AddInstance(inst.ID)
 		}
 
 		// If in tripleshot mode, register this group for sidebar display

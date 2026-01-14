@@ -227,6 +227,9 @@ func (c *TripleShotCoordinator) StartAttempts() error {
 	now := time.Now()
 	session.StartedAt = &now
 
+	// Find the triple-shot group to add instances to
+	tripleGroup := c.baseSession.GetGroupBySessionType(SessionTypeTripleShot)
+
 	// Create and start all three attempts
 	for i := range 3 {
 		prompt := fmt.Sprintf(TripleShotAttemptPromptTemplate, task, i)
@@ -235,6 +238,11 @@ func (c *TripleShotCoordinator) StartAttempts() error {
 		inst, err := c.orch.AddInstance(c.baseSession, prompt)
 		if err != nil {
 			return fmt.Errorf("failed to create attempt %d instance: %w", i, err)
+		}
+
+		// Add instance to the triple-shot group for sidebar display
+		if tripleGroup != nil {
+			tripleGroup.AddInstance(inst.ID)
 		}
 
 		// Record attempt info
@@ -302,6 +310,11 @@ func (c *TripleShotCoordinator) StartJudge() error {
 	inst, err := c.orch.AddInstance(c.baseSession, prompt)
 	if err != nil {
 		return fmt.Errorf("failed to create judge instance: %w", err)
+	}
+
+	// Add judge to the triple-shot group for sidebar display
+	if tripleGroup := c.baseSession.GetGroupBySessionType(SessionTypeTripleShot); tripleGroup != nil {
+		tripleGroup.AddInstance(inst.ID)
 	}
 
 	session.JudgeID = inst.ID

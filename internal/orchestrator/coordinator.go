@@ -516,6 +516,11 @@ func (c *Coordinator) RunPlanning() error {
 		return fmt.Errorf("failed to create planning instance: %w", err)
 	}
 
+	// Add planning instance to the ultraplan group for sidebar display
+	if ultraGroup := c.baseSession.GetGroupBySessionType(SessionTypeUltraPlan); ultraGroup != nil {
+		ultraGroup.AddInstance(inst.ID)
+	}
+
 	session.CoordinatorID = inst.ID
 
 	// Start the instance
@@ -567,6 +572,11 @@ func (c *Coordinator) RunMultiPassPlanning() error {
 				"stage", "create_instance",
 			)
 			return fmt.Errorf("failed to create planning instance for strategy %s: %w", strategy, err)
+		}
+
+		// Add planning instance to the multi-pass group for sidebar display
+		if multiGroup := c.baseSession.GetGroupBySessionType(SessionTypePlanMulti); multiGroup != nil {
+			multiGroup.AddInstance(inst.ID)
 		}
 
 		// Store the instance ID
@@ -631,6 +641,11 @@ func (c *Coordinator) RunPlanManager() error {
 	inst, err := c.orch.AddInstance(c.baseSession, prompt)
 	if err != nil {
 		return fmt.Errorf("failed to create plan manager instance: %w", err)
+	}
+
+	// Add plan manager to the multi-pass group for sidebar display
+	if multiGroup := c.baseSession.GetGroupBySessionType(SessionTypePlanMulti); multiGroup != nil {
+		multiGroup.AddInstance(inst.ID)
 	}
 
 	session.PlanManagerID = inst.ID
@@ -923,6 +938,15 @@ func (c *Coordinator) startTask(taskID string, completionChan chan<- taskComplet
 			"stage", "create_instance",
 		)
 		return fmt.Errorf("failed to create instance for task %s: %w", taskID, err)
+	}
+
+	// Add instance to the ultraplan group for sidebar display
+	sessionType := SessionTypeUltraPlan
+	if session.Config.MultiPass {
+		sessionType = SessionTypePlanMulti
+	}
+	if ultraGroup := c.baseSession.GetGroupBySessionType(sessionType); ultraGroup != nil {
+		ultraGroup.AddInstance(inst.ID)
 	}
 
 	// Track the running task
@@ -1434,6 +1458,15 @@ func (c *Coordinator) RunSynthesis() error {
 	session := c.Session()
 	session.SynthesisID = inst.ID
 
+	// Add synthesis instance to the ultraplan group for sidebar display
+	sessionType := SessionTypeUltraPlan
+	if session.Config.MultiPass {
+		sessionType = SessionTypePlanMulti
+	}
+	if ultraGroup := c.baseSession.GetGroupBySessionType(sessionType); ultraGroup != nil {
+		ultraGroup.AddInstance(inst.ID)
+	}
+
 	// Start the instance
 	if err := c.orch.StartInstance(inst); err != nil {
 		c.logger.Error("synthesis failed",
@@ -1773,6 +1806,15 @@ func (c *Coordinator) startRevisionTask(taskID string, completionChan chan<- tas
 		return fmt.Errorf("failed to create revision instance for task %s: %w", taskID, err)
 	}
 
+	// Add revision instance to the ultraplan group for sidebar display
+	sessionType := SessionTypeUltraPlan
+	if session.Config.MultiPass {
+		sessionType = SessionTypePlanMulti
+	}
+	if ultraGroup := c.baseSession.GetGroupBySessionType(sessionType); ultraGroup != nil {
+		ultraGroup.AddInstance(inst.ID)
+	}
+
 	c.mu.Lock()
 	session.RevisionID = inst.ID
 	c.mu.Unlock()
@@ -1962,6 +2004,15 @@ func (c *Coordinator) StartConsolidation() error {
 	inst, err := c.orch.AddInstance(c.baseSession, prompt)
 	if err != nil {
 		return fmt.Errorf("failed to create consolidation instance: %w", err)
+	}
+
+	// Add consolidation instance to the ultraplan group for sidebar display
+	sessionType := SessionTypeUltraPlan
+	if session.Config.MultiPass {
+		sessionType = SessionTypePlanMulti
+	}
+	if ultraGroup := c.baseSession.GetGroupBySessionType(sessionType); ultraGroup != nil {
+		ultraGroup.AddInstance(inst.ID)
 	}
 
 	// Store the consolidation instance ID for TUI visibility
@@ -3549,6 +3600,15 @@ func (c *Coordinator) startGroupConsolidatorSession(groupIndex int) error {
 	}
 	if err != nil {
 		return fmt.Errorf("failed to create group consolidator instance: %w", err)
+	}
+
+	// Add consolidator instance to the ultraplan group for sidebar display
+	sessionType := SessionTypeUltraPlan
+	if session.Config.MultiPass {
+		sessionType = SessionTypePlanMulti
+	}
+	if ultraGroup := c.baseSession.GetGroupBySessionType(sessionType); ultraGroup != nil {
+		ultraGroup.AddInstance(inst.ID)
 	}
 
 	// Store the consolidator instance ID
