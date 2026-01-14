@@ -1092,32 +1092,11 @@ func TestTripleShotCommand(t *testing.T) {
 	})
 }
 
-// TestPlanCommand tests the plan command with config check
+// TestPlanCommand tests the plan command
 func TestPlanCommand(t *testing.T) {
-	t.Run("disabled by default", func(t *testing.T) {
+	t.Run("enabled by default", func(t *testing.T) {
 		// Reset viper to ensure clean state
 		viper.Reset()
-
-		h := New()
-		deps := newMockDeps()
-
-		result := h.Execute("plan", deps)
-
-		if result.ErrorMessage == "" {
-			t.Error("expected error when plan mode is disabled")
-		}
-		if result.ErrorMessage != "Plan mode is disabled. Enable it in :config under Experimental" {
-			t.Errorf("unexpected error message: %q", result.ErrorMessage)
-		}
-		if result.StartPlanMode != nil {
-			t.Error("StartPlanMode should be nil when disabled")
-		}
-	})
-
-	t.Run("enabled via config", func(t *testing.T) {
-		// Reset and enable plan mode
-		viper.Reset()
-		viper.Set("experimental.inline_plan", true)
 
 		h := New()
 		deps := newMockDeps()
@@ -1140,7 +1119,6 @@ func TestPlanCommand(t *testing.T) {
 
 	t.Run("blocked in ultraplan mode", func(t *testing.T) {
 		viper.Reset()
-		viper.Set("experimental.inline_plan", true)
 
 		h := New()
 		deps := newMockDeps()
@@ -1160,7 +1138,6 @@ func TestPlanCommand(t *testing.T) {
 
 	t.Run("allowed when in triple-shot mode", func(t *testing.T) {
 		viper.Reset()
-		viper.Set("experimental.inline_plan", true)
 
 		h := New()
 		deps := newMockDeps()
@@ -1180,7 +1157,7 @@ func TestPlanCommand(t *testing.T) {
 	})
 }
 
-// TestMultiPlanCommand tests the multiplan command with config check
+// TestMultiPlanCommand tests the multiplan command with config check (remains experimental)
 func TestMultiPlanCommand(t *testing.T) {
 	t.Run("disabled by default", func(t *testing.T) {
 		// Reset viper to ensure clean state
@@ -1192,9 +1169,9 @@ func TestMultiPlanCommand(t *testing.T) {
 		result := h.Execute("multiplan", deps)
 
 		if result.ErrorMessage == "" {
-			t.Error("expected error when plan mode is disabled")
+			t.Error("expected error when multiplan mode is disabled")
 		}
-		if result.ErrorMessage != "Plan mode is disabled. Enable it in :config under Experimental" {
+		if result.ErrorMessage != "MultiPlan mode is disabled. Enable it in :config under Experimental" {
 			t.Errorf("unexpected error message: %q", result.ErrorMessage)
 		}
 		if result.StartMultiPlanMode != nil {

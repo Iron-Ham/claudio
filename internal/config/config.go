@@ -342,7 +342,7 @@ func Default() *Config {
 			IntelligentNaming:   false, // Disabled by default until stable
 			TripleShot:          false, // Disabled by default until stable
 			TerminalSupport:     false, // Disabled by default until stable
-			InlinePlan:          false, // Disabled by default until stable
+			InlinePlan:          false, // Controls :multiplan only; :plan is always available
 			InlineUltraPlan:     false, // Disabled by default until stable
 			GroupedInstanceView: false, // Disabled by default until stable
 		},

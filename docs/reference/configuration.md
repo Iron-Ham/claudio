@@ -276,7 +276,7 @@ Controls experimental features that may change or be removed. These features are
 |-----|------|---------|-------------|
 | `experimental.intelligent_naming` | bool | `false` | Use Claude to generate short, descriptive instance names |
 | `experimental.triple_shot` | bool | `false` | Spawn three parallel instances and select the best solution |
-| `experimental.inline_plan` | bool | `false` | Enable `:plan` command in the TUI |
+| `experimental.inline_plan` | bool | `false` | Enable `:multiplan` command in the TUI (`:plan` is always available) |
 | `experimental.inline_ultraplan` | bool | `false` | Enable `:ultraplan` command in the TUI |
 | `experimental.grouped_instance_view` | bool | `false` | Enable visual group organization in the sidebar |
 
@@ -286,7 +286,7 @@ Controls experimental features that may change or be removed. These features are
 |---------|-------------|
 | `intelligent_naming` | Uses Claude to generate short, descriptive instance names for the sidebar based on the task and Claude's initial output. Requires `ANTHROPIC_API_KEY`. |
 | `triple_shot` | Spawns three parallel instances working on the same problem, then uses a judge instance to evaluate and select the best solution. |
-| `inline_plan` | Enables the `:plan` command in the standard TUI, allowing you to start a Plan workflow directly from the main interface. |
+| `inline_plan` | Enables the `:multiplan` command in the standard TUI for multi-pass planning with 3 planners + assessor. The `:plan` command is always available without this setting. |
 | `inline_ultraplan` | Enables the `:ultraplan` command in the standard TUI, allowing you to start an UltraPlan workflow with parallel task execution. |
 | `grouped_instance_view` | Organizes instances visually by execution group in the TUI sidebar. Related tasks are grouped together, with sub-groups for dependency chains. |
 
@@ -294,9 +294,9 @@ Controls experimental features that may change or be removed. These features are
 experimental:
   intelligent_naming: false
   triple_shot: false
-  inline_plan: true
-  inline_ultraplan: true
-  grouped_instance_view: true
+  inline_plan: false  # enables :multiplan; :plan is always available
+  inline_ultraplan: false
+  grouped_instance_view: false
 ```
 
 See the [Inline Planning Guide](../guide/inline-planning.md) for detailed usage of inline planning features.

@@ -462,8 +462,8 @@ func New() Model {
 				},
 				{
 					Key:         "experimental.inline_plan",
-					Label:       "Inline Plan",
-					Description: "Enable :plan command in standard TUI to start Plan workflows",
+					Label:       "Inline MultiPlan",
+					Description: "Enable :multiplan command for multi-pass planning with 3 planners + assessor",
 					Type:        "bool",
 					Category:    "experimental",
 				},

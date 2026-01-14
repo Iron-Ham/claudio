@@ -987,11 +987,6 @@ func cmdTripleShot(deps Dependencies) Result {
 }
 
 func cmdPlan(deps Dependencies) Result {
-	// Check if inline plan is enabled in config
-	if !viper.GetBool("experimental.inline_plan") {
-		return Result{ErrorMessage: "Plan mode is disabled. Enable it in :config under Experimental"}
-	}
-
 	// Don't allow starting plan mode if already in ultraplan mode
 	if deps.IsUltraPlanMode() {
 		return Result{ErrorMessage: "Cannot start plan mode while in ultraplan mode"}
@@ -1009,9 +1004,9 @@ func cmdPlan(deps Dependencies) Result {
 }
 
 func cmdMultiPlan(deps Dependencies) Result {
-	// Check if inline plan is enabled in config
+	// Check if inline plan is enabled in config (multiplan remains experimental)
 	if !viper.GetBool("experimental.inline_plan") {
-		return Result{ErrorMessage: "Plan mode is disabled. Enable it in :config under Experimental"}
+		return Result{ErrorMessage: "MultiPlan mode is disabled. Enable it in :config under Experimental"}
 	}
 
 	// Don't allow starting multiplan mode if already in ultraplan mode
