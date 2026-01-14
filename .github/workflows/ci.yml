@@ -104,3 +104,51 @@ jobs:
 
       - name: Build CLI
         run: go build -v -o claudio ./cmd/claudio
+
+  changelog:
+    name: Changelog
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for skip label
+        id: skip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          has_skip=$(gh pr view "$PR_NUMBER" --json labels -q '[.labels[].name] | any(. == "skip-changelog")')
+          if [ "$has_skip" = "true" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Skipping changelog check (skip-changelog label found)"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for changelog entry
+        if: steps.skip.outputs.skip != 'true'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # Get the list of changed files in this PR
+          changed_files=$(git diff --name-only "origin/${BASE_REF}...HEAD")
+
+          if echo "$changed_files" | grep -q "^CHANGELOG.md$"; then
+            echo "Changelog entry found"
+          else
+            echo "::error::No CHANGELOG.md entry found. Please add an entry to the Unreleased section."
+            echo ""
+            echo "If this change doesn't need a changelog entry (test-only, internal refactor,"
+            echo "docs-only, or dependency update), add the 'skip-changelog' label to this PR."
+            echo ""
+            echo "See CLAUDE.md for changelog guidelines."
+            exit 1
+          fi
