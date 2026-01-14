@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"time"
 )
 
@@ -17,8 +18,9 @@ const (
 	StatusCompleted    InstanceStatus = "completed"
 	StatusError        InstanceStatus = "error"
 	StatusCreatingPR   InstanceStatus = "creating_pr"
-	StatusStuck        InstanceStatus = "stuck"   // No activity for configured timeout period
-	StatusTimeout      InstanceStatus = "timeout" // Total runtime exceeded configured limit
+	StatusStuck        InstanceStatus = "stuck"       // No activity for configured timeout period
+	StatusTimeout      InstanceStatus = "timeout"     // Total runtime exceeded configured limit
+	StatusInterrupted  InstanceStatus = "interrupted" // Claudio exited while instance was running
 )
 
 // Metrics tracks resource usage and costs for an instance
@@ -72,6 +74,11 @@ type Instance struct {
 	// Intelligent naming support - LLM-generated short names for sidebar display
 	DisplayName   string `json:"display_name,omitempty"`   // Short descriptive name (e.g., "Fix auth bug")
 	ManuallyNamed bool   `json:"manually_named,omitempty"` // If true, auto-rename is disabled
+
+	// Progress persistence support - allows resuming interrupted Claude sessions
+	ClaudeSessionID string     `json:"claude_session_id,omitempty"` // Claude's internal session UUID for --resume
+	LastActiveAt    *time.Time `json:"last_active_at,omitempty"`    // Last time output was detected
+	InterruptedAt   *time.Time `json:"interrupted_at,omitempty"`    // When session was interrupted (if applicable)
 }
 
 // GetID returns the instance ID (satisfies prworkflow.InstanceInfo).
@@ -95,6 +102,18 @@ func (i *Instance) EffectiveName() string {
 	return i.Task
 }
 
+// RecoveryState indicates how a session was stopped
+type RecoveryState string
+
+const (
+	// RecoveryNone means the session was cleanly stopped or is new
+	RecoveryNone RecoveryState = ""
+	// RecoveryInterrupted means the session was interrupted (Claudio exited while instances were running)
+	RecoveryInterrupted RecoveryState = "interrupted"
+	// RecoveryRecovered means the session was successfully recovered after an interruption
+	RecoveryRecovered RecoveryState = "recovered"
+)
+
 // Session represents a Claudio work session
 type Session struct {
 	ID        string      `json:"id"`
@@ -114,6 +133,14 @@ type Session struct {
 
 	// TripleShot holds the triple-shot session state (nil for regular sessions)
 	TripleShot *TripleShotSession `json:"triple_shot,omitempty"`
+
+	// Recovery state tracking - helps detect and recover interrupted sessions
+	RecoveryState   RecoveryState `json:"recovery_state,omitempty"`   // Current recovery state
+	LastActiveAt    *time.Time    `json:"last_active_at,omitempty"`   // Last time any instance had activity
+	CleanShutdown   bool          `json:"clean_shutdown,omitempty"`   // True if session was cleanly stopped
+	InterruptedAt   *time.Time    `json:"interrupted_at,omitempty"`   // When session was interrupted
+	RecoveredAt     *time.Time    `json:"recovered_at,omitempty"`     // When session was last recovered
+	RecoveryAttempt int           `json:"recovery_attempt,omitempty"` // Number of recovery attempts
 }
 
 // NewSession creates a new session with a generated ID
@@ -131,13 +158,15 @@ func NewSession(name, baseRepo string) *Session {
 	}
 }
 
-// NewInstance creates a new instance with a generated ID
+// NewInstance creates a new instance with a generated ID.
+// Also generates a Claude session UUID for progress persistence and resume capability.
 func NewInstance(task string) *Instance {
 	return &Instance{
-		ID:      generateID(),
-		Task:    task,
-		Status:  StatusPending,
-		Created: time.Now(),
+		ID:              generateID(),
+		Task:            task,
+		Status:          StatusPending,
+		Created:         time.Now(),
+		ClaudeSessionID: GenerateUUID(), // For resume capability
 	}
 }
 
@@ -196,6 +225,71 @@ func (s *Session) GetReadyInstances() []*Instance {
 	return ready
 }
 
+// NeedsRecovery checks if the session was interrupted and needs recovery.
+// A session needs recovery if it wasn't cleanly shutdown and had working instances.
+func (s *Session) NeedsRecovery() bool {
+	// If it was cleanly shutdown, no recovery needed
+	if s.CleanShutdown {
+		return false
+	}
+
+	// Check if any instances were in a working state
+	for _, inst := range s.Instances {
+		if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
+			return true
+		}
+	}
+
+	return false
+}
+
+// GetInterruptedInstances returns instances that were interrupted (working but tmux session gone).
+func (s *Session) GetInterruptedInstances() []*Instance {
+	var interrupted []*Instance
+	for _, inst := range s.Instances {
+		if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
+			// Mark as interrupted if we're detecting a recovery scenario
+			interrupted = append(interrupted, inst)
+		}
+	}
+	return interrupted
+}
+
+// GetResumableInstances returns instances that have a Claude session ID and can be resumed.
+func (s *Session) GetResumableInstances() []*Instance {
+	var resumable []*Instance
+	for _, inst := range s.Instances {
+		// Instances with Claude session ID can be resumed if they were running or interrupted
+		if inst.ClaudeSessionID != "" && (inst.Status == StatusWorking || inst.Status == StatusWaitingInput || inst.Status == StatusPaused || inst.Status == StatusInterrupted) {
+			resumable = append(resumable, inst)
+		}
+	}
+	return resumable
+}
+
+// MarkInstancesInterrupted marks all running instances as interrupted.
+// This should be called when detecting that a session was not cleanly shutdown.
+func (s *Session) MarkInstancesInterrupted() {
+	now := time.Now()
+	for _, inst := range s.Instances {
+		if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
+			inst.Status = StatusInterrupted
+			inst.InterruptedAt = &now
+		}
+	}
+	s.InterruptedAt = &now
+	s.RecoveryState = RecoveryInterrupted
+}
+
+// MarkRecovered marks the session as having been recovered from an interruption.
+func (s *Session) MarkRecovered() {
+	now := time.Now()
+	s.RecoveredAt = &now
+	s.RecoveryAttempt++
+	s.RecoveryState = RecoveryRecovered
+	s.CleanShutdown = false // Will be set true on next clean shutdown
+}
+
 // generateID creates a short random hex ID
 func generateID() string {
 	bytes := make([]byte, 4)
@@ -207,4 +301,24 @@ func generateID() string {
 // Exported for use by cmd package.
 func GenerateID() string {
 	return generateID()
+}
+
+// GenerateUUID generates a new random UUID (version 4) for Claude session IDs.
+// This creates a UUID in the format xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+// where y is one of 8, 9, a, or b.
+func GenerateUUID() string {
+	uuid := make([]byte, 16)
+	_, _ = rand.Read(uuid)
+
+	// Set version (4) and variant (2) bits per RFC 4122
+	uuid[6] = (uuid[6] & 0x0f) | 0x40 // Version 4
+	uuid[8] = (uuid[8] & 0x3f) | 0x80 // Variant is 10
+
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		uuid[0:4],
+		uuid[4:6],
+		uuid[6:8],
+		uuid[8:10],
+		uuid[10:16],
+	)
 }

@@ -440,6 +440,284 @@ func TestSession_GetReadyInstances(t *testing.T) {
 	}
 }
 
+// Test progress persistence and recovery functionality
+
+func TestNewInstance_GeneratesClaudeSessionID(t *testing.T) {
+	inst := NewInstance("test task")
+
+	if inst.ClaudeSessionID == "" {
+		t.Error("NewInstance should generate a ClaudeSessionID for resume capability")
+	}
+
+	// UUID format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+	if len(inst.ClaudeSessionID) != 36 {
+		t.Errorf("ClaudeSessionID length = %d, want 36 (UUID format)", len(inst.ClaudeSessionID))
+	}
+}
+
+func TestGenerateUUID_Format(t *testing.T) {
+	uuid := GenerateUUID()
+
+	// UUID format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx (36 chars including hyphens)
+	if len(uuid) != 36 {
+		t.Errorf("GenerateUUID() length = %d, want 36", len(uuid))
+	}
+
+	// Check hyphen positions
+	if uuid[8] != '-' || uuid[13] != '-' || uuid[18] != '-' || uuid[23] != '-' {
+		t.Errorf("GenerateUUID() = %q, doesn't have hyphens in correct positions", uuid)
+	}
+
+	// Check version 4 indicator (position 14 should be '4')
+	if uuid[14] != '4' {
+		t.Errorf("GenerateUUID() = %q, version indicator at position 14 should be '4'", uuid)
+	}
+
+	// Check variant bits (position 19 should be 8, 9, a, or b)
+	variantChar := uuid[19]
+	if variantChar != '8' && variantChar != '9' && variantChar != 'a' && variantChar != 'b' {
+		t.Errorf("GenerateUUID() = %q, variant indicator at position 19 should be 8, 9, a, or b", uuid)
+	}
+}
+
+func TestGenerateUUID_Uniqueness(t *testing.T) {
+	ids := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		uuid := GenerateUUID()
+		if ids[uuid] {
+			t.Errorf("GenerateUUID returned duplicate: %s", uuid)
+		}
+		ids[uuid] = true
+	}
+}
+
+func TestSession_NeedsRecovery(t *testing.T) {
+	tests := []struct {
+		name          string
+		cleanShutdown bool
+		instances     []*Instance
+		expected      bool
+	}{
+		{
+			name:          "clean shutdown - no recovery needed",
+			cleanShutdown: true,
+			instances: []*Instance{
+				{ID: "1", Status: StatusWorking},
+			},
+			expected: false,
+		},
+		{
+			name:          "not clean shutdown with working instance - needs recovery",
+			cleanShutdown: false,
+			instances: []*Instance{
+				{ID: "1", Status: StatusWorking},
+			},
+			expected: true,
+		},
+		{
+			name:          "not clean shutdown with waiting instance - needs recovery",
+			cleanShutdown: false,
+			instances: []*Instance{
+				{ID: "1", Status: StatusWaitingInput},
+			},
+			expected: true,
+		},
+		{
+			name:          "not clean shutdown but all completed - no recovery needed",
+			cleanShutdown: false,
+			instances: []*Instance{
+				{ID: "1", Status: StatusCompleted},
+				{ID: "2", Status: StatusCompleted},
+			},
+			expected: false,
+		},
+		{
+			name:          "not clean shutdown but all paused - no recovery needed",
+			cleanShutdown: false,
+			instances: []*Instance{
+				{ID: "1", Status: StatusPaused},
+			},
+			expected: false,
+		},
+		{
+			name:          "not clean shutdown with mixed statuses - needs recovery",
+			cleanShutdown: false,
+			instances: []*Instance{
+				{ID: "1", Status: StatusCompleted},
+				{ID: "2", Status: StatusWorking},
+				{ID: "3", Status: StatusPaused},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &Session{
+				CleanShutdown: tt.cleanShutdown,
+				Instances:     tt.instances,
+			}
+			if got := session.NeedsRecovery(); got != tt.expected {
+				t.Errorf("NeedsRecovery() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSession_GetInterruptedInstances(t *testing.T) {
+	session := &Session{
+		Instances: []*Instance{
+			{ID: "1", Status: StatusWorking},
+			{ID: "2", Status: StatusCompleted},
+			{ID: "3", Status: StatusWaitingInput},
+			{ID: "4", Status: StatusPaused},
+			{ID: "5", Status: StatusWorking},
+		},
+	}
+
+	interrupted := session.GetInterruptedInstances()
+
+	// Should return instances with Working or WaitingInput status
+	if len(interrupted) != 3 {
+		t.Errorf("GetInterruptedInstances() returned %d instances, want 3", len(interrupted))
+	}
+
+	// Check that the right instances are returned
+	expectedIDs := map[string]bool{"1": true, "3": true, "5": true}
+	for _, inst := range interrupted {
+		if !expectedIDs[inst.ID] {
+			t.Errorf("GetInterruptedInstances() returned unexpected instance %q", inst.ID)
+		}
+	}
+}
+
+func TestSession_GetResumableInstances(t *testing.T) {
+	session := &Session{
+		Instances: []*Instance{
+			{ID: "1", Status: StatusWorking, ClaudeSessionID: "uuid-1"},
+			{ID: "2", Status: StatusCompleted, ClaudeSessionID: "uuid-2"},
+			{ID: "3", Status: StatusWaitingInput, ClaudeSessionID: "uuid-3"},
+			{ID: "4", Status: StatusPaused, ClaudeSessionID: "uuid-4"},
+			{ID: "5", Status: StatusWorking, ClaudeSessionID: ""},       // No session ID
+			{ID: "6", Status: StatusPending, ClaudeSessionID: "uuid-6"}, // Pending - not resumable
+		},
+	}
+
+	resumable := session.GetResumableInstances()
+
+	// Should return Working, WaitingInput, or Paused instances with ClaudeSessionID
+	if len(resumable) != 3 {
+		t.Errorf("GetResumableInstances() returned %d instances, want 3", len(resumable))
+	}
+
+	expectedIDs := map[string]bool{"1": true, "3": true, "4": true}
+	for _, inst := range resumable {
+		if !expectedIDs[inst.ID] {
+			t.Errorf("GetResumableInstances() returned unexpected instance %q", inst.ID)
+		}
+	}
+}
+
+func TestSession_MarkInstancesInterrupted(t *testing.T) {
+	session := &Session{
+		Instances: []*Instance{
+			{ID: "1", Status: StatusWorking},
+			{ID: "2", Status: StatusCompleted},
+			{ID: "3", Status: StatusWaitingInput},
+		},
+	}
+
+	before := time.Now()
+	session.MarkInstancesInterrupted()
+	after := time.Now()
+
+	// Check session-level fields
+	if session.RecoveryState != RecoveryInterrupted {
+		t.Errorf("RecoveryState = %q, want %q", session.RecoveryState, RecoveryInterrupted)
+	}
+	if session.InterruptedAt == nil {
+		t.Error("InterruptedAt should be set")
+	}
+	if session.InterruptedAt.Before(before) || session.InterruptedAt.After(after) {
+		t.Errorf("InterruptedAt = %v, should be between %v and %v", session.InterruptedAt, before, after)
+	}
+
+	// Check instance-level fields
+	inst1 := session.GetInstance("1")
+	if inst1.InterruptedAt == nil {
+		t.Error("Working instance should have InterruptedAt set")
+	}
+	if inst1.Status != StatusInterrupted {
+		t.Errorf("Working instance Status = %q, want %q", inst1.Status, StatusInterrupted)
+	}
+
+	inst2 := session.GetInstance("2")
+	if inst2.InterruptedAt != nil {
+		t.Error("Completed instance should NOT have InterruptedAt set")
+	}
+	if inst2.Status != StatusCompleted {
+		t.Errorf("Completed instance Status should remain %q, got %q", StatusCompleted, inst2.Status)
+	}
+
+	inst3 := session.GetInstance("3")
+	if inst3.InterruptedAt == nil {
+		t.Error("WaitingInput instance should have InterruptedAt set")
+	}
+	if inst3.Status != StatusInterrupted {
+		t.Errorf("WaitingInput instance Status = %q, want %q", inst3.Status, StatusInterrupted)
+	}
+}
+
+func TestSession_MarkRecovered(t *testing.T) {
+	session := &Session{
+		RecoveryState:   RecoveryInterrupted,
+		RecoveryAttempt: 0,
+	}
+
+	before := time.Now()
+	session.MarkRecovered()
+	after := time.Now()
+
+	if session.RecoveryState != RecoveryRecovered {
+		t.Errorf("RecoveryState = %q, want %q", session.RecoveryState, RecoveryRecovered)
+	}
+	if session.RecoveryAttempt != 1 {
+		t.Errorf("RecoveryAttempt = %d, want 1", session.RecoveryAttempt)
+	}
+	if session.RecoveredAt == nil {
+		t.Error("RecoveredAt should be set")
+	}
+	if session.RecoveredAt.Before(before) || session.RecoveredAt.After(after) {
+		t.Errorf("RecoveredAt = %v, should be between %v and %v", session.RecoveredAt, before, after)
+	}
+	if session.CleanShutdown {
+		t.Error("CleanShutdown should be false after recovery")
+	}
+
+	// Call again to verify increment
+	session.MarkRecovered()
+	if session.RecoveryAttempt != 2 {
+		t.Errorf("RecoveryAttempt after second call = %d, want 2", session.RecoveryAttempt)
+	}
+}
+
+func TestRecoveryState_Constants(t *testing.T) {
+	tests := []struct {
+		state    RecoveryState
+		expected string
+	}{
+		{RecoveryNone, ""},
+		{RecoveryInterrupted, "interrupted"},
+		{RecoveryRecovered, "recovered"},
+	}
+
+	for _, tt := range tests {
+		if string(tt.state) != tt.expected {
+			t.Errorf("RecoveryState constant = %q, want %q", tt.state, tt.expected)
+		}
+	}
+}
+
 func TestInstance_EffectiveName(t *testing.T) {
 	tests := []struct {
 		name        string

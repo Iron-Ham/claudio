@@ -728,6 +728,8 @@ func (v *InstanceView) RenderWaitingState(status orchestrator.InstanceStatus) st
 		return styles.Error.Render("⏰ Instance timed out")
 	case orchestrator.StatusPaused:
 		return styles.Muted.Render("⏸ Instance paused")
+	case orchestrator.StatusInterrupted:
+		return styles.Warning.Render("⚡ Session interrupted - press 'r' to resume")
 	default:
 		return ""
 	}
