@@ -1349,6 +1349,86 @@ func TestRenderGroupedInstance_UngroupedInstance(t *testing.T) {
 	}
 }
 
+func TestSidebarView_GroupedModeNoHighlightWhenAddingTask(t *testing.T) {
+	// Regression test: when adding a task, no instance should be highlighted
+	// even though activeTab points to an existing instance
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Task 1", Status: orchestrator.StatusWorking},
+			{ID: "inst-2", Task: "Task 2", Status: orchestrator.StatusPending},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Name:      "Test Group",
+				Phase:     orchestrator.GroupPhaseExecuting,
+				Instances: []string{"inst-1", "inst-2"},
+			},
+		},
+	}
+
+	groupState := NewGroupViewState()
+
+	// Test with isAddingTask=true: no instance should be highlighted
+	stateAddingTask := &mockSidebarState{
+		session:        session,
+		activeTab:      0, // Points to inst-1, but should NOT be highlighted
+		terminalWidth:  80,
+		terminalHeight: 30,
+		sidebarMode:    SidebarModeGrouped,
+		groupViewState: groupState,
+		isAddingTask:   true,
+	}
+
+	sv := NewSidebarView()
+	resultAddingTask := sv.RenderSidebar(stateAddingTask, 40, 25)
+
+	if !strings.Contains(resultAddingTask, "New Task") {
+		t.Errorf("should show 'New Task' when adding task, got:\n%s", resultAddingTask)
+	}
+	if !strings.Contains(resultAddingTask, "Task 1") {
+		t.Errorf("should show instance Task 1, got:\n%s", resultAddingTask)
+	}
+
+	// Test with isAddingTask=false: instance should be highlighted
+	stateNotAddingTask := &mockSidebarState{
+		session:        session,
+		activeTab:      0,
+		terminalWidth:  80,
+		terminalHeight: 30,
+		sidebarMode:    SidebarModeGrouped,
+		groupViewState: groupState,
+		isAddingTask:   false,
+	}
+
+	resultNotAddingTask := sv.RenderSidebar(stateNotAddingTask, 40, 25)
+
+	if strings.Contains(resultNotAddingTask, "New Task") {
+		t.Errorf("should NOT show 'New Task' when not adding task, got:\n%s", resultNotAddingTask)
+	}
+
+	// Verify active vs inactive styling by comparing RenderGroupedInstance output directly.
+	// When adding task, Task 1 should be rendered as inactive (isActive=false).
+	// When not adding task, Task 1 should be rendered as active (isActive=true).
+	gi := GroupedInstance{
+		Instance:    session.Instances[0],
+		GroupID:     "group-1",
+		Depth:       0,
+		IsLast:      false,
+		GlobalIdx:   0,
+		AbsoluteIdx: 0,
+	}
+	activeRendered := RenderGroupedInstance(gi, true, false, 40)
+	inactiveRendered := RenderGroupedInstance(gi, false, false, 40)
+
+	if !strings.Contains(resultNotAddingTask, activeRendered) {
+		t.Errorf("when not adding task, expected Task 1 with active styling")
+	}
+	if !strings.Contains(resultAddingTask, inactiveRendered) {
+		t.Errorf("when adding task, expected Task 1 with inactive styling")
+	}
+}
+
 func TestRenderGroupedInstance_GroupedInstance(t *testing.T) {
 	// Test that grouped instances (Depth>=0) render with tree connectors
 	gi := GroupedInstance{
