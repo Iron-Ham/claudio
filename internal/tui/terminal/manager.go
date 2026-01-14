@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/tui/styles"
 )
 
 // DirMode indicates which directory the terminal pane is using.
@@ -175,10 +176,9 @@ func (m *Manager) GetPaneDimensions(extraFooterLines int) PaneDimensions {
 	}
 
 	// Calculate main area height
-	// Base height minus header (2 lines), help bar (2 lines), and margins (2 lines) = 6
+	// Use centralized constant from styles package to stay in sync with style definitions.
 	// Plus any extra footer lines for dynamic elements (error messages, conflict warnings)
-	const headerFooterReserved = 6
-	dims.MainAreaHeight = m.height - headerFooterReserved - max(extraFooterLines, 0)
+	dims.MainAreaHeight = m.height - styles.HeaderFooterReserved - max(extraFooterLines, 0)
 
 	// Reduce main area when terminal pane is visible
 	if m.layout == LayoutVisible && dims.TerminalPaneHeight > 0 {

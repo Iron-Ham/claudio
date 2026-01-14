@@ -1,6 +1,10 @@
 package terminal
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Iron-Ham/claudio/internal/tui/styles"
+)
 
 func TestNewManager(t *testing.T) {
 	m := NewManager()
@@ -46,7 +50,7 @@ func TestGetPaneDimensions_Hidden(t *testing.T) {
 	}
 
 	// Main area should be full height minus reserved space
-	expectedMainArea := 40 - 6 // height - headerFooterReserved
+	expectedMainArea := 40 - styles.HeaderFooterReserved
 	if dims.MainAreaHeight != expectedMainArea {
 		t.Errorf("MainAreaHeight = %d, want %d", dims.MainAreaHeight, expectedMainArea)
 	}
@@ -77,7 +81,7 @@ func TestGetPaneDimensions_Visible(t *testing.T) {
 	}
 
 	// Main area should be reduced by terminal pane height + spacing
-	expectedMainArea := 40 - 6 - DefaultPaneHeight - TerminalPaneSpacing
+	expectedMainArea := 40 - styles.HeaderFooterReserved - DefaultPaneHeight - TerminalPaneSpacing
 	if dims.MainAreaHeight != expectedMainArea {
 		t.Errorf("MainAreaHeight = %d, want %d", dims.MainAreaHeight, expectedMainArea)
 	}
@@ -427,37 +431,31 @@ func TestGetPaneDimensions_WithExtraFooterLines(t *testing.T) {
 		name             string
 		terminalHeight   int
 		extraFooterLines int
-		expectedMainArea int
 	}{
 		{
 			name:             "no extra lines",
 			terminalHeight:   40,
 			extraFooterLines: 0,
-			expectedMainArea: 40 - 6, // height - base headerFooterReserved
 		},
 		{
 			name:             "one extra line for error message",
 			terminalHeight:   40,
 			extraFooterLines: 1,
-			expectedMainArea: 40 - 6 - 1,
 		},
 		{
 			name:             "two extra lines for error and conflicts",
 			terminalHeight:   40,
 			extraFooterLines: 2,
-			expectedMainArea: 40 - 6 - 2,
 		},
 		{
 			name:             "three extra lines for verbose help",
 			terminalHeight:   40,
 			extraFooterLines: 3,
-			expectedMainArea: 40 - 6 - 3,
 		},
 		{
 			name:             "negative lines clamped to zero",
 			terminalHeight:   40,
 			extraFooterLines: -5,
-			expectedMainArea: 40 - 6, // negative clamped to 0
 		},
 	}
 
@@ -469,8 +467,12 @@ func TestGetPaneDimensions_WithExtraFooterLines(t *testing.T) {
 
 			dims := m.GetPaneDimensions(tt.extraFooterLines)
 
-			if dims.MainAreaHeight != tt.expectedMainArea {
-				t.Errorf("MainAreaHeight = %d, want %d", dims.MainAreaHeight, tt.expectedMainArea)
+			// Compute expected value using the centralized constant
+			clampedExtra := max(tt.extraFooterLines, 0)
+			expectedMainArea := tt.terminalHeight - styles.HeaderFooterReserved - clampedExtra
+
+			if dims.MainAreaHeight != expectedMainArea {
+				t.Errorf("MainAreaHeight = %d, want %d", dims.MainAreaHeight, expectedMainArea)
 			}
 		})
 	}
@@ -481,11 +483,11 @@ func TestGetPaneDimensions_ExtraFooterLinesWithTerminalPane(t *testing.T) {
 	m.SetSize(120, 50)
 	m.SetLayout(LayoutVisible)
 
-	dims := m.GetPaneDimensions(2) // error message + conflict warning
+	extraFooterLines := 2 // error message + conflict warning
+	dims := m.GetPaneDimensions(extraFooterLines)
 
 	// Expected: height - headerFooterReserved - extraFooterLines - terminalPaneHeight - spacing
-	// 50 - 6 - 2 - 15 - 1 = 26
-	expectedMainArea := 50 - 6 - 2 - DefaultPaneHeight - TerminalPaneSpacing
+	expectedMainArea := 50 - styles.HeaderFooterReserved - extraFooterLines - DefaultPaneHeight - TerminalPaneSpacing
 	if dims.MainAreaHeight != expectedMainArea {
 		t.Errorf("MainAreaHeight = %d, want %d", dims.MainAreaHeight, expectedMainArea)
 	}
