@@ -706,6 +706,18 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.branchList = nil           // Clear cached branches
 				m.showBranchSelector = false // Ensure dropdown is closed
 
+				// Handle inline plan/ultraplan objective submission
+				if m.inlinePlan != nil && m.inlinePlan.AwaitingObjective {
+					if m.inlinePlan.IsUltraPlan {
+						// This is an ultraplan objective - create the full ultraplan coordinator
+						m.handleUltraPlanObjectiveSubmit(task)
+					} else {
+						// This is a regular plan objective
+						m.handleInlinePlanObjectiveSubmit(task)
+					}
+					return m, nil
+				}
+
 				// Handle triple-shot mode initiation
 				if isTripleShot {
 					return m.initiateTripleShotMode(task)

@@ -100,6 +100,13 @@ type InlinePlanState struct {
 	// AwaitingObjective indicates we're waiting for user to input the plan objective
 	AwaitingObjective bool
 
+	// IsUltraPlan indicates this is an ultraplan objective prompt (vs regular plan)
+	// When true, submitting the objective should create an UltraPlan coordinator
+	IsUltraPlan bool
+
+	// UltraPlanConfig holds the config for ultraplan mode (when IsUltraPlan is true)
+	UltraPlanConfig *orchestrator.UltraPlanConfig
+
 	// AwaitingPlanCreation indicates we're waiting for the planning instance to generate a plan
 	AwaitingPlanCreation bool
 

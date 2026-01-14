@@ -127,15 +127,14 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 		return
 	}
 
-	// No objective provided - prompt for one using inline plan state temporarily
-	// We'll convert to ultraPlan once objective is provided via task input
+	// No objective provided - prompt for one using inline plan state
+	// Mark as ultraplan so the objective handler creates the ultraplan coordinator
 	m.inlinePlan = &InlinePlanState{
 		AwaitingObjective: true,
 		TaskToInstance:    make(map[string]string),
+		IsUltraPlan:       true,
+		UltraPlanConfig:   &cfg,
 	}
-
-	// Mark that this is for ultraplan (we can check this later)
-	// When objective is submitted, we'll create the ultraplan coordinator instead
 
 	m.addingTask = true
 	m.taskInput = ""
@@ -163,12 +162,14 @@ func (m *Model) toggleGroupedView() {
 
 // handleInlinePlanObjectiveSubmit handles submission of the plan objective.
 // Called when user presses enter after typing an objective in inline plan mode.
-// Integration note: This should be called from the task input handler when
-// m.inlinePlan.AwaitingObjective is true.
-//
-//nolint:unused // Integration with task input handler pending (called externally)
+// Called from the task input handler in app.go when m.inlinePlan.AwaitingObjective is true.
 func (m *Model) handleInlinePlanObjectiveSubmit(objective string) {
 	if m.inlinePlan == nil {
+		if m.logger != nil {
+			m.logger.Warn("handleInlinePlanObjectiveSubmit called with nil inlinePlan",
+				"objective", objective)
+		}
+		m.errorMessage = "Unable to submit objective: plan state lost"
 		return
 	}
 
@@ -224,9 +225,82 @@ func (m *Model) handleInlinePlanObjectiveSubmit(objective string) {
 	m.ensureActiveVisible()
 }
 
+// handleUltraPlanObjectiveSubmit handles submission of an ultraplan objective.
+// Called when user presses enter after typing an objective for :ultraplan.
+// This creates the full ultraplan coordinator and starts the planning phase.
+func (m *Model) handleUltraPlanObjectiveSubmit(objective string) {
+	if m.inlinePlan == nil {
+		if m.logger != nil {
+			m.logger.Warn("handleUltraPlanObjectiveSubmit called with nil inlinePlan",
+				"objective", objective)
+		}
+		m.errorMessage = "Unable to submit objective: plan state lost"
+		return
+	}
+	if !m.inlinePlan.IsUltraPlan {
+		if m.logger != nil {
+			m.logger.Warn("handleUltraPlanObjectiveSubmit called for non-ultraplan",
+				"objective", objective,
+				"isUltraPlan", m.inlinePlan.IsUltraPlan)
+		}
+		m.errorMessage = "Unable to submit objective: incorrect plan mode"
+		return
+	}
+
+	// Get config from the inline plan state
+	cfg := orchestrator.UltraPlanConfig{
+		AutoApprove: false,
+		Review:      true,
+	}
+	if m.inlinePlan.UltraPlanConfig != nil {
+		cfg = *m.inlinePlan.UltraPlanConfig
+	}
+
+	// Clear the inline plan state - we're transitioning to ultraplan
+	m.inlinePlan = nil
+
+	// Create ultraplan session
+	ultraSession := orchestrator.NewUltraPlanSession(objective, cfg)
+
+	// Initialize coordinator
+	coordinator := orchestrator.NewCoordinator(m.orchestrator, m.session, ultraSession, m.logger)
+
+	// Start planning phase FIRST - before creating UI resources
+	// This prevents orphaned groups if planning fails
+	if err := coordinator.RunPlanning(); err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to start ultraplan planning",
+				"objective", objective,
+				"multiPass", cfg.MultiPass,
+				"error", err)
+		}
+		m.errorMessage = fmt.Sprintf("Failed to start planning: %v", err)
+		return
+	}
+
+	// Create UI resources only after planning starts successfully
+	sessionType := orchestrator.SessionTypeUltraPlan
+	if cfg.MultiPass {
+		sessionType = orchestrator.SessionTypePlanMulti
+	}
+	ultraGroup := orchestrator.NewInstanceGroupWithType(
+		truncateString(objective, 30),
+		sessionType,
+		objective,
+	)
+	m.session.AddGroup(ultraGroup)
+
+	// Auto-enable grouped sidebar mode
+	m.autoEnableGroupedMode()
+
+	m.ultraPlan = &view.UltraPlanState{
+		Coordinator:  coordinator,
+		ShowPlanView: false,
+	}
+	m.infoMessage = "Planning started..."
+}
+
 // createPlanningPrompt creates the prompt for the planning instance
-//
-//nolint:unused // Used by handleInlinePlanObjectiveSubmit
 func (m *Model) createPlanningPrompt(objective string) string {
 	return fmt.Sprintf(`Create a detailed task plan for the following objective:
 
