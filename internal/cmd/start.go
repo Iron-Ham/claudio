@@ -15,6 +15,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tmux"
 	"github.com/Iron-Ham/claudio/internal/tui"
+	"github.com/Iron-Ham/claudio/internal/ultraplan"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/term"
@@ -378,6 +379,8 @@ func launchTUIWithTripleshots(cwd string, orch *orchestrator.Orchestrator, sess 
 
 // resumeUltraplanSession resumes an interrupted ultraplan session.
 // It detects the current phase and automatically continues execution from where it left off.
+// This function uses the shared ultraplan initialization helpers to ensure consistency
+// with newly created ultraplan sessions.
 func resumeUltraplanSession(orch *orchestrator.Orchestrator, sess *orchestrator.Session, logger *logging.Logger) error {
 	ultraSession := sess.UltraPlan
 
@@ -394,6 +397,20 @@ func resumeUltraplanSession(orch *orchestrator.Orchestrator, sess *orchestrator.
 		groupInfo = fmt.Sprintf(", group: %d/%d", ultraSession.CurrentGroup+1, len(ultraSession.Plan.ExecutionOrder))
 	}
 	fmt.Printf("Resuming ultraplan session (phase: %s%s)\n", ultraSession.Phase, groupInfo)
+
+	// Ensure the ultraplan group exists using the shared initialization helper.
+	// This is important for resumed sessions where the group might not exist
+	// (e.g., sessions created before group support was added, or if the group
+	// was somehow lost). Creating the group BEFORE phase handling ensures that
+	// any instances created during resume (e.g., restarting planning) are
+	// properly added to the group for sidebar display.
+	if ultraSession.GroupID == "" {
+		ultraplan.CreateAndLinkUltraPlanGroup(sess, ultraSession, ultraSession.Config.MultiPass)
+		logger.Info("created ultraplan group for resumed session",
+			"group_id", ultraSession.GroupID,
+			"multi_pass", ultraSession.Config.MultiPass,
+		)
+	}
 
 	// Create coordinator from the loaded session state
 	coordinator := orchestrator.NewCoordinator(orch, sess, ultraSession, logger)
