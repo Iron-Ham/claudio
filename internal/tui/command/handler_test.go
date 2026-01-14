@@ -1180,6 +1180,113 @@ func TestPlanCommand(t *testing.T) {
 	})
 }
 
+// TestMultiPlanCommand tests the multiplan command with config check
+func TestMultiPlanCommand(t *testing.T) {
+	t.Run("disabled by default", func(t *testing.T) {
+		// Reset viper to ensure clean state
+		viper.Reset()
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("multiplan", deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error when plan mode is disabled")
+		}
+		if result.ErrorMessage != "Plan mode is disabled. Enable it in :config under Experimental" {
+			t.Errorf("unexpected error message: %q", result.ErrorMessage)
+		}
+		if result.StartMultiPlanMode != nil {
+			t.Error("StartMultiPlanMode should be nil when disabled")
+		}
+	})
+
+	t.Run("enabled via config", func(t *testing.T) {
+		// Reset and enable plan mode
+		viper.Reset()
+		viper.Set("experimental.inline_plan", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("multiplan", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartMultiPlanMode == nil || !*result.StartMultiPlanMode {
+			t.Error("expected StartMultiPlanMode to be true")
+		}
+		if result.InfoMessage != "Enter an objective for multiplan mode (3 planners + 1 assessor)" {
+			t.Errorf("unexpected info message: %q", result.InfoMessage)
+		}
+
+		// Clean up
+		viper.Reset()
+	})
+
+	t.Run("mp alias works", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_plan", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("mp", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartMultiPlanMode == nil || !*result.StartMultiPlanMode {
+			t.Error("expected StartMultiPlanMode to be true with mp alias")
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("blocked in ultraplan mode", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_plan", true)
+
+		h := New()
+		deps := newMockDeps()
+		deps.ultraPlanMode = true
+
+		result := h.Execute("multiplan", deps)
+
+		if result.ErrorMessage != "Cannot start multiplan mode while in ultraplan mode" {
+			t.Errorf("expected ultraplan mode error, got: %q", result.ErrorMessage)
+		}
+		if result.StartMultiPlanMode != nil {
+			t.Error("StartMultiPlanMode should be nil when blocked")
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("allowed when in triple-shot mode", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.inline_plan", true)
+
+		h := New()
+		deps := newMockDeps()
+		deps.tripleShotMode = true
+
+		result := h.Execute("multiplan", deps)
+
+		// MultiPlan mode is allowed in triple-shot mode - plans appear as separate groups
+		if result.ErrorMessage != "" {
+			t.Errorf("expected no error, got: %q", result.ErrorMessage)
+		}
+		if result.StartMultiPlanMode == nil || !*result.StartMultiPlanMode {
+			t.Error("StartMultiPlanMode should be true when in triple-shot mode")
+		}
+
+		viper.Reset()
+	})
+}
+
 // TestUltraPlanCommand tests the ultraplan command with config check and argument parsing
 func TestUltraPlanCommand(t *testing.T) {
 	t.Run("disabled by default", func(t *testing.T) {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
@@ -22,6 +23,24 @@ func (m *Model) initInlinePlanMode() {
 	m.taskInput = ""
 	m.taskInputCursor = 0
 	m.infoMessage = "Enter plan objective:"
+}
+
+// initInlineMultiPlanMode initializes inline multi-pass plan mode when :multiplan command is executed.
+// This prompts for an objective and will create multiple planning instances (one per strategy)
+// plus a plan manager instance that evaluates and merges the best plan.
+func (m *Model) initInlineMultiPlanMode() {
+	m.inlinePlan = &InlinePlanState{
+		AwaitingObjective: true,
+		TaskToInstance:    make(map[string]string),
+		MultiPass:         true,
+		ProcessedPlanners: make(map[int]bool),
+	}
+
+	// Prompt for objective using task input UI
+	m.addingTask = true
+	m.taskInput = ""
+	m.taskInputCursor = 0
+	m.infoMessage = "Enter multiplan objective (3 planners + 1 assessor):"
 }
 
 // initInlineUltraPlanMode initializes inline ultraplan mode when :ultraplan command is executed.
@@ -229,6 +248,352 @@ func (m *Model) handleInlinePlanObjectiveSubmit(objective string) {
 	m.ensureActiveVisible()
 	// Resume the new active instance's capture
 	m.resumeActiveInstance()
+}
+
+// handleMultiPlanObjectiveSubmit handles submission of a multi-pass plan objective.
+// Called when user presses enter after typing an objective in multiplan mode.
+// This creates multiple planning instances (one per strategy) that run in parallel.
+func (m *Model) handleMultiPlanObjectiveSubmit(objective string) {
+	if m.inlinePlan == nil {
+		if m.logger != nil {
+			m.logger.Warn("handleMultiPlanObjectiveSubmit called with nil inlinePlan",
+				"objective", objective)
+		}
+		m.errorMessage = "Unable to submit objective: plan state lost"
+		return
+	}
+
+	if !m.inlinePlan.MultiPass {
+		if m.logger != nil {
+			m.logger.Warn("handleMultiPlanObjectiveSubmit called for non-multipass plan",
+				"objective", objective)
+		}
+		m.errorMessage = "Unable to submit objective: not in multiplan mode"
+		return
+	}
+
+	m.inlinePlan.AwaitingObjective = false
+	m.inlinePlan.Objective = objective
+	m.inlinePlan.AwaitingPlanCreation = true
+
+	// Get the available strategy names
+	strategies := orchestrator.GetMultiPassStrategyNames()
+	if len(strategies) == 0 {
+		m.errorMessage = "No planning strategies available"
+		m.inlinePlan = nil
+		return
+	}
+
+	// Initialize slices for tracking planner instances and their plans
+	m.inlinePlan.PlanningInstanceIDs = make([]string, 0, len(strategies))
+	m.inlinePlan.CandidatePlans = make([]*orchestrator.PlanSpec, len(strategies))
+	m.inlinePlan.ProcessedPlanners = make(map[int]bool)
+
+	// Create a group for this multiplan's instances
+	gm := m.getGroupManager()
+	var planGroup *group.InstanceGroup
+	if gm != nil {
+		planGroup = gm.CreateGroup(fmt.Sprintf("MultiPlan: %s", truncateString(objective, 25)), nil)
+		m.inlinePlan.GroupID = planGroup.ID
+
+		// Set session type on the group for proper icon display (use multi-pass icon)
+		if orchGroup := m.session.GetGroup(planGroup.ID); orchGroup != nil {
+			orchGroup.SessionType = orchestrator.SessionTypePlanMulti
+			orchGroup.Objective = objective
+		}
+
+		// If in tripleshot mode, register this group for sidebar display
+		if m.tripleShot != nil {
+			m.tripleShot.PlanGroupIDs = append(m.tripleShot.PlanGroupIDs, planGroup.ID)
+		}
+	}
+
+	// Create and start an instance for each planning strategy
+	var firstInstanceID string
+	for i, strategy := range strategies {
+		// Build the strategy-specific prompt
+		prompt := orchestrator.GetMultiPassPlanningPrompt(strategy, objective)
+
+		// Create a planning instance for this strategy
+		inst, err := m.orchestrator.AddInstance(m.session, prompt)
+		if err != nil {
+			m.errorMessage = fmt.Sprintf("Failed to create planning instance for strategy %s: %v", strategy, err)
+			m.inlinePlan = nil
+			return
+		}
+
+		// Set task name to identify the strategy
+		inst.Task = fmt.Sprintf("Planning (%s)", strategy)
+
+		// Store the instance ID
+		m.inlinePlan.PlanningInstanceIDs = append(m.inlinePlan.PlanningInstanceIDs, inst.ID)
+
+		// Track first instance for tab selection
+		if i == 0 {
+			firstInstanceID = inst.ID
+		}
+
+		// Add to group for sidebar display
+		if gm != nil && planGroup != nil {
+			if orchGroup := m.session.GetGroup(planGroup.ID); orchGroup != nil {
+				orchGroup.AddInstance(inst.ID)
+			}
+		}
+
+		// Start the instance
+		if err := m.orchestrator.StartInstance(inst); err != nil {
+			m.errorMessage = fmt.Sprintf("Failed to start planning instance for strategy %s: %v", strategy, err)
+			m.inlinePlan = nil
+			return
+		}
+
+		if m.logger != nil {
+			m.logger.Info("started multiplan planner instance",
+				"strategy", strategy,
+				"instance_id", inst.ID,
+				"objective", objective)
+		}
+	}
+
+	// Auto-enable grouped sidebar mode for better visibility
+	m.autoEnableGroupedMode()
+
+	m.infoMessage = fmt.Sprintf("MultiPlan started: %d planners running in parallel...", len(strategies))
+
+	// Pause the old active instance before switching
+	if oldInst := m.activeInstance(); oldInst != nil {
+		m.pauseInstance(oldInst.ID)
+	}
+
+	// Switch to the first planning instance
+	if firstInstanceID != "" {
+		m.activeTab = m.findInstanceIndex(firstInstanceID)
+		m.ensureActiveVisible()
+		m.resumeActiveInstance()
+	}
+}
+
+// handleInlineMultiPlanCompletion handles completion of multiplan instances.
+// Returns true if the instance was part of a multiplan workflow and was handled.
+func (m *Model) handleInlineMultiPlanCompletion(inst *orchestrator.Instance) bool {
+	if m.inlinePlan == nil || !m.inlinePlan.MultiPass {
+		return false
+	}
+
+	// Check if this is one of the planner instances
+	if m.inlinePlan.AwaitingPlanCreation {
+		return m.handleInlineMultiPlanPlannerCompletion(inst)
+	}
+
+	// Check if this is the plan manager instance
+	if m.inlinePlan.AwaitingPlanManager && m.inlinePlan.PlanManagerInstanceID == inst.ID {
+		return m.handleInlineMultiPlanManagerCompletion(inst)
+	}
+
+	return false
+}
+
+// handleInlineMultiPlanPlannerCompletion handles completion of one of the multiplan planners.
+func (m *Model) handleInlineMultiPlanPlannerCompletion(inst *orchestrator.Instance) bool {
+	if m.inlinePlan == nil || !m.inlinePlan.MultiPass || !m.inlinePlan.AwaitingPlanCreation {
+		return false
+	}
+
+	// Check if this instance is one of our planners
+	plannerIndex := -1
+	for i, plannerID := range m.inlinePlan.PlanningInstanceIDs {
+		if plannerID == inst.ID {
+			plannerIndex = i
+			break
+		}
+	}
+
+	if plannerIndex == -1 {
+		return false // Not one of our planners
+	}
+
+	// Mark this planner as processed
+	if m.inlinePlan.ProcessedPlanners == nil {
+		m.inlinePlan.ProcessedPlanners = make(map[int]bool)
+	}
+	m.inlinePlan.ProcessedPlanners[plannerIndex] = true
+
+	// Try to parse the plan from this planner
+	strategyNames := orchestrator.GetMultiPassStrategyNames()
+	strategyName := "unknown"
+	if plannerIndex < len(strategyNames) {
+		strategyName = strategyNames[plannerIndex]
+	}
+
+	planPath := orchestrator.PlanFilePath(inst.WorktreePath)
+	plan, err := orchestrator.ParsePlanFromFile(planPath, m.inlinePlan.Objective)
+	if err != nil {
+		// Try output parsing as fallback
+		output := m.outputManager.GetOutput(inst.ID)
+		plan, err = orchestrator.ParsePlanFromOutput(output, m.inlinePlan.Objective)
+	}
+
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Warn("multiplan planner failed to produce valid plan",
+				"planner_index", plannerIndex,
+				"strategy", strategyName,
+				"error", err)
+		}
+		// Store nil to track completion even on failure
+		m.inlinePlan.CandidatePlans[plannerIndex] = nil
+	} else {
+		m.inlinePlan.CandidatePlans[plannerIndex] = plan
+		m.infoMessage = fmt.Sprintf("Plan %d/%d collected (%s): %d tasks",
+			len(m.inlinePlan.ProcessedPlanners), len(m.inlinePlan.PlanningInstanceIDs),
+			strategyName, len(plan.Tasks))
+	}
+
+	// Check if all planners have completed
+	if len(m.inlinePlan.ProcessedPlanners) >= len(m.inlinePlan.PlanningInstanceIDs) {
+		// Count valid plans
+		validPlans := 0
+		for _, p := range m.inlinePlan.CandidatePlans {
+			if p != nil {
+				validPlans++
+			}
+		}
+
+		if validPlans == 0 {
+			m.errorMessage = "All multiplan planners failed to produce valid plans"
+			m.inlinePlan = nil
+			return true
+		}
+
+		// Start the plan manager to evaluate and merge plans
+		m.startInlineMultiPlanManager()
+	}
+
+	return true
+}
+
+// startInlineMultiPlanManager creates and starts the plan manager instance.
+func (m *Model) startInlineMultiPlanManager() {
+	if m.inlinePlan == nil || !m.inlinePlan.MultiPass {
+		return
+	}
+
+	m.inlinePlan.AwaitingPlanCreation = false
+	m.inlinePlan.AwaitingPlanManager = true
+
+	// Build the plan manager prompt
+	prompt := m.buildInlineMultiPlanManagerPrompt()
+
+	// Create the plan manager instance
+	inst, err := m.orchestrator.AddInstance(m.session, prompt)
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to create plan manager: %v", err)
+		m.inlinePlan = nil
+		return
+	}
+
+	inst.Task = "Plan Manager (evaluating)"
+	m.inlinePlan.PlanManagerInstanceID = inst.ID
+
+	// Add to the multiplan group
+	if m.inlinePlan.GroupID != "" {
+		if orchGroup := m.session.GetGroup(m.inlinePlan.GroupID); orchGroup != nil {
+			orchGroup.AddInstance(inst.ID)
+		}
+	}
+
+	// Start the manager instance
+	if err := m.orchestrator.StartInstance(inst); err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to start plan manager: %v", err)
+		m.inlinePlan = nil
+		return
+	}
+
+	m.infoMessage = "Plan manager started - comparing strategies to select the best plan..."
+
+	if m.logger != nil {
+		m.logger.Info("started multiplan manager instance",
+			"instance_id", inst.ID,
+			"candidate_plans", len(m.inlinePlan.CandidatePlans))
+	}
+}
+
+// buildInlineMultiPlanManagerPrompt builds the prompt for the plan manager.
+func (m *Model) buildInlineMultiPlanManagerPrompt() string {
+	var plansSection strings.Builder
+
+	strategyNames := orchestrator.GetMultiPassStrategyNames()
+	for i, plan := range m.inlinePlan.CandidatePlans {
+		if plan == nil {
+			continue
+		}
+
+		strategyName := "unknown"
+		if i < len(strategyNames) {
+			strategyName = strategyNames[i]
+		}
+
+		plansSection.WriteString(fmt.Sprintf("\n### Plan %d: %s Strategy\n\n", i+1, strategyName))
+		plansSection.WriteString(fmt.Sprintf("**Summary:** %s\n\n", plan.Summary))
+		plansSection.WriteString(fmt.Sprintf("**Tasks (%d total):**\n", len(plan.Tasks)))
+		for _, task := range plan.Tasks {
+			deps := "none"
+			if len(task.DependsOn) > 0 {
+				deps = strings.Join(task.DependsOn, ", ")
+			}
+			plansSection.WriteString(fmt.Sprintf("- [%s] %s (complexity: %s, depends: %s)\n",
+				task.ID, task.Title, task.EstComplexity, deps))
+		}
+		plansSection.WriteString(fmt.Sprintf("\n**Execution Groups:** %d parallel groups\n", len(plan.ExecutionOrder)))
+		for groupIdx, grp := range plan.ExecutionOrder {
+			plansSection.WriteString(fmt.Sprintf("  - Group %d: %s\n", groupIdx+1, strings.Join(grp, ", ")))
+		}
+		plansSection.WriteString("\n---\n")
+	}
+
+	return fmt.Sprintf(orchestrator.PlanManagerPromptTemplate, m.inlinePlan.Objective, plansSection.String())
+}
+
+// handleInlineMultiPlanManagerCompletion handles completion of the plan manager.
+func (m *Model) handleInlineMultiPlanManagerCompletion(inst *orchestrator.Instance) bool {
+	if m.inlinePlan == nil || !m.inlinePlan.MultiPass || !m.inlinePlan.AwaitingPlanManager {
+		return false
+	}
+
+	if m.inlinePlan.PlanManagerInstanceID != inst.ID {
+		return false
+	}
+
+	// Parse the final plan from the manager
+	planPath := orchestrator.PlanFilePath(inst.WorktreePath)
+	plan, err := orchestrator.ParsePlanFromFile(planPath, m.inlinePlan.Objective)
+	if err != nil {
+		// Try output parsing as fallback
+		output := m.outputManager.GetOutput(inst.ID)
+		plan, err = orchestrator.ParsePlanFromOutput(output, m.inlinePlan.Objective)
+	}
+
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Plan manager completed but failed to parse final plan: %v", err)
+		m.inlinePlan = nil
+		return true
+	}
+
+	// Store the final plan
+	m.inlinePlan.Plan = plan
+	m.inlinePlan.AwaitingPlanManager = false
+
+	// Enter the plan editor for review
+	m.enterInlinePlanEditor()
+	m.infoMessage = fmt.Sprintf("MultiPlan complete: %d tasks. Edit and press [enter] to start execution.", len(plan.Tasks))
+
+	if m.logger != nil {
+		m.logger.Info("multiplan manager completed",
+			"task_count", len(plan.Tasks),
+			"objective", m.inlinePlan.Objective)
+	}
+
+	return true
 }
 
 // handleUltraPlanObjectiveSubmit handles submission of an ultraplan objective.

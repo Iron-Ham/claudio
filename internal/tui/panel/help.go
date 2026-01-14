@@ -174,6 +174,7 @@ func DefaultHelpSections() []HelpSection {
 			Title: "Inline Planning (experimental)",
 			Items: []HelpItem{
 				{Key: ":plan", Description: "Start inline plan mode"},
+				{Key: ":multiplan  :mp", Description: "Start multi-pass plan (3 planners + assessor)"},
 				{Key: ":ultraplan  :up", Description: "Start ultraplan mode"},
 				{Key: ":tripleshot", Description: "Run 3 parallel attempts + judge"},
 				{Key: ":accept", Description: "Accept winning triple-shot solution"},

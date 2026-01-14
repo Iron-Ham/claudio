@@ -810,11 +810,14 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.branchList = nil           // Clear cached branches
 				m.showBranchSelector = false // Ensure dropdown is closed
 
-				// Handle inline plan/ultraplan objective submission
+				// Handle inline plan/ultraplan/multiplan objective submission
 				if m.inlinePlan != nil && m.inlinePlan.AwaitingObjective {
 					if m.inlinePlan.IsUltraPlan {
 						// This is an ultraplan objective - create the full ultraplan coordinator
 						m.handleUltraPlanObjectiveSubmit(task)
+					} else if m.inlinePlan.MultiPass {
+						// This is a multiplan objective - create parallel planning instances
+						m.handleMultiPlanObjectiveSubmit(task)
 					} else {
 						// This is a regular plan objective
 						m.handleInlinePlanObjectiveSubmit(task)
@@ -1572,6 +1575,11 @@ func (m *Model) applyCommandResult(result command.Result) {
 	// Handle inline plan mode transition
 	if result.StartPlanMode != nil && *result.StartPlanMode {
 		m.initInlinePlanMode()
+	}
+
+	// Handle inline multi-pass plan mode transition
+	if result.StartMultiPlanMode != nil && *result.StartMultiPlanMode {
+		m.initInlineMultiPlanMode()
 	}
 
 	// Handle inline ultraplan mode transition
@@ -2398,6 +2406,11 @@ func (m *Model) updateInstanceStatus(inst *orchestrator.Instance, mgr *instance.
 func (m *Model) handleInstanceCompleted(inst *orchestrator.Instance) {
 	// Check if this is an ultra-plan coordinator instance completing
 	if m.handleUltraPlanCoordinatorCompletion(inst) {
+		return
+	}
+
+	// Check if this is an inline multiplan instance completing
+	if m.handleInlineMultiPlanCompletion(inst) {
 		return
 	}
 
