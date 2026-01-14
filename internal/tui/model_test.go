@@ -2,6 +2,7 @@ package tui
 
 import (
 	"testing"
+	"time"
 
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
@@ -671,4 +672,76 @@ func TestResumeActiveInstance_NilOrchestrator(t *testing.T) {
 
 	// Should not panic when orchestrator is nil
 	m.resumeActiveInstance()
+}
+
+func TestAutoDismissMessages(t *testing.T) {
+	t.Run("new message sets timestamp", func(t *testing.T) {
+		m := &Model{}
+
+		// Initially no message
+		m.autoDismissMessages()
+		if !m.messageSetAt.IsZero() {
+			t.Error("expected zero timestamp with no message")
+		}
+
+		// Set an error message
+		m.errorMessage = "test error"
+		m.autoDismissMessages()
+
+		if m.messageSetAt.IsZero() {
+			t.Error("expected timestamp to be set when message appears")
+		}
+		if m.errorMessage != "test error" {
+			t.Error("message should not be cleared immediately")
+		}
+	})
+
+	t.Run("message persists before timeout", func(t *testing.T) {
+		m := &Model{
+			errorMessage: "test error",
+		}
+
+		// First call sets the timestamp
+		m.autoDismissMessages()
+		// Second call should not clear it (not enough time passed)
+		m.autoDismissMessages()
+
+		if m.errorMessage != "test error" {
+			t.Error("message should persist before timeout")
+		}
+	})
+
+	t.Run("message cleared after timeout", func(t *testing.T) {
+		m := &Model{
+			errorMessage:   "test error",
+			messageSetAt:   time.Now().Add(-6 * time.Second), // 6 seconds ago
+			lastMessageKey: "test error|",
+		}
+
+		m.autoDismissMessages()
+
+		if m.errorMessage != "" {
+			t.Errorf("expected message to be cleared after timeout, got %q", m.errorMessage)
+		}
+	})
+
+	t.Run("new message resets timer", func(t *testing.T) {
+		m := &Model{
+			errorMessage:   "old error",
+			messageSetAt:   time.Now().Add(-6 * time.Second), // Would have timed out
+			lastMessageKey: "old error|",
+		}
+
+		// Change the message
+		m.errorMessage = "new error"
+		m.autoDismissMessages()
+
+		// Should have reset the timer, not cleared the message
+		if m.errorMessage != "new error" {
+			t.Error("new message should reset timer, not be cleared")
+		}
+		if time.Since(m.messageSetAt) > time.Second {
+			t.Error("timestamp should have been reset to now")
+		}
+	})
 }
