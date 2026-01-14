@@ -49,11 +49,10 @@ func (m *Model) initInlineMultiPlanMode() {
 // initInlineUltraPlanMode initializes inline ultraplan mode when :ultraplan command is executed.
 // This creates the UltraPlan coordinator and enters the planning workflow.
 func (m *Model) initInlineUltraPlanMode(result command.Result) {
-	// Create ultraplan session config
-	cfg := orchestrator.UltraPlanConfig{
-		AutoApprove: false, // Default to requiring approval in inline mode
-		Review:      true,  // Always review in inline mode
-	}
+	// Start with default config to get proper defaults (e.g., RequireVerifiedCommits: true)
+	cfg := orchestrator.DefaultUltraPlanConfig()
+	cfg.AutoApprove = false // Default to requiring approval in inline mode
+	cfg.Review = true       // Always review in inline mode
 
 	if result.UltraPlanMultiPass != nil && *result.UltraPlanMultiPass {
 		cfg.MultiPass = true

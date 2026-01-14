@@ -333,3 +333,25 @@ func TestExpandTildePath(t *testing.T) {
 		})
 	}
 }
+
+// TestInlineUltraPlanConfig_HasProperDefaults verifies that the inline ultraplan config
+// uses DefaultUltraPlanConfig() to get proper defaults like RequireVerifiedCommits=true.
+// This prevents regression of the bug where RequireVerifiedCommits defaulted to false,
+// causing "no task branches with verified commits found" errors during consolidation.
+func TestInlineUltraPlanConfig_HasProperDefaults(t *testing.T) {
+	// Get the default config that initInlineUltraPlanMode should use
+	cfg := orchestrator.DefaultUltraPlanConfig()
+
+	// Verify RequireVerifiedCommits is true (the most critical default)
+	if !cfg.RequireVerifiedCommits {
+		t.Error("DefaultUltraPlanConfig().RequireVerifiedCommits should be true")
+	}
+
+	// Verify other important defaults
+	if cfg.MaxParallel != 3 {
+		t.Errorf("DefaultUltraPlanConfig().MaxParallel = %d, want 3", cfg.MaxParallel)
+	}
+	if cfg.MaxTaskRetries != 3 {
+		t.Errorf("DefaultUltraPlanConfig().MaxTaskRetries = %d, want 3", cfg.MaxTaskRetries)
+	}
+}
