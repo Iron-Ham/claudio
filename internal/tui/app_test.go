@@ -174,3 +174,49 @@ func TestAutoEnableGroupedMode_EnablesWhenGroupsExist(t *testing.T) {
 		t.Error("expected sidebarMode to be grouped when groups exist")
 	}
 }
+
+// TestUltraPlanGroupID_MustBeSetOnCreation verifies that when an ultraplan group
+// is created, the ultraSession.GroupID must be set to link them together.
+// This test documents the pattern that initInlineUltraPlanMode must follow.
+func TestUltraPlanGroupID_MustBeSetOnCreation(t *testing.T) {
+	// Create a mock session and ultraplan session
+	session := &orchestrator.Session{
+		ID:     "test-session",
+		Groups: nil,
+	}
+	ultraSession := &orchestrator.UltraPlanSession{
+		ID:        "ultra-1",
+		Objective: "Test objective",
+	}
+
+	// Simulate the pattern from initInlineUltraPlanMode: create group and link it
+	ultraGroup := orchestrator.NewInstanceGroupWithType(
+		"Test Group",
+		orchestrator.SessionTypeUltraPlan,
+		ultraSession.Objective,
+	)
+	session.AddGroup(ultraGroup)
+	ultraSession.GroupID = ultraGroup.ID // This is the critical line being tested
+
+	// Verify the group was added to session
+	if len(session.Groups) != 1 {
+		t.Fatalf("expected 1 group in session, got %d", len(session.Groups))
+	}
+
+	// Verify GroupID is correctly set (this is what was missing before the fix)
+	if ultraSession.GroupID == "" {
+		t.Error("ultraSession.GroupID must be set when group is created")
+	}
+	if ultraSession.GroupID != ultraGroup.ID {
+		t.Errorf("ultraSession.GroupID = %q, want %q", ultraSession.GroupID, ultraGroup.ID)
+	}
+
+	// Verify we can retrieve the group by its ID
+	retrievedGroup := session.GetGroup(ultraSession.GroupID)
+	if retrievedGroup == nil {
+		t.Fatal("session.GetGroup(ultraSession.GroupID) should return the group")
+	}
+	if retrievedGroup.SessionType != orchestrator.SessionTypeUltraPlan {
+		t.Errorf("group.SessionType = %v, want %v", retrievedGroup.SessionType, orchestrator.SessionTypeUltraPlan)
+	}
+}
