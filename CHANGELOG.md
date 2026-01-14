@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Ultraplan File Path Tilde Expansion** - Fixed `:ultraplan --plan ~/path/to/file.yaml` failing because Go's `os.ReadFile()` doesn't expand shell shortcuts like `~`. Paths with `~/` prefix are now correctly expanded to the user's home directory.
 - **Multiplan Evaluator Not Starting** - Fixed `:multiplan` command not triggering the evaluator/assessor instance. The issue was that plan completion was only detected when planner processes exited, not when they created their plan files. Added async plan file polling (similar to `:ultraplan`) to detect plan creation and properly trigger the evaluator once all 3 planners complete.
 - **Semicolon Input** - Fixed semicolons not being sent to Claude instances when using the persistent tmux connection. Semicolons are now properly quoted in tmux control mode commands to prevent them from being interpreted as command separators.
 - **Option+Arrow and Option+Backspace Keys** - Fixed Option+Arrow (Alt+Arrow) and Option+Backspace (Alt+Backspace) keys not working in Claude instances. Bubble Tea key names are now properly mapped to tmux key names (e.g., "left" → "Left", "backspace" → "BSpace").

@@ -61,7 +61,7 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 
 	// If loading from file, handle that case
 	if result.UltraPlanFromFile != nil && *result.UltraPlanFromFile != "" {
-		planPath := *result.UltraPlanFromFile
+		planPath := expandTildePath(*result.UltraPlanFromFile)
 		plan, err := orchestrator.ParsePlanFromFile(planPath, "")
 		if err != nil {
 			m.errorMessage = fmt.Sprintf("Failed to load plan: %v", err)
@@ -860,6 +860,18 @@ func truncateString(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// expandTildePath expands a tilde prefix (~/) to the user's home directory.
+// Other path formats are returned unchanged.
+func expandTildePath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return home + path[1:]
+		}
+	}
+	return path
 }
 
 // getPlanForInlineEditor returns the plan for inline plan editing

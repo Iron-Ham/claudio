@@ -297,3 +297,39 @@ func TestStatFileFunction(t *testing.T) {
 		t.Error("expected error for nonexistent file")
 	}
 }
+
+func TestExpandTildePath(t *testing.T) {
+	// Test tilde expansion helper function
+	tests := []struct {
+		name     string
+		input    string
+		wantHome bool // true if result should start with home dir
+	}{
+		{"tilde prefix", "~/Desktop/plan.yaml", true},
+		{"absolute path", "/home/user/plan.yaml", false},
+		{"relative path", "plan.yaml", false},
+		{"tilde only", "~", false}, // Only ~/... gets expanded
+		{"tilde in middle", "/path/~/file", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := expandTildePath(tt.input)
+			if tt.wantHome {
+				// Should not contain tilde anymore
+				if len(result) > 0 && result[0] == '~' {
+					t.Errorf("expandTildePath(%q) = %q, still contains tilde", tt.input, result)
+				}
+				// Should be longer than input (home dir expanded)
+				if len(result) <= len(tt.input) {
+					t.Errorf("expandTildePath(%q) = %q, path not expanded", tt.input, result)
+				}
+			} else {
+				// Should be unchanged
+				if result != tt.input {
+					t.Errorf("expandTildePath(%q) = %q, want %q", tt.input, result, tt.input)
+				}
+			}
+		})
+	}
+}
