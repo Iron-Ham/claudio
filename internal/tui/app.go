@@ -1308,23 +1308,17 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "n":
 		// Next search match
-		if m.searchEngine.HasMatches() {
-			m.searchEngine.Next()
-			m.scrollToMatch()
-		}
+		m.SearchHandler().NextMatch()
 		return m, nil
 
 	case "N":
 		// Previous search match
-		if m.searchEngine.HasMatches() {
-			m.searchEngine.Previous()
-			m.scrollToMatch()
-		}
+		m.SearchHandler().PreviousMatch()
 		return m, nil
 
 	case "ctrl+/":
 		// Clear search
-		m.clearSearch()
+		m.SearchHandler().Clear()
 		return m, nil
 	}
 
@@ -1858,8 +1852,11 @@ func (m Model) adjustBranchScroll() Model {
 	return m
 }
 
-// handleSearchInput handles keyboard input when in search mode
+// handleSearchInput handles keyboard input when in search mode.
+// Delegates to search.Handler for actual search operations.
 func (m Model) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	handler := m.SearchHandler()
+
 	switch msg.Type {
 	case tea.KeyEsc:
 		// Cancel search mode (keep existing pattern if any)
@@ -1868,27 +1865,20 @@ func (m Model) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyEnter:
 		// Execute search and exit search mode
-		m.executeSearch()
+		handler.Execute()
 		m.searchMode = false
 		return m, nil
 
 	case tea.KeyBackspace:
-		if len(m.searchInput) > 0 {
-			m.searchInput = m.searchInput[:len(m.searchInput)-1]
-			// Live search as user types
-			m.executeSearch()
-		}
+		handler.HandleBackspace()
 		return m, nil
 
 	case tea.KeyRunes:
-		m.searchInput += string(msg.Runes)
-		// Live search as user types
-		m.executeSearch()
+		handler.HandleRunes(string(msg.Runes))
 		return m, nil
 
 	case tea.KeySpace:
-		m.searchInput += " "
-		m.executeSearch()
+		handler.HandleRunes(" ")
 		return m, nil
 	}
 
@@ -1968,59 +1958,6 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
-}
-
-// executeSearch uses the search engine to find all matches in the output
-func (m *Model) executeSearch() {
-	if m.searchInput == "" {
-		m.searchEngine.Clear()
-		return
-	}
-
-	inst := m.activeInstance()
-	if inst == nil {
-		return
-	}
-
-	output := m.outputManager.GetOutput(inst.ID)
-	if output == "" {
-		return
-	}
-
-	// Execute search using the search engine
-	m.searchEngine.Search(m.searchInput, output)
-
-	// Scroll to first match if any
-	if m.searchEngine.HasMatches() {
-		m.scrollToMatch()
-	}
-}
-
-// clearSearch clears the current search state
-func (m *Model) clearSearch() {
-	m.searchInput = ""
-	m.searchEngine.Clear()
-	m.outputScroll = 0
-}
-
-// scrollToMatch adjusts output scroll to show the current match
-func (m *Model) scrollToMatch() {
-	current := m.searchEngine.Current()
-	if current == nil {
-		return
-	}
-
-	matchLine := current.LineNumber
-	maxLines := m.terminalManager.Height() - 12
-	if maxLines < 5 {
-		maxLines = 5
-	}
-
-	// Center the match in the visible area
-	m.outputScroll = matchLine - maxLines/2
-	if m.outputScroll < 0 {
-		m.outputScroll = 0
-	}
 }
 
 // compileFilterRegex compiles the custom filter pattern

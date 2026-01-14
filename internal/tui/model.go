@@ -1064,3 +1064,62 @@ func (m Model) IsInstanceTripleShotJudge(instanceID string) bool {
 	}
 	return false
 }
+
+// -----------------------------------------------------------------------------
+// search.Context interface implementation
+// These methods implement the search.Context interface for the search Handler.
+// -----------------------------------------------------------------------------
+
+// modelSearchContext adapts the Model to implement search.Context.
+// This allows the search Handler to interact with the Model without circular imports.
+type modelSearchContext struct {
+	model *Model
+}
+
+// GetSearchInput returns the current search input string.
+func (c *modelSearchContext) GetSearchInput() string {
+	return c.model.searchInput
+}
+
+// SetSearchInput sets the search input string.
+func (c *modelSearchContext) SetSearchInput(input string) {
+	c.model.searchInput = input
+}
+
+// GetSearchEngine returns the search engine.
+func (c *modelSearchContext) GetSearchEngine() *search.Engine {
+	return c.model.searchEngine
+}
+
+// GetOutputForActiveInstance returns output for the active instance.
+func (c *modelSearchContext) GetOutputForActiveInstance() string {
+	if inst := c.model.activeInstance(); inst != nil {
+		return c.model.outputManager.GetOutput(inst.ID)
+	}
+	return ""
+}
+
+// GetViewportHeight returns the output viewport height.
+func (c *modelSearchContext) GetViewportHeight() int {
+	return c.model.terminalManager.Height() - 12
+}
+
+// GetOutputScroll returns the current output scroll position.
+func (c *modelSearchContext) GetOutputScroll() int {
+	return c.model.outputScroll
+}
+
+// SetOutputScroll sets the output scroll position.
+func (c *modelSearchContext) SetOutputScroll(scroll int) {
+	c.model.outputScroll = scroll
+}
+
+// newSearchContext creates a search context adapter for the model.
+func (m *Model) newSearchContext() *modelSearchContext {
+	return &modelSearchContext{model: m}
+}
+
+// SearchHandler returns a new search handler for this model.
+func (m *Model) SearchHandler() *search.Handler {
+	return search.NewHandler(m.newSearchContext())
+}
