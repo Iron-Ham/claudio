@@ -470,3 +470,253 @@ func TestHandleDependentTaskAdded_LongTaskTruncation(t *testing.T) {
 		t.Errorf("HandleDependentTaskAdded() task not truncated correctly\ngot:  %q\nwant: %q", ctx.infoMessage, expectedInfo)
 	}
 }
+
+func TestHandlePRComplete_NilOrchestrator(t *testing.T) {
+	// Test case where session and instance exist, but orchestrator is nil
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "test-instance"},
+		},
+	}
+
+	ctx := newMockContext()
+	ctx.session = session
+	ctx.orchestrator = nil // Orchestrator is nil
+
+	HandlePRComplete(ctx, msg.PRCompleteMsg{
+		InstanceID: "test-instance",
+		Success:    true,
+	})
+
+	// Should return early when orchestrator is nil (no info/error message)
+	if ctx.infoMessage != "" {
+		t.Errorf("HandlePRComplete() with nil orchestrator: infoMessage = %q, want empty", ctx.infoMessage)
+	}
+	if ctx.errorMessage != "" {
+		t.Errorf("HandlePRComplete() with nil orchestrator: errorMessage = %q, want empty", ctx.errorMessage)
+	}
+}
+
+func TestHandleTimeout_UnknownType(t *testing.T) {
+	// Test case where an unknown timeout type is provided
+	// This exercises the default case in the switch statement
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "test-instance"},
+		},
+	}
+
+	ctx := newMockContext()
+	ctx.session = session
+
+	// Use an unknown timeout type (type 99 doesn't exist)
+	HandleTimeout(ctx, msg.TimeoutMsg{
+		InstanceID:  "test-instance",
+		TimeoutType: instance.TimeoutType(99),
+	})
+
+	// The default case produces an empty statusText, so the message should just be:
+	// "Instance test-instance is  - use Ctrl+R to restart or Ctrl+K to kill"
+	expectedInfo := "Instance test-instance is  - use Ctrl+R to restart or Ctrl+K to kill"
+	if ctx.infoMessage != expectedInfo {
+		t.Errorf("HandleTimeout() with unknown type: infoMessage = %q, want %q", ctx.infoMessage, expectedInfo)
+	}
+}
+
+func TestHandleTaskAdded_WithLogger(t *testing.T) {
+	// Create a logger that writes to a temp directory
+	logger, err := logging.NewLogger(t.TempDir(), "DEBUG")
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer func() { _ = logger.Close() }()
+
+	t.Run("success with logger", func(t *testing.T) {
+		ctx := newMockContext()
+		ctx.logger = logger
+		ctx.instanceCount = 2
+		ctx.activeInstance = nil
+
+		HandleTaskAdded(ctx, msg.TaskAddedMsg{
+			Instance: &orchestrator.Instance{Task: "test task"},
+			Err:      nil,
+		})
+
+		// Verify success behavior
+		if ctx.activeTab != 1 {
+			t.Errorf("HandleTaskAdded() activeTab = %d, want 1", ctx.activeTab)
+		}
+		if ctx.ensureActiveCalls != 1 {
+			t.Errorf("HandleTaskAdded() ensureActiveCalls = %d, want 1", ctx.ensureActiveCalls)
+		}
+	})
+
+	t.Run("error with logger", func(t *testing.T) {
+		ctx := newMockContext()
+		ctx.logger = logger
+		ctx.instanceCount = 2
+
+		HandleTaskAdded(ctx, msg.TaskAddedMsg{
+			Instance: nil,
+			Err:      errors.New("task error"),
+		})
+
+		// Verify error was set
+		if ctx.errorMessage != "task error" {
+			t.Errorf("HandleTaskAdded() errorMessage = %q, want %q", ctx.errorMessage, "task error")
+		}
+	})
+
+	t.Run("success without instance (nil Instance field)", func(t *testing.T) {
+		ctx := newMockContext()
+		ctx.logger = logger
+		ctx.instanceCount = 2
+
+		HandleTaskAdded(ctx, msg.TaskAddedMsg{
+			Instance: nil, // Instance is nil but no error
+			Err:      nil,
+		})
+
+		// Should still complete without panic
+		if ctx.activeTab != 1 {
+			t.Errorf("HandleTaskAdded() activeTab = %d, want 1", ctx.activeTab)
+		}
+	})
+}
+
+func TestHandleDependentTaskAdded_WithLogger(t *testing.T) {
+	// Create a logger that writes to a temp directory
+	logger, err := logging.NewLogger(t.TempDir(), "DEBUG")
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer func() { _ = logger.Close() }()
+
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "parent-id", Task: "Parent task"},
+		},
+	}
+
+	t.Run("success with logger", func(t *testing.T) {
+		ctx := newMockContext()
+		ctx.logger = logger
+		ctx.session = session
+		ctx.instanceCount = 2
+		ctx.activeInstance = nil
+
+		HandleDependentTaskAdded(ctx, msg.DependentTaskAddedMsg{
+			Instance:  &orchestrator.Instance{Task: "child task"},
+			DependsOn: "parent-id",
+			Err:       nil,
+		})
+
+		// Verify success behavior
+		expectedInfo := `Chained task added. Will auto-start when "Parent task" completes.`
+		if ctx.infoMessage != expectedInfo {
+			t.Errorf("HandleDependentTaskAdded() infoMessage = %q, want %q", ctx.infoMessage, expectedInfo)
+		}
+	})
+
+	t.Run("error with logger", func(t *testing.T) {
+		ctx := newMockContext()
+		ctx.logger = logger
+		ctx.session = session
+		ctx.instanceCount = 2
+
+		HandleDependentTaskAdded(ctx, msg.DependentTaskAddedMsg{
+			Instance:  nil,
+			DependsOn: "parent-id",
+			Err:       errors.New("dependency error"),
+		})
+
+		// Verify error was set
+		if ctx.errorMessage != "dependency error" {
+			t.Errorf("HandleDependentTaskAdded() errorMessage = %q, want %q", ctx.errorMessage, "dependency error")
+		}
+	})
+
+	t.Run("success without instance (nil Instance field)", func(t *testing.T) {
+		ctx := newMockContext()
+		ctx.logger = logger
+		ctx.session = session
+		ctx.instanceCount = 2
+
+		HandleDependentTaskAdded(ctx, msg.DependentTaskAddedMsg{
+			Instance:  nil, // Instance is nil but no error
+			DependsOn: "parent-id",
+			Err:       nil,
+		})
+
+		// Should still complete without panic
+		expectedInfo := `Chained task added. Will auto-start when "Parent task" completes.`
+		if ctx.infoMessage != expectedInfo {
+			t.Errorf("HandleDependentTaskAdded() infoMessage = %q, want %q", ctx.infoMessage, expectedInfo)
+		}
+	})
+}
+
+func TestHandleDependentTaskAdded_NilSession(t *testing.T) {
+	// Test case where session is nil, verifying the parent lookup gracefully handles it
+	ctx := newMockContext()
+	ctx.session = nil // Session is nil
+	ctx.instanceCount = 2
+
+	HandleDependentTaskAdded(ctx, msg.DependentTaskAddedMsg{
+		Instance:  &orchestrator.Instance{Task: "child task"},
+		DependsOn: "parent-id",
+		Err:       nil,
+	})
+
+	// Should use the raw dependsOn ID since session is nil
+	expectedInfo := `Chained task added. Will auto-start when "parent-id" completes.`
+	if ctx.infoMessage != expectedInfo {
+		t.Errorf("HandleDependentTaskAdded() with nil session: infoMessage = %q, want %q", ctx.infoMessage, expectedInfo)
+	}
+}
+
+func TestHandleOutput_MultipleOutputs(t *testing.T) {
+	ctx := newMockContext()
+
+	// Test that multiple outputs append correctly
+	HandleOutput(ctx, msg.OutputMsg{
+		InstanceID: "test-instance",
+		Data:       []byte("first "),
+	})
+
+	HandleOutput(ctx, msg.OutputMsg{
+		InstanceID: "test-instance",
+		Data:       []byte("second"),
+	})
+
+	output := ctx.outputManager.GetOutput("test-instance")
+	expected := "first second"
+	if output != expected {
+		t.Errorf("HandleOutput() multiple outputs = %q, want %q", output, expected)
+	}
+}
+
+func TestHandleOutput_DifferentInstances(t *testing.T) {
+	ctx := newMockContext()
+
+	// Test outputs to different instances are isolated
+	HandleOutput(ctx, msg.OutputMsg{
+		InstanceID: "instance-a",
+		Data:       []byte("output-a"),
+	})
+
+	HandleOutput(ctx, msg.OutputMsg{
+		InstanceID: "instance-b",
+		Data:       []byte("output-b"),
+	})
+
+	outputA := ctx.outputManager.GetOutput("instance-a")
+	if outputA != "output-a" {
+		t.Errorf("HandleOutput() instance-a = %q, want %q", outputA, "output-a")
+	}
+
+	outputB := ctx.outputManager.GetOutput("instance-b")
+	if outputB != "output-b" {
+		t.Errorf("HandleOutput() instance-b = %q, want %q", outputB, "output-b")
+	}
+}
