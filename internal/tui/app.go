@@ -2510,97 +2510,22 @@ func (m Model) renderHelpPanel(width int) string {
 	return styles.ContentBox.Width(width - 4).Render(content)
 }
 
-// renderDiffPanel renders the diff preview panel with syntax highlighting
+// renderDiffPanel renders the diff preview panel using the panel package.
+// Diff rendering and syntax highlighting are sourced from panel.DiffPanel
+// for single source of truth.
 func (m Model) renderDiffPanel(width int) string {
-	var b strings.Builder
-
-	// Header
-	inst := m.activeInstance()
-	if inst != nil {
-		b.WriteString(styles.Title.Render(fmt.Sprintf("Diff Preview: %s", inst.Branch)))
-	} else {
-		b.WriteString(styles.Title.Render("Diff Preview"))
-	}
-	b.WriteString("\n")
-
-	if m.diffContent == "" {
-		b.WriteString(styles.Muted.Render("No changes to display"))
-		return styles.ContentBox.Width(width - 4).Render(b.String())
+	diffPanel := panel.NewDiffPanel()
+	state := &panel.RenderState{
+		Width:          width - 4, // Account for content box padding
+		Height:         m.terminalManager.Height() - 4,
+		ScrollOffset:   m.diffScroll,
+		Theme:          &styleTheme{},
+		ActiveInstance: m.activeInstance(),
+		DiffContent:    m.diffContent,
 	}
 
-	// Calculate available height for diff content
-	maxLines := m.terminalManager.Height() - 14
-	if maxLines < 5 {
-		maxLines = 5
-	}
-
-	// Split diff into lines and apply scroll
-	lines := strings.Split(m.diffContent, "\n")
-	totalLines := len(lines)
-
-	// Clamp scroll position
-	maxScroll := totalLines - maxLines
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if m.diffScroll > maxScroll {
-		m.diffScroll = maxScroll
-	}
-
-	// Get visible lines
-	startLine := m.diffScroll
-	endLine := startLine + maxLines
-	if endLine > totalLines {
-		endLine = totalLines
-	}
-
-	visibleLines := lines[startLine:endLine]
-
-	// Apply syntax highlighting to each visible line
-	var highlighted []string
-	for _, line := range visibleLines {
-		highlighted = append(highlighted, m.highlightDiffLine(line))
-	}
-
-	// Show scroll indicator
-	scrollInfo := fmt.Sprintf("Lines %d-%d of %d", startLine+1, endLine, totalLines)
-	if totalLines > maxLines {
-		scrollInfo += "  " + styles.Muted.Render("[j/k scroll, g/G top/bottom, d/Esc close]")
-	} else {
-		scrollInfo += "  " + styles.Muted.Render("[d/Esc close]")
-	}
-	b.WriteString(styles.Muted.Render(scrollInfo))
-	b.WriteString("\n\n")
-
-	// Add the diff content
-	b.WriteString(strings.Join(highlighted, "\n"))
-
-	return styles.ContentBox.Width(width - 4).Render(b.String())
-}
-
-// highlightDiffLine applies syntax highlighting to a single diff line
-func (m Model) highlightDiffLine(line string) string {
-	if len(line) == 0 {
-		return line
-	}
-
-	// Check line prefix for diff syntax highlighting
-	switch {
-	case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
-		return styles.DiffHeader.Render(line)
-	case strings.HasPrefix(line, "@@"):
-		return styles.DiffHunk.Render(line)
-	case strings.HasPrefix(line, "+"):
-		return styles.DiffAdd.Render(line)
-	case strings.HasPrefix(line, "-"):
-		return styles.DiffRemove.Render(line)
-	case strings.HasPrefix(line, "diff "):
-		return styles.DiffHeader.Render(line)
-	case strings.HasPrefix(line, "index "):
-		return styles.DiffHeader.Render(line)
-	default:
-		return styles.DiffContext.Render(line)
-	}
+	content := diffPanel.Render(state)
+	return styles.ContentBox.Width(width - 4).Render(content)
 }
 
 // calculateExtraFooterLines returns the number of extra lines needed in the footer
