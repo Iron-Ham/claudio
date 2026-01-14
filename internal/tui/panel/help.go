@@ -178,7 +178,18 @@ func DefaultHelpSections() []HelpSection {
 				{Key: ":tripleshot", Description: "Run 3 parallel attempts + judge"},
 				{Key: ":accept", Description: "Accept winning triple-shot solution"},
 				{Key: ":cancel", Description: "Cancel ultraplan execution"},
-				{Key: ":group", Description: "Manage instance groups"},
+			},
+		},
+		{
+			Title: "Group Management",
+			Items: []HelpItem{
+				{Key: ":group create", Description: "Create a new empty group"},
+				{Key: ":group add", Description: "Add instance to a group"},
+				{Key: ":group remove", Description: "Remove instance from its group"},
+				{Key: ":group move", Description: "Move instance to a different group"},
+				{Key: ":group order", Description: "Reorder group execution sequence"},
+				{Key: ":group delete", Description: "Delete an empty group"},
+				{Key: ":group show", Description: "Toggle grouped instance view"},
 			},
 		},
 		{
@@ -190,6 +201,9 @@ func DefaultHelpSections() []HelpSection {
 				{Key: ":f  :filter", Description: "Open filter panel"},
 				{Key: ":tmux", Description: "Show tmux attach command"},
 				{Key: ":r  :pr", Description: "Show PR creation command"},
+				{Key: ":pr --group", Description: "Create stacked PRs for all groups"},
+				{Key: ":pr --group=all", Description: "Create consolidated PR from all groups"},
+				{Key: ":pr --group=single", Description: "Create PR for current group only"},
 			},
 		},
 		{
