@@ -52,6 +52,26 @@ func New(orch *orchestrator.Orchestrator, session *orchestrator.Session, logger 
 // NewWithUltraPlan creates a new TUI application in ultra-plan mode
 func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.Coordinator, logger *logging.Logger) *App {
 	model := NewModel(orch, session, logger)
+
+	// Create a group for this ultraplan session (similar to inline mode)
+	ultraSession := coordinator.Session()
+	if ultraSession != nil && ultraSession.GroupID == "" {
+		sessionType := orchestrator.SessionTypeUltraPlan
+		if ultraSession.Config.MultiPass {
+			sessionType = orchestrator.SessionTypePlanMulti
+		}
+		ultraGroup := orchestrator.NewInstanceGroupWithType(
+			truncateString(ultraSession.Objective, 30),
+			sessionType,
+			ultraSession.Objective,
+		)
+		session.AddGroup(ultraGroup)
+		ultraSession.GroupID = ultraGroup.ID
+
+		// Auto-enable grouped sidebar mode
+		model.autoEnableGroupedMode()
+	}
+
 	model.ultraPlan = &UltraPlanState{
 		Coordinator:  coordinator,
 		ShowPlanView: false,
@@ -73,7 +93,20 @@ func NewWithTripleShot(orch *orchestrator.Orchestrator, session *orchestrator.Se
 	// Add the coordinator to the map keyed by its group ID for multiple tripleshot support
 	if coordinator != nil {
 		tripleSession := coordinator.Session()
-		if tripleSession != nil && tripleSession.GroupID != "" {
+		if tripleSession != nil {
+			// Create a group if one doesn't exist (CLI-started tripleshots)
+			if tripleSession.GroupID == "" {
+				tripleGroup := orchestrator.NewInstanceGroupWithType(
+					truncateString(tripleSession.Task, 30),
+					orchestrator.SessionTypeTripleShot,
+					tripleSession.Task,
+				)
+				session.AddGroup(tripleGroup)
+				tripleSession.GroupID = tripleGroup.ID
+
+				// Auto-enable grouped sidebar mode
+				model.autoEnableGroupedMode()
+			}
 			model.tripleShot.Coordinators[tripleSession.GroupID] = coordinator
 		}
 	}
@@ -93,13 +126,30 @@ func NewWithTripleShots(orch *orchestrator.Orchestrator, session *orchestrator.S
 	}
 
 	// Add all coordinators to the map keyed by their group IDs
+	createdGroup := false
 	for _, coordinator := range coordinators {
 		if coordinator != nil {
 			tripleSession := coordinator.Session()
-			if tripleSession != nil && tripleSession.GroupID != "" {
+			if tripleSession != nil {
+				// Create a group if one doesn't exist (legacy sessions)
+				if tripleSession.GroupID == "" {
+					tripleGroup := orchestrator.NewInstanceGroupWithType(
+						truncateString(tripleSession.Task, 30),
+						orchestrator.SessionTypeTripleShot,
+						tripleSession.Task,
+					)
+					session.AddGroup(tripleGroup)
+					tripleSession.GroupID = tripleGroup.ID
+					createdGroup = true
+				}
 				model.tripleShot.Coordinators[tripleSession.GroupID] = coordinator
 			}
 		}
+	}
+
+	// Auto-enable grouped sidebar mode if we created any groups
+	if createdGroup {
+		model.autoEnableGroupedMode()
 	}
 
 	// Set the first coordinator as the deprecated single Coordinator for backward compatibility
