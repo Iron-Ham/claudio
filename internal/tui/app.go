@@ -21,6 +21,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tmux"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
+	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/output"
 	"github.com/Iron-Ham/claudio/internal/tui/panel"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
@@ -198,9 +199,9 @@ func (a *App) Run() error {
 			// Log unexpected event type for debugging
 			return
 		}
-		a.program.Send(prCompleteMsg{
-			instanceID: prEvent.InstanceID,
-			success:    prEvent.Success,
+		a.program.Send(tuimsg.PRCompleteMsg{
+			InstanceID: prEvent.InstanceID,
+			Success:    prEvent.Success,
 		})
 	})
 	subscriptionIDs = append(subscriptionIDs, subID)
@@ -211,8 +212,8 @@ func (a *App) Run() error {
 		if !ok {
 			return
 		}
-		a.program.Send(prOpenedMsg{
-			instanceID: prEvent.InstanceID,
+		a.program.Send(tuimsg.PROpenedMsg{
+			InstanceID: prEvent.InstanceID,
 		})
 	})
 	subscriptionIDs = append(subscriptionIDs, subID)
@@ -236,9 +237,9 @@ func (a *App) Run() error {
 			// Unknown timeout type - default to activity timeout
 			timeoutType = instance.TimeoutActivity
 		}
-		a.program.Send(timeoutMsg{
-			instanceID:  timeoutEvent.InstanceID,
-			timeoutType: timeoutType,
+		a.program.Send(tuimsg.TimeoutMsg{
+			InstanceID:  timeoutEvent.InstanceID,
+			TimeoutType: timeoutType,
 		})
 	})
 	subscriptionIDs = append(subscriptionIDs, subID)
@@ -249,7 +250,7 @@ func (a *App) Run() error {
 		if !ok {
 			return
 		}
-		a.program.Send(bellMsg{instanceID: bellEvent.InstanceID})
+		a.program.Send(tuimsg.BellMsg{InstanceID: bellEvent.InstanceID})
 	})
 	subscriptionIDs = append(subscriptionIDs, subID)
 
@@ -315,50 +316,11 @@ func (s *styleTheme) DiffContext() lipgloss.Style { return styles.Muted }
 
 // Messages
 
-type tickMsg time.Time
-type outputMsg struct {
-	instanceID string
-	data       []byte
-}
-type errMsg struct {
-	err error
-}
-type prCompleteMsg struct {
-	instanceID string
-	success    bool
-}
-
-type prOpenedMsg struct {
-	instanceID string
-}
-
-type timeoutMsg struct {
-	instanceID  string
-	timeoutType instance.TimeoutType
-}
-
-type bellMsg struct {
-	instanceID string
-}
-
-// taskAddedMsg is sent when async task addition completes
-type taskAddedMsg struct {
-	instance *orchestrator.Instance
-	err      error
-}
-
-// dependentTaskAddedMsg is sent when async dependent task addition completes
-type dependentTaskAddedMsg struct {
-	instance  *orchestrator.Instance
-	dependsOn string // The instance ID this task depends on
-	err       error
-}
-
 // Commands
 
 func tick() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
-		return tickMsg(t)
+		return tuimsg.TickMsg(t)
 	})
 }
 
@@ -402,7 +364,7 @@ func notifyUser() tea.Cmd {
 func addTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string) tea.Cmd {
 	return func() tea.Msg {
 		inst, err := o.AddInstance(session, task)
-		return taskAddedMsg{instance: inst, err: err}
+		return tuimsg.TaskAddedMsg{Instance: inst, Err: err}
 	}
 }
 
@@ -411,7 +373,7 @@ func addTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, t
 func addTaskFromBranchAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string, baseBranch string) tea.Cmd {
 	return func() tea.Msg {
 		inst, err := o.AddInstanceFromBranch(session, task, baseBranch)
-		return taskAddedMsg{instance: inst, err: err}
+		return tuimsg.TaskAddedMsg{Instance: inst, Err: err}
 	}
 }
 
@@ -420,12 +382,9 @@ func addTaskFromBranchAsync(o *orchestrator.Orchestrator, session *orchestrator.
 func addDependentTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string, dependsOn string) tea.Cmd {
 	return func() tea.Msg {
 		inst, err := o.AddInstanceWithDependencies(session, task, []string{dependsOn}, true)
-		return dependentTaskAddedMsg{instance: inst, dependsOn: dependsOn, err: err}
+		return tuimsg.DependentTaskAddedMsg{Instance: inst, DependsOn: dependsOn, Err: err}
 	}
 }
-
-// ultraPlanInitMsg signals that ultra-plan mode should initialize
-type ultraPlanInitMsg struct{}
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
@@ -435,7 +394,7 @@ func (m Model) Init() tea.Cmd {
 	if m.ultraPlan != nil && m.ultraPlan.Coordinator != nil {
 		session := m.ultraPlan.Coordinator.Session()
 		if session != nil && session.Phase == orchestrator.PhasePlanning && session.CoordinatorID == "" {
-			cmds = append(cmds, func() tea.Msg { return ultraPlanInitMsg{} })
+			cmds = append(cmds, func() tea.Msg { return tuimsg.UltraPlanInitMsg{} })
 		}
 	}
 
@@ -482,7 +441,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// This helps with terminal emulators that don't properly clear stale content
 		return m, tea.ClearScreen
 
-	case tickMsg:
+	case tuimsg.TickMsg:
 		// Update outputs from instances
 		m.updateOutputs()
 		// Update terminal pane output if visible
@@ -518,7 +477,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
-	case ultraPlanInitMsg:
+	case tuimsg.UltraPlanInitMsg:
 		// Initialize ultra-plan mode by starting the planning phase
 		if m.ultraPlan != nil && m.ultraPlan.Coordinator != nil {
 			session := m.ultraPlan.Coordinator.Session()
@@ -545,42 +504,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case outputMsg:
-		m.outputManager.AddOutput(msg.instanceID, string(msg.data))
+	case tuimsg.OutputMsg:
+		m.outputManager.AddOutput(msg.InstanceID, string(msg.Data))
 		return m, nil
 
-	case errMsg:
-		m.errorMessage = msg.err.Error()
+	case tuimsg.ErrMsg:
+		m.errorMessage = msg.Err.Error()
 		return m, nil
 
-	case prCompleteMsg:
+	case tuimsg.PRCompleteMsg:
 		// PR workflow completed - remove the instance
-		inst := m.session.GetInstance(msg.instanceID)
+		inst := m.session.GetInstance(msg.InstanceID)
 		if inst != nil {
-			if err := m.orchestrator.RemoveInstance(m.session, msg.instanceID, true); err != nil {
+			if err := m.orchestrator.RemoveInstance(m.session, msg.InstanceID, true); err != nil {
 				m.errorMessage = fmt.Sprintf("Failed to remove instance after PR: %v", err)
-			} else if msg.success {
-				m.infoMessage = fmt.Sprintf("PR created and instance %s removed", msg.instanceID)
+			} else if msg.Success {
+				m.infoMessage = fmt.Sprintf("PR created and instance %s removed", msg.InstanceID)
 			} else {
-				m.infoMessage = fmt.Sprintf("PR workflow finished (may have failed) - instance %s removed", msg.instanceID)
+				m.infoMessage = fmt.Sprintf("PR workflow finished (may have failed) - instance %s removed", msg.InstanceID)
 			}
 		}
 		return m, nil
 
-	case prOpenedMsg:
+	case tuimsg.PROpenedMsg:
 		// PR URL detected in instance output - notify user but keep instance for potential review tools
-		inst := m.session.GetInstance(msg.instanceID)
+		inst := m.session.GetInstance(msg.InstanceID)
 		if inst != nil {
 			m.infoMessage = fmt.Sprintf("PR opened for instance %s - use :D to remove or run review tools", inst.ID)
 		}
 		return m, nil
 
-	case timeoutMsg:
+	case tuimsg.TimeoutMsg:
 		// Instance timeout detected - notify user
-		inst := m.session.GetInstance(msg.instanceID)
+		inst := m.session.GetInstance(msg.InstanceID)
 		if inst != nil {
 			var statusText string
-			switch msg.timeoutType {
+			switch msg.TimeoutType {
 			case instance.TimeoutActivity:
 				statusText = "stuck (no activity)"
 			case instance.TimeoutCompletion:
@@ -592,17 +551,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case bellMsg:
+	case tuimsg.BellMsg:
 		// Terminal bell detected in a tmux session - forward it to the parent terminal
 		return m, ringBell()
 
-	case taskAddedMsg:
+	case tuimsg.TaskAddedMsg:
 		// Async task addition completed
 		m.infoMessage = "" // Clear the "Adding task..." message
-		if msg.err != nil {
-			m.errorMessage = msg.err.Error()
+		if msg.Err != nil {
+			m.errorMessage = msg.Err.Error()
 			if m.logger != nil {
-				m.logger.Error("failed to add task", "error", msg.err.Error())
+				m.logger.Error("failed to add task", "error", msg.Err.Error())
 			}
 		} else {
 			// Pause the old active instance before switching (new instance starts unpaused)
@@ -613,21 +572,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab = len(m.session.Instances) - 1
 			m.ensureActiveVisible()
 			// Log user adding instance
-			if m.logger != nil && msg.instance != nil {
-				m.logger.Info("user added instance", "task", msg.instance.Task)
+			if m.logger != nil && msg.Instance != nil {
+				m.logger.Info("user added instance", "task", msg.Instance.Task)
 			}
 		}
 		return m, nil
 
-	case dependentTaskAddedMsg:
+	case tuimsg.DependentTaskAddedMsg:
 		// Async dependent task addition completed
 		m.infoMessage = "" // Clear the "Adding dependent task..." message
-		if msg.err != nil {
-			m.errorMessage = msg.err.Error()
+		if msg.Err != nil {
+			m.errorMessage = msg.Err.Error()
 			if m.logger != nil {
 				m.logger.Error("failed to add dependent task",
-					"depends_on", msg.dependsOn,
-					"error", msg.err.Error(),
+					"depends_on", msg.DependsOn,
+					"error", msg.Err.Error(),
 				)
 			}
 		} else {
@@ -639,9 +598,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab = len(m.session.Instances) - 1
 			m.ensureActiveVisible()
 			// Find the parent instance name for a better message
-			parentTask := msg.dependsOn
+			parentTask := msg.DependsOn
 			for _, inst := range m.session.Instances {
-				if inst.ID == msg.dependsOn {
+				if inst.ID == msg.DependsOn {
 					parentTask = inst.Task
 					if len(parentTask) > 50 {
 						parentTask = parentTask[:50] + "..."
@@ -651,16 +610,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.infoMessage = fmt.Sprintf("Chained task added. Will auto-start when \"%s\" completes.", parentTask)
 			// Log user adding dependent instance
-			if m.logger != nil && msg.instance != nil {
+			if m.logger != nil && msg.Instance != nil {
 				m.logger.Info("user added dependent instance",
-					"task", msg.instance.Task,
-					"depends_on", msg.dependsOn,
+					"task", msg.Instance.Task,
+					"depends_on", msg.DependsOn,
 				)
 			}
 		}
 		return m, nil
 
-	case tripleShotStartedMsg:
+	case tuimsg.TripleShotStartedMsg:
 		// Triple-shot attempts started successfully
 		m.infoMessage = "Triple-shot started: 3 instances working on the task"
 		if m.logger != nil {
@@ -668,7 +627,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tripleShotJudgeStartedMsg:
+	case tuimsg.TripleShotJudgeStartedMsg:
 		// Judge started evaluating the attempts
 		m.infoMessage = "All attempts complete - judge is evaluating solutions..."
 		if m.logger != nil {
@@ -676,41 +635,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tripleShotErrorMsg:
+	case tuimsg.TripleShotErrorMsg:
 		// Triple-shot failed to start
-		m.errorMessage = fmt.Sprintf("Failed to start triple-shot: %v", msg.err)
+		m.errorMessage = fmt.Sprintf("Failed to start triple-shot: %v", msg.Err)
 		// Clean up triple-shot state on error
 		m.cleanupTripleShot()
 		if m.logger != nil {
-			m.logger.Error("failed to start triple-shot", "error", msg.err)
+			m.logger.Error("failed to start triple-shot", "error", msg.Err)
 		}
 		return m, nil
 
-	case tripleShotCheckResultMsg:
+	case tuimsg.TripleShotCheckResultMsg:
 		// Handle async completion check results
 		return m.handleTripleShotCheckResult(msg)
 
-	case tripleShotAttemptProcessedMsg:
+	case tuimsg.TripleShotAttemptProcessedMsg:
 		// Handle async attempt completion processing result
 		return m.handleTripleShotAttemptProcessed(msg)
 
-	case tripleShotJudgeProcessedMsg:
+	case tuimsg.TripleShotJudgeProcessedMsg:
 		// Handle async judge completion processing result
 		return m.handleTripleShotJudgeProcessed(msg)
 
-	case planFileCheckResultMsg:
+	case tuimsg.PlanFileCheckResultMsg:
 		// Handle async plan file check result (single-pass mode)
 		return m.handlePlanFileCheckResult(msg)
 
-	case multiPassPlanFileCheckResultMsg:
+	case tuimsg.MultiPassPlanFileCheckResultMsg:
 		// Handle async multi-pass plan file check result
 		return m.handleMultiPassPlanFileCheckResult(msg)
 
-	case planManagerFileCheckResultMsg:
+	case tuimsg.PlanManagerFileCheckResultMsg:
 		// Handle async plan manager file check result
 		return m.handlePlanManagerFileCheckResult(msg)
 
-	case inlineMultiPlanFileCheckResultMsg:
+	case tuimsg.InlineMultiPlanFileCheckResultMsg:
 		// Handle async inline multiplan file check result
 		return m.handleInlineMultiPlanFileCheckResult(msg)
 	}
@@ -3394,44 +3353,10 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	// Start attempts asynchronously
 	return m, func() tea.Msg {
 		if err := coordinator.StartAttempts(); err != nil {
-			return tripleShotErrorMsg{err: err}
+			return tuimsg.TripleShotErrorMsg{Err: err}
 		}
-		return tripleShotStartedMsg{}
+		return tuimsg.TripleShotStartedMsg{}
 	}
-}
-
-// tripleShotStartedMsg indicates triple-shot attempts have started
-type tripleShotStartedMsg struct{}
-
-// tripleShotJudgeStartedMsg indicates the judge has started evaluating
-type tripleShotJudgeStartedMsg struct{}
-
-// tripleShotErrorMsg indicates an error during triple-shot operation
-type tripleShotErrorMsg struct {
-	err error
-}
-
-// tripleShotCheckResultMsg contains results from async completion file checks.
-// This allows the tick handler to dispatch async I/O and receive results
-// without blocking the UI event loop.
-type tripleShotCheckResultMsg struct {
-	// GroupID identifies which tripleshot coordinator this result is for
-	GroupID string
-
-	// AttemptResults maps attempt index to completion status (true = file exists)
-	AttemptResults map[int]bool
-
-	// AttemptErrors maps attempt index to any errors encountered during check
-	AttemptErrors map[int]error
-
-	// JudgeComplete indicates whether the judge completion file exists
-	JudgeComplete bool
-
-	// JudgeError is any error encountered checking the judge file
-	JudgeError error
-
-	// Phase is the current phase of the tripleshot session
-	Phase orchestrator.TripleShotPhase
 }
 
 // checkTripleShotCompletionAsync returns a command that checks for completion files
@@ -3446,7 +3371,7 @@ func checkTripleShotCompletionAsync(
 			return nil
 		}
 
-		result := tripleShotCheckResultMsg{
+		result := tuimsg.TripleShotCheckResultMsg{
 			GroupID:        groupID,
 			AttemptResults: make(map[int]bool),
 			AttemptErrors:  make(map[int]error),
@@ -3478,22 +3403,6 @@ func checkTripleShotCompletionAsync(
 	}
 }
 
-// tripleShotAttemptProcessedMsg contains the result of processing an attempt completion file.
-// This is returned by processAttemptCompletionAsync after reading and parsing the file.
-type tripleShotAttemptProcessedMsg struct {
-	GroupID      string
-	AttemptIndex int
-	Err          error
-}
-
-// tripleShotJudgeProcessedMsg contains the result of processing a judge completion file.
-// This is returned by processJudgeCompletionAsync after reading and parsing the file.
-type tripleShotJudgeProcessedMsg struct {
-	GroupID     string
-	Err         error
-	TaskPreview string
-}
-
 // processAttemptCompletionAsync returns a command that processes an attempt completion file
 // in a goroutine, avoiding blocking the UI event loop with file I/O.
 func processAttemptCompletionAsync(
@@ -3503,7 +3412,7 @@ func processAttemptCompletionAsync(
 ) tea.Cmd {
 	return func() tea.Msg {
 		err := coordinator.ProcessAttemptCompletion(attemptIndex)
-		return tripleShotAttemptProcessedMsg{
+		return tuimsg.TripleShotAttemptProcessedMsg{
 			GroupID:      groupID,
 			AttemptIndex: attemptIndex,
 			Err:          err,
@@ -3531,48 +3440,12 @@ func processJudgeCompletionAsync(
 			}
 		}
 
-		return tripleShotJudgeProcessedMsg{
+		return tuimsg.TripleShotJudgeProcessedMsg{
 			GroupID:     groupID,
 			Err:         err,
 			TaskPreview: taskPreview,
 		}
 	}
-}
-
-// planFileCheckResultMsg contains the result of async plan file checking.
-// Used for single-pass mode during planning phase.
-type planFileCheckResultMsg struct {
-	Found        bool
-	Plan         *orchestrator.PlanSpec
-	InstanceID   string
-	WorktreePath string
-	Err          error
-}
-
-// multiPassPlanFileCheckResultMsg contains the result of async multi-pass plan file checking.
-// Returned for each coordinator that has a new plan file detected.
-type multiPassPlanFileCheckResultMsg struct {
-	Index        int
-	Plan         *orchestrator.PlanSpec
-	StrategyName string
-	Err          error
-}
-
-// planManagerFileCheckResultMsg contains the result of async plan manager file checking.
-// Used during plan selection phase in multi-pass mode.
-type planManagerFileCheckResultMsg struct {
-	Found    bool
-	Plan     *orchestrator.PlanSpec
-	Decision *orchestrator.PlanDecision
-	Err      error
-}
-
-// inlineMultiPlanFileCheckResultMsg contains the result of async inline multiplan file checking.
-// Used by the :multiplan command to detect when planners create their plan files.
-type inlineMultiPlanFileCheckResultMsg struct {
-	Index        int
-	Plan         *orchestrator.PlanSpec
-	StrategyName string
 }
 
 // checkPlanFileAsync returns a command that checks for a plan file asynchronously.
@@ -3610,7 +3483,7 @@ func checkPlanFileAsync(
 			return nil
 		}
 
-		return planFileCheckResultMsg{
+		return tuimsg.PlanFileCheckResultMsg{
 			Found:        true,
 			Plan:         plan,
 			InstanceID:   inst.ID,
@@ -3688,7 +3561,7 @@ func checkMultiPassPlanFilesAsync(
 				return nil
 			}
 
-			return multiPassPlanFileCheckResultMsg{
+			return tuimsg.MultiPassPlanFileCheckResultMsg{
 				Index:        idx,
 				Plan:         plan,
 				StrategyName: strategyName,
@@ -3746,7 +3619,7 @@ func checkPlanManagerFileAsync(
 		// Parse the plan from the file
 		plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
 		if err != nil {
-			return planManagerFileCheckResultMsg{
+			return tuimsg.PlanManagerFileCheckResultMsg{
 				Found: true,
 				Err:   err,
 			}
@@ -3759,7 +3632,7 @@ func checkPlanManagerFileAsync(
 			decision, _ = orchestrator.ParsePlanDecisionFromOutput(output)
 		}
 
-		return planManagerFileCheckResultMsg{
+		return tuimsg.PlanManagerFileCheckResultMsg{
 			Found:    true,
 			Plan:     plan,
 			Decision: decision,
