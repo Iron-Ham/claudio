@@ -381,12 +381,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.checkForPlanManagerPlanFile()
 		// Check for phase changes that need notification (synthesis, consolidation pause)
 		m.checkForPhaseNotification()
-		// Check for triple-shot attempt and judge completion
-		m.checkForTripleShotCompletion()
 
-		// Check if ultraplan needs user notification
+		// Build commands for this tick
 		var cmds []tea.Cmd
 		cmds = append(cmds, tick())
+
+		// Dispatch async commands to check tripleshot completion files
+		// This avoids blocking the UI with file I/O
+		cmds = append(cmds, m.dispatchTripleShotCompletionChecks()...)
+
+		// Check if ultraplan needs user notification
 		if m.ultraPlan != nil && m.ultraPlan.NeedsNotification {
 			m.ultraPlan.NeedsNotification = false
 			cmds = append(cmds, notifyUser())
@@ -537,16 +541,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tripleShotJudgeStartedMsg:
+		// Judge started evaluating the attempts
+		m.infoMessage = "All attempts complete - judge is evaluating solutions..."
+		if m.logger != nil {
+			m.logger.Info("triple-shot judge started")
+		}
+		return m, nil
+
 	case tripleShotErrorMsg:
 		// Triple-shot failed to start
 		m.errorMessage = fmt.Sprintf("Failed to start triple-shot: %v", msg.err)
 		// Clean up triple-shot state on error
-		m.tripleShot = nil
-		m.session.TripleShot = nil
+		m.cleanupTripleShot()
 		if m.logger != nil {
 			m.logger.Error("failed to start triple-shot", "error", msg.err)
 		}
 		return m, nil
+
+	case tripleShotCheckResultMsg:
+		// Handle async completion check results
+		return m.handleTripleShotCheckResult(msg)
 	}
 
 	return m, nil
@@ -3186,7 +3201,77 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 // tripleShotStartedMsg indicates triple-shot attempts have started
 type tripleShotStartedMsg struct{}
 
+// tripleShotJudgeStartedMsg indicates the judge has started evaluating
+type tripleShotJudgeStartedMsg struct{}
+
 // tripleShotErrorMsg indicates an error during triple-shot operation
 type tripleShotErrorMsg struct {
 	err error
+}
+
+// tripleShotCheckResultMsg contains results from async completion file checks.
+// This allows the tick handler to dispatch async I/O and receive results
+// without blocking the UI event loop.
+type tripleShotCheckResultMsg struct {
+	// GroupID identifies which tripleshot coordinator this result is for
+	GroupID string
+
+	// AttemptResults maps attempt index to completion status (true = file exists)
+	AttemptResults map[int]bool
+
+	// AttemptErrors maps attempt index to any errors encountered during check
+	AttemptErrors map[int]error
+
+	// JudgeComplete indicates whether the judge completion file exists
+	JudgeComplete bool
+
+	// JudgeError is any error encountered checking the judge file
+	JudgeError error
+
+	// Phase is the current phase of the tripleshot session
+	Phase orchestrator.TripleShotPhase
+}
+
+// checkTripleShotCompletionAsync returns a command that checks for completion files
+// in a goroutine, avoiding blocking the UI event loop with file I/O.
+func checkTripleShotCompletionAsync(
+	coordinator *orchestrator.TripleShotCoordinator,
+	groupID string,
+) tea.Cmd {
+	return func() tea.Msg {
+		session := coordinator.Session()
+		if session == nil {
+			return nil
+		}
+
+		result := tripleShotCheckResultMsg{
+			GroupID:        groupID,
+			AttemptResults: make(map[int]bool),
+			AttemptErrors:  make(map[int]error),
+			Phase:          session.Phase,
+		}
+
+		switch session.Phase {
+		case orchestrator.PhaseTripleShotWorking:
+			// Check each attempt's completion file
+			for i := range 3 {
+				attempt := session.Attempts[i]
+				if attempt.Status == orchestrator.AttemptStatusWorking {
+					complete, err := coordinator.CheckAttemptCompletion(i)
+					result.AttemptResults[i] = complete
+					if err != nil {
+						result.AttemptErrors[i] = err
+					}
+				}
+			}
+
+		case orchestrator.PhaseTripleShotEvaluating:
+			// Check judge completion file
+			complete, err := coordinator.CheckJudgeCompletion()
+			result.JudgeComplete = complete
+			result.JudgeError = err
+		}
+
+		return result
+	}
 }

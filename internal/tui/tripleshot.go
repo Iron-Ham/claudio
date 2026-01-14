@@ -5,158 +5,12 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // TripleShotState is an alias to the view package's TripleShotState.
 // This allows the main tui package to use the state without importing view.
 type TripleShotState = view.TripleShotState
-
-// checkForTripleShotCompletion checks if any triple-shot attempts or the judge have completed.
-// This is called from the tick handler to poll for completion files.
-// For multiple tripleshots, iterates through all active coordinators.
-func (m *Model) checkForTripleShotCompletion() {
-	if m.tripleShot == nil || !m.tripleShot.HasActiveCoordinators() {
-		return
-	}
-
-	// Process each coordinator
-	for groupID, coordinator := range m.tripleShot.Coordinators {
-		session := coordinator.Session()
-		if session == nil {
-			continue
-		}
-
-		switch session.Phase {
-		case orchestrator.PhaseTripleShotWorking:
-			m.checkTripleShotAttempts(coordinator, session)
-		case orchestrator.PhaseTripleShotEvaluating:
-			m.checkTripleShotJudge(coordinator, groupID)
-		case orchestrator.PhaseTripleShotComplete:
-			m.handleTripleShotComplete(session)
-		case orchestrator.PhaseTripleShotFailed:
-			m.handleTripleShotFailed(session)
-		}
-	}
-
-	// Also check the deprecated single Coordinator for backward compatibility
-	if m.tripleShot.Coordinator != nil {
-		// Only process if it's not already in Coordinators map
-		alreadyProcessed := false
-		for _, coord := range m.tripleShot.Coordinators {
-			if coord == m.tripleShot.Coordinator {
-				alreadyProcessed = true
-				break
-			}
-		}
-		if !alreadyProcessed {
-			session := m.tripleShot.Coordinator.Session()
-			if session != nil {
-				switch session.Phase {
-				case orchestrator.PhaseTripleShotWorking:
-					m.checkTripleShotAttempts(m.tripleShot.Coordinator, session)
-				case orchestrator.PhaseTripleShotEvaluating:
-					m.checkTripleShotJudge(m.tripleShot.Coordinator, "")
-				case orchestrator.PhaseTripleShotComplete:
-					m.handleTripleShotComplete(session)
-				case orchestrator.PhaseTripleShotFailed:
-					m.handleTripleShotFailed(session)
-				}
-			}
-		}
-	}
-}
-
-// checkTripleShotAttempts checks if any attempts have completed their work
-func (m *Model) checkTripleShotAttempts(coordinator *orchestrator.TripleShotCoordinator, session *orchestrator.TripleShotSession) {
-	allComplete := true
-	for i := range 3 {
-		attempt := session.Attempts[i]
-		if attempt.Status == orchestrator.AttemptStatusWorking {
-			complete, err := coordinator.CheckAttemptCompletion(i)
-			if err != nil {
-				if m.logger != nil {
-					m.logger.Warn("failed to check attempt completion",
-						"attempt_index", i,
-						"error", err,
-					)
-				}
-				continue
-			}
-			if complete {
-				if err := coordinator.ProcessAttemptCompletion(i); err != nil {
-					if m.logger != nil {
-						m.logger.Error("failed to process attempt completion",
-							"attempt_index", i,
-							"error", err,
-						)
-					}
-				} else {
-					m.infoMessage = "Attempt completed - checking progress..."
-				}
-			} else {
-				allComplete = false
-			}
-		}
-	}
-
-	// If all attempts are complete and we haven't started the judge yet, start it
-	if allComplete && session.AllAttemptsComplete() && session.JudgeID == "" {
-		if session.SuccessfulAttemptCount() >= 2 {
-			if err := coordinator.StartJudge(); err != nil {
-				if m.logger != nil {
-					m.logger.Error("failed to start judge", "error", err)
-				}
-				m.errorMessage = "Failed to start judge evaluation"
-			} else {
-				m.infoMessage = "All attempts complete - judge is evaluating solutions..."
-			}
-		}
-	}
-}
-
-// checkTripleShotJudge checks if the judge has completed evaluation
-func (m *Model) checkTripleShotJudge(coordinator *orchestrator.TripleShotCoordinator, groupID string) {
-	complete, err := coordinator.CheckJudgeCompletion()
-	if err != nil {
-		if m.logger != nil {
-			m.logger.Warn("failed to check judge completion", "error", err, "group_id", groupID)
-		}
-		return
-	}
-
-	if complete {
-		if err := coordinator.ProcessJudgeCompletion(); err != nil {
-			if m.logger != nil {
-				m.logger.Error("failed to process judge completion", "error", err)
-			}
-			m.errorMessage = "Failed to process judge evaluation"
-		} else {
-			session := coordinator.Session()
-			taskPreview := ""
-			if session != nil && len(session.Task) > 30 {
-				taskPreview = session.Task[:27] + "..."
-			} else if session != nil {
-				taskPreview = session.Task
-			}
-			m.infoMessage = fmt.Sprintf("Triple-shot complete! (%s) Use :accept to apply the solution", taskPreview)
-			m.tripleShot.NeedsNotification = true
-		}
-	}
-}
-
-// handleTripleShotComplete handles when triple-shot has completed successfully
-func (m *Model) handleTripleShotComplete(session *orchestrator.TripleShotSession) {
-	// Nothing to poll for - the user should take action
-	// The notification was already shown when we transitioned to complete
-}
-
-// handleTripleShotFailed handles when triple-shot has failed
-func (m *Model) handleTripleShotFailed(session *orchestrator.TripleShotSession) {
-	// Show error message if we have one
-	if session.Error != "" && m.errorMessage == "" {
-		m.errorMessage = "Triple-shot failed: " + session.Error
-	}
-}
 
 // handleTripleShotAccept handles accepting the winning triple-shot solution.
 // For multiple tripleshots, accepts the one whose instance is currently focused.
@@ -238,20 +92,35 @@ func (m *Model) handleTripleShotAccept() {
 		return
 	}
 
-	// Remove this tripleshot from the coordinators map
-	if session.GroupID != "" && m.tripleShot.Coordinators != nil {
-		delete(m.tripleShot.Coordinators, session.GroupID)
+	// Find and stop the coordinator for this session
+	var coordinatorToStop *orchestrator.TripleShotCoordinator
+	for groupID, coord := range m.tripleShot.Coordinators {
+		if coord.Session() == session {
+			coordinatorToStop = coord
+			delete(m.tripleShot.Coordinators, groupID)
+			break
+		}
 	}
 
-	// If no more coordinators, clear tripleshot state entirely
+	// Stop the coordinator's context
+	if coordinatorToStop != nil {
+		coordinatorToStop.Stop()
+	}
+
+	// If no more coordinators, fully clean up tripleshot state
 	if !m.tripleShot.HasActiveCoordinators() {
-		m.tripleShot = nil
+		m.cleanupTripleShot()
 	}
 }
 
 // findActiveTripleShotSession finds the tripleshot session that contains
-// the currently active instance (based on activeTab).
+// the currently active instance (based on activeTab). Falls back to the
+// first coordinator's session if no match is found or no instance is selected.
 func (m *Model) findActiveTripleShotSession() *orchestrator.TripleShotSession {
+	if m.tripleShot == nil {
+		return nil
+	}
+
 	if m.session == nil || m.activeTab >= len(m.session.Instances) {
 		// If no instance is selected, return the first coordinator's session
 		coords := m.tripleShot.GetAllCoordinators()
@@ -292,4 +161,229 @@ func (m *Model) findActiveTripleShotSession() *orchestrator.TripleShotSession {
 		return coords[0].Session()
 	}
 	return nil
+}
+
+// dispatchTripleShotCompletionChecks returns commands to check tripleshot completion
+// files asynchronously. This avoids blocking the UI event loop with file I/O.
+func (m *Model) dispatchTripleShotCompletionChecks() []tea.Cmd {
+	if m.tripleShot == nil || !m.tripleShot.HasActiveCoordinators() {
+		return nil
+	}
+
+	var cmds []tea.Cmd
+
+	// Dispatch async check for each coordinator
+	for groupID, coordinator := range m.tripleShot.Coordinators {
+		session := coordinator.Session()
+		if session == nil {
+			continue
+		}
+
+		// Only check if in a phase that requires polling
+		switch session.Phase {
+		case orchestrator.PhaseTripleShotWorking, orchestrator.PhaseTripleShotEvaluating:
+			cmds = append(cmds, checkTripleShotCompletionAsync(coordinator, groupID))
+		}
+	}
+
+	// Also check the deprecated single Coordinator for backward compatibility
+	if m.tripleShot.Coordinator != nil {
+		// Only process if it's not already in Coordinators map
+		alreadyProcessed := false
+		for _, coord := range m.tripleShot.Coordinators {
+			if coord == m.tripleShot.Coordinator {
+				alreadyProcessed = true
+				break
+			}
+		}
+		if !alreadyProcessed {
+			session := m.tripleShot.Coordinator.Session()
+			if session != nil {
+				switch session.Phase {
+				case orchestrator.PhaseTripleShotWorking, orchestrator.PhaseTripleShotEvaluating:
+					cmds = append(cmds, checkTripleShotCompletionAsync(m.tripleShot.Coordinator, ""))
+				}
+			}
+		}
+	}
+
+	return cmds
+}
+
+// handleTripleShotCheckResult processes the async completion check results.
+// This is called when a checkTripleShotCompletionAsync command completes.
+func (m *Model) handleTripleShotCheckResult(msg tripleShotCheckResultMsg) (tea.Model, tea.Cmd) {
+	if m.tripleShot == nil {
+		return m, nil
+	}
+
+	// Find the coordinator for this result
+	var coordinator *orchestrator.TripleShotCoordinator
+	if msg.GroupID != "" {
+		coordinator = m.tripleShot.Coordinators[msg.GroupID]
+	} else {
+		coordinator = m.tripleShot.Coordinator
+	}
+
+	if coordinator == nil {
+		if m.logger != nil {
+			m.logger.Warn("tripleshot check result for unknown coordinator",
+				"group_id", msg.GroupID,
+				"phase", msg.Phase,
+			)
+		}
+		return m, nil
+	}
+
+	session := coordinator.Session()
+	if session == nil {
+		if m.logger != nil {
+			m.logger.Warn("tripleshot coordinator has nil session",
+				"group_id", msg.GroupID,
+			)
+		}
+		return m, nil
+	}
+
+	switch msg.Phase {
+	case orchestrator.PhaseTripleShotWorking:
+		return m.processAttemptCheckResults(coordinator, session, msg)
+
+	case orchestrator.PhaseTripleShotEvaluating:
+		return m.processJudgeCheckResult(coordinator, msg)
+
+	case orchestrator.PhaseTripleShotFailed:
+		// Show error message for failed tripleshot
+		if session.Error != "" && m.errorMessage == "" {
+			m.errorMessage = "Triple-shot failed: " + session.Error
+		}
+		return m, nil
+	}
+
+	return m, nil
+}
+
+// processAttemptCheckResults handles completion check results for attempts.
+func (m *Model) processAttemptCheckResults(
+	coordinator *orchestrator.TripleShotCoordinator,
+	session *orchestrator.TripleShotSession,
+	msg tripleShotCheckResultMsg,
+) (tea.Model, tea.Cmd) {
+	// Process each attempt result
+	for i, complete := range msg.AttemptResults {
+		if err, hasErr := msg.AttemptErrors[i]; hasErr && err != nil {
+			if m.logger != nil {
+				m.logger.Warn("failed to check attempt completion",
+					"attempt_index", i,
+					"error", err,
+				)
+			}
+			continue
+		}
+
+		if complete {
+			// Process the completion result now that we know the file exists.
+			// Note: This still performs I/O to read/parse the completion file.
+			if err := coordinator.ProcessAttemptCompletion(i); err != nil {
+				if m.logger != nil {
+					m.logger.Error("failed to process attempt completion",
+						"attempt_index", i,
+						"error", err,
+					)
+				}
+				m.errorMessage = fmt.Sprintf("Failed to process attempt %d completion", i+1)
+			} else {
+				m.infoMessage = "Attempt completed - checking progress..."
+			}
+		}
+	}
+
+	// Check if all attempts are complete and we should start the judge
+	if session.AllAttemptsComplete() && session.JudgeID == "" {
+		if session.SuccessfulAttemptCount() >= 2 {
+			// Return a command to start the judge in a goroutine
+			return m, func() tea.Msg {
+				if err := coordinator.StartJudge(); err != nil {
+					return tripleShotErrorMsg{err: fmt.Errorf("failed to start judge: %w", err)}
+				}
+				return tripleShotJudgeStartedMsg{}
+			}
+		}
+	}
+
+	return m, nil
+}
+
+// processJudgeCheckResult handles completion check results for the judge.
+func (m *Model) processJudgeCheckResult(
+	coordinator *orchestrator.TripleShotCoordinator,
+	msg tripleShotCheckResultMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.JudgeError != nil {
+		if m.logger != nil {
+			m.logger.Warn("failed to check judge completion", "error", msg.JudgeError, "group_id", msg.GroupID)
+		}
+		return m, nil
+	}
+
+	if msg.JudgeComplete {
+		// Process the judge completion result now that we know the file exists.
+		// Note: This still performs I/O to read/parse the evaluation file.
+		if err := coordinator.ProcessJudgeCompletion(); err != nil {
+			if m.logger != nil {
+				m.logger.Error("failed to process judge completion", "error", err)
+			}
+			m.errorMessage = "Failed to process judge evaluation"
+		} else {
+			session := coordinator.Session()
+			taskPreview := ""
+			if session != nil && len(session.Task) > 30 {
+				taskPreview = session.Task[:27] + "..."
+			} else if session != nil {
+				taskPreview = session.Task
+			}
+			m.infoMessage = fmt.Sprintf("Triple-shot complete! (%s) Use :accept to apply the solution", taskPreview)
+			m.tripleShot.NeedsNotification = true
+		}
+	}
+
+	return m, nil
+}
+
+// cleanupTripleShot stops all tripleshot coordinators and clears the tripleshot state.
+// This handles both the Coordinators map and the deprecated single Coordinator field.
+func (m *Model) cleanupTripleShot() {
+	if m.tripleShot == nil {
+		return
+	}
+
+	// Stop all coordinators to cancel their contexts
+	for _, coordinator := range m.tripleShot.Coordinators {
+		if coordinator != nil {
+			coordinator.Stop()
+		}
+	}
+
+	// Stop the deprecated single coordinator if not already in the map
+	if m.tripleShot.Coordinator != nil {
+		alreadyStopped := false
+		for _, coord := range m.tripleShot.Coordinators {
+			if coord == m.tripleShot.Coordinator {
+				alreadyStopped = true
+				break
+			}
+		}
+		if !alreadyStopped {
+			m.tripleShot.Coordinator.Stop()
+		}
+	}
+
+	// Clear TUI-level state
+	m.tripleShot = nil
+
+	// Clear session-level tripleshot state
+	if m.session != nil {
+		m.session.TripleShot = nil
+		m.session.TripleShots = nil
+	}
 }
