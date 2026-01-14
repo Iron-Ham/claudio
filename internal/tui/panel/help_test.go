@@ -329,3 +329,50 @@ func TestDefaultHelpSectionsContainsAllCommands(t *testing.T) {
 			missingCommands)
 	}
 }
+
+// TestDefaultHelpSectionsContainsAllFlags verifies that DefaultHelpSections()
+// documents ALL command flags from the command handler's flag registry.
+// This prevents the help panel from getting out of sync when new flags are added.
+//
+// IMPORTANT: Every flag in buildFlags() must appear in DefaultHelpSections().
+// The flag should appear in a help item's Key field as ":<command> <flag>" or ":<alias> <flag>".
+func TestDefaultHelpSectionsContainsAllFlags(t *testing.T) {
+	// Get all help sections
+	sections := DefaultHelpSections()
+
+	// Get all flags from the handler
+	handler := command.New()
+	flags := handler.Flags()
+
+	// Track missing flags for better error reporting
+	var missingFlags []string
+
+	for _, flag := range flags {
+		// Check if the flag appears in any help item's Key field
+		// This is more precise than checking the full help text
+		found := false
+		for _, section := range sections {
+			for _, item := range section.Items {
+				// The flag should appear in the Key field (e.g., ":up --multi-pass")
+				if strings.Contains(item.Key, flag.Flag) {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+
+		if !found {
+			missingFlags = append(missingFlags, flag.Command+" "+flag.Flag)
+		}
+	}
+
+	if len(missingFlags) > 0 {
+		t.Errorf("DefaultHelpSections() is missing the following command flags: %v\n"+
+			"Update DefaultHelpSections() in help.go to include these flags.\n"+
+			"Example: {Key: \":up --multi-pass\", Description: \"...\"}",
+			missingFlags)
+	}
+}
