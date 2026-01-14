@@ -539,6 +539,22 @@ func (m *Model) pauseInstance(instanceID string) {
 	}
 }
 
+// resumeActiveInstance resumes the capture loop for the currently active instance.
+// This should be called after any direct modification of activeTab (e.g., after
+// instance removal) to ensure the new active instance's output is being captured.
+// Without this, removed instances can leave the remaining instance in a paused state.
+func (m *Model) resumeActiveInstance() {
+	if m.orchestrator == nil {
+		return
+	}
+	if inst := m.activeInstance(); inst != nil {
+		if mgr := m.orchestrator.GetInstanceManager(inst.ID); mgr != nil {
+			// Note: Resume() currently always returns nil, so error is safely discarded
+			_ = mgr.Resume()
+		}
+	}
+}
+
 // instanceCount returns the number of instances
 func (m Model) instanceCount() int {
 	if m.session == nil {

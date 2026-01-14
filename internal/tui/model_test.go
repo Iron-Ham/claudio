@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/conflict"
+	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/spf13/viper"
 )
 
@@ -633,4 +634,41 @@ func TestCalculateExtraFooterLines(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResumeActiveInstance_NilSession(t *testing.T) {
+	// Test that resumeActiveInstance doesn't panic with nil session
+	m := Model{
+		session: nil,
+	}
+
+	// Should not panic
+	m.resumeActiveInstance()
+}
+
+func TestResumeActiveInstance_NoActiveInstance(t *testing.T) {
+	// Test that resumeActiveInstance doesn't panic with empty instances
+	m := Model{
+		session:   &orchestrator.Session{},
+		activeTab: 0,
+	}
+
+	// Should not panic even with no instances
+	m.resumeActiveInstance()
+}
+
+func TestResumeActiveInstance_NilOrchestrator(t *testing.T) {
+	// Test that resumeActiveInstance doesn't panic with nil orchestrator
+	m := Model{
+		session: &orchestrator.Session{
+			Instances: []*orchestrator.Instance{
+				{ID: "test-1"},
+			},
+		},
+		orchestrator: nil,
+		activeTab:    0,
+	}
+
+	// Should not panic when orchestrator is nil
+	m.resumeActiveInstance()
 }
