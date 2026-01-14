@@ -1123,3 +1123,79 @@ func (m *Model) newSearchContext() *modelSearchContext {
 func (m *Model) SearchHandler() *search.Handler {
 	return search.NewHandler(m.newSearchContext())
 }
+
+// -----------------------------------------------------------------------------
+// update.Context interface implementation
+// These methods implement the update.Context interface for the update package.
+// -----------------------------------------------------------------------------
+
+// modelUpdateContext adapts the Model to implement update.Context.
+// This allows the update handlers to interact with the Model without circular imports.
+type modelUpdateContext struct {
+	model *Model
+}
+
+// Session returns the current orchestrator session.
+func (c *modelUpdateContext) Session() *orchestrator.Session {
+	return c.model.session
+}
+
+// Orchestrator returns the orchestrator instance.
+func (c *modelUpdateContext) Orchestrator() *orchestrator.Orchestrator {
+	return c.model.orchestrator
+}
+
+// OutputManager returns the output manager for instance output handling.
+func (c *modelUpdateContext) OutputManager() *output.Manager {
+	return c.model.outputManager
+}
+
+// Logger returns the logger instance (may be nil).
+func (c *modelUpdateContext) Logger() *logging.Logger {
+	return c.model.logger
+}
+
+// InstanceCount returns the number of instances.
+func (c *modelUpdateContext) InstanceCount() int {
+	return c.model.instanceCount()
+}
+
+// ActiveInstance returns the currently active instance (may be nil).
+func (c *modelUpdateContext) ActiveInstance() *orchestrator.Instance {
+	return c.model.activeInstance()
+}
+
+// SetErrorMessage sets an error message to display.
+func (c *modelUpdateContext) SetErrorMessage(msg string) {
+	c.model.errorMessage = msg
+}
+
+// SetInfoMessage sets an info message to display.
+func (c *modelUpdateContext) SetInfoMessage(msg string) {
+	c.model.infoMessage = msg
+}
+
+// ClearInfoMessage clears the info message.
+func (c *modelUpdateContext) ClearInfoMessage() {
+	c.model.infoMessage = ""
+}
+
+// SetActiveTab sets the active tab index.
+func (c *modelUpdateContext) SetActiveTab(idx int) {
+	c.model.activeTab = idx
+}
+
+// PauseInstance pauses the output capture for an instance.
+func (c *modelUpdateContext) PauseInstance(instanceID string) {
+	c.model.pauseInstance(instanceID)
+}
+
+// EnsureActiveVisible ensures the active tab is visible in the sidebar.
+func (c *modelUpdateContext) EnsureActiveVisible() {
+	c.model.ensureActiveVisible()
+}
+
+// newUpdateContext creates an update context adapter for the model.
+func (m *Model) newUpdateContext() *modelUpdateContext {
+	return &modelUpdateContext{model: m}
+}
