@@ -25,7 +25,17 @@ type TmuxSender interface {
 }
 
 // DefaultTmuxSender is the production implementation of TmuxSender.
-type DefaultTmuxSender struct{}
+// It uses tmux subprocess spawning for each command.
+type DefaultTmuxSender struct {
+	// socketName is the tmux socket to use. If empty, uses the default socket.
+	socketName string
+}
+
+// NewDefaultTmuxSender creates a new default sender that uses the specified socket.
+// If socketName is empty, uses the default "claudio" socket.
+func NewDefaultTmuxSender(socketName string) *DefaultTmuxSender {
+	return &DefaultTmuxSender{socketName: socketName}
+}
 
 // SendKeys sends keys to a tmux session using the tmux package.
 func (d *DefaultTmuxSender) SendKeys(sessionName string, keys string, literal bool) error {
@@ -34,6 +44,9 @@ func (d *DefaultTmuxSender) SendKeys(sessionName string, keys string, literal bo
 		args = append(args, "-l")
 	}
 	args = append(args, keys)
+	if d.socketName != "" {
+		return tmux.CommandWithSocket(d.socketName, args...).Run()
+	}
 	return tmux.Command(args...).Run()
 }
 
@@ -153,10 +166,11 @@ func WithMaxHistory(max int) Option {
 // WithPersistentSender creates a persistent tmux sender for the given session.
 // This uses tmux control mode to maintain a persistent connection, avoiding
 // subprocess spawn overhead for each character sent.
+// The socketName specifies which tmux socket to use for the control mode connection.
 // This option is mutually exclusive with WithTmuxSender.
-func WithPersistentSender(sessionName string, opts ...PersistentOption) Option {
+func WithPersistentSender(sessionName, socketName string, opts ...PersistentOption) Option {
 	return func(h *Handler) {
-		h.sender = NewPersistentTmuxSender(sessionName, opts...)
+		h.sender = NewPersistentTmuxSender(sessionName, socketName, opts...)
 	}
 }
 

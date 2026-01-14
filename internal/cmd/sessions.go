@@ -3,14 +3,12 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/session"
-	"github.com/Iron-Ham/claudio/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
@@ -273,13 +271,19 @@ func runSessionsClean(cmd *cobra.Command, args []string) error {
 	}
 
 	// List all sessions to find orphaned tmux sessions
-	sessions, _ := session.ListSessions(cwd)
-	tmuxSessions, _ := instance.ListClaudioTmuxSessions()
+	sessions, err := session.ListSessions(cwd)
+	if err != nil {
+		fmt.Printf("Warning: failed to list sessions: %v\n", err)
+	}
+	tmuxSessionInfos, err := instance.ListClaudioTmuxSessionsWithSocket()
+	if err != nil {
+		fmt.Printf("Warning: failed to list tmux sessions: %v\n", err)
+	}
 
 	// Find and kill orphaned tmux sessions
 	var orphanedKilled int
-	for _, ts := range tmuxSessions {
-		sessionID, _ := instance.ExtractSessionAndInstanceID(ts)
+	for _, ts := range tmuxSessionInfos {
+		sessionID, _ := instance.ExtractSessionAndInstanceID(ts.SessionName) // instanceID not needed for orphan detection
 		found := false
 		if sessionID != "" {
 			for _, s := range sessions {
@@ -290,9 +294,10 @@ func runSessionsClean(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if !found {
-			// Kill orphaned session
-			killCmd := fmt.Sprintf("tmux -L %s kill-session -t %s", tmux.SocketName, ts)
-			if _, err := runCommand(killCmd); err == nil {
+			// Kill orphaned session using socket-aware KillCommand
+			if err := ts.KillCommand().Run(); err != nil {
+				fmt.Printf("Warning: failed to kill orphaned session %s: %v\n", ts.SessionName, err)
+			} else {
 				orphanedKilled++
 			}
 		}
@@ -332,14 +337,4 @@ func runSessionsClean(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
-}
-
-// runCommand executes a shell command and returns output
-func runCommand(cmd string) (string, error) {
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
-		return "", fmt.Errorf("empty command")
-	}
-	out, err := exec.Command(parts[0], parts[1:]...).Output()
-	return string(out), err
 }

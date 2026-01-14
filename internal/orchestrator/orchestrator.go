@@ -25,7 +25,6 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prworkflow"
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	"github.com/Iron-Ham/claudio/internal/session"
-	"github.com/Iron-Ham/claudio/internal/tmux"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 	"github.com/spf13/viper"
 )
@@ -511,7 +510,20 @@ func (o *Orchestrator) ReleaseLock() error {
 
 // GetOrphanedTmuxSessions returns tmux sessions that exist but aren't tracked by the current session
 func (o *Orchestrator) GetOrphanedTmuxSessions() ([]string, error) {
-	tmuxSessions, err := instance.ListClaudioTmuxSessions()
+	orphaned, err := o.GetOrphanedTmuxSessionsWithSocket()
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(orphaned))
+	for i, info := range orphaned {
+		names[i] = info.SessionName
+	}
+	return names, nil
+}
+
+// GetOrphanedTmuxSessionsWithSocket returns orphaned sessions with socket information.
+func (o *Orchestrator) GetOrphanedTmuxSessionsWithSocket() ([]instance.TmuxSessionInfo, error) {
+	tmuxSessions, err := instance.ListClaudioTmuxSessionsWithSocket()
 	if err != nil {
 		return nil, err
 	}
@@ -528,9 +540,9 @@ func (o *Orchestrator) GetOrphanedTmuxSessions() ([]string, error) {
 	}
 
 	// Find orphaned sessions
-	var orphaned []string
+	var orphaned []instance.TmuxSessionInfo
 	for _, sess := range tmuxSessions {
-		if !tracked[sess] {
+		if !tracked[sess.SessionName] {
 			orphaned = append(orphaned, sess)
 		}
 	}
@@ -540,18 +552,19 @@ func (o *Orchestrator) GetOrphanedTmuxSessions() ([]string, error) {
 
 // CleanOrphanedTmuxSessions kills all orphaned claudio tmux sessions
 func (o *Orchestrator) CleanOrphanedTmuxSessions() (int, error) {
-	orphaned, err := o.GetOrphanedTmuxSessions()
+	orphaned, err := o.GetOrphanedTmuxSessionsWithSocket()
 	if err != nil {
 		return 0, err
 	}
 
 	cleaned := 0
 	for _, sess := range orphaned {
-		cmd := tmux.Command("kill-session", "-t", sess)
-		if err := cmd.Run(); err != nil {
+		// Use the session's KillCommand for socket-aware cleanup
+		if err := sess.KillCommand().Run(); err != nil {
 			if o.logger != nil {
 				o.logger.Warn("failed to kill orphaned tmux session",
-					"session", sess,
+					"session", sess.SessionName,
+					"socket", sess.SocketName,
 					"error", err,
 				)
 			}

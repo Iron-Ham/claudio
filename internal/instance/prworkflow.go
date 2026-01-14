@@ -31,6 +31,7 @@ type PRWorkflow struct {
 	branch      string
 	task        string
 	sessionName string // tmux session name
+	socketName  string // tmux socket for crash isolation
 	config      PRWorkflowConfig
 	outputBuf   *capture.RingBuffer
 	logger      *logging.Logger
@@ -44,7 +45,7 @@ type PRWorkflow struct {
 }
 
 // NewPRWorkflow creates a new PR workflow manager.
-// Uses legacy tmux naming (claudio-{instanceID}-pr) for backwards compatibility.
+// Uses the instance's socket (claudio-{instanceID}) for crash isolation.
 func NewPRWorkflow(instanceID, workdir, branch, task string, cfg PRWorkflowConfig) *PRWorkflow {
 	return &PRWorkflow{
 		instanceID:  instanceID,
@@ -52,6 +53,7 @@ func NewPRWorkflow(instanceID, workdir, branch, task string, cfg PRWorkflowConfi
 		branch:      branch,
 		task:        task,
 		sessionName: fmt.Sprintf("claudio-%s-pr", instanceID),
+		socketName:  tmux.InstanceSocketName(instanceID), // Use instance socket for crash isolation
 		config:      cfg,
 		outputBuf:   capture.NewRingBuffer(100000), // 100KB buffer
 		doneChan:    make(chan struct{}),
@@ -61,6 +63,7 @@ func NewPRWorkflow(instanceID, workdir, branch, task string, cfg PRWorkflowConfi
 // NewPRWorkflowWithSession creates a new PR workflow manager with session-scoped tmux naming.
 // The tmux session will be named claudio-{sessionID}-{instanceID}-pr to prevent collisions
 // when multiple Claudio sessions are running simultaneously.
+// Uses the instance's socket (claudio-{instanceID}) for crash isolation.
 func NewPRWorkflowWithSession(sessionID, instanceID, workdir, branch, task string, cfg PRWorkflowConfig) *PRWorkflow {
 	// Use session-scoped naming if sessionID is provided
 	var sessionName string
@@ -77,6 +80,23 @@ func NewPRWorkflowWithSession(sessionID, instanceID, workdir, branch, task strin
 		branch:      branch,
 		task:        task,
 		sessionName: sessionName,
+		socketName:  tmux.InstanceSocketName(instanceID), // Use instance socket for crash isolation
+		config:      cfg,
+		outputBuf:   capture.NewRingBuffer(100000), // 100KB buffer
+		doneChan:    make(chan struct{}),
+	}
+}
+
+// NewPRWorkflowWithSocket creates a new PR workflow manager with explicit socket isolation.
+// The socketName should match the parent instance's socket for crash isolation.
+func NewPRWorkflowWithSocket(instanceID, socketName, workdir, branch, task string, cfg PRWorkflowConfig) *PRWorkflow {
+	return &PRWorkflow{
+		instanceID:  instanceID,
+		workdir:     workdir,
+		branch:      branch,
+		task:        task,
+		sessionName: fmt.Sprintf("claudio-%s-pr", instanceID),
+		socketName:  socketName,
 		config:      cfg,
 		outputBuf:   capture.NewRingBuffer(100000), // 100KB buffer
 		doneChan:    make(chan struct{}),
@@ -139,12 +159,12 @@ func (p *PRWorkflow) Start() error {
 
 	// Kill any existing session with this name (cleanup from previous run)
 	p.logDebug("cleaning up existing tmux session", "session_name", p.sessionName)
-	_ = tmux.Command("kill-session", "-t", p.sessionName).Run()
+	_ = tmux.CommandWithSocket(p.socketName, "kill-session", "-t", p.sessionName).Run()
 
 	// Set history-limit BEFORE creating session so the new pane inherits it.
 	// tmux's history-limit only affects newly created panes, not existing ones.
 	// Use 50000 lines for generous scrollback in the PR workflow pane.
-	if err := tmux.Command("set-option", "-g", "history-limit", "50000").Run(); err != nil {
+	if err := tmux.CommandWithSocket(p.socketName, "set-option", "-g", "history-limit", "50000").Run(); err != nil {
 		p.logDebug("failed to set global history-limit for tmux", "error", err.Error())
 	}
 
@@ -154,7 +174,7 @@ func (p *PRWorkflow) Start() error {
 		"width", p.config.TmuxWidth,
 		"height", p.config.TmuxHeight,
 	)
-	createCmd := tmux.Command(
+	createCmd := tmux.CommandWithSocket(p.socketName,
 		"new-session",
 		"-d",
 		"-s", p.sessionName,
@@ -173,7 +193,7 @@ func (p *PRWorkflow) Start() error {
 
 	// Set up additional tmux session options for color support
 	p.logDebug("configuring tmux session options", "session_name", p.sessionName)
-	_ = tmux.Command("set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run()
+	_ = tmux.CommandWithSocket(p.socketName, "set-option", "-t", p.sessionName, "default-terminal", "xterm-256color").Run()
 
 	// Build and send the command
 	var cmd string
@@ -189,7 +209,7 @@ func (p *PRWorkflow) Start() error {
 
 	p.logDebug("sending workflow command to tmux session")
 
-	sendCmd := tmux.Command(
+	sendCmd := tmux.CommandWithSocket(p.socketName,
 		"send-keys",
 		"-t", p.sessionName,
 		cmd,
@@ -200,7 +220,7 @@ func (p *PRWorkflow) Start() error {
 			"error", err.Error(),
 			"session_name", p.sessionName,
 		)
-		_ = tmux.Command("kill-session", "-t", p.sessionName).Run()
+		_ = tmux.CommandWithSocket(p.socketName, "kill-session", "-t", p.sessionName).Run()
 		return fmt.Errorf("failed to start PR workflow command: %w", err)
 	}
 
@@ -306,7 +326,7 @@ func (p *PRWorkflow) monitorLoop() {
 			p.mu.RUnlock()
 
 			// Capture output
-			captureCmd := tmux.Command(
+			captureCmd := tmux.CommandWithSocket(p.socketName,
 				"capture-pane",
 				"-t", sessionName,
 				"-p",
@@ -321,7 +341,7 @@ func (p *PRWorkflow) monitorLoop() {
 			}
 
 			// Check if the session is still running
-			checkCmd := tmux.Command("has-session", "-t", sessionName)
+			checkCmd := tmux.CommandWithSocket(p.socketName, "has-session", "-t", sessionName)
 			if checkCmd.Run() != nil {
 				// Session ended - workflow completed
 				p.mu.Lock()
@@ -433,10 +453,15 @@ func (p *PRWorkflow) Stop() error {
 	}
 
 	// Kill the tmux session
-	_ = tmux.Command("kill-session", "-t", p.sessionName).Run()
+	_ = tmux.CommandWithSocket(p.socketName, "kill-session", "-t", p.sessionName).Run()
 
 	p.running = false
 	return nil
+}
+
+// SocketName returns the tmux socket name used for this PR workflow.
+func (p *PRWorkflow) SocketName() string {
+	return p.socketName
 }
 
 // Running returns whether the PR workflow is running

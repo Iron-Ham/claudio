@@ -29,6 +29,11 @@ type Config struct {
 	// If empty, a name will be generated automatically.
 	TmuxSession string
 
+	// TmuxSocket is the tmux socket name to use for crash isolation.
+	// Each instance should use a unique socket so crashes don't affect others.
+	// If empty, defaults to the global "claudio" socket.
+	TmuxSocket string
+
 	// WorkDir is the working directory for the process.
 	// This is where the Claude Code instance will execute.
 	WorkDir string

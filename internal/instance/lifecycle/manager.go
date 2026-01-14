@@ -79,6 +79,10 @@ type Instance interface {
 	// SessionName returns the tmux session name for this instance.
 	SessionName() string
 
+	// SocketName returns the tmux socket name for this instance.
+	// Each instance uses a unique socket for crash isolation.
+	SocketName() string
+
 	// WorkDir returns the working directory for this instance.
 	WorkDir() string
 
@@ -190,12 +194,13 @@ func (m *Manager) Start(inst Instance) error {
 	m.mu.Unlock()
 
 	sessionName := inst.SessionName()
+	socketName := inst.SocketName()
 	workDir := inst.WorkDir()
 	task := inst.Task()
 	cfg := inst.Config()
 
 	// Kill any existing session with this name (cleanup from previous run)
-	_ = tmux.Command("kill-session", "-t", sessionName).Run()
+	_ = tmux.CommandWithSocket(socketName, "kill-session", "-t", sessionName).Run()
 
 	// Determine terminal dimensions
 	width := cfg.TmuxWidth
@@ -213,7 +218,8 @@ func (m *Manager) Start(inst Instance) error {
 
 	// Set history-limit BEFORE creating session so the new pane inherits it.
 	// tmux's history-limit only affects newly created panes, not existing ones.
-	if err := tmux.Command("set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
+	// Using the instance socket ensures this applies to the instance's isolated tmux server.
+	if err := tmux.CommandWithSocket(socketName, "set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
 		if m.logger != nil {
 			m.logger.Warn("failed to set global history-limit for tmux",
 				"history_limit", historyLimit,
@@ -222,7 +228,8 @@ func (m *Manager) Start(inst Instance) error {
 	}
 
 	// Create a new detached tmux session with color support
-	createCmd := tmux.Command(
+	createCmd := tmux.CommandWithSocket(
+		socketName,
 		"new-session",
 		"-d",
 		"-s", sessionName,
@@ -243,28 +250,29 @@ func (m *Manager) Start(inst Instance) error {
 	}
 
 	// Set up additional tmux session options for color support
-	_ = tmux.Command("set-option", "-t", sessionName, "default-terminal", "xterm-256color").Run()
+	_ = tmux.CommandWithSocket(socketName, "set-option", "-t", sessionName, "default-terminal", "xterm-256color").Run()
 	// Enable bell monitoring for detecting terminal bells
-	_ = tmux.Command("set-option", "-t", sessionName, "-w", "monitor-bell", "on").Run()
+	_ = tmux.CommandWithSocket(socketName, "set-option", "-t", sessionName, "-w", "monitor-bell", "on").Run()
 
 	// Write the task/prompt to a temporary file to avoid shell escaping issues
 	promptFile := filepath.Join(workDir, ".claude-prompt")
 	if err := os.WriteFile(promptFile, []byte(task), 0600); err != nil {
-		_ = tmux.Command("kill-session", "-t", sessionName).Run()
+		_ = tmux.CommandWithSocket(socketName, "kill-session", "-t", sessionName).Run()
 		m.setStateStopped(inst)
 		return fmt.Errorf("failed to write prompt file: %w", err)
 	}
 
 	// Send the claude command to the tmux session, reading prompt from file
 	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q", promptFile, promptFile)
-	sendCmd := tmux.Command(
+	sendCmd := tmux.CommandWithSocket(
+		socketName,
 		"send-keys",
 		"-t", sessionName,
 		claudeCmd,
 		"Enter",
 	)
 	if err := sendCmd.Run(); err != nil {
-		_ = tmux.Command("kill-session", "-t", sessionName).Run()
+		_ = tmux.CommandWithSocket(socketName, "kill-session", "-t", sessionName).Run()
 		_ = os.Remove(promptFile)
 		m.setStateStopped(inst)
 		if m.logger != nil {
@@ -314,13 +322,14 @@ func (m *Manager) Stop(inst Instance) error {
 	m.mu.Unlock()
 
 	sessionName := inst.SessionName()
+	socketName := inst.SocketName()
 
 	// Send Ctrl+C to gracefully stop Claude first
-	_ = tmux.Command("send-keys", "-t", sessionName, "C-c").Run()
+	_ = tmux.CommandWithSocket(socketName, "send-keys", "-t", sessionName, "C-c").Run()
 	time.Sleep(gracefulTimeout)
 
 	// Kill the tmux session
-	if err := tmux.Command("kill-session", "-t", sessionName).Run(); err != nil {
+	if err := tmux.CommandWithSocket(socketName, "kill-session", "-t", sessionName).Run(); err != nil {
 		// Log but don't fail - session may have already exited
 		if m.logger != nil {
 			m.logger.Debug("tmux kill-session error (may be expected)",
@@ -443,14 +452,15 @@ func (m *Manager) Reconnect(inst Instance) error {
 	m.mu.Unlock()
 
 	sessionName := inst.SessionName()
+	socketName := inst.SocketName()
 
 	// Check if the tmux session exists
-	if !m.SessionExists(sessionName) {
+	if !m.SessionExistsWithSocket(sessionName, socketName) {
 		return ErrSessionNotFound
 	}
 
 	// Ensure monitor-bell is enabled
-	_ = tmux.Command("set-option", "-t", sessionName, "-w", "monitor-bell", "on").Run()
+	_ = tmux.CommandWithSocket(socketName, "set-option", "-t", sessionName, "-w", "monitor-bell", "on").Run()
 
 	// Update instance state
 	inst.SetRunning(true)
@@ -471,9 +481,16 @@ func (m *Manager) Reconnect(inst Instance) error {
 	return nil
 }
 
-// SessionExists checks if a tmux session with the given name exists.
+// SessionExists checks if a tmux session with the given name exists on the default socket.
+// Deprecated: Use SessionExistsWithSocket for socket-specific checks.
 func (m *Manager) SessionExists(sessionName string) bool {
 	cmd := tmux.Command("has-session", "-t", sessionName)
+	return cmd.Run() == nil
+}
+
+// SessionExistsWithSocket checks if a tmux session exists on a specific socket.
+func (m *Manager) SessionExistsWithSocket(sessionName, socketName string) bool {
+	cmd := tmux.CommandWithSocket(socketName, "has-session", "-t", sessionName)
 	return cmd.Run() == nil
 }
 
@@ -488,7 +505,7 @@ func (m *Manager) isReady(inst Instance) bool {
 	}
 
 	// Default readiness check: tmux session exists and instance is marked as running
-	return inst.IsRunning() && m.SessionExists(inst.SessionName())
+	return inst.IsRunning() && m.SessionExistsWithSocket(inst.SessionName(), inst.SocketName())
 }
 
 // setStateStopped sets the instance state to stopped.
