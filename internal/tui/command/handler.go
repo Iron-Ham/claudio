@@ -92,7 +92,8 @@ type Result struct {
 	StoppedTripleShotJudgeID *string
 
 	// Mode transition - Plan Mode
-	StartPlanMode *bool // Request to switch to inline plan mode
+	StartPlanMode      *bool // Request to switch to inline plan mode
+	StartMultiPlanMode *bool // Request to switch to inline multi-pass plan mode (3 planners + 1 assessor)
 
 	// Mode transition - UltraPlan Mode
 	StartUltraPlanMode *bool   // Request to switch to inline ultraplan mode
@@ -257,6 +258,8 @@ func (h *Handler) registerCommands() {
 
 	// Plan mode commands
 	h.commands["plan"] = cmdPlan
+	h.commands["multiplan"] = cmdMultiPlan
+	h.commands["mp"] = cmdMultiPlan
 
 	// Group management commands
 	h.argCommands["group"] = func(deps Dependencies, args string) Result {
@@ -320,6 +323,7 @@ func (h *Handler) buildCategories() {
 				{ShortKey: "", LongKey: "cancel", Description: "Cancel ultra-plan execution", Category: "utility"},
 				{ShortKey: "", LongKey: "tripleshot", Description: "Start triple-shot mode (3 parallel attempts + judge)", Category: "utility"},
 				{ShortKey: "", LongKey: "plan", Description: "Start inline plan mode for structured task planning", Category: "utility"},
+				{ShortKey: "", LongKey: "multiplan", Description: "Start multi-pass plan mode (3 planners + 1 assessor)", Category: "utility"},
 				{ShortKey: "", LongKey: "ultraplan", Description: "Start ultraplan mode for parallel task execution", Category: "utility"},
 			},
 		},
@@ -1001,6 +1005,28 @@ func cmdPlan(deps Dependencies) Result {
 	return Result{
 		StartPlanMode: &startPlanMode,
 		InfoMessage:   "Enter an objective for plan mode",
+	}
+}
+
+func cmdMultiPlan(deps Dependencies) Result {
+	// Check if inline plan is enabled in config
+	if !viper.GetBool("experimental.inline_plan") {
+		return Result{ErrorMessage: "Plan mode is disabled. Enable it in :config under Experimental"}
+	}
+
+	// Don't allow starting multiplan mode if already in ultraplan mode
+	if deps.IsUltraPlanMode() {
+		return Result{ErrorMessage: "Cannot start multiplan mode while in ultraplan mode"}
+	}
+
+	// Multiplan mode is allowed in triple-shot mode - plans appear as separate groups in the sidebar
+
+	// Signal to the model that we want to enter multi-pass plan mode
+	// This will create 3 parallel planners + 1 plan assessor
+	startMultiPlanMode := true
+	return Result{
+		StartMultiPlanMode: &startMultiPlanMode,
+		InfoMessage:        "Enter an objective for multiplan mode (3 planners + 1 assessor)",
 	}
 }
 
