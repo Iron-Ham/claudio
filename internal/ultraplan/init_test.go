@@ -771,3 +771,80 @@ func TestInit_GroupCreation(t *testing.T) {
 		})
 	}
 }
+
+// TestInitWithPlan_ValidationErrors tests that InitWithPlan properly validates plans
+// before attempting initialization. This tests the validation logic without needing
+// a full orchestrator.
+func TestInitWithPlan_ValidationErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		plan     *orchestrator.PlanSpec
+		errorMsg string
+	}{
+		{
+			name:     "nil plan fails validation",
+			plan:     nil,
+			errorMsg: "plan is nil",
+		},
+		{
+			name: "plan with no tasks fails validation",
+			plan: &orchestrator.PlanSpec{
+				ID:        "empty-plan",
+				Objective: "Empty",
+				Tasks:     []orchestrator.PlannedTask{},
+			},
+			errorMsg: "plan has no tasks",
+		},
+		{
+			name: "plan with invalid dependency fails validation",
+			plan: &orchestrator.PlanSpec{
+				ID:        "invalid-deps",
+				Objective: "Invalid deps",
+				Tasks: []orchestrator.PlannedTask{
+					{ID: "task-1", Title: "Task 1", DependsOn: []string{"nonexistent"}},
+				},
+			},
+			errorMsg: "depends on unknown task",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := orchestrator.NewSession("test-session", "/tmp/test-repo")
+			params := InitParams{
+				Orchestrator: nil,
+				Session:      session,
+				Objective:    "Params objective",
+				Config: &orchestrator.UltraPlanConfig{
+					MaxParallel: 3,
+				},
+			}
+
+			result, err := InitWithPlan(params, tt.plan)
+
+			if err == nil {
+				t.Error("expected error but got nil")
+			} else if !contains(err.Error(), tt.errorMsg) {
+				t.Errorf("error = %q, want to contain %q", err.Error(), tt.errorMsg)
+			}
+			if result != nil {
+				t.Error("result should be nil when error occurs")
+			}
+		})
+	}
+}
+
+// contains is a helper function for string containment check.
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
