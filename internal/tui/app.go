@@ -22,6 +22,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	"github.com/Iron-Ham/claudio/internal/tui/update"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
+	"github.com/Iron-Ham/claudio/internal/ultraplan"
 	"github.com/Iron-Ham/claudio/internal/util"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -50,20 +51,12 @@ func New(orch *orchestrator.Orchestrator, session *orchestrator.Session, logger 
 func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.Coordinator, logger *logging.Logger) *App {
 	model := NewModel(orch, session, logger)
 
-	// Create a group for this ultraplan session (similar to inline mode)
+	// Create a group for this ultraplan session if one doesn't exist.
+	// Uses the shared helper from the ultraplan package to ensure consistent
+	// group creation logic across all entry points (CLI, TUI inline, etc.)
 	ultraSession := coordinator.Session()
 	if ultraSession != nil && ultraSession.GroupID == "" {
-		sessionType := orchestrator.SessionTypeUltraPlan
-		if ultraSession.Config.MultiPass {
-			sessionType = orchestrator.SessionTypePlanMulti
-		}
-		ultraGroup := orchestrator.NewInstanceGroupWithType(
-			util.TruncateString(ultraSession.Objective, 30),
-			sessionType,
-			ultraSession.Objective,
-		)
-		session.AddGroup(ultraGroup)
-		ultraSession.GroupID = ultraGroup.ID
+		ultraplan.CreateAndLinkUltraPlanGroup(session, ultraSession, ultraSession.Config.MultiPass)
 
 		// Auto-enable grouped sidebar mode
 		model.autoEnableGroupedMode()

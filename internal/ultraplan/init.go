@@ -292,6 +292,8 @@ func InitWithPlan(params InitParams, plan *orchestrator.PlanSpec) (*InitResult, 
 	result := Init(params)
 
 	// Set the plan on the coordinator (ensures all internal state is updated)
+	// Coverage: This error branch is unreachable because ValidatePlan above validates
+	// the same conditions that SetPlan checks, so a valid plan will never fail here.
 	if err := result.Coordinator.SetPlan(plan); err != nil {
 		return nil, err
 	}
