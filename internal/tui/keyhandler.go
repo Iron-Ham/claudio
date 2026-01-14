@@ -7,6 +7,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
+	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -270,16 +271,16 @@ func (m Model) submitTaskInput() (tea.Model, tea.Cmd) {
 		// Add instance asynchronously to avoid blocking UI during git worktree creation
 		if isDependent && dependsOn != "" {
 			m.infoMessage = "Adding dependent task..."
-			return m, addDependentTaskAsync(m.orchestrator, m.session, task, dependsOn)
+			return m, tuimsg.AddDependentTaskAsync(m.orchestrator, m.session, task, dependsOn)
 		}
 
 		// Use selected base branch if specified, otherwise use default (current HEAD)
 		if baseBranch != "" {
 			m.infoMessage = "Adding task from branch " + baseBranch + "..."
-			return m, addTaskFromBranchAsync(m.orchestrator, m.session, task, baseBranch)
+			return m, tuimsg.AddTaskFromBranchAsync(m.orchestrator, m.session, task, baseBranch)
 		}
 		m.infoMessage = "Adding task..."
-		return m, addTaskAsync(m.orchestrator, m.session, task)
+		return m, tuimsg.AddTaskAsync(m.orchestrator, m.session, task)
 	}
 	return m.cancelTaskInput(), nil
 }

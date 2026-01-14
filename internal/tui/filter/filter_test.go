@@ -1,6 +1,8 @@
 package filter
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -306,28 +308,8 @@ func TestApplyCategoryFilters(t *testing.T) {
 }
 
 func containsLine(output, line string) bool {
-	lines := splitLines(output)
-	for _, l := range lines {
-		if l == line {
-			return true
-		}
-	}
-	return false
-}
-
-func splitLines(s string) []string {
-	var lines []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			lines = append(lines, s[start:i])
-			start = i + 1
-		}
-	}
-	if start < len(s) {
-		lines = append(lines, s[start:])
-	}
-	return lines
+	lines := strings.Split(output, "\n")
+	return slices.Contains(lines, line)
 }
 
 func TestShouldShowLineErrors(t *testing.T) {
@@ -632,5 +614,257 @@ func TestRenderPanelWithDisabledCategory(t *testing.T) {
 	// Panel should render without error
 	if panel == "" {
 		t.Error("RenderPanel() with disabled category returned empty string")
+	}
+}
+
+// Additional edge case tests
+
+func TestBackspacePatternToEmpty(t *testing.T) {
+	// This tests the compileRegex branch where pattern becomes empty
+	f := New()
+	f.SetCustomPattern("a")
+
+	// Backspace to empty string
+	f.BackspacePattern()
+
+	if f.CustomPattern() != "" {
+		t.Errorf("CustomPattern() = %q, want empty after backspace", f.CustomPattern())
+	}
+	if f.CustomRegex() != nil {
+		t.Error("CustomRegex() should be nil when pattern becomes empty via backspace")
+	}
+}
+
+func TestShouldShowLineWarnings(t *testing.T) {
+	f := New()
+	f.ToggleCategory("warnings")
+
+	tests := []struct {
+		line string
+		show bool
+	}{
+		{"normal line", true},
+		{"warning: something", false},
+		{"Warning message", false},
+		{"WARN: deprecated", false},
+		{"warn: use X instead", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			if got := f.ShouldShowLine(tt.line); got != tt.show {
+				t.Errorf("ShouldShowLine(%q) = %v, want %v", tt.line, got, tt.show)
+			}
+		})
+	}
+}
+
+func TestShouldShowLineThinking(t *testing.T) {
+	f := New()
+	f.ToggleCategory("thinking")
+
+	tests := []struct {
+		line string
+		show bool
+	}{
+		{"normal line", true},
+		{"I'm thinking about this", false},
+		{"Let me check the code", false},
+		{"I'll review the changes", false},
+		{"I will implement this", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			if got := f.ShouldShowLine(tt.line); got != tt.show {
+				t.Errorf("ShouldShowLine(%q) = %v, want %v", tt.line, got, tt.show)
+			}
+		})
+	}
+}
+
+func TestApplyEmptyInput(t *testing.T) {
+	f := New()
+	f.SetCustomPattern("test")
+
+	// Empty input should return empty output
+	output := f.Apply("")
+	if output != "" {
+		t.Errorf("Apply(\"\") = %q, want empty", output)
+	}
+}
+
+func TestApplySingleLineNoMatch(t *testing.T) {
+	f := New()
+	f.SetCustomPattern("error")
+
+	// Single line that doesn't match
+	output := f.Apply("normal line")
+	if output != "" {
+		t.Errorf("Apply() = %q, want empty when no match", output)
+	}
+}
+
+func TestHandleKeyUnhandledType(t *testing.T) {
+	f := New()
+
+	// Test an unhandled key type (e.g., KeyUp)
+	msg := tea.KeyMsg{Type: tea.KeyUp}
+	result := f.HandleKey(msg)
+
+	// Should return empty result (no exit, no changes)
+	if result.ExitMode {
+		t.Error("unhandled key should not exit mode")
+	}
+}
+
+func TestNewWithCategoriesEmpty(t *testing.T) {
+	// Pass empty map - all categories should default to enabled
+	f := NewWithCategories(map[string]bool{})
+
+	for _, cat := range Categories {
+		if !f.IsCategoryEnabled(cat.Key) {
+			t.Errorf("category %q should default to enabled with empty map", cat.Key)
+		}
+	}
+}
+
+func TestToggleCategoryUnknown(t *testing.T) {
+	f := New()
+
+	// Toggle an unknown category - should not panic
+	f.ToggleCategory("unknown")
+
+	// After toggling unknown, it should be true (toggled from false default)
+	if !f.IsCategoryEnabled("unknown") {
+		t.Error("unknown category should be true after first toggle")
+	}
+}
+
+func TestSetCategoriesPartial(t *testing.T) {
+	f := New()
+
+	// Disable one category first
+	f.ToggleCategory("errors")
+
+	// Set only warnings - errors should remain disabled
+	f.SetCategories(map[string]bool{
+		"warnings": false,
+	})
+
+	if f.IsCategoryEnabled("errors") {
+		t.Error("errors should remain disabled")
+	}
+	if f.IsCategoryEnabled("warnings") {
+		t.Error("warnings should be disabled after SetCategories")
+	}
+}
+
+func TestApplyMultipleCategoriesDisabled(t *testing.T) {
+	f := New()
+	f.ToggleCategory("errors")
+	f.ToggleCategory("warnings")
+
+	input := "normal line\nerror occurred\nwarning issued\nok"
+	output := f.Apply(input)
+
+	if containsLine(output, "error occurred") {
+		t.Error("output should not contain error line")
+	}
+	if containsLine(output, "warning issued") {
+		t.Error("output should not contain warning line")
+	}
+	if !containsLine(output, "normal line") {
+		t.Error("output should contain normal line")
+	}
+	if !containsLine(output, "ok") {
+		t.Error("output should contain ok line")
+	}
+}
+
+func TestCustomPatternRegexSpecialChars(t *testing.T) {
+	f := New()
+
+	// Test regex with special characters that are valid
+	f.SetCustomPattern("\\d+") // Match digits
+	if f.CustomRegex() == nil {
+		t.Error("CustomRegex() should compile valid regex with special chars")
+	}
+	if !f.CustomRegex().MatchString("123") {
+		t.Error("regex should match digits")
+	}
+	if f.CustomRegex().MatchString("abc") {
+		t.Error("regex should not match non-digits")
+	}
+}
+
+func TestApplyWithRegexPattern(t *testing.T) {
+	f := New()
+	f.SetCustomPattern("^\\[.*\\]") // Lines starting with brackets
+
+	input := "[INFO] message\nnormal line\n[ERROR] bad thing\nplain text"
+	output := f.Apply(input)
+
+	if !containsLine(output, "[INFO] message") {
+		t.Error("output should contain [INFO] line")
+	}
+	if !containsLine(output, "[ERROR] bad thing") {
+		t.Error("output should contain [ERROR] line")
+	}
+	if containsLine(output, "normal line") {
+		t.Error("output should not contain normal line")
+	}
+	if containsLine(output, "plain text") {
+		t.Error("output should not contain plain text line")
+	}
+}
+
+func TestShouldShowLineToolsWithParenthesis(t *testing.T) {
+	f := New()
+	f.ToggleCategory("tools")
+
+	// Test the specific pattern: lines starting with spaces and containing (
+	tests := []struct {
+		line string
+		show bool
+	}{
+		{"  someFunc(arg)", false},       // Tool call pattern
+		{"someFunc(arg)", true},          // Not indented - shows
+		{"  plain text no parens", true}, // Indented but no parens
+		{"  has arrow → here", false},    // Tool result pattern
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			if got := f.ShouldShowLine(tt.line); got != tt.show {
+				t.Errorf("ShouldShowLine(%q) = %v, want %v", tt.line, got, tt.show)
+			}
+		})
+	}
+}
+
+func TestCategoriesGlobalVariable(t *testing.T) {
+	// Ensure Categories global has expected length and structure
+	if len(Categories) != 5 {
+		t.Errorf("Categories should have 5 items, got %d", len(Categories))
+	}
+
+	expectedKeys := []string{"errors", "warnings", "tools", "thinking", "progress"}
+	for i, key := range expectedKeys {
+		if Categories[i].Key != key {
+			t.Errorf("Categories[%d].Key = %q, want %q", i, Categories[i].Key, key)
+		}
+	}
+}
+
+func TestAllEnabledEmptyCategories(t *testing.T) {
+	// Create filter with empty categories map directly
+	f := &Filter{
+		categories: make(map[string]bool),
+	}
+
+	// Empty map should return true (no disabled categories)
+	if !f.AllEnabled() {
+		t.Error("AllEnabled() should return true for empty categories map")
 	}
 }
