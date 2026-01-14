@@ -10,6 +10,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
+	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 )
 
@@ -1215,7 +1216,7 @@ func checkInlineMultiPlanFileAsync(
 			return nil
 		}
 
-		return inlineMultiPlanFileCheckResultMsg{
+		return tuimsg.InlineMultiPlanFileCheckResultMsg{
 			Index:        idx,
 			Plan:         plan,
 			StrategyName: strategyName,
@@ -1230,7 +1231,7 @@ var statFile = func(path string) (any, error) {
 
 // handleInlineMultiPlanFileCheckResult handles the result of async inline multiplan file checking.
 // When a plan file is detected, this processes it and potentially triggers the evaluator.
-func (m *Model) handleInlineMultiPlanFileCheckResult(msg inlineMultiPlanFileCheckResultMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleInlineMultiPlanFileCheckResult(msg tuimsg.InlineMultiPlanFileCheckResultMsg) (tea.Model, tea.Cmd) {
 	// Verify we're still in inline multiplan mode
 	if m.inlinePlan == nil || !m.inlinePlan.MultiPass || !m.inlinePlan.AwaitingPlanCreation {
 		return m, nil

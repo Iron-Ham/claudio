@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 )
 
 func TestDispatchInlineMultiPlanFileChecks_NilInlinePlan(t *testing.T) {
@@ -109,7 +110,7 @@ func TestHandleInlineMultiPlanFileCheckResult_NilInlinePlan(t *testing.T) {
 		inlinePlan: nil,
 	}
 
-	msg := inlineMultiPlanFileCheckResultMsg{
+	msg := tuimsg.InlineMultiPlanFileCheckResultMsg{
 		Index:        0,
 		Plan:         &orchestrator.PlanSpec{},
 		StrategyName: "test",
@@ -133,7 +134,7 @@ func TestHandleInlineMultiPlanFileCheckResult_NotMultiPass(t *testing.T) {
 		},
 	}
 
-	msg := inlineMultiPlanFileCheckResultMsg{
+	msg := tuimsg.InlineMultiPlanFileCheckResultMsg{
 		Index:        0,
 		Plan:         &orchestrator.PlanSpec{},
 		StrategyName: "test",
@@ -166,7 +167,7 @@ func TestHandleInlineMultiPlanFileCheckResult_InvalidIndex(t *testing.T) {
 				},
 			}
 
-			msg := inlineMultiPlanFileCheckResultMsg{
+			msg := tuimsg.InlineMultiPlanFileCheckResultMsg{
 				Index:        tt.index,
 				Plan:         &orchestrator.PlanSpec{},
 				StrategyName: "test",
@@ -193,7 +194,7 @@ func TestHandleInlineMultiPlanFileCheckResult_SkipsAlreadyProcessed(t *testing.T
 		},
 	}
 
-	msg := inlineMultiPlanFileCheckResultMsg{
+	msg := tuimsg.InlineMultiPlanFileCheckResultMsg{
 		Index:        0,
 		Plan:         &orchestrator.PlanSpec{Tasks: []orchestrator.PlannedTask{{ID: "new"}}},
 		StrategyName: "test",
@@ -226,7 +227,7 @@ func TestHandleInlineMultiPlanFileCheckResult_StoresPlan(t *testing.T) {
 		Tasks:   []orchestrator.PlannedTask{{ID: "task-1", Title: "Test Task"}},
 	}
 
-	msg := inlineMultiPlanFileCheckResultMsg{
+	msg := tuimsg.InlineMultiPlanFileCheckResultMsg{
 		Index:        1,
 		Plan:         testPlan,
 		StrategyName: "minimize-complexity",
@@ -264,7 +265,7 @@ func TestHandleInlineMultiPlanFileCheckResult_AllPlansCollectedWithNoValidPlans(
 	}
 
 	// Send a nil plan (simulating parse failure)
-	msg := inlineMultiPlanFileCheckResultMsg{
+	msg := tuimsg.InlineMultiPlanFileCheckResultMsg{
 		Index:        0,
 		Plan:         nil,
 		StrategyName: "test",

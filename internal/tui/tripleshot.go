@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -31,7 +32,7 @@ func (m *Model) dispatchTripleShotCompletionChecks() []tea.Cmd {
 		// Only check if in a phase that requires polling
 		switch session.Phase {
 		case orchestrator.PhaseTripleShotWorking, orchestrator.PhaseTripleShotEvaluating:
-			cmds = append(cmds, checkTripleShotCompletionAsync(coordinator, groupID))
+			cmds = append(cmds, tuimsg.CheckTripleShotCompletionAsync(coordinator, groupID))
 		}
 	}
 
@@ -50,7 +51,7 @@ func (m *Model) dispatchTripleShotCompletionChecks() []tea.Cmd {
 			if session != nil {
 				switch session.Phase {
 				case orchestrator.PhaseTripleShotWorking, orchestrator.PhaseTripleShotEvaluating:
-					cmds = append(cmds, checkTripleShotCompletionAsync(m.tripleShot.Coordinator, ""))
+					cmds = append(cmds, tuimsg.CheckTripleShotCompletionAsync(m.tripleShot.Coordinator, ""))
 				}
 			}
 		}
@@ -61,7 +62,7 @@ func (m *Model) dispatchTripleShotCompletionChecks() []tea.Cmd {
 
 // handleTripleShotCheckResult processes the async completion check results.
 // This is called when a checkTripleShotCompletionAsync command completes.
-func (m *Model) handleTripleShotCheckResult(msg tripleShotCheckResultMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleTripleShotCheckResult(msg tuimsg.TripleShotCheckResultMsg) (tea.Model, tea.Cmd) {
 	if m.tripleShot == nil {
 		return m, nil
 	}
@@ -117,7 +118,7 @@ func (m *Model) handleTripleShotCheckResult(msg tripleShotCheckResultMsg) (tea.M
 func (m *Model) processAttemptCheckResults(
 	coordinator *orchestrator.TripleShotCoordinator,
 	session *orchestrator.TripleShotSession,
-	msg tripleShotCheckResultMsg,
+	msg tuimsg.TripleShotCheckResultMsg,
 ) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
@@ -136,7 +137,7 @@ func (m *Model) processAttemptCheckResults(
 		if complete {
 			// Dispatch async command to process the completion file
 			// This avoids blocking the UI with file I/O
-			cmds = append(cmds, processAttemptCompletionAsync(coordinator, msg.GroupID, i))
+			cmds = append(cmds, tuimsg.ProcessAttemptCompletionAsync(coordinator, msg.GroupID, i))
 		}
 	}
 
@@ -147,7 +148,7 @@ func (m *Model) processAttemptCheckResults(
 }
 
 // handleTripleShotAttemptProcessed handles the result of async attempt completion processing.
-func (m *Model) handleTripleShotAttemptProcessed(msg tripleShotAttemptProcessedMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleTripleShotAttemptProcessed(msg tuimsg.TripleShotAttemptProcessedMsg) (tea.Model, tea.Cmd) {
 	if m.tripleShot == nil {
 		return m, nil
 	}
@@ -184,9 +185,9 @@ func (m *Model) handleTripleShotAttemptProcessed(msg tripleShotAttemptProcessedM
 			// Return a command to start the judge in a goroutine
 			return m, func() tea.Msg {
 				if err := coordinator.StartJudge(); err != nil {
-					return tripleShotErrorMsg{err: fmt.Errorf("failed to start judge: %w", err)}
+					return tuimsg.TripleShotErrorMsg{Err: fmt.Errorf("failed to start judge: %w", err)}
 				}
-				return tripleShotJudgeStartedMsg{}
+				return tuimsg.TripleShotJudgeStartedMsg{}
 			}
 		}
 	}
@@ -198,7 +199,7 @@ func (m *Model) handleTripleShotAttemptProcessed(msg tripleShotAttemptProcessedM
 // Returns an async command to process the judge completion file without blocking the UI.
 func (m *Model) processJudgeCheckResult(
 	coordinator *orchestrator.TripleShotCoordinator,
-	msg tripleShotCheckResultMsg,
+	msg tuimsg.TripleShotCheckResultMsg,
 ) (tea.Model, tea.Cmd) {
 	if msg.JudgeError != nil {
 		if m.logger != nil {
@@ -210,14 +211,14 @@ func (m *Model) processJudgeCheckResult(
 	if msg.JudgeComplete {
 		// Dispatch async command to process the judge completion file
 		// This avoids blocking the UI with file I/O
-		return m, processJudgeCompletionAsync(coordinator, msg.GroupID)
+		return m, tuimsg.ProcessJudgeCompletionAsync(coordinator, msg.GroupID)
 	}
 
 	return m, nil
 }
 
 // handleTripleShotJudgeProcessed handles the result of async judge completion processing.
-func (m *Model) handleTripleShotJudgeProcessed(msg tripleShotJudgeProcessedMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleTripleShotJudgeProcessed(msg tuimsg.TripleShotJudgeProcessedMsg) (tea.Model, tea.Cmd) {
 	if m.tripleShot == nil {
 		return m, nil
 	}

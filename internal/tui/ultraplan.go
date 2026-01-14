@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -978,7 +979,7 @@ func (m *Model) tryParsePlan(inst *orchestrator.Instance, session *orchestrator.
 
 // handlePlanFileCheckResult handles the async result of checking for a plan file.
 // This is the handler for single-pass mode plan file detection.
-func (m *Model) handlePlanFileCheckResult(msg planFileCheckResultMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handlePlanFileCheckResult(msg tuimsg.PlanFileCheckResultMsg) (tea.Model, tea.Cmd) {
 	if !msg.Found || msg.Plan == nil {
 		return m, nil
 	}
@@ -1029,7 +1030,7 @@ func (m *Model) handlePlanFileCheckResult(msg planFileCheckResultMsg) (tea.Model
 
 // handleMultiPassPlanFileCheckResult handles the async result of checking for multi-pass plan files.
 // This processes one coordinator's plan at a time and triggers the plan manager when all are collected.
-func (m *Model) handleMultiPassPlanFileCheckResult(msg multiPassPlanFileCheckResultMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleMultiPassPlanFileCheckResult(msg tuimsg.MultiPassPlanFileCheckResultMsg) (tea.Model, tea.Cmd) {
 	if msg.Plan == nil {
 		return m, nil
 	}
@@ -1072,7 +1073,7 @@ func (m *Model) handleMultiPassPlanFileCheckResult(msg multiPassPlanFileCheckRes
 
 // handlePlanManagerFileCheckResult handles the async result of checking for the plan manager's output file.
 // This processes the final selected/merged plan from multi-pass mode.
-func (m *Model) handlePlanManagerFileCheckResult(msg planManagerFileCheckResultMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handlePlanManagerFileCheckResult(msg tuimsg.PlanManagerFileCheckResultMsg) (tea.Model, tea.Cmd) {
 	if !msg.Found {
 		return m, nil
 	}
@@ -1156,13 +1157,13 @@ func (m *Model) dispatchUltraPlanFileChecks() []tea.Cmd {
 	var cmds []tea.Cmd
 
 	// Dispatch async check for single-pass plan file
-	cmds = append(cmds, checkPlanFileAsync(m.orchestrator, m.ultraPlan))
+	cmds = append(cmds, tuimsg.CheckPlanFileAsync(m.orchestrator, m.ultraPlan))
 
 	// Dispatch async checks for multi-pass plan files
-	cmds = append(cmds, checkMultiPassPlanFilesAsync(m.orchestrator, m.ultraPlan)...)
+	cmds = append(cmds, tuimsg.CheckMultiPassPlanFilesAsync(m.orchestrator, m.ultraPlan)...)
 
 	// Dispatch async check for plan manager file
-	cmds = append(cmds, checkPlanManagerFileAsync(m.orchestrator, m.outputManager, m.ultraPlan))
+	cmds = append(cmds, tuimsg.CheckPlanManagerFileAsync(m.orchestrator, m.outputManager, m.ultraPlan))
 
 	return cmds
 }

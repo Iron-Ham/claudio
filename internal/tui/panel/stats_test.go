@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestStatsPanel_Render(t *testing.T) {
@@ -310,6 +311,160 @@ func TestTruncateString(t *testing.T) {
 		result := truncateString(tt.input, tt.maxLen)
 		if result != tt.expected {
 			t.Errorf("truncateString(%q, %d) = %q, want %q", tt.input, tt.maxLen, result, tt.expected)
+		}
+	}
+}
+
+func TestStatsPanel_RenderWithBox(t *testing.T) {
+	// Create a simple box style for testing
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(1, 2)
+
+	tests := []struct {
+		name           string
+		state          *RenderState
+		contains       []string
+		notContains    []string
+		checkBoxBorder bool
+	}{
+		{
+			name: "renders stats with box wrapper",
+			state: &RenderState{
+				Width:  80,
+				Height: 24,
+				SessionMetrics: &orchestrator.SessionMetrics{
+					TotalInputTokens:  5000,
+					TotalOutputTokens: 2500,
+					TotalCost:         0.75,
+					InstanceCount:     2,
+					ActiveCount:       1,
+				},
+				SessionCreated: time.Date(2024, 3, 20, 14, 30, 0, 0, time.UTC),
+				Instances: []*orchestrator.Instance{
+					{ID: "inst-1", Task: "Test task", Metrics: &orchestrator.Metrics{Cost: 0.75}},
+				},
+			},
+			contains: []string{
+				"Session Statistics",
+				"Session Summary",
+				"Token Usage",
+				"Estimated Cost",
+				"$0.75",
+			},
+			checkBoxBorder: true,
+		},
+		{
+			name: "no session renders with box",
+			state: &RenderState{
+				Width:          80,
+				Height:         24,
+				SessionMetrics: nil,
+			},
+			contains: []string{
+				"Session Statistics",
+				"No active session",
+			},
+			checkBoxBorder: true,
+		},
+		{
+			name: "box respects width from state",
+			state: &RenderState{
+				Width:  100,
+				Height: 24,
+				SessionMetrics: &orchestrator.SessionMetrics{
+					TotalCost:     1.00,
+					InstanceCount: 1,
+					ActiveCount:   1,
+				},
+			},
+			contains: []string{
+				"Session Statistics",
+			},
+			checkBoxBorder: true,
+		},
+	}
+
+	panel := NewStatsPanel()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := panel.RenderWithBox(tt.state, boxStyle)
+
+			if result == "" {
+				t.Error("expected non-empty result, got empty")
+			}
+
+			for _, want := range tt.contains {
+				if !strings.Contains(result, want) {
+					t.Errorf("result missing %q\nGot:\n%s", want, result)
+				}
+			}
+
+			for _, notWant := range tt.notContains {
+				if strings.Contains(result, notWant) {
+					t.Errorf("result should not contain %q\nGot:\n%s", notWant, result)
+				}
+			}
+
+			// Check that the box border characters are present (rounded border uses ╭╮╰╯)
+			if tt.checkBoxBorder {
+				hasBorder := strings.Contains(result, "╭") || strings.Contains(result, "│")
+				if !hasBorder {
+					t.Error("expected box border characters in output")
+				}
+			}
+		})
+	}
+}
+
+func TestStatsPanel_RenderWithBox_ContentMatchesRender(t *testing.T) {
+	// Verify that RenderWithBox wraps the same content as Render
+	panel := NewStatsPanel()
+
+	state := &RenderState{
+		Width:  80,
+		Height: 24,
+		SessionMetrics: &orchestrator.SessionMetrics{
+			TotalInputTokens:  10000,
+			TotalOutputTokens: 5000,
+			TotalCost:         1.50,
+			InstanceCount:     3,
+			ActiveCount:       2,
+		},
+		SessionCreated: time.Date(2024, 6, 15, 10, 0, 0, 0, time.UTC),
+		Instances: []*orchestrator.Instance{
+			{ID: "a", Task: "Task A", Metrics: &orchestrator.Metrics{Cost: 0.50}},
+			{ID: "b", Task: "Task B", Metrics: &orchestrator.Metrics{Cost: 0.60}},
+			{ID: "c", Task: "Task C", Metrics: &orchestrator.Metrics{Cost: 0.40}},
+		},
+	}
+
+	// Get the raw content
+	rawContent := panel.Render(state)
+
+	// Get the boxed content with a minimal style
+	boxStyle := lipgloss.NewStyle().Width(state.Width - 4)
+	boxedContent := panel.RenderWithBox(state, boxStyle)
+
+	// The boxed content should contain all the same text elements
+	expectedParts := []string{
+		"Session Statistics",
+		"Session Summary",
+		"Token Usage",
+		"Estimated Cost",
+		"$1.50",
+		"Task A",
+		"Task B",
+		"Task C",
+	}
+
+	for _, part := range expectedParts {
+		if !strings.Contains(rawContent, part) {
+			t.Errorf("Render() missing %q", part)
+		}
+		if !strings.Contains(boxedContent, part) {
+			t.Errorf("RenderWithBox() missing %q", part)
 		}
 	}
 }
