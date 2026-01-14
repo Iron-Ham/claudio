@@ -240,3 +240,42 @@ func TestExtractInstanceID(t *testing.T) {
 		})
 	}
 }
+
+func TestMapKeyToTmux(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		// Arrow keys
+		{"up", "Up"},
+		{"down", "Down"},
+		{"left", "Left"},
+		{"right", "Right"},
+		// Navigation keys
+		{"home", "Home"},
+		{"end", "End"},
+		{"backspace", "BSpace"},
+		{"delete", "DC"},
+		{"insert", "IC"},
+		{"pgup", "PageUp"},
+		{"pgdown", "PageDown"},
+		// Other special keys
+		{"tab", "Tab"},
+		{"enter", "Enter"},
+		{"esc", "Escape"},
+		{"escape", "Escape"},
+		// Unknown keys should pass through unchanged
+		{"f1", "f1"},
+		{"unknown", "unknown"},
+		{"x", "x"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := MapKeyToTmux(tt.input)
+			if got != tt.expected {
+				t.Errorf("MapKeyToTmux(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}

@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/tmux"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 )
 
@@ -649,7 +650,9 @@ func (m *Manager) SendKey(msg tea.KeyMsg) {
 			if len(baseKey) == 1 {
 				logKeyErr("SendLiteral", baseKey, m.process.SendLiteral(baseKey))
 			} else {
-				logKeyErr("SendKey", baseKey, m.process.SendKey(baseKey))
+				// Map Bubble Tea key names to tmux key names
+				tmuxKey := tmux.MapKeyToTmux(baseKey)
+				logKeyErr("SendKey", tmuxKey, m.process.SendKey(tmuxKey))
 			}
 			return
 		case strings.HasPrefix(keyStr, "ctrl+"):

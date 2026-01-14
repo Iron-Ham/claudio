@@ -406,7 +406,8 @@ func escapeForControlMode(s string) string {
 	// if it contains special characters. We use single quotes and escape
 	// any existing single quotes by ending the quote, adding escaped quote,
 	// and restarting the quote: ' -> '\''
-	if strings.ContainsAny(s, " \t\n\r'\"\\") {
+	// Note: semicolon (;) is a tmux command separator and must be quoted.
+	if strings.ContainsAny(s, " \t\n\r'\"\\;") {
 		escaped := strings.ReplaceAll(s, "'", "'\\''")
 		return "'" + escaped + "'"
 	}

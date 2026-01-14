@@ -18,6 +18,7 @@ import (
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/tmux"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
 	"github.com/Iron-Ham/claudio/internal/tui/output"
@@ -1769,7 +1770,9 @@ func (m Model) sendKeyToTmux(mgr *instance.Manager, msg tea.KeyMsg) {
 			if len(baseKey) == 1 {
 				mgr.SendLiteral(baseKey)
 			} else {
-				mgr.SendKey(baseKey)
+				// Map Bubble Tea key names to tmux key names
+				tmuxKey := tmux.MapKeyToTmux(baseKey)
+				mgr.SendKey(tmuxKey)
 			}
 			return
 		case strings.HasPrefix(keyStr, "ctrl+"):
