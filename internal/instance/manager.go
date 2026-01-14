@@ -725,12 +725,11 @@ func (m *Manager) getSessionStatus(sessionName string) sessionStatus {
 	cmd := m.tmuxCmdCtx(ctx, "display-message", "-t", sessionName, "-p", "#{history_size}|#{window_bell_flag}")
 	output, err := cmd.Output()
 	if err != nil {
-		m.mu.RLock()
-		logger := m.logger
-		m.mu.RUnlock()
-
 		// Check if this was a timeout - session may still exist
 		if ctx.Err() == context.DeadlineExceeded {
+			m.mu.RLock()
+			logger := m.logger
+			m.mu.RUnlock()
 			if logger != nil {
 				logger.Warn("tmux display-message timed out, will retry next tick",
 					"session_name", sessionName)
@@ -738,33 +737,8 @@ func (m *Manager) getSessionStatus(sessionName string) sessionStatus {
 			return sessionStatus{historySize: -1, bellActive: false, sessionExists: true}
 		}
 
-		// Handle ExitError - check if session actually ended
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			stderr := string(exitErr.Stderr)
-			// Known "session ended" errors - session definitely doesn't exist
-			if strings.Contains(stderr, "can't find") || strings.Contains(stderr, "no server running") {
-				return sessionStatus{historySize: -1, bellActive: false, sessionExists: false}
-			}
-			// Other exit errors - log and assume session ended
-			if logger != nil {
-				logger.Debug("getSessionStatus failed",
-					"session_name", sessionName,
-					"error", err.Error(),
-					"stderr", stderr)
-			}
-			return sessionStatus{historySize: -1, bellActive: false, sessionExists: false}
-		}
-
-		// Non-ExitError (e.g., PathError, exec.ErrNotFound) - log as warning
-		// and return sessionExists: true to allow retry on next tick rather
-		// than incorrectly marking the session as completed
-		if logger != nil {
-			logger.Warn("getSessionStatus unexpected error, will retry",
-				"session_name", sessionName,
-				"error_type", fmt.Sprintf("%T", err),
-				"error", err.Error())
-		}
-		return sessionStatus{historySize: -1, bellActive: false, sessionExists: true}
+		// Any non-timeout error means session doesn't exist or can't be verified
+		return sessionStatus{historySize: -1, bellActive: false, sessionExists: false}
 	}
 
 	// Parse the response using the extracted helper
@@ -823,21 +797,8 @@ func (m *Manager) checkSessionExists(sessionName string) bool {
 	}
 
 	if err != nil {
-		// For non-ExitError (e.g., tmux not found), log and assume session exists
-		// to avoid false completion notifications
-		if _, ok := err.(*exec.ExitError); !ok {
-			m.mu.RLock()
-			logger := m.logger
-			m.mu.RUnlock()
-			if logger != nil {
-				logger.Warn("checkSessionExists unexpected error, will retry",
-					"session_name", sessionName,
-					"error_type", fmt.Sprintf("%T", err),
-					"error", err.Error())
-			}
-			return true
-		}
-		// ExitError means tmux ran but session doesn't exist
+		// Any error means session doesn't exist or can't be verified
+		// This is consistent with TmuxSessionExists() which uses `cmd.Run() == nil`
 		return false
 	}
 
