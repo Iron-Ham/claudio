@@ -73,6 +73,7 @@ type PlannedTask struct {
 	Priority      int            `json:"priority"`        // Execution priority (lower = earlier)
 	EstComplexity TaskComplexity `json:"est_complexity"`
 	IssueURL      string         `json:"issue_url,omitempty"` // External issue tracker URL (GitHub, Linear, Notion, etc.)
+	NoCode        bool           `json:"no_code,omitempty"`   // Task doesn't require code changes (verification/testing tasks)
 }
 
 // PlanSpec represents the output of the planning phase

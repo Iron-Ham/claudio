@@ -29,6 +29,13 @@ type TaskCompletionResult struct {
 	CommitCount int
 }
 
+// TaskVerifyOptions provides additional context for task verification.
+type TaskVerifyOptions struct {
+	// NoCode indicates the task doesn't require code changes.
+	// When true, the task succeeds even without commits.
+	NoCode bool
+}
+
 // TaskCompletionFile represents the completion report written by a task.
 type TaskCompletionFile struct {
 	TaskID        string   `json:"task_id"`
@@ -221,7 +228,8 @@ func (v *TaskVerifier) ParseRevisionCompletionFile(worktreePath string) (*Revisi
 }
 
 // VerifyTaskWork checks if a task produced actual commits and determines success/retry.
-func (v *TaskVerifier) VerifyTaskWork(taskID, instanceID, worktreePath, baseBranch string) TaskCompletionResult {
+// The opts parameter provides task-specific context (e.g., NoCode flag for verification tasks).
+func (v *TaskVerifier) VerifyTaskWork(taskID, instanceID, worktreePath, baseBranch string, opts *TaskVerifyOptions) TaskCompletionResult {
 	result := TaskCompletionResult{
 		TaskID:     taskID,
 		InstanceID: instanceID,
@@ -230,6 +238,12 @@ func (v *TaskVerifier) VerifyTaskWork(taskID, instanceID, worktreePath, baseBran
 
 	// Skip verification if not required
 	if !v.config.RequireVerifiedCommits {
+		return result
+	}
+
+	// Skip commit verification for no-code tasks (verification, testing, documentation-only)
+	if opts != nil && opts.NoCode {
+		v.logger.Debug("skipping commit verification for no-code task", "task_id", taskID)
 		return result
 	}
 
@@ -250,7 +264,24 @@ func (v *TaskVerifier) VerifyTaskWork(taskID, instanceID, worktreePath, baseBran
 
 	// Check if task produced any commits
 	if commitCount == 0 {
-		// No commits - check retry status
+		// Before failing, check if task wrote a completion file with status="complete"
+		// This allows tasks to explicitly signal success without code changes
+		completion, parseErr := v.ParseTaskCompletionFile(worktreePath)
+		if parseErr == nil {
+			if completion.Status == "complete" {
+				v.logger.Debug("task has no commits but completion file indicates success",
+					"task_id", taskID,
+					"summary", completion.Summary)
+				return result // Success - completion file overrides commit requirement
+			}
+		} else if !os.IsNotExist(parseErr) {
+			// Log if file exists but couldn't be parsed (likely corruption or bug)
+			v.logger.Warn("failed to parse task completion file",
+				"task_id", taskID,
+				"error", parseErr)
+		}
+
+		// No commits and no completion file override - check retry status
 		maxRetries := v.retryTracker.GetMaxRetries(taskID)
 		if maxRetries == 0 {
 			maxRetries = v.config.MaxTaskRetries

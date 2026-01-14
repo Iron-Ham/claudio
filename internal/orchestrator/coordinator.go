@@ -50,7 +50,8 @@ type Verifier interface {
 	CheckCompletionFile(worktreePath string) (bool, error)
 
 	// VerifyTaskWork checks if a task produced actual commits and determines success/retry.
-	VerifyTaskWork(taskID, instanceID, worktreePath, baseBranch string) verify.TaskCompletionResult
+	// The opts parameter provides task-specific context (e.g., NoCode flag for verification tasks).
+	VerifyTaskWork(taskID, instanceID, worktreePath, baseBranch string, opts *verify.TaskVerifyOptions) verify.TaskCompletionResult
 }
 
 // Coordinator orchestrates the execution of an ultra-plan
@@ -1246,8 +1247,14 @@ func (c *Coordinator) verifyTaskWork(taskID string, inst *Instance) taskCompleti
 	// Determine the base branch for this task
 	baseBranch := c.getBaseBranchForGroup(session.CurrentGroup)
 
+	// Build verification options from task metadata
+	var opts *verify.TaskVerifyOptions
+	if task := session.GetTask(taskID); task != nil && task.NoCode {
+		opts = &verify.TaskVerifyOptions{NoCode: true}
+	}
+
 	// Delegate to the verifier for the core verification logic
-	verifyResult := c.verifier.VerifyTaskWork(taskID, inst.ID, inst.WorktreePath, baseBranch)
+	verifyResult := c.verifier.VerifyTaskWork(taskID, inst.ID, inst.WorktreePath, baseBranch, opts)
 
 	// Store commit count for later reference (Coordinator maintains this state)
 	if verifyResult.CommitCount > 0 {
