@@ -131,13 +131,6 @@ var (
 				Padding(0, 1).
 				MarginBottom(0)
 
-	SidebarItemInputNeeded = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(TextColor).
-				Background(WarningColor).
-				Padding(0, 1).
-				MarginBottom(0)
-
 	SidebarTitle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(PrimaryColor)

@@ -174,27 +174,13 @@ func (dv *DashboardView) renderSidebarInstance(
 		prefixLen += 2
 	}
 
-	// Choose style based on active state and status
+	// Choose style - only differentiate active (selected) vs inactive
+	// Status is already shown via the colored status indicator
 	var itemStyle lipgloss.Style
 	if i == activeTab {
-		if conflictingInstances[inst.ID] {
-			// Active item with conflict - use warning background
-			itemStyle = styles.SidebarItemInputNeeded
-		} else if inst.Status == orchestrator.StatusWaitingInput {
-			itemStyle = styles.SidebarItemInputNeeded
-		} else {
-			itemStyle = styles.SidebarItemActive
-		}
+		itemStyle = styles.SidebarItemActive
 	} else {
-		itemStyle = styles.SidebarItem
-		if conflictingInstances[inst.ID] {
-			// Inactive but has conflict - use warning color
-			itemStyle = itemStyle.Foreground(styles.WarningColor)
-		} else if inst.Status == orchestrator.StatusWaitingInput {
-			itemStyle = itemStyle.Foreground(styles.WarningColor)
-		} else {
-			itemStyle = itemStyle.Foreground(styles.MutedColor)
-		}
+		itemStyle = styles.SidebarItem.Foreground(styles.MutedColor)
 	}
 
 	// Calculate maximum task length based on context

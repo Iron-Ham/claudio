@@ -332,21 +332,13 @@ func RenderGroupedInstance(gi GroupedInstance, isActiveInstance bool, hasConflic
 
 	displayName := truncate(inst.EffectiveName(), maxNameLen)
 
-	// Choose style
+	// Choose style - only differentiate active (selected) vs inactive
+	// Status is already shown via the colored status abbreviation
 	var nameStyle lipgloss.Style
 	if isActiveInstance {
-		if hasConflict || inst.Status == orchestrator.StatusWaitingInput {
-			nameStyle = styles.SidebarItemInputNeeded
-		} else {
-			nameStyle = styles.SidebarItemActive
-		}
+		nameStyle = styles.SidebarItemActive
 	} else {
-		nameStyle = styles.SidebarItem
-		if hasConflict || inst.Status == orchestrator.StatusWaitingInput {
-			nameStyle = nameStyle.Foreground(styles.WarningColor)
-		} else {
-			nameStyle = nameStyle.Foreground(styles.MutedColor)
-		}
+		nameStyle = styles.SidebarItem.Foreground(styles.MutedColor)
 	}
 
 	statusStyle := lipgloss.NewStyle().Foreground(statusColor)
