@@ -492,6 +492,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check for phase changes that need notification (synthesis, consolidation pause)
 		m.checkForPhaseNotification()
 
+		// Auto-dismiss info/error messages after timeout
+		m.autoDismissMessages()
+
 		// Build commands for this tick
 		var cmds []tea.Cmd
 		cmds = append(cmds, tick())
@@ -2487,6 +2490,34 @@ func (m *Model) handleInstanceCompleted(inst *orchestrator.Instance) {
 	default:
 		// For other actions (keep_branch, merge_staging, merge_main), just note completion
 		m.infoMessage = fmt.Sprintf("Instance %s completed.", inst.ID)
+	}
+}
+
+// messageDismissTimeout is how long info/error messages stay visible before auto-dismissing
+const messageDismissTimeout = 5 * time.Second
+
+// autoDismissMessages clears info/error messages after they've been displayed for a while.
+// This prevents stale warnings from cluttering the UI indefinitely.
+func (m *Model) autoDismissMessages() {
+	// Build current message key to detect changes
+	currentKey := m.errorMessage + "|" + m.infoMessage
+
+	// If message changed, record the new timestamp
+	if currentKey != m.lastMessageKey {
+		m.lastMessageKey = currentKey
+		if currentKey != "|" { // Only set timestamp if there's actually a message
+			m.messageSetAt = time.Now()
+		}
+		return
+	}
+
+	// If there's a message and it's been displayed long enough, clear it
+	if currentKey != "|" && !m.messageSetAt.IsZero() {
+		if time.Since(m.messageSetAt) > messageDismissTimeout {
+			m.errorMessage = ""
+			m.infoMessage = ""
+			m.lastMessageKey = "|"
+		}
 	}
 }
 

@@ -182,9 +182,11 @@ type Model struct {
 	// Triple-shot task state (for :tripleshot command)
 	startingTripleShot bool // When true, taskInput will start a triple-shot session
 
-	errorMessage string
-	infoMessage  string // Non-error status message
-	inputMode    bool   // When true, all keys are forwarded to the active instance's tmux session
+	errorMessage   string
+	infoMessage    string    // Non-error status message
+	messageSetAt   time.Time // When the current message was set (for auto-dismiss)
+	lastMessageKey string    // Used to detect message changes (concatenation of both messages)
+	inputMode      bool      // When true, all keys are forwarded to the active instance's tmux session
 
 	// Command mode state (vim-style ex commands with ':' prefix)
 	commandMode   bool   // When true, we're typing a command after ':'
