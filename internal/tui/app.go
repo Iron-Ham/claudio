@@ -3,10 +3,8 @@ package tui
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"regexp"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -20,7 +18,6 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/command"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
-	"github.com/Iron-Ham/claudio/internal/tui/output"
 	"github.com/Iron-Ham/claudio/internal/tui/panel"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
@@ -265,81 +262,9 @@ func (a *App) Run() error {
 	return err
 }
 
-// Messages
-
-// Commands
-
-func tick() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
-		return tuimsg.TickMsg(t)
-	})
-}
-
-// ringBell returns a command that outputs a terminal bell character
-// This forwards bells from tmux sessions to the parent terminal
-func ringBell() tea.Cmd {
-	return func() tea.Msg {
-		// Write the bell character directly to stdout
-		// This works even when Bubbletea is in alt-screen mode
-		_, _ = os.Stdout.Write([]byte{'\a'})
-		return nil
-	}
-}
-
-// notifyUser returns a command that notifies the user via bell and optional sound
-// Used to alert the user when ultraplan needs input (e.g., plan ready, synthesis ready)
-func notifyUser() tea.Cmd {
-	return func() tea.Msg {
-		if !viper.GetBool("ultraplan.notifications.enabled") {
-			return nil
-		}
-
-		// Always ring terminal bell
-		_, _ = os.Stdout.Write([]byte{'\a'})
-
-		// Optionally play system sound on macOS
-		if runtime.GOOS == "darwin" && viper.GetBool("ultraplan.notifications.use_sound") {
-			soundPath := viper.GetString("ultraplan.notifications.sound_path")
-			if soundPath == "" {
-				soundPath = "/System/Library/Sounds/Glass.aiff"
-			}
-			// Start in background so it doesn't block
-			_ = exec.Command("afplay", soundPath).Start()
-		}
-		return nil
-	}
-}
-
-// addTaskAsync returns a command that adds a task asynchronously
-// This prevents the UI from blocking while git creates the worktree
-func addTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string) tea.Cmd {
-	return func() tea.Msg {
-		inst, err := o.AddInstance(session, task)
-		return tuimsg.TaskAddedMsg{Instance: inst, Err: err}
-	}
-}
-
-// addTaskFromBranchAsync returns a command that adds a task from a specific base branch asynchronously.
-// The baseBranch parameter specifies which branch the new worktree should be created from.
-func addTaskFromBranchAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string, baseBranch string) tea.Cmd {
-	return func() tea.Msg {
-		inst, err := o.AddInstanceFromBranch(session, task, baseBranch)
-		return tuimsg.TaskAddedMsg{Instance: inst, Err: err}
-	}
-}
-
-// addDependentTaskAsync returns a command that adds a task with dependencies asynchronously
-// The new task will depend on the specified instance and auto-start when it completes
-func addDependentTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string, dependsOn string) tea.Cmd {
-	return func() tea.Msg {
-		inst, err := o.AddInstanceWithDependencies(session, task, []string{dependsOn}, true)
-		return tuimsg.DependentTaskAddedMsg{Instance: inst, DependsOn: dependsOn, Err: err}
-	}
-}
-
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{tick()}
+	cmds := []tea.Cmd{tuimsg.Tick()}
 
 	// Schedule ultra-plan initialization if needed
 	if m.ultraPlan != nil && m.ultraPlan.Coordinator != nil {
@@ -407,7 +332,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Build commands for this tick
 		var cmds []tea.Cmd
-		cmds = append(cmds, tick())
+		cmds = append(cmds, tuimsg.Tick())
 
 		// Dispatch async commands to check tripleshot completion files
 		// This avoids blocking the UI with file I/O
@@ -424,7 +349,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check if ultraplan needs user notification
 		if m.ultraPlan != nil && m.ultraPlan.NeedsNotification {
 			m.ultraPlan.NeedsNotification = false
-			cmds = append(cmds, notifyUser())
+			cmds = append(cmds, tuimsg.NotifyUser())
 		}
 		return m, tea.Batch(cmds...)
 
@@ -504,7 +429,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuimsg.BellMsg:
 		// Terminal bell detected in a tmux session - forward it to the parent terminal
-		return m, ringBell()
+		return m, tuimsg.RingBell()
 
 	case tuimsg.TaskAddedMsg:
 		// Async task addition completed
@@ -805,16 +730,16 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// Add instance asynchronously to avoid blocking UI during git worktree creation
 				if isDependent && dependsOn != "" {
 					m.infoMessage = "Adding dependent task..."
-					return m, addDependentTaskAsync(m.orchestrator, m.session, task, dependsOn)
+					return m, tuimsg.AddDependentTaskAsync(m.orchestrator, m.session, task, dependsOn)
 				}
 
 				// Use selected base branch if specified, otherwise use default (current HEAD)
 				if baseBranch != "" {
 					m.infoMessage = "Adding task from branch " + baseBranch + "..."
-					return m, addTaskFromBranchAsync(m.orchestrator, m.session, task, baseBranch)
+					return m, tuimsg.AddTaskFromBranchAsync(m.orchestrator, m.session, task, baseBranch)
 				}
 				m.infoMessage = "Adding task..."
-				return m, addTaskAsync(m.orchestrator, m.session, task)
+				return m, tuimsg.AddTaskAsync(m.orchestrator, m.session, task)
 			}
 			m.addingTask = false
 			m.addingDependentTask = false
@@ -893,16 +818,16 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					// Add instance asynchronously to avoid blocking UI during git worktree creation
 					if isDependent && dependsOn != "" {
 						m.infoMessage = "Adding dependent task..."
-						return m, addDependentTaskAsync(m.orchestrator, m.session, task, dependsOn)
+						return m, tuimsg.AddDependentTaskAsync(m.orchestrator, m.session, task, dependsOn)
 					}
 
 					// Use selected base branch if specified, otherwise use default (current HEAD)
 					if baseBranch != "" {
 						m.infoMessage = "Adding task from branch " + baseBranch + "..."
-						return m, addTaskFromBranchAsync(m.orchestrator, m.session, task, baseBranch)
+						return m, tuimsg.AddTaskFromBranchAsync(m.orchestrator, m.session, task, baseBranch)
 					}
 					m.infoMessage = "Adding task..."
-					return m, addTaskAsync(m.orchestrator, m.session, task)
+					return m, tuimsg.AddTaskAsync(m.orchestrator, m.session, task)
 				}
 				m.addingTask = false
 				m.addingDependentTask = false
@@ -2733,286 +2658,5 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 			return tuimsg.TripleShotErrorMsg{Err: err}
 		}
 		return tuimsg.TripleShotStartedMsg{}
-	}
-}
-
-// checkTripleShotCompletionAsync returns a command that checks for completion files
-// in a goroutine, avoiding blocking the UI event loop with file I/O.
-func checkTripleShotCompletionAsync(
-	coordinator *orchestrator.TripleShotCoordinator,
-	groupID string,
-) tea.Cmd {
-	return func() tea.Msg {
-		session := coordinator.Session()
-		if session == nil {
-			return nil
-		}
-
-		result := tuimsg.TripleShotCheckResultMsg{
-			GroupID:        groupID,
-			AttemptResults: make(map[int]bool),
-			AttemptErrors:  make(map[int]error),
-			Phase:          session.Phase,
-		}
-
-		switch session.Phase {
-		case orchestrator.PhaseTripleShotWorking:
-			// Check each attempt's completion file
-			for i := range 3 {
-				attempt := session.Attempts[i]
-				if attempt.Status == orchestrator.AttemptStatusWorking {
-					complete, err := coordinator.CheckAttemptCompletion(i)
-					result.AttemptResults[i] = complete
-					if err != nil {
-						result.AttemptErrors[i] = err
-					}
-				}
-			}
-
-		case orchestrator.PhaseTripleShotEvaluating:
-			// Check judge completion file
-			complete, err := coordinator.CheckJudgeCompletion()
-			result.JudgeComplete = complete
-			result.JudgeError = err
-		}
-
-		return result
-	}
-}
-
-// processAttemptCompletionAsync returns a command that processes an attempt completion file
-// in a goroutine, avoiding blocking the UI event loop with file I/O.
-func processAttemptCompletionAsync(
-	coordinator *orchestrator.TripleShotCoordinator,
-	groupID string,
-	attemptIndex int,
-) tea.Cmd {
-	return func() tea.Msg {
-		err := coordinator.ProcessAttemptCompletion(attemptIndex)
-		return tuimsg.TripleShotAttemptProcessedMsg{
-			GroupID:      groupID,
-			AttemptIndex: attemptIndex,
-			Err:          err,
-		}
-	}
-}
-
-// processJudgeCompletionAsync returns a command that processes a judge completion file
-// in a goroutine, avoiding blocking the UI event loop with file I/O.
-func processJudgeCompletionAsync(
-	coordinator *orchestrator.TripleShotCoordinator,
-	groupID string,
-) tea.Cmd {
-	return func() tea.Msg {
-		err := coordinator.ProcessJudgeCompletion()
-
-		// Build task preview for success message
-		taskPreview := ""
-		if err == nil {
-			session := coordinator.Session()
-			if session != nil && len(session.Task) > 30 {
-				taskPreview = session.Task[:27] + "..."
-			} else if session != nil {
-				taskPreview = session.Task
-			}
-		}
-
-		return tuimsg.TripleShotJudgeProcessedMsg{
-			GroupID:     groupID,
-			Err:         err,
-			TaskPreview: taskPreview,
-		}
-	}
-}
-
-// checkPlanFileAsync returns a command that checks for a plan file asynchronously.
-// This avoids blocking the UI event loop with file I/O during the planning phase.
-func checkPlanFileAsync(
-	orc *orchestrator.Orchestrator,
-	ultraPlan *view.UltraPlanState,
-) tea.Cmd {
-	return func() tea.Msg {
-		if ultraPlan == nil || ultraPlan.Coordinator == nil {
-			return nil
-		}
-
-		session := ultraPlan.Coordinator.Session()
-		if session == nil || session.Phase != orchestrator.PhasePlanning || session.Plan != nil {
-			return nil
-		}
-
-		// Get the coordinator instance
-		inst := orc.GetInstance(session.CoordinatorID)
-		if inst == nil {
-			return nil
-		}
-
-		// Check if plan file exists
-		planPath := orchestrator.PlanFilePath(inst.WorktreePath)
-		if _, err := os.Stat(planPath); err != nil {
-			return nil
-		}
-
-		// Parse the plan
-		plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
-		if err != nil {
-			// Don't return error yet - file might be partially written
-			return nil
-		}
-
-		return tuimsg.PlanFileCheckResultMsg{
-			Found:        true,
-			Plan:         plan,
-			InstanceID:   inst.ID,
-			WorktreePath: inst.WorktreePath,
-		}
-	}
-}
-
-// checkMultiPassPlanFilesAsync returns commands that check for plan files from multi-pass coordinators.
-// Each returned command checks one coordinator's plan file asynchronously.
-func checkMultiPassPlanFilesAsync(
-	orc *orchestrator.Orchestrator,
-	ultraPlan *view.UltraPlanState,
-) []tea.Cmd {
-	if ultraPlan == nil || ultraPlan.Coordinator == nil {
-		return nil
-	}
-
-	session := ultraPlan.Coordinator.Session()
-	if session == nil {
-		return nil
-	}
-
-	// Only check during planning phase in multi-pass mode
-	if session.Phase != orchestrator.PhasePlanning || !session.Config.MultiPass {
-		return nil
-	}
-
-	// Skip if we don't have coordinator IDs yet
-	numCoordinators := len(session.PlanCoordinatorIDs)
-	if numCoordinators == 0 {
-		return nil
-	}
-
-	// Skip if plan manager is already running
-	if session.PlanManagerID != "" {
-		return nil
-	}
-
-	strategyNames := orchestrator.GetMultiPassStrategyNames()
-	var cmds []tea.Cmd
-
-	// Create async check command for each coordinator that doesn't have a plan yet
-	for i, coordID := range session.PlanCoordinatorIDs {
-		// Skip if we already have a plan for this coordinator
-		if i < len(session.CandidatePlans) && session.CandidatePlans[i] != nil {
-			continue
-		}
-
-		// Capture loop variables for closure
-		idx := i
-		instID := coordID
-		strategyName := "unknown"
-		if idx < len(strategyNames) {
-			strategyName = strategyNames[idx]
-		}
-
-		cmds = append(cmds, func() tea.Msg {
-			// Get the coordinator instance
-			inst := orc.GetInstance(instID)
-			if inst == nil {
-				return nil
-			}
-
-			// Check if plan file exists
-			planPath := orchestrator.PlanFilePath(inst.WorktreePath)
-			if _, err := os.Stat(planPath); err != nil {
-				return nil
-			}
-
-			// Parse the plan
-			plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
-			if err != nil {
-				// File might be partially written, skip for now
-				return nil
-			}
-
-			return tuimsg.MultiPassPlanFileCheckResultMsg{
-				Index:        idx,
-				Plan:         plan,
-				StrategyName: strategyName,
-			}
-		})
-	}
-
-	return cmds
-}
-
-// checkPlanManagerFileAsync returns a command that checks for the plan manager's output file.
-// This avoids blocking the UI during plan selection phase in multi-pass mode.
-func checkPlanManagerFileAsync(
-	orc *orchestrator.Orchestrator,
-	outputManager *output.Manager,
-	ultraPlan *view.UltraPlanState,
-) tea.Cmd {
-	return func() tea.Msg {
-		if ultraPlan == nil || ultraPlan.Coordinator == nil {
-			return nil
-		}
-
-		session := ultraPlan.Coordinator.Session()
-		if session == nil {
-			return nil
-		}
-
-		// Only check during plan selection phase in multi-pass mode
-		if session.Phase != orchestrator.PhasePlanSelection || !session.Config.MultiPass {
-			return nil
-		}
-
-		// Need a plan manager ID to check
-		if session.PlanManagerID == "" {
-			return nil
-		}
-
-		// Skip if we already have a plan set
-		if session.Plan != nil {
-			return nil
-		}
-
-		// Get the plan manager instance
-		inst := orc.GetInstance(session.PlanManagerID)
-		if inst == nil {
-			return nil
-		}
-
-		// Check if plan file exists
-		planPath := orchestrator.PlanFilePath(inst.WorktreePath)
-		if _, err := os.Stat(planPath); err != nil {
-			return nil
-		}
-
-		// Parse the plan from the file
-		plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
-		if err != nil {
-			return tuimsg.PlanManagerFileCheckResultMsg{
-				Found: true,
-				Err:   err,
-			}
-		}
-
-		// Try to parse the plan decision from the output (for display purposes)
-		var decision *orchestrator.PlanDecision
-		if outputManager != nil {
-			output := outputManager.GetOutput(inst.ID)
-			decision, _ = orchestrator.ParsePlanDecisionFromOutput(output)
-		}
-
-		return tuimsg.PlanManagerFileCheckResultMsg{
-			Found:    true,
-			Plan:     plan,
-			Decision: decision,
-		}
 	}
 }

@@ -32,7 +32,7 @@ func (m *Model) dispatchTripleShotCompletionChecks() []tea.Cmd {
 		// Only check if in a phase that requires polling
 		switch session.Phase {
 		case orchestrator.PhaseTripleShotWorking, orchestrator.PhaseTripleShotEvaluating:
-			cmds = append(cmds, checkTripleShotCompletionAsync(coordinator, groupID))
+			cmds = append(cmds, tuimsg.CheckTripleShotCompletionAsync(coordinator, groupID))
 		}
 	}
 
@@ -51,7 +51,7 @@ func (m *Model) dispatchTripleShotCompletionChecks() []tea.Cmd {
 			if session != nil {
 				switch session.Phase {
 				case orchestrator.PhaseTripleShotWorking, orchestrator.PhaseTripleShotEvaluating:
-					cmds = append(cmds, checkTripleShotCompletionAsync(m.tripleShot.Coordinator, ""))
+					cmds = append(cmds, tuimsg.CheckTripleShotCompletionAsync(m.tripleShot.Coordinator, ""))
 				}
 			}
 		}
@@ -137,7 +137,7 @@ func (m *Model) processAttemptCheckResults(
 		if complete {
 			// Dispatch async command to process the completion file
 			// This avoids blocking the UI with file I/O
-			cmds = append(cmds, processAttemptCompletionAsync(coordinator, msg.GroupID, i))
+			cmds = append(cmds, tuimsg.ProcessAttemptCompletionAsync(coordinator, msg.GroupID, i))
 		}
 	}
 
@@ -211,7 +211,7 @@ func (m *Model) processJudgeCheckResult(
 	if msg.JudgeComplete {
 		// Dispatch async command to process the judge completion file
 		// This avoids blocking the UI with file I/O
-		return m, processJudgeCompletionAsync(coordinator, msg.GroupID)
+		return m, tuimsg.ProcessJudgeCompletionAsync(coordinator, msg.GroupID)
 	}
 
 	return m, nil
