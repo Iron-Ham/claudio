@@ -586,8 +586,24 @@ func (v *UltraplanView) RenderInlineContent(width int, maxLines int) string {
 		return b.String()
 	}
 
-	// Show coordinator if active
-	if session.Phase == orchestrator.PhasePlanning && session.CoordinatorID != "" {
+	// Show coordinator(s) based on planning mode
+	if session.Config.MultiPass {
+		// Multi-pass mode: show all planning coordinators
+		for i, coordID := range session.PlanCoordinatorIDs {
+			if lineCount >= maxLines {
+				return b.String()
+			}
+			inst := v.ctx.GetInstance(coordID)
+			selected := v.ctx.IsSelected(coordID)
+			navigable := inst != nil && inst.Status != orchestrator.StatusPending
+			line := v.renderPhaseInstanceLine(inst, fmt.Sprintf("Planner %d", i+1), selected, navigable, width-6)
+			b.WriteString(indent)
+			b.WriteString(line)
+			b.WriteString("\n")
+			lineCount++
+		}
+	} else if session.Phase == orchestrator.PhasePlanning && session.CoordinatorID != "" {
+		// Single-pass mode: show single coordinator
 		inst := v.ctx.GetInstance(session.CoordinatorID)
 		selected := v.ctx.IsSelected(session.CoordinatorID)
 		line := v.renderPhaseInstanceLine(inst, "Coordinator", selected, true, width-6)
@@ -597,6 +613,35 @@ func (v *UltraplanView) RenderInlineContent(width int, maxLines int) string {
 		lineCount++
 		if lineCount >= maxLines {
 			return b.String()
+		}
+	}
+
+	// ========== PLAN SELECTION SECTION (multi-pass only) ==========
+	if session.Config.MultiPass && (session.Phase == orchestrator.PhasePlanSelection ||
+		session.PlanManagerID != "" ||
+		len(session.CandidatePlans) > 0) {
+		b.WriteString(indent)
+		selStatus := v.getPhaseSectionStatus(orchestrator.PhasePlanSelection, session)
+		b.WriteString(styles.Muted.Render(fmt.Sprintf("Plan Selection %s", selStatus)))
+		b.WriteString("\n")
+		lineCount++
+		if lineCount >= maxLines {
+			return b.String()
+		}
+
+		// Show Plan Manager (Plan Selector) if it exists
+		if session.PlanManagerID != "" {
+			inst := v.ctx.GetInstance(session.PlanManagerID)
+			selected := v.ctx.IsSelected(session.PlanManagerID)
+			navigable := inst != nil && inst.Status != orchestrator.StatusPending
+			line := v.renderPhaseInstanceLine(inst, "Plan Selector", selected, navigable, width-6)
+			b.WriteString(indent)
+			b.WriteString(line)
+			b.WriteString("\n")
+			lineCount++
+			if lineCount >= maxLines {
+				return b.String()
+			}
 		}
 	}
 
