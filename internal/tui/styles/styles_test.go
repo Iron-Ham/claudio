@@ -67,3 +67,37 @@ func TestStatusInterruptedConstant(t *testing.T) {
 		t.Errorf("StatusInterrupted = %q, want %q", StatusInterrupted, "#FBBF24")
 	}
 }
+
+func TestLayoutConstants(t *testing.T) {
+	// Verify the layout constants are consistent
+	// This test ensures that if components are changed, the total is updated
+
+	t.Run("HeaderFooterReserved equals sum of components", func(t *testing.T) {
+		expected := HeaderLines + HelpBarLines + ViewNewlines
+		if HeaderFooterReserved != expected {
+			t.Errorf("HeaderFooterReserved = %d, want %d (sum of HeaderLines=%d + HelpBarLines=%d + ViewNewlines=%d)",
+				HeaderFooterReserved, expected, HeaderLines, HelpBarLines, ViewNewlines)
+		}
+	})
+
+	t.Run("HeaderLines accounts for Header style", func(t *testing.T) {
+		// Header style has: text (1) + PaddingBottom(1) + BorderBottom (1) + MarginBottom(1) = 4
+		if HeaderLines != 4 {
+			t.Errorf("HeaderLines = %d, want 4 (text + PaddingBottom + BorderBottom + MarginBottom)", HeaderLines)
+		}
+	})
+
+	t.Run("HelpBarLines accounts for HelpBar style", func(t *testing.T) {
+		// HelpBar style has: MarginTop(1) + text (1) = 2
+		if HelpBarLines != 2 {
+			t.Errorf("HelpBarLines = %d, want 2 (MarginTop + text)", HelpBarLines)
+		}
+	})
+
+	t.Run("ViewNewlines accounts for explicit newlines in View()", func(t *testing.T) {
+		// View() adds: 1 newline after header + 1 newline before help bar = 2
+		if ViewNewlines != 2 {
+			t.Errorf("ViewNewlines = %d, want 2 (after header + before help bar)", ViewNewlines)
+		}
+	})
+}

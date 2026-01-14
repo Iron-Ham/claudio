@@ -2,6 +2,28 @@ package styles
 
 import "github.com/charmbracelet/lipgloss"
 
+// Layout constants for vertical space calculations.
+// These must be kept in sync with the style definitions below.
+// If you change Header, HelpBar, or related styles, update these constants.
+const (
+	// HeaderLines is the number of lines the Header style occupies:
+	// 1 (text) + 1 (PaddingBottom) + 1 (BorderBottom) + 1 (MarginBottom) = 4
+	HeaderLines = 4
+
+	// HelpBarLines is the number of lines the HelpBar style occupies:
+	// 1 (MarginTop) + 1 (text) = 2
+	HelpBarLines = 2
+
+	// ViewNewlines is the number of explicit newlines added in View():
+	// 1 after header + 1 before help bar = 2
+	ViewNewlines = 2
+
+	// HeaderFooterReserved is the total vertical space reserved for
+	// header and footer chrome in the main TUI view.
+	// This is used by terminal.Manager.GetPaneDimensions().
+	HeaderFooterReserved = HeaderLines + HelpBarLines + ViewNewlines // 8
+)
+
 var (
 	// Colors - all colors meet WCAG AA contrast (4.5:1) on both black and dark surfaces
 	PrimaryColor   = lipgloss.Color("#A78BFA") // Purple (violet-400, was #7C3AED - improved contrast)
