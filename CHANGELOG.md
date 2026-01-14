@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Searchable Branch Selector** - Branch selection when adding a new instance now supports real-time search filtering and scrolling. Type to filter branches, use arrow keys to navigate, Page Up/Down for faster scrolling, and scroll indicators show when more branches exist above or below the visible viewport.
+
 ## [0.6.0] - 2026-01-14
 
 This release introduces **Intelligent Task Decomposition** - a comprehensive analysis system that makes UltraPlan significantly smarter about breaking down complex projects into well-ordered, risk-aware execution plans.
