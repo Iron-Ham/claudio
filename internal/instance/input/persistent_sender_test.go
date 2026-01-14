@@ -221,6 +221,21 @@ func TestEscapeForControlMode(t *testing.T) {
 			input:    "echo 'hello' | grep 'world'",
 			expected: "'echo '\\''hello'\\'' | grep '\\''world'\\'''",
 		},
+		{
+			name:     "string with semicolon",
+			input:    "foo;bar",
+			expected: "'foo;bar'",
+		},
+		{
+			name:     "javascript with semicolons",
+			input:    "const x = 1; const y = 2;",
+			expected: "'const x = 1; const y = 2;'",
+		},
+		{
+			name:     "semicolon only",
+			input:    ";",
+			expected: "';'",
+		},
 	}
 
 	for _, tt := range tests {
@@ -304,6 +319,18 @@ func TestPersistentTmuxSender_BuildCommand(t *testing.T) {
 			keys:     "hello world",
 			literal:  true,
 			expected: "send-keys -t my-session -l 'hello world'\n",
+		},
+		{
+			name:     "literal text with semicolon",
+			keys:     "foo;bar",
+			literal:  true,
+			expected: "send-keys -t my-session -l 'foo;bar'\n",
+		},
+		{
+			name:     "literal text with semicolon and spaces",
+			keys:     "console.log('hello'); return;",
+			literal:  true,
+			expected: "send-keys -t my-session -l 'console.log('\\''hello'\\''); return;'\n",
 		},
 	}
 

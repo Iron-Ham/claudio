@@ -136,3 +136,41 @@ func ExtractInstanceID(socket string) string {
 	}
 	return ""
 }
+
+// MapKeyToTmux converts Bubble Tea key names to tmux key names.
+// Bubble Tea uses lowercase names like "left", "backspace" while
+// tmux expects capitalized names like "Left", "BSpace".
+func MapKeyToTmux(key string) string {
+	switch key {
+	case "up":
+		return "Up"
+	case "down":
+		return "Down"
+	case "left":
+		return "Left"
+	case "right":
+		return "Right"
+	case "home":
+		return "Home"
+	case "end":
+		return "End"
+	case "backspace":
+		return "BSpace"
+	case "delete":
+		return "DC"
+	case "insert":
+		return "IC"
+	case "pgup":
+		return "PageUp"
+	case "pgdown":
+		return "PageDown"
+	case "tab":
+		return "Tab"
+	case "enter":
+		return "Enter"
+	case "esc", "escape":
+		return "Escape"
+	default:
+		return key
+	}
+}
