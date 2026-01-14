@@ -168,11 +168,12 @@ func truncateGroupName(name string, maxLen int) string {
 
 // GroupedInstance represents an instance within a group, with rendering context.
 type GroupedInstance struct {
-	Instance  *orchestrator.Instance
-	GroupID   string
-	Depth     int  // 0 = top-level group instance, 1 = sub-group instance, etc.
-	IsLast    bool // Is this the last instance in its group/sub-group?
-	GlobalIdx int  // Global index for selection (across all visible instances)
+	Instance    *orchestrator.Instance
+	GroupID     string
+	Depth       int  // 0 = top-level group instance, 1 = sub-group instance, etc.
+	IsLast      bool // Is this the last instance in its group/sub-group?
+	GlobalIdx   int  // Global index for selection (across all visible instances)
+	AbsoluteIdx int  // Absolute index in session.Instances for stable display numbering
 }
 
 // FlattenGroupsForDisplay flattens groups into a list of renderable items.
@@ -231,11 +232,12 @@ func flattenGroupRecursive(group *orchestrator.InstanceGroup, session *orchestra
 		}
 		isLast := i == len(group.Instances)-1 && len(group.SubGroups) == 0
 		items = append(items, GroupedInstance{
-			Instance:  inst,
-			GroupID:   group.ID,
-			Depth:     depth,
-			IsLast:    isLast,
-			GlobalIdx: *globalIdx,
+			Instance:    inst,
+			GroupID:     group.ID,
+			Depth:       depth,
+			IsLast:      isLast,
+			GlobalIdx:   *globalIdx,
+			AbsoluteIdx: findInstanceIndex(session, instID),
 		})
 		*globalIdx++
 	}
@@ -266,8 +268,13 @@ func RenderGroupedInstance(gi GroupedInstance, isActiveInstance bool, hasConflic
 	statusColor := styles.StatusColor(string(inst.Status))
 	dot := lipgloss.NewStyle().Foreground(statusColor).Render("\u25cf")
 
-	// Instance number (for identification)
-	idxStr := fmt.Sprintf("[%d]", gi.GlobalIdx+1)
+	// Instance number (for identification) - use AbsoluteIdx for stable numbering
+	// Fall back to GlobalIdx if AbsoluteIdx is invalid (should not happen in practice)
+	displayIdx := gi.AbsoluteIdx
+	if displayIdx < 0 {
+		displayIdx = gi.GlobalIdx
+	}
+	idxStr := fmt.Sprintf("[%d]", displayIdx+1)
 	idxStyle := lipgloss.NewStyle().Foreground(styles.MutedColor)
 
 	// Status abbreviation
@@ -429,4 +436,18 @@ func findInstanceInGroup(group *orchestrator.InstanceGroup, session *orchestrato
 		}
 	}
 	return nil
+}
+
+// findInstanceIndex returns the index of an instance in session.Instances by ID.
+// Returns -1 if not found or if session is nil.
+func findInstanceIndex(session *orchestrator.Session, instID string) int {
+	if session == nil {
+		return -1
+	}
+	for i, inst := range session.Instances {
+		if inst.ID == instID {
+			return i
+		}
+	}
+	return -1
 }

@@ -15,10 +15,9 @@ import (
 
 // Layout constants for dashboard rendering
 const (
-	SidebarWidth               = 30 // Fixed sidebar width
-	SidebarMinWidth            = 20 // Minimum sidebar width for narrow terminals
-	ExpandedNameMaxLen         = 50 // Maximum length for expanded instance names
-	ExpandedNameContinuationIn = 4  // Indentation for continuation lines
+	SidebarWidth       = 30 // Fixed sidebar width
+	SidebarMinWidth    = 20 // Minimum sidebar width for narrow terminals
+	ExpandedNameMaxLen = 50 // Maximum length for expanded instance names
 )
 
 // DashboardState provides the minimal state needed for dashboard rendering.
@@ -256,7 +255,9 @@ func (dv *DashboardView) renderExpandedInstance(
 	for len(remaining) > 0 && remaining[0] == ' ' {
 		remaining = remaining[1:]
 	}
-	continuationAvailable := max(width-ExpandedNameContinuationIn-2, 10) // indent + padding
+	// Use firstLineOverhead as indent to align continuation text with the name start position
+	continuationIndent := firstLineOverhead
+	continuationAvailable := max(width-continuationIndent-2, 10) // indent + padding
 
 	for len(remaining) > 0 {
 		chunk := wrapAtWordBoundary(remaining, continuationAvailable)
@@ -271,7 +272,7 @@ func (dv *DashboardView) renderExpandedInstance(
 		}
 
 		// Indent continuation lines to align under the name
-		indent := strings.Repeat(" ", ExpandedNameContinuationIn)
+		indent := strings.Repeat(" ", continuationIndent)
 		lines = append(lines, indent+itemStyle.Render(chunk))
 	}
 
