@@ -290,6 +290,7 @@ type GroupDecisionState struct {
 // UltraPlanSession represents an ultra-plan orchestration session
 type UltraPlanSession struct {
 	ID            string          `json:"id"`
+	GroupID       string          `json:"group_id,omitempty"` // Link to InstanceGroup for TUI display
 	Objective     string          `json:"objective"`
 	Plan          *PlanSpec       `json:"plan,omitempty"`
 	Phase         UltraPlanPhase  `json:"phase"`
