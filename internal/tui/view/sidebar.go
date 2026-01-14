@@ -116,7 +116,11 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 
 		// Render visible items
 		// ActiveTab returns the index in session.Instances, so compare with AbsoluteIdx
-		activeInstanceIdx := state.ActiveTab()
+		// When adding a task, no instance should be highlighted (use -1 to match nothing)
+		activeInstanceIdx := -1
+		if !isAddingTask {
+			activeInstanceIdx = state.ActiveTab()
+		}
 		for i := startIdx; i < endIdx; i++ {
 			item := items[i]
 			switch v := item.(type) {
