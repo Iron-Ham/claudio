@@ -940,3 +940,134 @@ func TestPhaseColor(t *testing.T) {
 		t.Errorf("PhaseColor(unknown) = %v, want MutedColor", unknownColor)
 	}
 }
+
+func TestFindInstanceIndex(t *testing.T) {
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-a", Task: "Task A"},
+			{ID: "inst-b", Task: "Task B"},
+			{ID: "inst-c", Task: "Task C"},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		session  *orchestrator.Session
+		instID   string
+		expected int
+	}{
+		{"first instance", session, "inst-a", 0},
+		{"middle instance", session, "inst-b", 1},
+		{"last instance", session, "inst-c", 2},
+		{"non-existent instance", session, "inst-x", -1},
+		{"nil session", nil, "inst-a", -1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := findInstanceIndex(tt.session, tt.instID)
+			if result != tt.expected {
+				t.Errorf("findInstanceIndex(%q) = %d, want %d", tt.instID, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGroupedInstance_AbsoluteIdx(t *testing.T) {
+	// Test that AbsoluteIdx is correctly set to the instance's position in session.Instances
+	// regardless of group structure or collapse state
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Task 1", Status: orchestrator.StatusCompleted},
+			{ID: "inst-2", Task: "Task 2", Status: orchestrator.StatusWorking},
+			{ID: "inst-3", Task: "Task 3", Status: orchestrator.StatusPending},
+			{ID: "inst-4", Task: "Task 4", Status: orchestrator.StatusPending},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Name:      "Group 1",
+				Instances: []string{"inst-1", "inst-2"},
+			},
+			{
+				ID:        "group-2",
+				Name:      "Group 2",
+				Instances: []string{"inst-3", "inst-4"},
+			},
+		},
+	}
+
+	state := NewGroupViewState()
+	items := FlattenGroupsForDisplay(session, state)
+
+	// Extract GroupedInstance items and verify AbsoluteIdx
+	expectedAbsoluteIdxs := map[string]int{
+		"inst-1": 0,
+		"inst-2": 1,
+		"inst-3": 2,
+		"inst-4": 3,
+	}
+
+	for _, item := range items {
+		if gi, ok := item.(GroupedInstance); ok {
+			expected, exists := expectedAbsoluteIdxs[gi.Instance.ID]
+			if !exists {
+				t.Errorf("unexpected instance ID: %s", gi.Instance.ID)
+				continue
+			}
+			if gi.AbsoluteIdx != expected {
+				t.Errorf("AbsoluteIdx for %s = %d, want %d", gi.Instance.ID, gi.AbsoluteIdx, expected)
+			}
+		}
+	}
+
+	// Now collapse group-1 and verify AbsoluteIdx remains stable
+	state.CollapsedGroups["group-1"] = true
+	items = FlattenGroupsForDisplay(session, state)
+
+	// Only group-2 instances should be visible, but their AbsoluteIdx should remain 2 and 3
+	for _, item := range items {
+		if gi, ok := item.(GroupedInstance); ok {
+			expected := expectedAbsoluteIdxs[gi.Instance.ID]
+			if gi.AbsoluteIdx != expected {
+				t.Errorf("after collapse, AbsoluteIdx for %s = %d, want %d", gi.Instance.ID, gi.AbsoluteIdx, expected)
+			}
+		}
+	}
+}
+
+func TestGroupedInstance_AbsoluteIdx_OutOfOrder(t *testing.T) {
+	// Test that AbsoluteIdx reflects session.Instances order, not group order
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Task 1", Status: orchestrator.StatusCompleted}, // index 0
+			{ID: "inst-2", Task: "Task 2", Status: orchestrator.StatusWorking},   // index 1
+			{ID: "inst-3", Task: "Task 3", Status: orchestrator.StatusPending},   // index 2
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Name:      "Group 1",
+				Instances: []string{"inst-3", "inst-1"}, // Reverse order from session.Instances
+			},
+		},
+	}
+
+	state := NewGroupViewState()
+	items := FlattenGroupsForDisplay(session, state)
+
+	// AbsoluteIdx should reflect position in session.Instances, not group order
+	expectedAbsoluteIdxs := map[string]int{
+		"inst-1": 0, // First in session.Instances
+		"inst-3": 2, // Third in session.Instances
+	}
+
+	for _, item := range items {
+		if gi, ok := item.(GroupedInstance); ok {
+			expected := expectedAbsoluteIdxs[gi.Instance.ID]
+			if gi.AbsoluteIdx != expected {
+				t.Errorf("AbsoluteIdx for %s = %d, want %d (session.Instances position)", gi.Instance.ID, gi.AbsoluteIdx, expected)
+			}
+		}
+	}
+}
