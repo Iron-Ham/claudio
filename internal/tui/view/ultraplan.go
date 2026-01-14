@@ -674,7 +674,7 @@ func (v *UltraplanView) renderExecutionTaskLine(session *orchestrator.UltraPlanS
 
 	// For selected tasks, wrap the title across multiple lines instead of truncating
 	if selected && len([]rune(task.Title)) > titleLen {
-		return v.renderWrappedTaskLine(task.Title, statusIcon, statusStyle, titleLen, maxWidth)
+		return v.renderWrappedTaskLine(task.Title, statusIcon, titleLen, maxWidth)
 	}
 
 	// Standard single-line rendering (truncate if needed)
@@ -695,10 +695,12 @@ func (v *UltraplanView) renderExecutionTaskLine(session *orchestrator.UltraPlanS
 
 // renderWrappedTaskLine renders a task title that wraps across multiple lines.
 // Used for selected tasks to show the full title instead of truncating.
-func (v *UltraplanView) renderWrappedTaskLine(title, statusIcon string, statusStyle lipgloss.Style, firstLineLen, maxWidth int) ExecutionTaskResult {
+func (v *UltraplanView) renderWrappedTaskLine(title, statusIcon string, firstLineLen, maxWidth int) ExecutionTaskResult {
 	// Guard against pathologically small widths (e.g., during window resizing)
+	// Note: We use plain icon (not statusStyle.Render) to avoid ANSI reset codes
+	// that would break the background color when selectedStyle wraps the line.
 	if firstLineLen <= 0 || maxWidth <= 6 {
-		line := fmt.Sprintf("    %s %s", statusStyle.Render(statusIcon), truncate(title, 3))
+		line := fmt.Sprintf("    %s %s", statusIcon, truncate(title, 3))
 		selectedStyle := lipgloss.NewStyle().
 			Background(styles.PrimaryColor).
 			Foreground(styles.TextColor)
@@ -713,8 +715,11 @@ func (v *UltraplanView) renderWrappedTaskLine(title, statusIcon string, statusSt
 	var lines []string
 
 	// First line: "    X <part of title>"
+	// Note: We use the plain icon (not statusStyle.Render) because applying
+	// statusStyle first would embed ANSI reset codes that break the background
+	// color when selectedStyle wraps the entire line.
 	firstPart := wrapAtWordBoundary(remaining, firstLineLen)
-	firstLine := fmt.Sprintf("    %s %s", statusStyle.Render(statusIcon), firstPart)
+	firstLine := fmt.Sprintf("    %s %s", statusIcon, firstPart)
 	lines = append(lines, selectedStyle.Render(padToWidth(firstLine, maxWidth)))
 
 	remaining = trimLeadingSpaces(remaining[len([]rune(firstPart)):])
