@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Enhanced Task Decomposition** - Comprehensive `decomposition` package provides intelligent task breakdown for UltraPlan with multiple analysis strategies:
+  - **Code Structure Analysis**: Parses Go source files to build package dependency graphs with centrality calculations
+  - **Risk-Based Prioritization**: Multi-factor risk scoring (complexity, file count, centrality, shared files, cross-package scope) with blocking scores for execution ordering
+  - **Critical Path Analysis**: Identifies the longest dependency chain and marks critical path tasks for optimization focus
+  - **Dependency Inference**: Automatically detects implicit dependencies from shared files, same-package modifications, and import relationships
+  - **Parallelism Metrics**: Calculates parallelism scores, identifies bottleneck groups, and computes average group sizes
+  - **File Conflict Detection**: Groups tasks that share files with severity ratings for merge conflict prevention
+  - **Transitive Reduction**: Simplifies dependency graphs by removing redundant edges (Floyd-Warshall algorithm)
+  - **Smart Split Suggestions**: Recommends how to break complex tasks by file-type, package, or risk-isolation
+  - **Risk-Aware Planning Strategy**: New "risk-aware" planning strategy guides Claude to create safer execution plans
 - **Progress Persistence & Session Recovery** - Claude instances now persist their session IDs, enabling automatic recovery when Claudio is interrupted. If Claudio exits unexpectedly while instances are running, reattaching to the session will automatically resume Claude conversations using `--resume`, picking up exactly where they left off. Sessions track clean shutdown state and can detect interruptions on restart.
 - **Multiple Concurrent Tripleshots** - Users can now run multiple tripleshot sessions simultaneously. Each tripleshot operates independently with its own attempts, judge, and evaluation. The `:accept` command is context-aware, accepting the tripleshot whose instance is currently selected. Tripleshots appear as separate groups in the sidebar.
 - **Plan Mode in Triple-Shot** - The `:plan` command can now be used while in triple-shot mode. Plan groups appear as separate sections in the sidebar below the tripleshot attempts and judge, allowing parallel planning workflows alongside tripleshot execution.
