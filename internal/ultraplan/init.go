@@ -59,3 +59,74 @@ func BuildConfigFromAppConfig(cfg *config.Config) orchestrator.UltraPlanConfig {
 
 	return ultraCfg
 }
+
+// GroupNameMaxLength is the maximum length for ultraplan group names.
+// Longer names are truncated with "..." suffix.
+const GroupNameMaxLength = 30
+
+// CreateUltraPlanGroup creates an InstanceGroup for an ultraplan session with the
+// appropriate SessionType based on the MultiPass configuration.
+//
+// This is a helper function that consolidates the duplicated group creation logic
+// from multiple locations (app.go NewWithUltraPlan, inlineplan.go initInlineUltraPlanMode,
+// and handleUltraPlanObjectiveSubmit).
+//
+// It creates a group with:
+//   - Name: truncated objective (max 30 chars with "..." suffix if needed)
+//   - SessionType: UltraPlan for single-pass, PlanMulti for multi-pass mode
+//   - Objective: full objective string for LLM-based name generation
+//
+// The caller is responsible for:
+//   - Adding the group to the session via session.AddGroup()
+//   - Linking the group to the UltraPlanSession via ultraSession.GroupID = group.ID
+func CreateUltraPlanGroup(objective string, multiPass bool) *orchestrator.InstanceGroup {
+	sessionType := orchestrator.SessionTypeUltraPlan
+	if multiPass {
+		sessionType = orchestrator.SessionTypePlanMulti
+	}
+
+	name := truncateString(objective, GroupNameMaxLength)
+	if name == "" {
+		name = "UltraPlan"
+	}
+
+	return orchestrator.NewInstanceGroupWithType(name, sessionType, objective)
+}
+
+// CreateAndLinkUltraPlanGroup creates an InstanceGroup for the ultraplan session,
+// adds it to the session, and links it to the UltraPlanSession.
+//
+// This is a convenience function that combines CreateUltraPlanGroup with the
+// common follow-up operations. It returns the created group.
+//
+// Parameters:
+//   - session: the Claudio session to add the group to
+//   - ultraSession: the UltraPlanSession to link the group to
+//   - multiPass: whether multi-pass planning mode is enabled
+//
+// The function uses the objective from ultraSession.Objective.
+func CreateAndLinkUltraPlanGroup(
+	session *orchestrator.Session,
+	ultraSession *orchestrator.UltraPlanSession,
+	multiPass bool,
+) *orchestrator.InstanceGroup {
+	group := CreateUltraPlanGroup(ultraSession.Objective, multiPass)
+	session.AddGroup(group)
+	ultraSession.GroupID = group.ID
+	return group
+}
+
+// truncateString truncates a string to maxLen characters, adding "..." suffix
+// if truncation was needed. Returns empty string if input is empty.
+func truncateString(s string, maxLen int) string {
+	if s == "" {
+		return ""
+	}
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
+}
