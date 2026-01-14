@@ -453,6 +453,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// This avoids blocking the UI with file I/O during planning phases
 		cmds = append(cmds, m.dispatchUltraPlanFileChecks()...)
 
+		// Dispatch async commands to check inline multiplan files
+		// This polls for plan file creation during :multiplan command
+		cmds = append(cmds, m.dispatchInlineMultiPlanFileChecks()...)
+
 		// Check if ultraplan needs user notification
 		if m.ultraPlan != nil && m.ultraPlan.NeedsNotification {
 			m.ultraPlan.NeedsNotification = false
@@ -651,6 +655,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case planManagerFileCheckResultMsg:
 		// Handle async plan manager file check result
 		return m.handlePlanManagerFileCheckResult(msg)
+
+	case inlineMultiPlanFileCheckResultMsg:
+		// Handle async inline multiplan file check result
+		return m.handleInlineMultiPlanFileCheckResult(msg)
 	}
 
 	return m, nil
@@ -3473,6 +3481,14 @@ type planManagerFileCheckResultMsg struct {
 	Plan     *orchestrator.PlanSpec
 	Decision *orchestrator.PlanDecision
 	Err      error
+}
+
+// inlineMultiPlanFileCheckResultMsg contains the result of async inline multiplan file checking.
+// Used by the :multiplan command to detect when planners create their plan files.
+type inlineMultiPlanFileCheckResultMsg struct {
+	Index        int
+	Plan         *orchestrator.PlanSpec
+	StrategyName string
 }
 
 // checkPlanFileAsync returns a command that checks for a plan file asynchronously.
