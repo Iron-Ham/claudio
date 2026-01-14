@@ -176,20 +176,22 @@ This project uses standard Go testing conventions:
 
 This project maintains a [CHANGELOG.md](CHANGELOG.md) following the [Keep a Changelog](https://keepachangelog.com/) format. The changelog has an **Unreleased** section at the top where changes accumulate until the next release.
 
-### When to Update
+### MANDATORY: Every Pull Request MUST Include a Changelog Entry
 
-Add an entry to the Unreleased section when making:
-- **New features** (`### Added`)
-- **Bug fixes** (`### Fixed`)
-- **Performance improvements** (`### Performance`)
-- **Breaking changes** (`### Changed` or `### Removed`)
-- **Deprecations** (`### Deprecated`)
+**NO EXCEPTIONS.** Every pull request must add an entry to the `## [Unreleased]` section of CHANGELOG.md. This requirement is absolute and applies to all changes, regardless of size or type.
 
-Skip changelog entries for:
-- Internal refactors that don't change behavior
-- Test-only changes
-- Documentation-only changes (unless significant)
-- Dependency updates (unless they fix bugs or add features)
+Use the appropriate category for your change:
+- **New features** → `### Added`
+- **Bug fixes** → `### Fixed`
+- **Performance improvements** → `### Performance`
+- **Breaking changes** → `### Changed` or `### Removed`
+- **Deprecations** → `### Deprecated`
+- **Internal refactors** → `### Changed`
+- **Test improvements** → `### Changed`
+- **Documentation updates** → `### Changed`
+- **Dependency updates** → `### Changed`
+
+If you're unsure which category to use, use `### Changed`.
 
 ### Entry Format
 
@@ -222,7 +224,7 @@ Before committing, ensure:
 3. Build succeeds: `go build ./...`
 4. All tests pass: `go test ./...`
 5. New code has tests with reasonable coverage
-6. Notable changes have a CHANGELOG.md entry (see above)
+6. **CHANGELOG.md has been updated (MANDATORY - NO EXCEPTIONS)**
 
 ## Project Structure
 
