@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Instance Header Simplified** - Removed redundant status badge from instance detail header since task state is already displayed in the sidebar with 4-character abbreviations (WAIT, WORK, DONE, etc.)
+
 ### Added
 
 - **Changelog CI Check** - PRs now require a CHANGELOG.md entry. Add the `skip-changelog` label to bypass for trivial changes (test-only, internal refactors, docs-only, dependency updates).
