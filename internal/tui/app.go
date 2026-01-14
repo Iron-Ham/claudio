@@ -1892,10 +1892,26 @@ func (m Model) openBranchSelector() (tea.Model, tea.Cmd) {
 		m.branchList[i] = b.Name
 	}
 
+	// Initialize filter state - start with all branches visible
+	m.branchSearchInput = ""
+	m.branchFiltered = m.branchList
+	m.branchScrollOffset = 0
+
+	// Calculate visible height for branch selector (reserve space for UI elements)
+	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
+	// Reserve: search line, scroll indicators, count line, padding
+	m.branchSelectorHeight = dims.MainAreaHeight - 10
+	if m.branchSelectorHeight < 5 {
+		m.branchSelectorHeight = 5
+	}
+	if m.branchSelectorHeight > 15 {
+		m.branchSelectorHeight = 15 // Cap at reasonable max
+	}
+
 	// Find the index of the currently selected branch (if any)
 	selectedIdx := 0
 	if m.selectedBaseBranch != "" {
-		for i, name := range m.branchList {
+		for i, name := range m.branchFiltered {
 			if name == m.selectedBaseBranch {
 				selectedIdx = i
 				break
@@ -1905,39 +1921,155 @@ func (m Model) openBranchSelector() (tea.Model, tea.Cmd) {
 
 	m.showBranchSelector = true
 	m.branchSelected = selectedIdx
+	m = m.adjustBranchScroll()
+
 	return m, nil
+}
+
+// closeBranchSelector resets the branch selector state.
+func (m Model) closeBranchSelector() Model {
+	m.showBranchSelector = false
+	m.branchSearchInput = ""
+	m.branchFiltered = nil
+	m.branchScrollOffset = 0
+	return m
 }
 
 // handleBranchSelector handles keyboard input when the branch selector is visible.
 func (m Model) handleBranchSelector(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
-		// Close dropdown without changing selection
-		m.showBranchSelector = false
-		return m, nil
+		return m.closeBranchSelector(), nil
 
 	case tea.KeyEnter, tea.KeyTab:
-		// Select the highlighted branch
-		if len(m.branchList) > 0 && m.branchSelected < len(m.branchList) {
-			m.selectedBaseBranch = m.branchList[m.branchSelected]
+		// Select the highlighted branch from the filtered list
+		if len(m.branchFiltered) > 0 && m.branchSelected < len(m.branchFiltered) {
+			m.selectedBaseBranch = m.branchFiltered[m.branchSelected]
 		}
-		m.showBranchSelector = false
-		return m, nil
+		return m.closeBranchSelector(), nil
 
 	case tea.KeyUp:
 		if m.branchSelected > 0 {
 			m.branchSelected--
+			m = m.adjustBranchScroll()
 		}
 		return m, nil
 
 	case tea.KeyDown:
-		if m.branchSelected < len(m.branchList)-1 {
+		if m.branchSelected < len(m.branchFiltered)-1 {
 			m.branchSelected++
+			m = m.adjustBranchScroll()
 		}
+		return m, nil
+
+	case tea.KeyPgUp, tea.KeyCtrlU:
+		// Page up
+		m.branchSelected -= m.branchSelectorHeight
+		if m.branchSelected < 0 {
+			m.branchSelected = 0
+		}
+		m = m.adjustBranchScroll()
+		return m, nil
+
+	case tea.KeyPgDown, tea.KeyCtrlD:
+		// Page down
+		m.branchSelected += m.branchSelectorHeight
+		if m.branchSelected >= len(m.branchFiltered) {
+			m.branchSelected = len(m.branchFiltered) - 1
+		}
+		if m.branchSelected < 0 {
+			m.branchSelected = 0
+		}
+		m = m.adjustBranchScroll()
+		return m, nil
+
+	case tea.KeyBackspace:
+		// Remove last character from search
+		if len(m.branchSearchInput) > 0 {
+			runes := []rune(m.branchSearchInput)
+			m.branchSearchInput = string(runes[:len(runes)-1])
+			m = m.applyBranchFilter()
+		}
+		return m, nil
+
+	case tea.KeyRunes:
+		// Add typed characters to search
+		m.branchSearchInput += string(msg.Runes)
+		m = m.applyBranchFilter()
+		return m, nil
+
+	case tea.KeySpace:
+		// Add space to search
+		m.branchSearchInput += " "
+		m = m.applyBranchFilter()
 		return m, nil
 	}
 
 	return m, nil
+}
+
+// applyBranchFilter filters the branch list based on search input.
+// Returns a new Model with the filter applied.
+func (m Model) applyBranchFilter() Model {
+	if m.branchSearchInput == "" {
+		m.branchFiltered = m.branchList
+	} else {
+		searchLower := strings.ToLower(m.branchSearchInput)
+		m.branchFiltered = nil
+		for _, name := range m.branchList {
+			if strings.Contains(strings.ToLower(name), searchLower) {
+				m.branchFiltered = append(m.branchFiltered, name)
+			}
+		}
+	}
+
+	// Reset selection to first item when filter changes
+	m.branchSelected = 0
+	m.branchScrollOffset = 0
+
+	// Try to keep previously selected branch selected if it's still visible
+	if m.selectedBaseBranch != "" {
+		for i, name := range m.branchFiltered {
+			if name == m.selectedBaseBranch {
+				m.branchSelected = i
+				break
+			}
+		}
+	}
+
+	return m.adjustBranchScroll()
+}
+
+// adjustBranchScroll adjusts scroll offset to keep selection visible.
+// Returns a new Model with the scroll adjusted.
+func (m Model) adjustBranchScroll() Model {
+	if m.branchSelectorHeight <= 0 {
+		return m
+	}
+
+	// If selection is above viewport, scroll up
+	if m.branchSelected < m.branchScrollOffset {
+		m.branchScrollOffset = m.branchSelected
+	}
+
+	// If selection is below viewport, scroll down
+	if m.branchSelected >= m.branchScrollOffset+m.branchSelectorHeight {
+		m.branchScrollOffset = m.branchSelected - m.branchSelectorHeight + 1
+	}
+
+	// Clamp scroll offset
+	maxScroll := len(m.branchFiltered) - m.branchSelectorHeight
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.branchScrollOffset > maxScroll {
+		m.branchScrollOffset = maxScroll
+	}
+	if m.branchScrollOffset < 0 {
+		m.branchScrollOffset = 0
+	}
+
+	return m
 }
 
 // handleSearchInput handles keyboard input when in search mode
@@ -2580,15 +2712,18 @@ func (m Model) renderFilterPanel(width int) string {
 // renderAddTask renders the add task input
 func (m Model) renderAddTask(width int) string {
 	inputState := &view.InputState{
-		Text:               m.taskInput,
-		Cursor:             m.taskInputCursor,
-		ShowTemplates:      m.showTemplates,
-		Templates:          m.buildTemplateItems(),
-		TemplateSelected:   m.templateSelected,
-		ShowBranchSelector: m.showBranchSelector,
-		Branches:           m.buildBranchItems(),
-		BranchSelected:     m.branchSelected,
-		SelectedBranch:     m.selectedBaseBranch,
+		Text:                 m.taskInput,
+		Cursor:               m.taskInputCursor,
+		ShowTemplates:        m.showTemplates,
+		Templates:            m.buildTemplateItems(),
+		TemplateSelected:     m.templateSelected,
+		ShowBranchSelector:   m.showBranchSelector,
+		Branches:             m.buildBranchItems(),
+		BranchSelected:       m.branchSelected,
+		BranchScrollOffset:   m.branchScrollOffset,
+		BranchSearchInput:    m.branchSearchInput,
+		SelectedBranch:       m.selectedBaseBranch,
+		BranchSelectorHeight: m.branchSelectorHeight,
 	}
 
 	// Customize title/subtitle for dependent task mode
@@ -2625,17 +2760,22 @@ func (m Model) buildTemplateItems() []view.TemplateItem {
 	return items
 }
 
-// buildBranchItems converts the cached branch list to view branch items
+// buildBranchItems converts the filtered branch list to view branch items
 func (m Model) buildBranchItems() []view.BranchItem {
-	if len(m.branchList) == 0 {
+	// Use filtered list if available, otherwise full list
+	branchList := m.branchFiltered
+	if len(branchList) == 0 && len(m.branchList) > 0 && m.branchSearchInput == "" {
+		branchList = m.branchList
+	}
+	if len(branchList) == 0 {
 		return nil
 	}
 
 	// Get main branch name from orchestrator
 	mainBranch := m.orchestrator.GetMainBranch()
 
-	items := make([]view.BranchItem, len(m.branchList))
-	for i, name := range m.branchList {
+	items := make([]view.BranchItem, len(branchList))
+	for i, name := range branchList {
 		items[i] = view.BranchItem{
 			Name:   name,
 			IsMain: name == mainBranch,

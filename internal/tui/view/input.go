@@ -4,6 +4,7 @@
 package view
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
@@ -38,10 +39,13 @@ type InputState struct {
 	TemplateSelected int            // Currently highlighted template index
 
 	// Branch selector state
-	ShowBranchSelector bool         // Whether the branch selector is visible
-	Branches           []BranchItem // Available branches to select from
-	BranchSelected     int          // Currently highlighted branch index
-	SelectedBranch     string       // The currently selected branch name (shown in UI)
+	ShowBranchSelector   bool         // Whether the branch selector is visible
+	Branches             []BranchItem // Available branches to select from (filtered)
+	BranchSelected       int          // Currently highlighted branch index in filtered list
+	BranchScrollOffset   int          // Scroll offset for branch list viewport
+	BranchSearchInput    string       // Current search/filter text
+	SelectedBranch       string       // The currently selected branch name (shown in UI)
+	BranchSelectorHeight int          // Maximum visible branches in the selector
 }
 
 // InputView renders the task input dialog.
@@ -175,14 +179,59 @@ func (v *InputView) renderTemplateDropdown(state *InputState) string {
 	return styles.DropdownContainer.Render(content)
 }
 
-// renderBranchSelector renders the branch selection dropdown.
+// renderBranchSelector renders the branch selection dropdown with search and scrolling.
 func (v *InputView) renderBranchSelector(state *InputState) string {
+	var b strings.Builder
+
+	// Search input field
+	b.WriteString(styles.Muted.Render("Search: "))
+	b.WriteString(state.BranchSearchInput)
+	b.WriteString(styles.Secondary.Render("█")) // Cursor
+	b.WriteString("\n")
+
 	if len(state.Branches) == 0 {
-		return styles.Muted.Render("  No branches available")
+		if state.BranchSearchInput != "" {
+			b.WriteString(styles.Muted.Render("  No matching branches"))
+		} else {
+			b.WriteString(styles.Muted.Render("  No branches available"))
+		}
+		return styles.DropdownContainer.Render(b.String())
 	}
 
-	var items []string
-	for i, branch := range state.Branches {
+	// Calculate visible range with scrolling
+	maxVisible := state.BranchSelectorHeight
+	if maxVisible <= 0 {
+		maxVisible = 10 // Default fallback
+	}
+
+	totalBranches := len(state.Branches)
+	scrollOffset := state.BranchScrollOffset
+
+	// Clamp scroll offset
+	maxScroll := totalBranches - maxVisible
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scrollOffset > maxScroll {
+		scrollOffset = maxScroll
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+
+	// Show scroll indicator if there's content above
+	if scrollOffset > 0 {
+		b.WriteString(styles.Muted.Render("  ▲ " + formatCount(scrollOffset) + " more above\n"))
+	}
+
+	// Render visible branches
+	endIdx := scrollOffset + maxVisible
+	if endIdx > totalBranches {
+		endIdx = totalBranches
+	}
+
+	for i := scrollOffset; i < endIdx; i++ {
+		branch := state.Branches[i]
 		name := branch.Name
 		var suffix string
 		if branch.IsMain {
@@ -200,17 +249,36 @@ func (v *InputView) renderBranchSelector(state *InputState) string {
 					styles.Muted.Render(suffix),
 			)
 		}
-		items = append(items, item)
+		b.WriteString(item)
+		if i < endIdx-1 {
+			b.WriteString("\n")
+		}
 	}
 
-	content := strings.Join(items, "\n")
-	return styles.DropdownContainer.Render(content)
+	// Show scroll indicator if there's content below
+	remaining := totalBranches - endIdx
+	if remaining > 0 {
+		b.WriteString("\n")
+		b.WriteString(styles.Muted.Render("  ▼ " + formatCount(remaining) + " more below"))
+	}
+
+	// Show match count
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("  " + formatCount(totalBranches) + " branches"))
+
+	return styles.DropdownContainer.Render(b.String())
+}
+
+// formatCount formats a count for display.
+func formatCount(n int) string {
+	return strconv.Itoa(n)
 }
 
 // renderHints renders the context-aware keyboard hints.
 func (v *InputView) renderHints(state *InputState) string {
 	if state.ShowBranchSelector {
 		return styles.Muted.Render("↑/↓") + " navigate  " +
+			styles.Muted.Render("Type") + " filter  " +
 			styles.Muted.Render("Enter/Tab") + " select  " +
 			styles.Muted.Render("Esc") + " close"
 	}
