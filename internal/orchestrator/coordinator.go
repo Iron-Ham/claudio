@@ -517,7 +517,15 @@ func (c *Coordinator) RunPlanning() error {
 	}
 
 	// Add planning instance to the ultraplan group for sidebar display
-	if ultraGroup := c.baseSession.GetGroupBySessionType(SessionTypeUltraPlan); ultraGroup != nil {
+	// Use session.GroupID (set by TUI) for reliable group lookup, with fallback to type-based lookup
+	var ultraGroup *InstanceGroup
+	if session.GroupID != "" {
+		ultraGroup = c.baseSession.GetGroup(session.GroupID)
+	}
+	if ultraGroup == nil {
+		ultraGroup = c.baseSession.GetGroupBySessionType(SessionTypeUltraPlan)
+	}
+	if ultraGroup != nil {
 		ultraGroup.AddInstance(inst.ID)
 	}
 
@@ -575,7 +583,15 @@ func (c *Coordinator) RunMultiPassPlanning() error {
 		}
 
 		// Add planning instance to the multi-pass group for sidebar display
-		if multiGroup := c.baseSession.GetGroupBySessionType(SessionTypePlanMulti); multiGroup != nil {
+		// Use session.GroupID (set by TUI) for reliable group lookup, with fallback to type-based lookup
+		var multiGroup *InstanceGroup
+		if session.GroupID != "" {
+			multiGroup = c.baseSession.GetGroup(session.GroupID)
+		}
+		if multiGroup == nil {
+			multiGroup = c.baseSession.GetGroupBySessionType(SessionTypePlanMulti)
+		}
+		if multiGroup != nil {
 			multiGroup.AddInstance(inst.ID)
 		}
 
@@ -644,7 +660,15 @@ func (c *Coordinator) RunPlanManager() error {
 	}
 
 	// Add plan manager to the multi-pass group for sidebar display
-	if multiGroup := c.baseSession.GetGroupBySessionType(SessionTypePlanMulti); multiGroup != nil {
+	// Use session.GroupID (set by TUI) for reliable group lookup, with fallback to type-based lookup
+	var multiGroup *InstanceGroup
+	if session.GroupID != "" {
+		multiGroup = c.baseSession.GetGroup(session.GroupID)
+	}
+	if multiGroup == nil {
+		multiGroup = c.baseSession.GetGroupBySessionType(SessionTypePlanMulti)
+	}
+	if multiGroup != nil {
 		multiGroup.AddInstance(inst.ID)
 	}
 
