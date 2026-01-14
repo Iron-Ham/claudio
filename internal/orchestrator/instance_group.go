@@ -125,6 +125,11 @@ func (g *InstanceGroup) InstanceCount() int {
 	return count
 }
 
+// IsEmpty returns true if this group has no instances and no sub-groups with instances
+func (g *InstanceGroup) IsEmpty() bool {
+	return g.InstanceCount() == 0
+}
+
 // IsTopLevel returns true if this group has no parent (is not a sub-group)
 func (g *InstanceGroup) IsTopLevel() bool {
 	return g.ParentID == ""
@@ -268,4 +273,60 @@ func (s *Session) GetOrCreateSharedGroup(sessionType SessionType) *InstanceGroup
 	group := NewInstanceGroupWithType(sessionType.SharedGroupName(), sessionType, "")
 	s.AddGroup(group)
 	return group
+}
+
+// RemoveInstanceFromGroups removes an instance from all groups and sub-groups.
+// After removal, any empty groups are automatically cleaned up.
+func (s *Session) RemoveInstanceFromGroups(instanceID string) {
+	// First, remove the instance from all groups
+	for _, g := range s.Groups {
+		removeInstanceFromGroupRecursive(g, instanceID)
+	}
+
+	// Then clean up any empty groups
+	s.CleanupEmptyGroups()
+}
+
+// removeInstanceFromGroupRecursive removes an instance from a group and its sub-groups.
+func removeInstanceFromGroupRecursive(group *InstanceGroup, instanceID string) {
+	group.RemoveInstance(instanceID)
+	for _, sg := range group.SubGroups {
+		removeInstanceFromGroupRecursive(sg, instanceID)
+	}
+}
+
+// CleanupEmptyGroups removes all empty groups (top-level and sub-groups).
+func (s *Session) CleanupEmptyGroups() {
+	// First, clean up empty sub-groups within each top-level group
+	for _, g := range s.Groups {
+		cleanupEmptySubGroups(g)
+	}
+
+	// Then, remove empty top-level groups
+	var nonEmptyGroups []*InstanceGroup
+	for _, g := range s.Groups {
+		if !g.IsEmpty() {
+			nonEmptyGroups = append(nonEmptyGroups, g)
+		}
+	}
+
+	s.Groups = nonEmptyGroups
+}
+
+// cleanupEmptySubGroups recursively removes empty sub-groups from a parent group.
+func cleanupEmptySubGroups(parent *InstanceGroup) {
+	// First, recurse into sub-groups to clean up their sub-groups
+	for _, sg := range parent.SubGroups {
+		cleanupEmptySubGroups(sg)
+	}
+
+	// Then, remove empty sub-groups from this parent
+	var nonEmptySubGroups []*InstanceGroup
+	for _, sg := range parent.SubGroups {
+		if !sg.IsEmpty() {
+			nonEmptySubGroups = append(nonEmptySubGroups, sg)
+		}
+	}
+
+	parent.SubGroups = nonEmptySubGroups
 }

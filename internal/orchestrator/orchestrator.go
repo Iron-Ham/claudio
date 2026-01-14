@@ -1084,6 +1084,9 @@ func (o *Orchestrator) RemoveInstance(session *Session, instanceID string, force
 	// Remove from session
 	session.Instances = append(session.Instances[:instIndex], session.Instances[instIndex+1:]...)
 
+	// Remove from any groups and clean up empty groups
+	session.RemoveInstanceFromGroups(instanceID)
+
 	// Update context
 	if err := o.updateContext(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update context: %v\n", err)

@@ -190,15 +190,12 @@ func cmdGroupRemove(args string, deps GroupDependencies) Result {
 		return Result{InfoMessage: fmt.Sprintf("Instance %q is not in any group", inst.EffectiveName())}
 	}
 
-	// Remove instance by moving to no group
-	// The group manager doesn't have a direct "ungroup" method,
-	// so we use the orchestrator's InstanceGroup method directly
-	sessionGroup := session.GetGroupForInstance(inst.ID)
-	if sessionGroup != nil {
-		sessionGroup.RemoveInstance(inst.ID)
-	}
+	groupName := currentGroup.Name
 
-	return Result{InfoMessage: fmt.Sprintf("Removed instance %q from group %q", inst.EffectiveName(), currentGroup.Name)}
+	// Remove instance from group (this also cleans up empty groups automatically)
+	mgr.RemoveInstanceFromGroup(inst.ID)
+
+	return Result{InfoMessage: fmt.Sprintf("Removed instance %q from group %q", inst.EffectiveName(), groupName)}
 }
 
 // cmdGroupMove handles ":group move [instance] [group]"

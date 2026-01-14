@@ -668,3 +668,294 @@ func TestSession_GetGroup_DeepRecursion(t *testing.T) {
 		})
 	}
 }
+
+func TestInstanceGroup_IsEmpty(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func() *InstanceGroup
+		expected bool
+	}{
+		{
+			name: "empty group with no instances or sub-groups",
+			setup: func() *InstanceGroup {
+				return NewInstanceGroup("Empty")
+			},
+			expected: true,
+		},
+		{
+			name: "group with instances",
+			setup: func() *InstanceGroup {
+				g := NewInstanceGroup("With Instances")
+				g.AddInstance("inst-1")
+				return g
+			},
+			expected: false,
+		},
+		{
+			name: "group with empty sub-group",
+			setup: func() *InstanceGroup {
+				parent := NewInstanceGroup("Parent")
+				child := NewInstanceGroup("Empty Child")
+				parent.AddSubGroup(child)
+				return parent
+			},
+			expected: true,
+		},
+		{
+			name: "group with sub-group containing instances",
+			setup: func() *InstanceGroup {
+				parent := NewInstanceGroup("Parent")
+				child := NewInstanceGroup("Child")
+				child.AddInstance("inst-1")
+				parent.AddSubGroup(child)
+				return parent
+			},
+			expected: false,
+		},
+		{
+			name: "deeply nested with instance at bottom",
+			setup: func() *InstanceGroup {
+				root := NewInstanceGroup("Root")
+				level1 := NewInstanceGroup("Level 1")
+				level2 := NewInstanceGroup("Level 2")
+				level2.AddInstance("inst-deep")
+				level1.AddSubGroup(level2)
+				root.AddSubGroup(level1)
+				return root
+			},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			group := tt.setup()
+			result := group.IsEmpty()
+			if result != tt.expected {
+				t.Errorf("IsEmpty() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSession_RemoveInstanceFromGroups(t *testing.T) {
+	t.Run("removes instance and cleans up empty group", func(t *testing.T) {
+		session := NewSession("test", "/repo")
+
+		// Create a group with one instance
+		group := NewInstanceGroup("Single Instance Group")
+		group.AddInstance("inst-1")
+		session.AddGroup(group)
+
+		// Remove the instance
+		session.RemoveInstanceFromGroups("inst-1")
+
+		// Group should be removed since it's now empty
+		if len(session.Groups) != 0 {
+			t.Errorf("expected 0 groups after removing last instance, got %d", len(session.Groups))
+		}
+	})
+
+	t.Run("removes instance but keeps group with remaining instances", func(t *testing.T) {
+		session := NewSession("test", "/repo")
+
+		// Create a group with multiple instances
+		group := NewInstanceGroup("Multi Instance Group")
+		group.AddInstance("inst-1")
+		group.AddInstance("inst-2")
+		session.AddGroup(group)
+
+		// Remove one instance
+		session.RemoveInstanceFromGroups("inst-1")
+
+		// Group should still exist
+		if len(session.Groups) != 1 {
+			t.Errorf("expected 1 group remaining, got %d", len(session.Groups))
+		}
+
+		// Only inst-2 should remain
+		if len(session.Groups[0].Instances) != 1 {
+			t.Errorf("expected 1 instance remaining, got %d", len(session.Groups[0].Instances))
+		}
+		if session.Groups[0].Instances[0] != "inst-2" {
+			t.Errorf("expected inst-2 to remain, got %s", session.Groups[0].Instances[0])
+		}
+	})
+
+	t.Run("removes instance from sub-group and cleans up empty hierarchy", func(t *testing.T) {
+		session := NewSession("test", "/repo")
+
+		// Create parent with empty direct instances but sub-group with instance
+		parent := NewInstanceGroup("Parent")
+		child := NewInstanceGroup("Child")
+		child.AddInstance("inst-1")
+		parent.AddSubGroup(child)
+		session.AddGroup(parent)
+
+		// Remove the instance
+		session.RemoveInstanceFromGroups("inst-1")
+
+		// Both parent and child should be removed since hierarchy is empty
+		if len(session.Groups) != 0 {
+			t.Errorf("expected 0 groups after removing instance from sub-group, got %d", len(session.Groups))
+		}
+	})
+
+	t.Run("keeps parent group when sibling sub-group has instances", func(t *testing.T) {
+		session := NewSession("test", "/repo")
+
+		parent := NewInstanceGroup("Parent")
+		child1 := NewInstanceGroup("Child 1")
+		child1.AddInstance("inst-1")
+		child2 := NewInstanceGroup("Child 2")
+		child2.AddInstance("inst-2")
+		parent.AddSubGroup(child1)
+		parent.AddSubGroup(child2)
+		session.AddGroup(parent)
+
+		// Remove instance from child1
+		session.RemoveInstanceFromGroups("inst-1")
+
+		// Parent should remain, child1 should be removed, child2 should remain
+		if len(session.Groups) != 1 {
+			t.Errorf("expected 1 top-level group, got %d", len(session.Groups))
+		}
+
+		if len(session.Groups[0].SubGroups) != 1 {
+			t.Errorf("expected 1 sub-group remaining, got %d", len(session.Groups[0].SubGroups))
+		}
+
+		if session.Groups[0].SubGroups[0].Name != "Child 2" {
+			t.Errorf("expected Child 2 to remain, got %s", session.Groups[0].SubGroups[0].Name)
+		}
+	})
+
+	t.Run("handles non-existent instance gracefully", func(t *testing.T) {
+		session := NewSession("test", "/repo")
+
+		group := NewInstanceGroup("Group")
+		group.AddInstance("inst-1")
+		session.AddGroup(group)
+
+		// Remove non-existent instance
+		session.RemoveInstanceFromGroups("nonexistent")
+
+		// Group should remain unchanged
+		if len(session.Groups) != 1 {
+			t.Errorf("expected 1 group, got %d", len(session.Groups))
+		}
+		if len(session.Groups[0].Instances) != 1 {
+			t.Errorf("expected 1 instance, got %d", len(session.Groups[0].Instances))
+		}
+	})
+}
+
+func TestSession_CleanupEmptyGroups(t *testing.T) {
+	t.Run("removes empty top-level groups", func(t *testing.T) {
+		session := NewSession("test", "/repo")
+
+		emptyGroup := NewInstanceGroup("Empty")
+		nonEmptyGroup := NewInstanceGroup("Not Empty")
+		nonEmptyGroup.AddInstance("inst-1")
+
+		session.AddGroup(emptyGroup)
+		session.AddGroup(nonEmptyGroup)
+
+		session.CleanupEmptyGroups()
+
+		if len(session.Groups) != 1 {
+			t.Errorf("expected 1 group remaining, got %d", len(session.Groups))
+		}
+		if session.Groups[0].Name != "Not Empty" {
+			t.Errorf("expected 'Not Empty' group to remain, got %s", session.Groups[0].Name)
+		}
+	})
+
+	t.Run("removes empty sub-groups", func(t *testing.T) {
+		session := NewSession("test", "/repo")
+
+		parent := NewInstanceGroup("Parent")
+		parent.AddInstance("inst-parent")
+
+		emptyChild := NewInstanceGroup("Empty Child")
+		nonEmptyChild := NewInstanceGroup("Not Empty Child")
+		nonEmptyChild.AddInstance("inst-child")
+
+		parent.AddSubGroup(emptyChild)
+		parent.AddSubGroup(nonEmptyChild)
+		session.AddGroup(parent)
+
+		session.CleanupEmptyGroups()
+
+		if len(session.Groups) != 1 {
+			t.Errorf("expected 1 top-level group, got %d", len(session.Groups))
+		}
+		if len(session.Groups[0].SubGroups) != 1 {
+			t.Errorf("expected 1 sub-group, got %d", len(session.Groups[0].SubGroups))
+		}
+		if session.Groups[0].SubGroups[0].Name != "Not Empty Child" {
+			t.Errorf("expected 'Not Empty Child' to remain, got %s", session.Groups[0].SubGroups[0].Name)
+		}
+	})
+
+	t.Run("handles deeply nested empty groups", func(t *testing.T) {
+		session := NewSession("test", "/repo")
+
+		root := NewInstanceGroup("Root")
+		level1 := NewInstanceGroup("Level 1")
+		level2 := NewInstanceGroup("Level 2")
+		level3Empty := NewInstanceGroup("Level 3 Empty")
+		level3NonEmpty := NewInstanceGroup("Level 3 Non-Empty")
+		level3NonEmpty.AddInstance("inst-deep")
+
+		level2.AddSubGroup(level3Empty)
+		level2.AddSubGroup(level3NonEmpty)
+		level1.AddSubGroup(level2)
+		root.AddSubGroup(level1)
+		session.AddGroup(root)
+
+		session.CleanupEmptyGroups()
+
+		// Root should remain (has nested instance)
+		if len(session.Groups) != 1 {
+			t.Errorf("expected 1 top-level group, got %d", len(session.Groups))
+		}
+
+		// Level 3 Empty should be removed
+		level2Result := session.Groups[0].SubGroups[0].SubGroups[0]
+		if len(level2Result.SubGroups) != 1 {
+			t.Errorf("expected 1 sub-group at level 2, got %d", len(level2Result.SubGroups))
+		}
+		if level2Result.SubGroups[0].Name != "Level 3 Non-Empty" {
+			t.Errorf("expected 'Level 3 Non-Empty' to remain, got %s", level2Result.SubGroups[0].Name)
+		}
+	})
+
+	t.Run("no-op when all groups are non-empty", func(t *testing.T) {
+		session := NewSession("test", "/repo")
+
+		group1 := NewInstanceGroup("Group 1")
+		group1.AddInstance("inst-1")
+		group2 := NewInstanceGroup("Group 2")
+		group2.AddInstance("inst-2")
+
+		session.AddGroup(group1)
+		session.AddGroup(group2)
+
+		session.CleanupEmptyGroups()
+
+		if len(session.Groups) != 2 {
+			t.Errorf("expected 2 groups, got %d", len(session.Groups))
+		}
+	})
+
+	t.Run("no-op when no groups exist", func(t *testing.T) {
+		session := NewSession("test", "/repo")
+
+		session.CleanupEmptyGroups()
+
+		if len(session.Groups) != 0 {
+			t.Errorf("expected empty groups, got %v", session.Groups)
+		}
+	})
+}

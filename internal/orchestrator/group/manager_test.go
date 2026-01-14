@@ -852,3 +852,151 @@ func TestComplexScenario_WorkflowSimulation(t *testing.T) {
 		t.Errorf("integration.DependsOn = %v, want [%s]", integration.DependsOn, features.ID)
 	}
 }
+
+func TestRemoveInstanceFromGroup(t *testing.T) {
+	t.Run("removes instance and cleans up empty group", func(t *testing.T) {
+		session := newMockManagerSession()
+		manager := NewManager(session)
+
+		manager.CreateGroup("Single Instance Group", []string{"inst-1"})
+
+		removed := manager.RemoveInstanceFromGroup("inst-1")
+		if !removed {
+			t.Error("RemoveInstanceFromGroup should return true when instance found")
+		}
+
+		groups := manager.GetAllGroups()
+		if len(groups) != 0 {
+			t.Errorf("expected 0 groups after removing last instance, got %d", len(groups))
+		}
+	})
+
+	t.Run("removes instance but keeps group with remaining instances", func(t *testing.T) {
+		session := newMockManagerSession()
+		manager := NewManager(session)
+
+		manager.CreateGroup("Multi Instance Group", []string{"inst-1", "inst-2"})
+
+		removed := manager.RemoveInstanceFromGroup("inst-1")
+		if !removed {
+			t.Error("RemoveInstanceFromGroup should return true when instance found")
+		}
+
+		groups := manager.GetAllGroups()
+		if len(groups) != 1 {
+			t.Errorf("expected 1 group remaining, got %d", len(groups))
+		}
+
+		if len(groups[0].Instances) != 1 || groups[0].Instances[0] != "inst-2" {
+			t.Errorf("expected only inst-2 to remain, got %v", groups[0].Instances)
+		}
+	})
+
+	t.Run("removes instance from sub-group and cleans up empty hierarchy", func(t *testing.T) {
+		session := newMockManagerSession()
+		manager := NewManager(session)
+
+		parent := manager.CreateGroup("Parent", nil)
+		manager.CreateSubGroup(parent.ID, "Child", []string{"inst-1"})
+
+		removed := manager.RemoveInstanceFromGroup("inst-1")
+		if !removed {
+			t.Error("RemoveInstanceFromGroup should return true when instance found")
+		}
+
+		groups := manager.GetAllGroups()
+		if len(groups) != 0 {
+			t.Errorf("expected 0 groups after removing instance from sub-group, got %d", len(groups))
+		}
+	})
+
+	t.Run("keeps parent group when sibling sub-group has instances", func(t *testing.T) {
+		session := newMockManagerSession()
+		manager := NewManager(session)
+
+		parent := manager.CreateGroup("Parent", nil)
+		manager.CreateSubGroup(parent.ID, "Child 1", []string{"inst-1"})
+		manager.CreateSubGroup(parent.ID, "Child 2", []string{"inst-2"})
+
+		removed := manager.RemoveInstanceFromGroup("inst-1")
+		if !removed {
+			t.Error("RemoveInstanceFromGroup should return true when instance found")
+		}
+
+		groups := manager.GetAllGroups()
+		if len(groups) != 1 {
+			t.Errorf("expected 1 top-level group, got %d", len(groups))
+		}
+
+		if len(groups[0].SubGroups) != 1 {
+			t.Errorf("expected 1 sub-group remaining, got %d", len(groups[0].SubGroups))
+		}
+
+		if groups[0].SubGroups[0].Name != "Child 2" {
+			t.Errorf("expected Child 2 to remain, got %s", groups[0].SubGroups[0].Name)
+		}
+	})
+
+	t.Run("returns false for non-existent instance", func(t *testing.T) {
+		session := newMockManagerSession()
+		manager := NewManager(session)
+
+		manager.CreateGroup("Group", []string{"inst-1"})
+
+		removed := manager.RemoveInstanceFromGroup("nonexistent")
+		if removed {
+			t.Error("RemoveInstanceFromGroup should return false for non-existent instance")
+		}
+
+		groups := manager.GetAllGroups()
+		if len(groups) != 1 || len(groups[0].Instances) != 1 {
+			t.Error("group should remain unchanged when removing non-existent instance")
+		}
+	})
+
+	t.Run("cleans up deeply nested empty hierarchy", func(t *testing.T) {
+		session := newMockManagerSession()
+		manager := NewManager(session)
+
+		root := manager.CreateGroup("Root", nil)
+		level1 := manager.CreateSubGroup(root.ID, "Level 1", nil)
+		level2 := manager.CreateSubGroup(level1.ID, "Level 2", nil)
+		manager.CreateSubGroup(level2.ID, "Level 3", []string{"inst-deep"})
+
+		removed := manager.RemoveInstanceFromGroup("inst-deep")
+		if !removed {
+			t.Error("RemoveInstanceFromGroup should return true for deeply nested instance")
+		}
+
+		groups := manager.GetAllGroups()
+		if len(groups) != 0 {
+			t.Errorf("expected 0 groups after removing last instance from deep hierarchy, got %d", len(groups))
+		}
+	})
+
+	t.Run("keeps parent with direct instances when sub-group becomes empty", func(t *testing.T) {
+		session := newMockManagerSession()
+		manager := NewManager(session)
+
+		parent := manager.CreateGroup("Parent", []string{"parent-inst"})
+		manager.CreateSubGroup(parent.ID, "Child", []string{"child-inst"})
+
+		removed := manager.RemoveInstanceFromGroup("child-inst")
+		if !removed {
+			t.Error("RemoveInstanceFromGroup should return true")
+		}
+
+		groups := manager.GetAllGroups()
+		if len(groups) != 1 {
+			t.Errorf("expected 1 group remaining, got %d", len(groups))
+		}
+
+		if len(groups[0].SubGroups) != 0 {
+			t.Error("empty sub-group should be removed")
+		}
+
+		if len(groups[0].Instances) != 1 || groups[0].Instances[0] != "parent-inst" {
+			t.Error("parent instance should remain")
+		}
+	})
+}

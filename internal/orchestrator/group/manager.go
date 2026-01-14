@@ -438,3 +438,82 @@ func (m *Manager) flattenGroup(group *InstanceGroup) []string {
 
 	return result
 }
+
+// instanceCount returns the total number of instances in a group and all sub-groups.
+func (m *Manager) instanceCount(group *InstanceGroup) int {
+	count := len(group.Instances)
+	for _, sg := range group.SubGroups {
+		count += m.instanceCount(sg)
+	}
+	return count
+}
+
+// isEmpty returns true if a group has no instances and no sub-groups with instances.
+func (m *Manager) isEmpty(group *InstanceGroup) bool {
+	return m.instanceCount(group) == 0
+}
+
+// RemoveInstanceFromGroup removes an instance from its current group.
+// If the removal causes the group (or any parent groups) to become empty,
+// those empty groups are automatically removed.
+// Returns true if the instance was found and removed from a group.
+func (m *Manager) RemoveInstanceFromGroup(instanceID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Find the group containing this instance
+	group := m.findGroupContainingInstance(instanceID)
+	if group == nil {
+		return false
+	}
+
+	// Remove the instance from the group
+	m.removeInstanceFromGroupRecursive(group, instanceID)
+
+	// Clean up empty groups
+	m.cleanupEmptyGroups()
+
+	return true
+}
+
+// cleanupEmptyGroups removes all empty groups (top-level and sub-groups).
+// Must be called with the lock held.
+func (m *Manager) cleanupEmptyGroups() {
+	groups := m.session.GetGroups()
+
+	// First, clean up empty sub-groups within each top-level group
+	for _, g := range groups {
+		m.cleanupEmptySubGroups(g)
+	}
+
+	// Then, remove empty top-level groups
+	var nonEmptyGroups []*InstanceGroup
+	for _, g := range groups {
+		if !m.isEmpty(g) {
+			nonEmptyGroups = append(nonEmptyGroups, g)
+		}
+	}
+
+	// Only update if we removed any groups
+	if len(nonEmptyGroups) != len(groups) {
+		m.session.SetGroups(nonEmptyGroups)
+	}
+}
+
+// cleanupEmptySubGroups recursively removes empty sub-groups from a parent group.
+func (m *Manager) cleanupEmptySubGroups(parent *InstanceGroup) {
+	// First, recurse into sub-groups to clean up their sub-groups
+	for _, sg := range parent.SubGroups {
+		m.cleanupEmptySubGroups(sg)
+	}
+
+	// Then, remove empty sub-groups from this parent
+	var nonEmptySubGroups []*InstanceGroup
+	for _, sg := range parent.SubGroups {
+		if !m.isEmpty(sg) {
+			nonEmptySubGroups = append(nonEmptySubGroups, sg)
+		}
+	}
+
+	parent.SubGroups = nonEmptySubGroups
+}
