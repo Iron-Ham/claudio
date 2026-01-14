@@ -474,6 +474,53 @@ func (m Model) activeInstance() *orchestrator.Instance {
 	return m.session.Instances[m.activeTab]
 }
 
+// switchToInstance switches focus to a new instance index, pausing the old
+// instance's capture and resuming the new one. This reduces overhead by not
+// capturing output for background instances.
+func (m *Model) switchToInstance(newTab int) {
+	if m.session == nil || len(m.session.Instances) == 0 {
+		return
+	}
+
+	// Clamp newTab to valid range
+	if newTab < 0 || newTab >= len(m.session.Instances) {
+		return
+	}
+
+	oldTab := m.activeTab
+	if oldTab == newTab {
+		return // No change needed
+	}
+
+	// Pause the old active instance's capture
+	// Note: Pause() currently always returns nil, so error is safely discarded
+	if oldTab >= 0 && oldTab < len(m.session.Instances) {
+		oldInst := m.session.Instances[oldTab]
+		if mgr := m.orchestrator.GetInstanceManager(oldInst.ID); mgr != nil {
+			_ = mgr.Pause()
+		}
+	}
+
+	// Switch to the new tab
+	m.activeTab = newTab
+
+	// Resume the new active instance's capture
+	// Note: Resume() currently always returns nil, so error is safely discarded
+	newInst := m.session.Instances[newTab]
+	if mgr := m.orchestrator.GetInstanceManager(newInst.ID); mgr != nil {
+		_ = mgr.Resume()
+	}
+}
+
+// pauseInstance pauses an instance's capture without switching tabs.
+// Used when adding new instances to pause the previously active one.
+// Note: Pause() currently always returns nil, so error is safely discarded.
+func (m *Model) pauseInstance(instanceID string) {
+	if mgr := m.orchestrator.GetInstanceManager(instanceID); mgr != nil {
+		_ = mgr.Pause()
+	}
+}
+
 // instanceCount returns the number of instances
 func (m Model) instanceCount() int {
 	if m.session == nil {

@@ -36,6 +36,11 @@ const (
 // At 100ms per tick, 50 ticks = 5 seconds between full refreshes.
 const fullRefreshInterval = 50
 
+// pausedHeartbeatInterval is the number of ticks between session existence checks
+// when an instance is paused. This allows detecting completion of background instances
+// without the overhead of full capture. At 100ms per tick, 50 ticks = 5 seconds.
+const pausedHeartbeatInterval = 50
+
 // tmuxCommandTimeout is the maximum time to wait for tmux subprocess commands.
 // This prevents the capture loop from hanging indefinitely if tmux becomes unresponsive.
 const tmuxCommandTimeout = 2 * time.Second
@@ -134,6 +139,9 @@ type Manager struct {
 	lastHistorySize    int  // Last captured history size (for differential capture)
 	fullRefreshCounter int  // Counter for periodic full refresh
 	forceFullCapture   bool // Force full capture on next tick (set when visible content changes)
+
+	// Paused heartbeat - tracks ticks while paused to do periodic session checks
+	pausedHeartbeatCounter int
 
 	// Bell tracking - delegated to stateMonitor
 	bellCallback BellCallback
@@ -508,13 +516,46 @@ func (m *Manager) captureLoop() {
 			return
 		case <-m.captureTick.C:
 			m.mu.RLock()
-			if !m.running || m.paused {
-				m.mu.RUnlock()
-				continue
-			}
+			running := m.running
+			paused := m.paused
 			sessionName := m.sessionName
 			instanceID := m.id
 			m.mu.RUnlock()
+
+			if !running {
+				continue
+			}
+
+			// When paused, do lightweight heartbeat checks to detect completion
+			if paused {
+				m.mu.Lock()
+				m.pausedHeartbeatCounter++
+				doHeartbeat := m.pausedHeartbeatCounter >= pausedHeartbeatInterval
+				if doHeartbeat {
+					m.pausedHeartbeatCounter = 0
+				}
+				m.mu.Unlock()
+
+				if doHeartbeat {
+					// Lightweight session check - only verify session exists
+					if !m.checkSessionExists(sessionName) {
+						// Session ended while paused - notify completion
+						m.mu.Lock()
+						m.running = false
+						callback := m.stateCallback
+						m.mu.Unlock()
+
+						m.stateMonitor.SetState(instanceID, detect.StateCompleted)
+						m.stateMonitor.Stop(instanceID)
+
+						if callback != nil {
+							callback(instanceID, detect.StateCompleted)
+						}
+						return
+					}
+				}
+				continue
+			}
 
 			// Skip processing if already timed out
 			timedOut, _ := m.stateMonitor.GetTimedOut(instanceID)
@@ -522,16 +563,38 @@ func (m *Manager) captureLoop() {
 				continue
 			}
 
+			// Batched tmux query: get history_size, bell_flag, and session existence
+			// in a single subprocess call to reduce overhead (was 4 calls, now 2).
+			status := m.getSessionStatus(sessionName)
+
+			// Check if session ended
+			if !status.sessionExists {
+				// Session actually ended - notify completion and stop
+				m.mu.Lock()
+				m.running = false
+				callback := m.stateCallback
+				m.mu.Unlock()
+
+				// Notify state monitor about completion
+				m.stateMonitor.SetState(instanceID, detect.StateCompleted)
+				m.stateMonitor.Stop(instanceID)
+
+				// Fire the completion callback so coordinator knows task is done
+				if callback != nil {
+					callback(instanceID, detect.StateCompleted)
+				}
+				return
+			}
+
+			// If history size query failed but session exists, skip capture this tick
+			if status.historySize == -1 {
+				continue
+			}
+
 			// Differential capture optimization:
 			// - Check history size to detect new output
 			// - Capture only visible pane when nothing changed (much faster)
 			// - Do full capture when history grows or periodically (every 50 ticks = 5 seconds)
-			currentHistorySize := m.getHistorySize(sessionName)
-			if currentHistorySize == -1 {
-				// Session may not exist, skip this tick
-				continue
-			}
-
 			m.mu.Lock()
 			lastHistorySize := m.lastHistorySize
 			m.fullRefreshCounter++
@@ -540,11 +603,11 @@ func (m *Manager) captureLoop() {
 			// 2. History size increased (new scrollback lines)
 			// 3. Visible content changed in previous tick (user typing)
 			doFullCapture := m.fullRefreshCounter >= fullRefreshInterval ||
-				currentHistorySize > lastHistorySize ||
+				status.historySize > lastHistorySize ||
 				m.forceFullCapture
 			if doFullCapture {
 				m.fullRefreshCounter = 0
-				m.lastHistorySize = currentHistorySize
+				m.lastHistorySize = status.historySize
 				m.forceFullCapture = false
 			}
 			m.mu.Unlock()
@@ -616,50 +679,176 @@ func (m *Manager) captureLoop() {
 			// Check for timeout conditions
 			m.stateMonitor.CheckTimeouts(instanceID)
 
-			// Check for terminal bells and forward them
-			m.checkAndForwardBell(sessionName, instanceID)
-
-			// Check if the session is still running
-			ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
-			checkCmd := m.tmuxCmdCtx(ctx, "has-session", "-t", sessionName)
-			sessionErr := checkCmd.Run()
-			cancel()
-			if sessionErr != nil {
-				// Check if this was a timeout vs actual session end
-				if ctx.Err() == context.DeadlineExceeded {
-					m.mu.RLock()
-					logger := m.logger
-					m.mu.RUnlock()
-					if logger != nil {
-						logger.Warn("tmux has-session timed out, will retry next tick",
-							"session_name", sessionName)
-					}
-					continue // Don't mark as completed on timeout, retry next tick
-				}
-				// Session actually ended - notify completion and stop
-				m.mu.Lock()
-				m.running = false
-				callback := m.stateCallback
-				m.mu.Unlock()
-
-				// Notify state monitor about completion
-				m.stateMonitor.SetState(instanceID, detect.StateCompleted)
-				m.stateMonitor.Stop(instanceID)
-
-				// Fire the completion callback so coordinator knows task is done
-				if callback != nil {
-					callback(instanceID, detect.StateCompleted)
-				}
-				return
-			}
+			// Forward bell state from batched query
+			m.stateMonitor.CheckBell(instanceID, status.bellActive)
 		}
 	}
+}
+
+// sessionStatus holds the result of a batched tmux query for session state.
+// Using a single tmux command to query multiple values reduces subprocess overhead.
+type sessionStatus struct {
+	historySize   int  // Current scrollback line count, -1 if unknown
+	bellActive    bool // Whether window_bell_flag is set
+	sessionExists bool // Whether the session is still running
+}
+
+// parseSessionStatusOutput parses the "historySize|bellFlag" output from tmux.
+// Returns the parsed values. If parsing fails, historySize will be -1.
+// This function is separated for testability.
+func parseSessionStatusOutput(output string) (historySize int, bellActive bool, ok bool) {
+	parts := strings.Split(strings.TrimSpace(output), "|")
+	if len(parts) != 2 {
+		return -1, false, false
+	}
+
+	historySize = -1
+	if _, err := fmt.Sscanf(parts[0], "%d", &historySize); err != nil {
+		// Leave historySize as -1 on parse error
+		historySize = -1
+	}
+
+	bellActive = parts[1] == "1"
+	return historySize, bellActive, true
+}
+
+// getSessionStatus queries multiple tmux values in a single command to reduce subprocess overhead.
+// This batches history_size and window_bell_flag into one display-message call.
+// If the command fails with a known "session not found" error, sessionExists is false.
+// For unknown errors or transient failures, sessionExists is true to allow retry.
+func (m *Manager) getSessionStatus(sessionName string) sessionStatus {
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+
+	// Batch query: history_size|window_bell_flag
+	// Using pipe as delimiter since it won't appear in these numeric values
+	cmd := m.tmuxCmdCtx(ctx, "display-message", "-t", sessionName, "-p", "#{history_size}|#{window_bell_flag}")
+	output, err := cmd.Output()
+	if err != nil {
+		m.mu.RLock()
+		logger := m.logger
+		m.mu.RUnlock()
+
+		// Check if this was a timeout - session may still exist
+		if ctx.Err() == context.DeadlineExceeded {
+			if logger != nil {
+				logger.Warn("tmux display-message timed out, will retry next tick",
+					"session_name", sessionName)
+			}
+			return sessionStatus{historySize: -1, bellActive: false, sessionExists: true}
+		}
+
+		// Handle ExitError - check if session actually ended
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := string(exitErr.Stderr)
+			// Known "session ended" errors - session definitely doesn't exist
+			if strings.Contains(stderr, "can't find") || strings.Contains(stderr, "no server running") {
+				return sessionStatus{historySize: -1, bellActive: false, sessionExists: false}
+			}
+			// Other exit errors - log and assume session ended
+			if logger != nil {
+				logger.Debug("getSessionStatus failed",
+					"session_name", sessionName,
+					"error", err.Error(),
+					"stderr", stderr)
+			}
+			return sessionStatus{historySize: -1, bellActive: false, sessionExists: false}
+		}
+
+		// Non-ExitError (e.g., PathError, exec.ErrNotFound) - log as warning
+		// and return sessionExists: true to allow retry on next tick rather
+		// than incorrectly marking the session as completed
+		if logger != nil {
+			logger.Warn("getSessionStatus unexpected error, will retry",
+				"session_name", sessionName,
+				"error_type", fmt.Sprintf("%T", err),
+				"error", err.Error())
+		}
+		return sessionStatus{historySize: -1, bellActive: false, sessionExists: true}
+	}
+
+	// Parse the response using the extracted helper
+	historySize, bellActive, ok := parseSessionStatusOutput(string(output))
+	if !ok {
+		m.mu.RLock()
+		logger := m.logger
+		m.mu.RUnlock()
+		if logger != nil {
+			logger.Debug("getSessionStatus parse failed: unexpected format",
+				"session_name", sessionName,
+				"output", strings.TrimSpace(string(output)))
+		}
+		return sessionStatus{historySize: -1, bellActive: false, sessionExists: true}
+	}
+
+	// Log if history size parsing failed (but format was valid)
+	if historySize == -1 {
+		m.mu.RLock()
+		logger := m.logger
+		m.mu.RUnlock()
+		if logger != nil {
+			logger.Debug("getSessionStatus: history_size parse failed",
+				"session_name", sessionName,
+				"output", strings.TrimSpace(string(output)))
+		}
+	}
+
+	return sessionStatus{
+		historySize:   historySize,
+		bellActive:    bellActive,
+		sessionExists: true,
+	}
+}
+
+// checkSessionExists performs a lightweight check to verify the tmux session exists.
+// This is used for heartbeat checks on paused instances - it avoids the overhead
+// of querying history_size and bell_flag when we only care about session existence.
+func (m *Manager) checkSessionExists(sessionName string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
+	defer cancel()
+
+	cmd := m.tmuxCmdCtx(ctx, "has-session", "-t", sessionName)
+	err := cmd.Run()
+
+	// If timeout, assume session still exists (retry on next heartbeat)
+	if ctx.Err() == context.DeadlineExceeded {
+		m.mu.RLock()
+		logger := m.logger
+		m.mu.RUnlock()
+		if logger != nil {
+			logger.Warn("tmux has-session timed out during heartbeat, will retry",
+				"session_name", sessionName)
+		}
+		return true
+	}
+
+	if err != nil {
+		// For non-ExitError (e.g., tmux not found), log and assume session exists
+		// to avoid false completion notifications
+		if _, ok := err.(*exec.ExitError); !ok {
+			m.mu.RLock()
+			logger := m.logger
+			m.mu.RUnlock()
+			if logger != nil {
+				logger.Warn("checkSessionExists unexpected error, will retry",
+					"session_name", sessionName,
+					"error_type", fmt.Sprintf("%T", err),
+					"error", err.Error())
+			}
+			return true
+		}
+		// ExitError means tmux ran but session doesn't exist
+		return false
+	}
+
+	return true
 }
 
 // getHistorySize queries the current tmux pane history size.
 // Returns -1 if the query fails (indicates session may not exist or tmux error).
 // Note: Called without lock since it's a tmux query, and lastHistorySize is only
 // modified within the captureLoop goroutine.
+// Deprecated: Use getSessionStatus for batched queries to reduce subprocess overhead.
 func (m *Manager) getHistorySize(sessionName string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
 	defer cancel()
@@ -711,31 +900,6 @@ func (m *Manager) captureFullPane(sessionName string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
 	defer cancel()
 	return m.tmuxCmdCtx(ctx, "capture-pane", "-t", sessionName, "-p", "-e", "-S", "-", "-E", "-").Output()
-}
-
-// checkAndForwardBell checks for terminal bells and delegates to the state monitor.
-func (m *Manager) checkAndForwardBell(sessionName, instanceID string) {
-	// Query the window_bell_flag from tmux
-	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
-	defer cancel()
-	bellCmd := m.tmuxCmdCtx(ctx, "display-message", "-t", sessionName, "-p", "#{window_bell_flag}")
-	output, err := bellCmd.Output()
-	if err != nil {
-		// Log at debug level since bell detection is non-critical
-		m.mu.RLock()
-		logger := m.logger
-		m.mu.RUnlock()
-		if logger != nil {
-			logger.Debug("failed to query bell flag from tmux",
-				"session_name", sessionName,
-				"instance_id", instanceID,
-				"error", err.Error())
-		}
-		return
-	}
-
-	bellActive := strings.TrimSpace(string(output)) == "1"
-	m.stateMonitor.CheckBell(instanceID, bellActive)
 }
 
 // parseAndNotifyMetrics parses metrics from output and notifies if changed
@@ -859,6 +1023,7 @@ func (m *Manager) Resume() error {
 	}
 
 	m.paused = false
+	m.pausedHeartbeatCounter = 0 // Reset so next pause starts fresh
 	return nil
 }
 

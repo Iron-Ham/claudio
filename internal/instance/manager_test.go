@@ -387,6 +387,157 @@ func TestManager_GetHistorySize_NoSession(t *testing.T) {
 	}
 }
 
+func TestManager_GetSessionStatus_NoSession(t *testing.T) {
+	mgr := NewManager("nonexistent-status-test", "/tmp", "task")
+
+	// getSessionStatus should indicate session doesn't exist for a non-existent session
+	status := mgr.getSessionStatus("nonexistent-session-xyz")
+
+	if status.sessionExists {
+		t.Error("getSessionStatus for non-existent session should return sessionExists=false")
+	}
+	if status.historySize != -1 {
+		t.Errorf("getSessionStatus for non-existent session should return historySize=-1, got %d", status.historySize)
+	}
+	if status.bellActive {
+		t.Error("getSessionStatus for non-existent session should return bellActive=false")
+	}
+}
+
+func TestParseSessionStatusOutput(t *testing.T) {
+	tests := []struct {
+		name        string
+		output      string
+		wantHistory int
+		wantBell    bool
+		wantOK      bool
+	}{
+		{
+			name:        "valid with bell active",
+			output:      "123|1",
+			wantHistory: 123,
+			wantBell:    true,
+			wantOK:      true,
+		},
+		{
+			name:        "valid with bell inactive",
+			output:      "456|0",
+			wantHistory: 456,
+			wantBell:    false,
+			wantOK:      true,
+		},
+		{
+			name:        "zero history",
+			output:      "0|1",
+			wantHistory: 0,
+			wantBell:    true,
+			wantOK:      true,
+		},
+		{
+			name:        "large history",
+			output:      "50000|0",
+			wantHistory: 50000,
+			wantBell:    false,
+			wantOK:      true,
+		},
+		{
+			name:        "with leading/trailing whitespace",
+			output:      "  123|0  ",
+			wantHistory: 123,
+			wantBell:    false,
+			wantOK:      true,
+		},
+		{
+			name:        "with newline",
+			output:      "789|1\n",
+			wantHistory: 789,
+			wantBell:    true,
+			wantOK:      true,
+		},
+		{
+			name:        "missing delimiter",
+			output:      "123",
+			wantHistory: -1,
+			wantBell:    false,
+			wantOK:      false,
+		},
+		{
+			name:        "empty string",
+			output:      "",
+			wantHistory: -1,
+			wantBell:    false,
+			wantOK:      false,
+		},
+		{
+			name:        "only whitespace",
+			output:      "   ",
+			wantHistory: -1,
+			wantBell:    false,
+			wantOK:      false,
+		},
+		{
+			name:        "non-numeric history",
+			output:      "abc|1",
+			wantHistory: -1,
+			wantBell:    true,
+			wantOK:      true,
+		},
+		{
+			name:        "extra parts ignored",
+			output:      "1|2|3",
+			wantHistory: -1,
+			wantBell:    false,
+			wantOK:      false,
+		},
+		{
+			name:        "bell value not 0 or 1 treated as false",
+			output:      "100|2",
+			wantHistory: 100,
+			wantBell:    false,
+			wantOK:      true,
+		},
+		{
+			name:        "empty bell value treated as false",
+			output:      "100|",
+			wantHistory: 100,
+			wantBell:    false,
+			wantOK:      true,
+		},
+		{
+			name:        "negative history parsed correctly",
+			output:      "-1|0",
+			wantHistory: -1,
+			wantBell:    false,
+			wantOK:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotHistory, gotBell, gotOK := parseSessionStatusOutput(tt.output)
+			if gotHistory != tt.wantHistory {
+				t.Errorf("parseSessionStatusOutput(%q) historySize = %d, want %d", tt.output, gotHistory, tt.wantHistory)
+			}
+			if gotBell != tt.wantBell {
+				t.Errorf("parseSessionStatusOutput(%q) bellActive = %v, want %v", tt.output, gotBell, tt.wantBell)
+			}
+			if gotOK != tt.wantOK {
+				t.Errorf("parseSessionStatusOutput(%q) ok = %v, want %v", tt.output, gotOK, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestManager_CheckSessionExists_NoSession(t *testing.T) {
+	mgr := NewManager("nonexistent-check-test", "/tmp", "task")
+
+	// checkSessionExists should return false for a non-existent session
+	exists := mgr.checkSessionExists("nonexistent-session-xyz")
+	if exists {
+		t.Error("checkSessionExists for non-existent session should return false")
+	}
+}
+
 func TestListClaudioTmuxSessions_NoTmuxServer(t *testing.T) {
 	// This test may return nil or an empty list depending on whether tmux is running
 	// The important thing is it should not error in a way that causes a panic
