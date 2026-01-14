@@ -150,18 +150,6 @@ func DefaultHelpSections() []HelpSection {
 			},
 		},
 		{
-			Title: "Group Commands (g prefix)",
-			Items: []HelpItem{
-				{Key: "gc", Description: "Collapse/expand current group"},
-				{Key: "gC", Description: "Collapse/expand all groups"},
-				{Key: "gn", Description: "Jump to next group"},
-				{Key: "gp", Description: "Jump to previous group"},
-				{Key: "gs", Description: "Skip current group (mark pending as skipped)"},
-				{Key: "gr", Description: "Retry failed tasks in current group"},
-				{Key: "gf", Description: "Force-start next group (ignore dependencies)"},
-			},
-		},
-		{
 			Title: "Instance Control",
 			Items: []HelpItem{
 				{Key: ":s  :start", Description: "Start a stopped/new instance"},
@@ -185,11 +173,12 @@ func DefaultHelpSections() []HelpSection {
 		{
 			Title: "Inline Planning (experimental)",
 			Items: []HelpItem{
-				{Key: ":plan", Description: "Start plan workflow with objective"},
-				{Key: ":ultraplan", Description: "Start ultraplan with coordinator"},
-				{Key: ":group create [name]", Description: "Create new empty group"},
-				{Key: ":group add [inst] [grp]", Description: "Add instance to group"},
-				{Key: ":group show", Description: "Toggle grouped sidebar view"},
+				{Key: ":plan", Description: "Start inline plan mode"},
+				{Key: ":ultraplan  :up", Description: "Start ultraplan mode"},
+				{Key: ":tripleshot", Description: "Run 3 parallel attempts + judge"},
+				{Key: ":accept", Description: "Accept winning triple-shot solution"},
+				{Key: ":cancel", Description: "Cancel ultraplan execution"},
+				{Key: ":group", Description: "Manage instance groups"},
 			},
 		},
 		{

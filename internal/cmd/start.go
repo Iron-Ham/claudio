@@ -223,6 +223,11 @@ func attachToSession(cwd, sessionID string, cfg *config.Config) error {
 		return resumeUltraplanSession(orch, sess, logger)
 	}
 
+	// Check for active tripleshot sessions and restore them
+	if len(sess.TripleShots) > 0 {
+		return launchTUIWithTripleshots(cwd, orch, sess, logger)
+	}
+
 	return launchTUI(cwd, orch, sess, logger)
 }
 
@@ -318,6 +323,52 @@ func launchTUI(cwd string, orch *orchestrator.Orchestrator, sess *orchestrator.S
 
 	// Launch TUI
 	app := tui.New(orch, sess, logger.WithSession(sess.ID))
+	if err := app.Run(); err != nil {
+		return fmt.Errorf("TUI error: %w", err)
+	}
+
+	return nil
+}
+
+// launchTUIWithTripleshots restores tripleshot sessions and launches the TUI.
+// This is called when a session has active TripleShots that need to be restored.
+func launchTUIWithTripleshots(cwd string, orch *orchestrator.Orchestrator, sess *orchestrator.Session, logger *logging.Logger) error {
+	// Get terminal dimensions and set them on the orchestrator before launching TUI
+	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+		contentWidth, contentHeight := tui.CalculateContentDimensions(termWidth, termHeight)
+		if contentWidth > 0 && contentHeight > 0 {
+			orch.SetDisplayDimensions(contentWidth, contentHeight)
+		}
+	}
+
+	// Restore tripleshot coordinators from persisted sessions
+	var coordinators []*orchestrator.TripleShotCoordinator
+	for _, tripleSession := range sess.TripleShots {
+		// Skip completed or failed tripleshots
+		if tripleSession.Phase == orchestrator.PhaseTripleShotComplete ||
+			tripleSession.Phase == orchestrator.PhaseTripleShotFailed {
+			continue
+		}
+
+		coordinator := orchestrator.NewTripleShotCoordinator(orch, sess, tripleSession, logger)
+		coordinators = append(coordinators, coordinator)
+		logger.Info("restored tripleshot session",
+			"tripleshot_id", tripleSession.ID,
+			"group_id", tripleSession.GroupID,
+			"phase", string(tripleSession.Phase),
+		)
+	}
+
+	// If we have active coordinators, launch with all of them restored
+	var app *tui.App
+	if len(coordinators) > 0 {
+		fmt.Printf("Resuming %d active tripleshot session(s)\n", len(coordinators))
+		app = tui.NewWithTripleShots(orch, sess, coordinators, logger.WithSession(sess.ID))
+	} else {
+		// All tripleshots completed, just launch normal TUI
+		app = tui.New(orch, sess, logger.WithSession(sess.ID))
+	}
+
 	if err := app.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
