@@ -92,7 +92,7 @@ func (v *InstanceView) Render(inst *orchestrator.Instance, state RenderState) st
 func (v *InstanceView) RenderWithSession(inst *orchestrator.Instance, state RenderState, session *orchestrator.Session) string {
 	var b strings.Builder
 
-	// Render header (status badge + branch info)
+	// Render header (branch info)
 	b.WriteString(v.RenderHeader(inst))
 	b.WriteString("\n")
 
@@ -143,11 +143,10 @@ func (v *InstanceView) RenderWithSession(inst *orchestrator.Instance, state Rend
 	return b.String()
 }
 
-// RenderHeader renders the instance header with status badge and branch info.
+// RenderHeader renders the instance header with branch info.
+// Status is displayed in the sidebar, so we only show branch here.
 func (v *InstanceView) RenderHeader(inst *orchestrator.Instance) string {
-	statusColor := styles.StatusColor(string(inst.Status))
-	statusBadge := styles.StatusBadge.Background(statusColor).Render(string(inst.Status))
-	info := fmt.Sprintf("%s  Branch: %s", statusBadge, inst.Branch)
+	info := fmt.Sprintf("Branch: %s", inst.Branch)
 	return styles.InstanceInfo.Render(info)
 }
 
