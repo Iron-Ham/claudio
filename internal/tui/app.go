@@ -1561,96 +1561,48 @@ func (m *Model) applyCommandResult(result command.Result) {
 	}
 }
 
-// handleTemplateDropdown handles keyboard input when the template dropdown is visible
+// handleTemplateDropdown handles keyboard input when the template dropdown is visible.
+// Delegates to view.TemplateDropdownHandler for the actual key processing logic.
 func (m Model) handleTemplateDropdown(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	templates := FilterTemplates(m.templateFilter)
-
-	switch msg.Type {
-	case tea.KeyEsc:
-		// Close dropdown but keep the "/" and filter in input
-		m.showTemplates = false
-		m.templateFilter = ""
-		m.templateSelected = 0
-		return m, nil
-
-	case tea.KeyEnter, tea.KeyTab:
-		// Select the highlighted template
-		if len(templates) > 0 && m.templateSelected < len(templates) {
-			selected := templates[m.templateSelected]
-			// Replace the "/" and filter with the template description
-			// Find where the "/" starts (could be at beginning or after newline)
-			lastNewline := strings.LastIndex(m.taskInput, "\n")
-			if lastNewline == -1 {
-				// "/" is at the beginning
-				m.taskInput = selected.Description
-			} else {
-				// "/" is after a newline
-				m.taskInput = m.taskInput[:lastNewline+1] + selected.Description
-			}
-			m.taskInputCursor = len([]rune(m.taskInput))
-			// Store the suffix to append on submission
-			m.templateSuffix = selected.Suffix
-		}
-		m.showTemplates = false
-		m.templateFilter = ""
-		m.templateSelected = 0
-		return m, nil
-
-	case tea.KeyUp:
-		if m.templateSelected > 0 {
-			m.templateSelected--
-		}
-		return m, nil
-
-	case tea.KeyDown:
-		if m.templateSelected < len(templates)-1 {
-			m.templateSelected++
-		}
-		return m, nil
-
-	case tea.KeyBackspace:
-		if len(m.templateFilter) > 0 {
-			// Remove from both filter and taskInput
-			m.templateFilter = m.templateFilter[:len(m.templateFilter)-1]
-			if len(m.taskInput) > 0 {
-				m.taskInput = m.taskInput[:len(m.taskInput)-1]
-				m.taskInputCursor = len([]rune(m.taskInput))
-			}
-			m.templateSelected = 0 // Reset selection on filter change
-		} else {
-			// Remove the "/" and close dropdown
-			if len(m.taskInput) > 0 {
-				m.taskInput = m.taskInput[:len(m.taskInput)-1]
-				m.taskInputCursor = len([]rune(m.taskInput))
-			}
-			m.showTemplates = false
-		}
-		return m, nil
-
-	case tea.KeyRunes:
-		char := string(msg.Runes)
-		// Space closes dropdown and keeps current input, adds space
-		if char == " " {
-			m.showTemplates = false
-			m.taskInput += " "
-			m.taskInputCursor = len([]rune(m.taskInput))
-			m.templateFilter = ""
-			m.templateSelected = 0
-			return m, nil
-		}
-		// Add to both filter and taskInput
-		m.templateFilter += char
-		m.taskInput += char
-		m.taskInputCursor = len([]rune(m.taskInput))
-		m.templateSelected = 0 // Reset selection on filter change
-		// If no templates match, close dropdown
-		if len(FilterTemplates(m.templateFilter)) == 0 {
-			m.showTemplates = false
-			m.templateFilter = ""
-		}
-		return m, nil
+	// Create state struct to pass to handler
+	state := &view.TemplateDropdownState{
+		ShowTemplates:    m.showTemplates,
+		TemplateFilter:   m.templateFilter,
+		TemplateSelected: m.templateSelected,
+		TemplateSuffix:   m.templateSuffix,
+		TaskInput:        m.taskInput,
+		TaskInputCursor:  m.taskInputCursor,
 	}
 
+	// Create handler with filter function adapter
+	filterFunc := func(filter string) []view.Template {
+		templates := FilterTemplates(filter)
+		result := make([]view.Template, len(templates))
+		for i, t := range templates {
+			result[i] = view.Template{
+				Command:     t.Command,
+				Name:        t.Name,
+				Description: t.Description,
+				Suffix:      t.Suffix,
+			}
+		}
+		return result
+	}
+
+	handler := view.NewTemplateDropdownHandler(state, filterFunc)
+	handled, cmd := handler.HandleKey(msg)
+
+	// Sync state back to model
+	m.showTemplates = state.ShowTemplates
+	m.templateFilter = state.TemplateFilter
+	m.templateSelected = state.TemplateSelected
+	m.templateSuffix = state.TemplateSuffix
+	m.taskInput = state.TaskInput
+	m.taskInputCursor = state.TaskInputCursor
+
+	if handled {
+		return m, cmd
+	}
 	return m, nil
 }
 
@@ -2503,17 +2455,20 @@ func (m Model) renderAddTask(width int) string {
 	return inputView.Render(inputState, width)
 }
 
-// buildTemplateItems converts filtered templates to view template items
+// buildTemplateItems converts filtered templates to view template items.
+// Uses view.BuildTemplateItems for the conversion logic.
 func (m Model) buildTemplateItems() []view.TemplateItem {
 	templates := FilterTemplates(m.templateFilter)
-	items := make([]view.TemplateItem, len(templates))
+	viewTemplates := make([]view.Template, len(templates))
 	for i, t := range templates {
-		items[i] = view.TemplateItem{
-			Command: t.Command,
-			Name:    t.Name,
+		viewTemplates[i] = view.Template{
+			Command:     t.Command,
+			Name:        t.Name,
+			Description: t.Description,
+			Suffix:      t.Suffix,
 		}
 	}
-	return items
+	return view.BuildTemplateItems(viewTemplates)
 }
 
 // buildBranchItems converts the filtered branch list to view branch items
