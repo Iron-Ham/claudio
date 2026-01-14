@@ -96,7 +96,8 @@ type AttemptEvaluationItem struct {
 // TripleShotSession represents a triple-shot orchestration session
 type TripleShotSession struct {
 	ID          string                `json:"id"`
-	Task        string                `json:"task"` // The original task/problem
+	GroupID     string                `json:"group_id,omitempty"` // Link to InstanceGroup for multi-tripleshot support
+	Task        string                `json:"task"`               // The original task/problem
 	Phase       TripleShotPhase       `json:"phase"`
 	Config      TripleShotConfig      `json:"config"`
 	Attempts    [3]TripleShotAttempt  `json:"attempts"`           // Exactly 3 attempts

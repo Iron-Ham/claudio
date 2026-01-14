@@ -131,8 +131,13 @@ type Session struct {
 	// UltraPlan holds the ultra-plan session state (nil for regular sessions)
 	UltraPlan *UltraPlanSession `json:"ultra_plan,omitempty"`
 
-	// TripleShot holds the triple-shot session state (nil for regular sessions)
+	// TripleShot holds a single triple-shot session for backward compatibility.
+	// Deprecated: Use TripleShots slice for multiple concurrent tripleshots.
 	TripleShot *TripleShotSession `json:"triple_shot,omitempty"`
+
+	// TripleShots holds multiple concurrent triple-shot sessions.
+	// Each tripleshot has its own group and coordinator.
+	TripleShots []*TripleShotSession `json:"triple_shots,omitempty"`
 
 	// Recovery state tracking - helps detect and recover interrupted sessions
 	RecoveryState   RecoveryState `json:"recovery_state,omitempty"`   // Current recovery state

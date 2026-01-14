@@ -60,6 +60,12 @@ func (m *mockDeps) GetUltraPlanCoordinator() *orchestrator.Coordinator {
 func (m *mockDeps) GetTripleShotCoordinator() *orchestrator.TripleShotCoordinator {
 	return m.tripleShotCoordinator
 }
+func (m *mockDeps) GetTripleShotCoordinators() []*orchestrator.TripleShotCoordinator {
+	if m.tripleShotCoordinator != nil {
+		return []*orchestrator.TripleShotCoordinator{m.tripleShotCoordinator}
+	}
+	return nil
+}
 func (m *mockDeps) GetLogger() *logging.Logger { return m.logger }
 func (m *mockDeps) GetStartTime() time.Time    { return m.startTime }
 
@@ -1019,7 +1025,7 @@ func TestTripleShotCommand(t *testing.T) {
 		viper.Reset()
 	})
 
-	t.Run("blocked when already in triple-shot mode", func(t *testing.T) {
+	t.Run("allowed when already in triple-shot mode (multiple tripleshots)", func(t *testing.T) {
 		viper.Reset()
 		viper.Set("experimental.triple_shot", true)
 
@@ -1029,8 +1035,15 @@ func TestTripleShotCommand(t *testing.T) {
 
 		result := h.Execute("tripleshot", deps)
 
-		if result.ErrorMessage != "Already in triple-shot mode" {
-			t.Errorf("expected already in mode error, got: %q", result.ErrorMessage)
+		// Multiple tripleshots are now allowed
+		if result.ErrorMessage != "" {
+			t.Errorf("expected no error, got: %q", result.ErrorMessage)
+		}
+		if result.StartTripleShot == nil || !*result.StartTripleShot {
+			t.Error("should start additional triple-shot")
+		}
+		if result.InfoMessage != "Enter a task for additional triple-shot" {
+			t.Errorf("expected additional task prompt, got: %q", result.InfoMessage)
 		}
 
 		viper.Reset()
@@ -1080,7 +1093,7 @@ func TestAcceptCommand(t *testing.T) {
 		}
 	})
 
-	t.Run("fails when no coordinator", func(t *testing.T) {
+	t.Run("fails when no complete session", func(t *testing.T) {
 		h := New()
 		deps := newMockDeps()
 		deps.tripleShotMode = true
@@ -1088,8 +1101,9 @@ func TestAcceptCommand(t *testing.T) {
 
 		result := h.Execute("accept", deps)
 
-		if result.ErrorMessage != "No active triple-shot session" {
-			t.Errorf("expected 'No active triple-shot session', got: %q", result.ErrorMessage)
+		// With multiple tripleshots support, we now check for any complete session
+		if result.ErrorMessage != "No complete triple-shot session. Wait for evaluation to finish." {
+			t.Errorf("expected 'No complete triple-shot session. Wait for evaluation to finish.', got: %q", result.ErrorMessage)
 		}
 		if result.AcceptTripleShot != nil {
 			t.Error("AcceptTripleShot should be nil on error")

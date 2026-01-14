@@ -207,6 +207,178 @@ func TestFindGroupByID(t *testing.T) {
 	})
 }
 
+func TestTripleShotState_HasActiveCoordinators(t *testing.T) {
+	t.Run("nil state returns false", func(t *testing.T) {
+		var state *TripleShotState
+		if state.HasActiveCoordinators() {
+			t.Error("expected false for nil state")
+		}
+	})
+
+	t.Run("empty state returns false", func(t *testing.T) {
+		state := &TripleShotState{}
+		if state.HasActiveCoordinators() {
+			t.Error("expected false for empty state")
+		}
+	})
+
+	t.Run("state with empty Coordinators map returns false", func(t *testing.T) {
+		state := &TripleShotState{
+			Coordinators: make(map[string]*orchestrator.TripleShotCoordinator),
+		}
+		if state.HasActiveCoordinators() {
+			t.Error("expected false for empty coordinators map")
+		}
+	})
+
+	t.Run("state with coordinators in map returns true", func(t *testing.T) {
+		state := &TripleShotState{
+			Coordinators: map[string]*orchestrator.TripleShotCoordinator{
+				"group-1": nil, // Even nil coordinator counts as entry
+			},
+		}
+		if !state.HasActiveCoordinators() {
+			t.Error("expected true when coordinators map has entries")
+		}
+	})
+
+	t.Run("state with deprecated Coordinator returns true", func(t *testing.T) {
+		state := &TripleShotState{
+			Coordinator: &orchestrator.TripleShotCoordinator{},
+		}
+		if !state.HasActiveCoordinators() {
+			t.Error("expected true for deprecated single coordinator")
+		}
+	})
+}
+
+func TestTripleShotState_GetAllCoordinators(t *testing.T) {
+	t.Run("nil state returns nil", func(t *testing.T) {
+		var state *TripleShotState
+		if state.GetAllCoordinators() != nil {
+			t.Error("expected nil for nil state")
+		}
+	})
+
+	t.Run("empty state returns nil", func(t *testing.T) {
+		state := &TripleShotState{}
+		if state.GetAllCoordinators() != nil {
+			t.Error("expected nil for empty state")
+		}
+	})
+
+	t.Run("returns coordinators from map", func(t *testing.T) {
+		coord1 := &orchestrator.TripleShotCoordinator{}
+		coord2 := &orchestrator.TripleShotCoordinator{}
+		state := &TripleShotState{
+			Coordinators: map[string]*orchestrator.TripleShotCoordinator{
+				"group-1": coord1,
+				"group-2": coord2,
+			},
+		}
+
+		result := state.GetAllCoordinators()
+		if len(result) != 2 {
+			t.Errorf("expected 2 coordinators, got %d", len(result))
+		}
+	})
+
+	t.Run("returns deterministic order by group ID", func(t *testing.T) {
+		coord1 := &orchestrator.TripleShotCoordinator{}
+		coord2 := &orchestrator.TripleShotCoordinator{}
+		coord3 := &orchestrator.TripleShotCoordinator{}
+		state := &TripleShotState{
+			Coordinators: map[string]*orchestrator.TripleShotCoordinator{
+				"z-group": coord1,
+				"a-group": coord2,
+				"m-group": coord3,
+			},
+		}
+
+		// Call multiple times to verify order is deterministic
+		for i := 0; i < 10; i++ {
+			result := state.GetAllCoordinators()
+			// Should be sorted alphabetically: a-group, m-group, z-group
+			if result[0] != coord2 || result[1] != coord3 || result[2] != coord1 {
+				t.Error("expected coordinators to be returned in sorted key order")
+			}
+		}
+	})
+
+	t.Run("falls back to deprecated Coordinator when map empty", func(t *testing.T) {
+		coord := &orchestrator.TripleShotCoordinator{}
+		state := &TripleShotState{
+			Coordinator: coord,
+		}
+
+		result := state.GetAllCoordinators()
+		if len(result) != 1 {
+			t.Errorf("expected 1 coordinator from fallback, got %d", len(result))
+		}
+		if result[0] != coord {
+			t.Error("expected fallback coordinator to be returned")
+		}
+	})
+}
+
+func TestTripleShotState_GetCoordinatorForGroup(t *testing.T) {
+	t.Run("returns coordinator from map when found", func(t *testing.T) {
+		coord := &orchestrator.TripleShotCoordinator{}
+		state := &TripleShotState{
+			Coordinators: map[string]*orchestrator.TripleShotCoordinator{
+				"target-group": coord,
+			},
+		}
+
+		result := state.GetCoordinatorForGroup("target-group")
+		if result != coord {
+			t.Error("expected to find coordinator by group ID")
+		}
+	})
+
+	t.Run("returns nil when not found and no fallback", func(t *testing.T) {
+		state := &TripleShotState{
+			Coordinators: map[string]*orchestrator.TripleShotCoordinator{
+				"other-group": &orchestrator.TripleShotCoordinator{},
+			},
+		}
+
+		result := state.GetCoordinatorForGroup("missing-group")
+		if result != nil {
+			t.Error("expected nil for missing group with no fallback")
+		}
+	})
+
+	t.Run("falls back to deprecated Coordinator when not in map", func(t *testing.T) {
+		fallbackCoord := &orchestrator.TripleShotCoordinator{}
+		state := &TripleShotState{
+			Coordinators: map[string]*orchestrator.TripleShotCoordinator{},
+			Coordinator:  fallbackCoord,
+		}
+
+		result := state.GetCoordinatorForGroup("any-group")
+		if result != fallbackCoord {
+			t.Error("expected fallback to deprecated Coordinator")
+		}
+	})
+
+	t.Run("prefers map over fallback when key exists", func(t *testing.T) {
+		mapCoord := &orchestrator.TripleShotCoordinator{}
+		fallbackCoord := &orchestrator.TripleShotCoordinator{}
+		state := &TripleShotState{
+			Coordinators: map[string]*orchestrator.TripleShotCoordinator{
+				"target": mapCoord,
+			},
+			Coordinator: fallbackCoord,
+		}
+
+		result := state.GetCoordinatorForGroup("target")
+		if result != mapCoord {
+			t.Error("expected map coordinator over fallback")
+		}
+	})
+}
+
 func TestTripleShotStatePlanGroupIDs(t *testing.T) {
 	t.Run("starts empty", func(t *testing.T) {
 		state := &TripleShotState{}

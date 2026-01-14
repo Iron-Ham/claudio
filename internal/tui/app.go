@@ -3122,19 +3122,10 @@ func (m Model) renderTripleShotHelp() string {
 	return styles.HelpBar.Render(strings.Join(keys, "  "))
 }
 
-// initiateTripleShotMode creates and starts a triple-shot session
+// initiateTripleShotMode creates and starts a triple-shot session.
+// Supports multiple concurrent tripleshots by adding to the Coordinators map.
 func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
-	// Create triple-shot session with default config
-	tripleConfig := orchestrator.DefaultTripleShotConfig()
-	tripleSession := orchestrator.NewTripleShotSession(task, tripleConfig)
-
-	// Link triple-shot session to main session for persistence
-	m.session.TripleShot = tripleSession
-
-	// Create coordinator
-	coordinator := orchestrator.NewTripleShotCoordinator(m.orchestrator, m.session, tripleSession, m.logger)
-
-	// Create a group for this triple-shot session
+	// Create a group for this triple-shot session FIRST to get its ID
 	tripleGroup := orchestrator.NewInstanceGroupWithType(
 		truncateString(task, 30),
 		orchestrator.SessionTypeTripleShot,
@@ -3142,15 +3133,46 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	)
 	m.session.AddGroup(tripleGroup)
 
+	// Create triple-shot session with default config
+	tripleConfig := orchestrator.DefaultTripleShotConfig()
+	tripleSession := orchestrator.NewTripleShotSession(task, tripleConfig)
+
+	// Link group ID to session for multi-tripleshot support
+	tripleSession.GroupID = tripleGroup.ID
+
+	// Add to TripleShots slice for persistence (supports multiple)
+	m.session.TripleShots = append(m.session.TripleShots, tripleSession)
+
+	// Also set single TripleShot field for backward compatibility
+	m.session.TripleShot = tripleSession
+
+	// Create coordinator
+	coordinator := orchestrator.NewTripleShotCoordinator(m.orchestrator, m.session, tripleSession, m.logger)
+
 	// Auto-enable grouped sidebar mode
 	m.autoEnableGroupedMode()
 
-	// Set triple-shot state
-	m.tripleShot = &TripleShotState{
-		Coordinator: coordinator,
+	// Initialize triple-shot state if needed, or add to existing coordinators
+	if m.tripleShot == nil {
+		m.tripleShot = &TripleShotState{
+			Coordinators: make(map[string]*orchestrator.TripleShotCoordinator),
+		}
+	} else if m.tripleShot.Coordinators == nil {
+		m.tripleShot.Coordinators = make(map[string]*orchestrator.TripleShotCoordinator)
 	}
 
-	m.infoMessage = "Starting triple-shot mode..."
+	// Add coordinator to the map keyed by group ID
+	m.tripleShot.Coordinators[tripleGroup.ID] = coordinator
+
+	// Also set the deprecated single Coordinator for backward compatibility
+	m.tripleShot.Coordinator = coordinator
+
+	numActive := len(m.tripleShot.Coordinators)
+	if numActive > 1 {
+		m.infoMessage = fmt.Sprintf("Starting triple-shot #%d...", numActive)
+	} else {
+		m.infoMessage = "Starting triple-shot mode..."
+	}
 
 	// Start attempts asynchronously
 	return m, func() tea.Msg {
