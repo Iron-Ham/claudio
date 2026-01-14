@@ -736,14 +736,14 @@ func TestRenderGroupHeader(t *testing.T) {
 		t.Errorf("should contain progress [2/5], got: %s", result)
 	}
 	// Should have expanded indicator (down triangle)
-	if !strings.Contains(result, "\u25bc") {
+	if !strings.Contains(result, styles.IconGroupExpand) {
 		t.Errorf("expanded group should have down triangle, got: %s", result)
 	}
 
 	// Test collapsed
 	result = RenderGroupHeader(group, progress, true, false, 40)
 	// Should have collapsed indicator (right triangle)
-	if !strings.Contains(result, "\u25b6") {
+	if !strings.Contains(result, styles.IconGroupCollapse) {
 		t.Errorf("collapsed group should have right triangle, got: %s", result)
 	}
 }

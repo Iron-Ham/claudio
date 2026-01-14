@@ -3122,6 +3122,17 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	// Create coordinator
 	coordinator := orchestrator.NewTripleShotCoordinator(m.orchestrator, m.session, tripleSession, m.logger)
 
+	// Create a group for this triple-shot session
+	tripleGroup := orchestrator.NewInstanceGroupWithType(
+		truncateString(task, 30),
+		orchestrator.SessionTypeTripleShot,
+		task,
+	)
+	m.session.AddGroup(tripleGroup)
+
+	// Auto-enable grouped sidebar mode
+	m.autoEnableGroupedMode()
+
 	// Set triple-shot state
 	m.tripleShot = &TripleShotState{
 		Coordinator: coordinator,

@@ -376,3 +376,198 @@ func TestNamer_Stop_DoubleStopSafe(t *testing.T) {
 	namer.Stop()
 	namer.Stop()
 }
+
+// Group rename tests
+
+func TestNamer_RequestGroupRename_Success(t *testing.T) {
+	client := &mockClient{}
+	namer := New(client, nil)
+
+	var callbackCalled bool
+	var receivedID, receivedName string
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	namer.OnGroupRename(func(groupID, newName string) {
+		receivedID = groupID
+		receivedName = newName
+		callbackCalled = true
+		wg.Done()
+	})
+
+	namer.Start()
+	defer namer.Stop()
+
+	namer.RequestGroupRename("group-1", "Implement user authentication")
+
+	// Wait for callback with timeout
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for callback")
+	}
+
+	if !callbackCalled {
+		t.Error("expected callback to be called")
+	}
+	if receivedID != "group-1" {
+		t.Errorf("expected group ID 'group-1', got '%s'", receivedID)
+	}
+	if receivedName != "Generated name" {
+		t.Errorf("expected name 'Generated name', got '%s'", receivedName)
+	}
+}
+
+func TestNamer_RequestGroupRename_SkipsDuplicate(t *testing.T) {
+	client := &mockClient{}
+	namer := New(client, nil)
+
+	var callCount int
+	var mu sync.Mutex
+	namer.OnGroupRename(func(_, _ string) {
+		mu.Lock()
+		callCount++
+		mu.Unlock()
+	})
+
+	namer.Start()
+	defer namer.Stop()
+
+	// Request rename for same group multiple times
+	namer.RequestGroupRename("group-1", "Objective")
+	namer.RequestGroupRename("group-1", "Objective")
+	namer.RequestGroupRename("group-1", "Objective")
+
+	// Wait for processing
+	time.Sleep(time.Second)
+
+	mu.Lock()
+	count := callCount
+	mu.Unlock()
+
+	// Should only be called once
+	if count != 1 {
+		t.Errorf("expected callback to be called once, got %d times", count)
+	}
+}
+
+func TestNamer_RequestGroupRename_APIError(t *testing.T) {
+	client := &mockClient{
+		summarizeFunc: func(_ context.Context, _ string) (string, error) {
+			return "", errors.New("API error")
+		},
+	}
+	namer := New(client, nil)
+
+	var callbackCalled bool
+	namer.OnGroupRename(func(_, _ string) {
+		callbackCalled = true
+	})
+
+	namer.Start()
+	defer namer.Stop()
+
+	namer.RequestGroupRename("group-1", "Objective")
+
+	// Wait for processing
+	time.Sleep(time.Second)
+
+	// Callback should NOT be called on error
+	if callbackCalled {
+		t.Error("expected callback NOT to be called on API error")
+	}
+
+	// But group should be marked as renamed to prevent retries
+	if !namer.IsGroupRenamed("group-1") {
+		t.Error("expected group to be marked as renamed after error")
+	}
+}
+
+func TestNamer_IsGroupRenamed(t *testing.T) {
+	client := &mockClient{}
+	namer := New(client, nil)
+	namer.Start()
+	defer namer.Stop()
+
+	// Initially not renamed
+	if namer.IsGroupRenamed("group-1") {
+		t.Error("expected group NOT to be renamed initially")
+	}
+
+	// Request rename
+	namer.RequestGroupRename("group-1", "Objective")
+
+	// Wait for processing
+	time.Sleep(time.Second)
+
+	// Now should be renamed
+	if !namer.IsGroupRenamed("group-1") {
+		t.Error("expected group to be renamed after processing")
+	}
+}
+
+func TestNamer_ResetGroup(t *testing.T) {
+	client := &mockClient{}
+	namer := New(client, nil)
+
+	var callCount int
+	var mu sync.Mutex
+	namer.OnGroupRename(func(_, _ string) {
+		mu.Lock()
+		callCount++
+		mu.Unlock()
+	})
+
+	namer.Start()
+	defer namer.Stop()
+
+	// First rename
+	namer.RequestGroupRename("group-1", "Objective 1")
+	time.Sleep(500 * time.Millisecond)
+
+	// Reset the renamed state
+	namer.ResetGroup("group-1")
+
+	// Should not be marked as renamed anymore
+	if namer.IsGroupRenamed("group-1") {
+		t.Error("expected group NOT to be renamed after reset")
+	}
+
+	// Second rename should work
+	namer.RequestGroupRename("group-1", "Objective 2")
+	time.Sleep(time.Second)
+
+	mu.Lock()
+	count := callCount
+	mu.Unlock()
+
+	if count != 2 {
+		t.Errorf("expected callback to be called twice after reset, got %d", count)
+	}
+}
+
+func TestNamer_GroupRename_NoCallback(t *testing.T) {
+	client := &mockClient{}
+	namer := New(client, nil)
+	// Don't set a group callback
+
+	namer.Start()
+	defer namer.Stop()
+
+	// Should not panic when callback is nil
+	namer.RequestGroupRename("group-1", "Objective")
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Group should still be marked as renamed
+	if !namer.IsGroupRenamed("group-1") {
+		t.Error("expected group to be renamed even without callback")
+	}
+}

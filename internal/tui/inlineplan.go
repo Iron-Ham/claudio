@@ -58,6 +58,25 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 			return
 		}
 
+		// Create a group for this ultraplan session
+		sessionType := orchestrator.SessionTypeUltraPlan
+		if cfg.MultiPass {
+			sessionType = orchestrator.SessionTypePlanMulti
+		}
+		objective := plan.Objective
+		if objective == "" {
+			objective = "Loaded Plan"
+		}
+		ultraGroup := orchestrator.NewInstanceGroupWithType(
+			truncateString(objective, 30),
+			sessionType,
+			objective,
+		)
+		m.session.AddGroup(ultraGroup)
+
+		// Auto-enable grouped sidebar mode
+		m.autoEnableGroupedMode()
+
 		m.ultraPlan = &view.UltraPlanState{
 			Coordinator:  coordinator,
 			ShowPlanView: false,
@@ -78,6 +97,21 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 
 		// Initialize coordinator
 		coordinator := orchestrator.NewCoordinator(m.orchestrator, m.session, ultraSession, m.logger)
+
+		// Create a group for this ultraplan session
+		sessionType := orchestrator.SessionTypeUltraPlan
+		if cfg.MultiPass {
+			sessionType = orchestrator.SessionTypePlanMulti
+		}
+		ultraGroup := orchestrator.NewInstanceGroupWithType(
+			truncateString(objective, 30),
+			sessionType,
+			objective,
+		)
+		m.session.AddGroup(ultraGroup)
+
+		// Auto-enable grouped sidebar mode
+		m.autoEnableGroupedMode()
 
 		// Start planning phase - create the planning instance
 		if err := coordinator.RunPlanning(); err != nil {
@@ -164,6 +198,12 @@ func (m *Model) handleInlinePlanObjectiveSubmit(objective string) {
 	if gm != nil {
 		planGroup := gm.CreateGroup(fmt.Sprintf("Plan: %s", truncateString(objective, 30)), nil)
 		m.inlinePlan.GroupID = planGroup.ID
+
+		// Set session type on the group for proper icon display
+		if orchGroup := m.session.GetGroup(planGroup.ID); orchGroup != nil {
+			orchGroup.SessionType = orchestrator.SessionTypePlan
+			orchGroup.Objective = objective
+		}
 
 		// If in tripleshot mode, register this group for sidebar display
 		if m.tripleShot != nil {

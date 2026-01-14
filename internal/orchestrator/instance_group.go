@@ -25,6 +25,14 @@ type InstanceGroup struct {
 	ExecutionOrder int              `json:"execution_order"` // Order of execution (0 = first)
 	DependsOn      []string         `json:"depends_on"`      // Group IDs this group depends on
 	Created        time.Time        `json:"created"`
+
+	// SessionType identifies the type of session that created this group.
+	// Used for displaying appropriate icons and determining grouping behavior.
+	SessionType SessionType `json:"session_type,omitempty"`
+
+	// Objective is the original user prompt/objective for this group.
+	// Used for LLM-based name generation and display purposes.
+	Objective string `json:"objective,omitempty"`
 }
 
 // NewInstanceGroup creates a new instance group with a generated ID
@@ -37,6 +45,22 @@ func NewInstanceGroup(name string) *InstanceGroup {
 		SubGroups: make([]*InstanceGroup, 0),
 		DependsOn: make([]string, 0),
 		Created:   time.Now(),
+	}
+}
+
+// NewInstanceGroupWithType creates a new instance group with a session type and objective.
+// The objective is used for LLM-based name generation.
+func NewInstanceGroupWithType(name string, sessionType SessionType, objective string) *InstanceGroup {
+	return &InstanceGroup{
+		ID:          generateID(),
+		Name:        name,
+		Phase:       GroupPhasePending,
+		Instances:   make([]string, 0),
+		SubGroups:   make([]*InstanceGroup, 0),
+		DependsOn:   make([]string, 0),
+		Created:     time.Now(),
+		SessionType: sessionType,
+		Objective:   objective,
 	}
 }
 
@@ -212,4 +236,36 @@ func (s *Session) GetReadyGroups() []*InstanceGroup {
 		}
 	}
 	return ready
+}
+
+// GetGroupBySessionType returns the first group with the given session type.
+// Useful for finding shared groups like "Plans".
+func (s *Session) GetGroupBySessionType(sessionType SessionType) *InstanceGroup {
+	for _, g := range s.Groups {
+		if g.SessionType == sessionType {
+			return g
+		}
+	}
+	return nil
+}
+
+// GetOrCreateSharedGroup returns an existing shared group for the session type,
+// or creates a new one if none exists. Only meaningful for session types with
+// GroupingMode() == "shared".
+func (s *Session) GetOrCreateSharedGroup(sessionType SessionType) *InstanceGroup {
+	if sessionType.GroupingMode() != "shared" {
+		return nil
+	}
+
+	// Look for existing group
+	for _, g := range s.Groups {
+		if g.SessionType == sessionType {
+			return g
+		}
+	}
+
+	// Create new shared group
+	group := NewInstanceGroupWithType(sessionType.SharedGroupName(), sessionType, "")
+	s.AddGroup(group)
+	return group
 }
