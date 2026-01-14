@@ -137,7 +137,7 @@ func (s *Service) closeLinear(ctx context.Context, issueURL string) error {
 
 // closeNotion marks a Notion page/task as complete
 // Note: Notion doesn't have a CLI, so this is a placeholder for API integration
-func (s *Service) closeNotion(ctx context.Context, issueURL string) error {
+func (s *Service) closeNotion(_ context.Context, issueURL string) error {
 	s.logger.Debug("Notion issue closing not yet implemented", "url", issueURL)
 	// Future: Use Notion API to update page status
 	// Would require NOTION_API_KEY and database-specific property names
