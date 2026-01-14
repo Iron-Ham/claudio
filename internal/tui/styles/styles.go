@@ -30,15 +30,16 @@ var (
 	Text      = lipgloss.NewStyle().Foreground(TextColor)
 
 	// Status colors - all meet WCAG AA contrast (4.5:1) on both black and dark surfaces
-	StatusWorking    = lipgloss.Color("#10B981") // Green
-	StatusPending    = lipgloss.Color("#9CA3AF") // Gray (brighter for readability)
-	StatusInput      = lipgloss.Color("#F59E0B") // Amber
-	StatusPaused     = lipgloss.Color("#60A5FA") // Blue (brighter for readability)
-	StatusComplete   = lipgloss.Color("#A78BFA") // Purple (brighter for readability)
-	StatusError      = lipgloss.Color("#F87171") // Red (red-400, was #EF4444 - improved contrast)
-	StatusCreatingPR = lipgloss.Color("#F472B6") // Pink (brighter for readability)
-	StatusStuck      = lipgloss.Color("#FB923C") // Orange - for stuck/no activity
-	StatusTimeout    = lipgloss.Color("#F87171") // Red (red-400, was #DC2626 - improved contrast)
+	StatusWorking     = lipgloss.Color("#10B981") // Green
+	StatusPending     = lipgloss.Color("#9CA3AF") // Gray (brighter for readability)
+	StatusInput       = lipgloss.Color("#F59E0B") // Amber
+	StatusPaused      = lipgloss.Color("#60A5FA") // Blue (brighter for readability)
+	StatusComplete    = lipgloss.Color("#A78BFA") // Purple (brighter for readability)
+	StatusError       = lipgloss.Color("#F87171") // Red (red-400, was #EF4444 - improved contrast)
+	StatusCreatingPR  = lipgloss.Color("#F472B6") // Pink (brighter for readability)
+	StatusStuck       = lipgloss.Color("#FB923C") // Orange - for stuck/no activity
+	StatusTimeout     = lipgloss.Color("#F87171") // Red (red-400, was #DC2626 - improved contrast)
+	StatusInterrupted = lipgloss.Color("#FBBF24") // Yellow/Amber - for interrupted sessions
 
 	// Base styles
 	Title = lipgloss.NewStyle().
@@ -304,6 +305,8 @@ func StatusColor(status string) lipgloss.Color {
 		return StatusStuck
 	case "timeout":
 		return StatusTimeout
+	case "interrupted":
+		return StatusInterrupted
 	default:
 		return MutedColor
 	}
@@ -330,6 +333,8 @@ func StatusIcon(status string) string {
 		return "⏱" // Timer icon for stuck/no activity
 	case "timeout":
 		return "⏰" // Alarm icon for timeout exceeded
+	case "interrupted":
+		return "⚡" // Lightning bolt for interrupted (needs resume)
 	default:
 		return "●"
 	}

@@ -208,28 +208,28 @@ func (h *GroupKeyHandler) handleSkipGroup() GroupKeyResult {
 	}
 }
 
-// handleRetryGroup retries failed tasks in the current group.
+// handleRetryGroup retries failed or interrupted tasks in the current group.
 func (h *GroupKeyHandler) handleRetryGroup() GroupKeyResult {
 	groupID := h.groupState.SelectedGroupID
 	if groupID == "" {
 		return GroupKeyResult{Handled: false}
 	}
 
-	// Find the group and collect failed instance IDs
+	// Find the group and collect restartable instance IDs
 	group := h.findGroup(groupID)
 	if group == nil {
 		return GroupKeyResult{Handled: false}
 	}
 
-	var failedIDs []string
+	var restartableIDs []string
 	for _, instID := range group.Instances {
 		inst := h.session.GetInstance(instID)
-		if inst != nil && isFailedStatus(inst.Status) {
-			failedIDs = append(failedIDs, instID)
+		if inst != nil && isRestartableStatus(inst.Status) {
+			restartableIDs = append(restartableIDs, instID)
 		}
 	}
 
-	if len(failedIDs) == 0 {
+	if len(restartableIDs) == 0 {
 		return GroupKeyResult{Handled: false}
 	}
 
@@ -237,7 +237,7 @@ func (h *GroupKeyHandler) handleRetryGroup() GroupKeyResult {
 		Action:      GroupActionRetryGroup,
 		Handled:     true,
 		GroupID:     groupID,
-		InstanceIDs: failedIDs,
+		InstanceIDs: restartableIDs,
 	}
 }
 
@@ -288,6 +288,16 @@ func isFailedStatus(status orchestrator.InstanceStatus) bool {
 	return status == orchestrator.StatusError ||
 		status == orchestrator.StatusStuck ||
 		status == orchestrator.StatusTimeout
+}
+
+// isRestartableStatus returns true if the status indicates an instance that can be restarted.
+// This includes interrupted instances (from Claudio exit) and failed instances.
+func isRestartableStatus(status orchestrator.InstanceStatus) bool {
+	return status == orchestrator.StatusInterrupted ||
+		status == orchestrator.StatusPaused ||
+		status == orchestrator.StatusStuck ||
+		status == orchestrator.StatusTimeout ||
+		status == orchestrator.StatusError
 }
 
 // -----------------------------------------------------------------------------

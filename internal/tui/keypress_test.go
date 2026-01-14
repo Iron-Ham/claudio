@@ -292,6 +292,7 @@ func TestIsFailedStatus(t *testing.T) {
 		{orchestrator.StatusWorking, false},
 		{orchestrator.StatusCompleted, false},
 		{orchestrator.StatusPaused, false},
+		{orchestrator.StatusInterrupted, false},
 	}
 
 	for _, tt := range tests {
@@ -299,6 +300,32 @@ func TestIsFailedStatus(t *testing.T) {
 			got := isFailedStatus(tt.status)
 			if got != tt.expected {
 				t.Errorf("isFailedStatus(%s) = %v, want %v", tt.status, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsRestartableStatus(t *testing.T) {
+	tests := []struct {
+		status   orchestrator.InstanceStatus
+		expected bool
+	}{
+		{orchestrator.StatusInterrupted, true},
+		{orchestrator.StatusPaused, true},
+		{orchestrator.StatusStuck, true},
+		{orchestrator.StatusTimeout, true},
+		{orchestrator.StatusError, true},
+		{orchestrator.StatusPending, false},
+		{orchestrator.StatusWorking, false},
+		{orchestrator.StatusCompleted, false},
+		{orchestrator.StatusWaitingInput, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.status), func(t *testing.T) {
+			got := isRestartableStatus(tt.status)
+			if got != tt.expected {
+				t.Errorf("isRestartableStatus(%s) = %v, want %v", tt.status, got, tt.expected)
 			}
 		})
 	}

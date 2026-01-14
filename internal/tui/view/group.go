@@ -354,6 +354,8 @@ func instanceStatusAbbrev(status orchestrator.InstanceStatus) string {
 		return "STUK"
 	case orchestrator.StatusTimeout:
 		return "TIME"
+	case orchestrator.StatusInterrupted:
+		return "INT!"
 	default:
 		return "????"
 	}

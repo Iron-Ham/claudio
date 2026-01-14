@@ -104,24 +104,26 @@ type ManagerOptions struct {
 	Config           ManagerConfig
 	StateMonitor     *state.Monitor     // Optional - if nil, an internal monitor is created
 	LifecycleManager *lifecycle.Manager // Optional - if set, delegates Start/Stop/Reconnect
+	ClaudeSessionID  string             // Optional - Claude's internal session UUID for resume capability
 }
 
 // Manager handles a single Claude Code instance running in a tmux session.
 // The Manager is a facade that delegates state tracking to its StateMonitor.
 type Manager struct {
-	id          string
-	sessionID   string // Claudio session ID (for multi-session support)
-	workdir     string
-	task        string
-	sessionName string // tmux session name
-	socketName  string // tmux socket name for isolation (claudio-{instanceID})
-	outputBuf   *capture.RingBuffer
-	mu          sync.RWMutex
-	running     bool
-	paused      bool
-	doneChan    chan struct{}
-	captureTick *time.Ticker
-	config      ManagerConfig
+	id              string
+	sessionID       string // Claudio session ID (for multi-session support)
+	workdir         string
+	task            string
+	sessionName     string // tmux session name
+	socketName      string // tmux socket name for isolation (claudio-{instanceID})
+	claudeSessionID string // Claude's internal session UUID for resume capability
+	outputBuf       *capture.RingBuffer
+	mu              sync.RWMutex
+	running         bool
+	paused          bool
+	doneChan        chan struct{}
+	captureTick     *time.Ticker
+	config          ManagerConfig
 
 	// State detection - delegated to stateMonitor
 	stateCallback StateChangeCallback
@@ -266,16 +268,17 @@ func NewManagerWithDeps(opts ManagerOptions) *Manager {
 	socketName := tmux.InstanceSocketName(opts.ID)
 
 	return &Manager{
-		id:            opts.ID,
-		sessionID:     opts.SessionID,
-		workdir:       opts.WorkDir,
-		task:          opts.Task,
-		sessionName:   sessionName,
-		socketName:    socketName,
-		outputBuf:     capture.NewRingBuffer(cfg.OutputBufferSize),
-		doneChan:      make(chan struct{}),
-		config:        cfg,
-		metricsParser: metrics.NewMetricsParser(),
+		id:              opts.ID,
+		sessionID:       opts.SessionID,
+		workdir:         opts.WorkDir,
+		task:            opts.Task,
+		sessionName:     sessionName,
+		socketName:      socketName,
+		claudeSessionID: opts.ClaudeSessionID,
+		outputBuf:       capture.NewRingBuffer(cfg.OutputBufferSize),
+		doneChan:        make(chan struct{}),
+		config:          cfg,
+		metricsParser:   metrics.NewMetricsParser(),
 		inputHandler: input.NewHandler(
 			input.WithPersistentSender(sessionName, socketName),
 			input.WithBatching(sessionName, input.DefaultBatchConfig()),
@@ -461,8 +464,17 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("failed to write prompt file: %w", err)
 	}
 
-	// Send the claude command to the tmux session, reading prompt from file
-	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q", promptFile, promptFile)
+	// Build the claude command with optional session-id for resume capability
+	// If claudeSessionID is set, use it to enable later resumption with --resume
+	var claudeCmd string
+	if m.claudeSessionID != "" {
+		claudeCmd = fmt.Sprintf("claude --dangerously-skip-permissions --session-id %q \"$(cat %q)\" && rm %q",
+			m.claudeSessionID, promptFile, promptFile)
+	} else {
+		claudeCmd = fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q",
+			promptFile, promptFile)
+	}
+
 	sendCmd := m.tmuxCmd(
 		"send-keys",
 		"-t", m.sessionName,
@@ -498,7 +510,114 @@ func (m *Manager) Start() error {
 	if m.logger != nil {
 		m.logger.Info("tmux session created",
 			"session_name", m.sessionName,
-			"workdir", m.workdir)
+			"workdir", m.workdir,
+			"claude_session_id", m.claudeSessionID)
+	}
+
+	return nil
+}
+
+// StartWithResume launches Claude Code with --resume to continue a previous session.
+// This requires a valid ClaudeSessionID to be set (either via ManagerOptions or SetClaudeSessionID).
+// The resumed session will continue from where it left off.
+func (m *Manager) StartWithResume() error {
+	// Delegate to lifecycle manager if available
+	if m.lifecycleManager != nil {
+		return m.lifecycleManager.Start(m)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.running {
+		return fmt.Errorf("instance already running")
+	}
+
+	if m.claudeSessionID == "" {
+		return fmt.Errorf("cannot resume: no Claude session ID set")
+	}
+
+	// Kill any existing tmux session with this name (cleanup from previous run)
+	_ = m.tmuxCmd("kill-session", "-t", m.sessionName).Run()
+
+	// Determine history limit from config (default to 50000 if not set)
+	historyLimit := m.config.TmuxHistoryLimit
+	if historyLimit == 0 {
+		historyLimit = 50000
+	}
+
+	// Set history-limit BEFORE creating session so the new pane inherits it.
+	if err := m.tmuxCmd("set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
+		if m.logger != nil {
+			m.logger.Warn("failed to set global history-limit for tmux",
+				"history_limit", historyLimit,
+				"error", err.Error())
+		}
+	}
+
+	// Create a new detached tmux session with color support
+	createCmd := m.tmuxCmd(
+		"new-session",
+		"-d",                // detached
+		"-s", m.sessionName, // session name
+		"-x", fmt.Sprintf("%d", m.config.TmuxWidth), // width
+		"-y", fmt.Sprintf("%d", m.config.TmuxHeight), // height
+	)
+	createCmd.Dir = m.workdir
+	createCmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	if err := createCmd.Run(); err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to create tmux session for resume",
+				"session_name", m.sessionName,
+				"workdir", m.workdir,
+				"error", err.Error())
+		}
+		return fmt.Errorf("failed to create tmux session: %w", err)
+	}
+
+	// Set up additional tmux session options
+	_ = m.tmuxCmd("set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run()
+	_ = m.tmuxCmd("set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
+
+	// Build the claude command with --resume to continue the previous session
+	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions --resume %q", m.claudeSessionID)
+
+	sendCmd := m.tmuxCmd(
+		"send-keys",
+		"-t", m.sessionName,
+		claudeCmd,
+		"Enter",
+	)
+	if err := sendCmd.Run(); err != nil {
+		_ = m.tmuxCmd("kill-session", "-t", m.sessionName).Run()
+		if m.logger != nil {
+			m.logger.Error("failed to start claude with resume in tmux session",
+				"session_name", m.sessionName,
+				"claude_session_id", m.claudeSessionID,
+				"error", err.Error())
+		}
+		return fmt.Errorf("failed to start claude with resume: %w", err)
+	}
+
+	m.running = true
+	m.paused = false
+
+	// Record start time for duration tracking
+	now := time.Now()
+	m.startTime = &now
+
+	// Register with state monitor for state/timeout/bell tracking
+	m.stateMonitor.Start(m.id)
+
+	// Start background goroutine to capture output periodically
+	m.captureTick = time.NewTicker(time.Duration(m.config.CaptureIntervalMs) * time.Millisecond)
+	go m.captureLoop()
+
+	if m.logger != nil {
+		m.logger.Info("tmux session created with resume",
+			"session_name", m.sessionName,
+			"workdir", m.workdir,
+			"claude_session_id", m.claudeSessionID)
 	}
 
 	return nil
@@ -1094,6 +1213,22 @@ func (m *Manager) SocketName() string {
 // ID returns the instance ID
 func (m *Manager) ID() string {
 	return m.id
+}
+
+// ClaudeSessionID returns the Claude session UUID used for resume capability.
+// This is the UUID passed to `claude --session-id` when starting the instance.
+func (m *Manager) ClaudeSessionID() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.claudeSessionID
+}
+
+// SetClaudeSessionID sets the Claude session UUID for resume capability.
+// This should be set before Start() or StartWithResume() is called.
+func (m *Manager) SetClaudeSessionID(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.claudeSessionID = sessionID
 }
 
 // tmuxCmd creates a tmux command using this instance's isolated socket.

@@ -305,6 +305,8 @@ func (o *Orchestrator) StartSession(name string) (*Session, error) {
 	if o.sessionID != "" {
 		sess.ID = o.sessionID
 	}
+	// Mark as not cleanly shutdown - will be set true on ReleaseLock()
+	sess.CleanShutdown = false
 	o.session = sess
 
 	// Start conflict detector
@@ -409,8 +411,8 @@ func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
 
 	var reconnected []string
 	for _, inst := range session.Instances {
-		// Create instance manager
-		mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task)
+		// Create instance manager (with Claude session ID for resume capability)
+		mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
 
 		// Try to reconnect if the tmux session still exists
 		if mgr.TmuxSessionExists() {
@@ -498,8 +500,18 @@ func (o *Orchestrator) BaseDir() string {
 }
 
 // ReleaseLock releases the session lock if one is held.
-// Safe to call multiple times.
+// Safe to call multiple times. Marks the session as cleanly shutdown first.
 func (o *Orchestrator) ReleaseLock() error {
+	// Mark session as cleanly shutdown before releasing lock
+	if o.session != nil {
+		o.session.CleanShutdown = true
+		o.session.RecoveryState = RecoveryNone
+		if err := o.saveSession(); err != nil && o.logger != nil {
+			o.logger.Error("failed to save clean shutdown state - recovery may trigger incorrectly on next start",
+				"error", err.Error())
+		}
+	}
+
 	if o.lock != nil {
 		err := o.lock.Release()
 		o.lock = nil
@@ -736,11 +748,14 @@ func (o *Orchestrator) AddInstanceToWorktree(session *Session, task string, work
 	inst.WorktreePath = worktreePath
 	inst.Branch = branch
 
+	// Generate a Claude session ID for resume capability
+	inst.ClaudeSessionID = GenerateUUID()
+
 	// Add to session
 	session.Instances = append(session.Instances, inst)
 
-	// Create instance manager with config
-	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, task)
+	// Create instance manager with config (including Claude session ID)
+	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, task, inst.ClaudeSessionID)
 	o.instances[inst.ID] = mgr
 
 	// Save session
@@ -798,15 +813,23 @@ func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, base
 
 // StartInstance starts a Claude process for an instance
 func (o *Orchestrator) StartInstance(inst *Instance) error {
+	// Generate a Claude session ID if not already present (for resume capability)
+	if inst.ClaudeSessionID == "" {
+		inst.ClaudeSessionID = GenerateUUID()
+	}
+
 	o.mu.Lock()
 	mgr, ok := o.instances[inst.ID]
 	o.mu.Unlock()
 
 	if !ok {
-		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task)
+		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
 		o.mu.Lock()
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
+	} else {
+		// Update the manager's Claude session ID if it changed
+		mgr.SetClaudeSessionID(inst.ClaudeSessionID)
 	}
 
 	// Configure all callbacks
@@ -845,6 +868,7 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 			"instance_id", inst.ID,
 			"tmux_session", inst.TmuxSession,
 			"pid", inst.PID,
+			"claude_session_id", inst.ClaudeSessionID,
 		)
 	}
 
@@ -1187,16 +1211,17 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 //
 // Note: LifecycleManager delegation is available but not enabled by default.
 // The instance Manager's Start/Stop/Reconnect use their internal implementation.
-func (o *Orchestrator) newInstanceManager(instanceID, workdir, task string) *instance.Manager {
+func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessionID string) *instance.Manager {
 	cfg := o.instanceManagerConfig()
 
 	mgr := instance.NewManagerWithDeps(instance.ManagerOptions{
-		ID:           instanceID,
-		SessionID:    o.sessionID,
-		WorkDir:      workdir,
-		Task:         task,
-		Config:       cfg,
-		StateMonitor: o.stateMonitor,
+		ID:              instanceID,
+		SessionID:       o.sessionID,
+		WorkDir:         workdir,
+		Task:            task,
+		Config:          cfg,
+		StateMonitor:    o.stateMonitor,
+		ClaudeSessionID: claudeSessionID,
 		// LifecycleManager not set - instances use internal Start/Stop/Reconnect
 	})
 
@@ -1217,8 +1242,8 @@ func (o *Orchestrator) registerInstance(session *Session, inst *Instance) error 
 	// Add to session
 	session.Instances = append(session.Instances, inst)
 
-	// Create instance manager with config
-	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task)
+	// Create instance manager with config (including Claude session ID for resume capability)
+	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
 	o.instances[inst.ID] = mgr
 
 	// Register with conflict detector
@@ -2034,9 +2059,9 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 	mgr, ok := o.instances[inst.ID]
 	o.mu.Unlock()
 
-	// If no manager exists yet, create one
+	// If no manager exists yet, create one (with Claude session ID for resume capability)
 	if !ok {
-		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task)
+		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
 		o.mu.Lock()
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
@@ -2051,8 +2076,22 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 		if err := mgr.Reconnect(); err != nil {
 			return fmt.Errorf("failed to reconnect to existing session: %w", err)
 		}
+	} else if inst.ClaudeSessionID != "" {
+		// Tmux session gone but we have a Claude session ID - resume Claude's conversation
+		if err := mgr.StartWithResume(); err != nil {
+			if o.logger != nil {
+				o.logger.Warn("failed to resume with claude session, falling back to fresh start",
+					"instance_id", inst.ID,
+					"claude_session_id", inst.ClaudeSessionID,
+					"error", err.Error())
+			}
+			// Fall back to fresh start if resume fails
+			if err := mgr.Start(); err != nil {
+				return fmt.Errorf("failed to restart instance: %w", err)
+			}
+		}
 	} else {
-		// Session doesn't exist - start a fresh one with the same task
+		// No tmux session and no Claude session ID - start fresh
 		if err := mgr.Start(); err != nil {
 			return fmt.Errorf("failed to restart instance: %w", err)
 		}
@@ -2069,6 +2108,66 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 	} else {
 		inst.Metrics.StartTime = now
 		inst.Metrics.EndTime = nil // Clear end time since we're restarting
+	}
+
+	return o.saveSession()
+}
+
+// ResumeInstance resumes an interrupted Claude instance using Claude's --resume flag.
+// This is useful when Claudio was interrupted but the Claude conversation can be continued.
+// Unlike ReconnectInstance, this always creates a new tmux session and uses --resume.
+func (o *Orchestrator) ResumeInstance(inst *Instance) error {
+	if inst.ClaudeSessionID == "" {
+		return fmt.Errorf("cannot resume: instance has no Claude session ID")
+	}
+
+	o.mu.Lock()
+	mgr, ok := o.instances[inst.ID]
+	o.mu.Unlock()
+
+	// If no manager exists yet, create one
+	if !ok {
+		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
+		o.mu.Lock()
+		o.instances[inst.ID] = mgr
+		o.mu.Unlock()
+	}
+
+	// Configure all callbacks
+	o.configureInstanceCallbacks(mgr)
+
+	// Start with resume
+	if err := mgr.StartWithResume(); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to resume instance",
+				"instance_id", inst.ID,
+				"claude_session_id", inst.ClaudeSessionID,
+				"error", err.Error())
+		}
+		return fmt.Errorf("failed to resume instance: %w", err)
+	}
+
+	inst.Status = StatusWorking
+	inst.PID = mgr.PID()
+	inst.TmuxSession = mgr.SessionName()
+
+	// Clear interrupted state
+	inst.InterruptedAt = nil
+
+	// Update start time for metrics
+	now := mgr.StartTime()
+	if inst.Metrics == nil {
+		inst.Metrics = &Metrics{StartTime: now}
+	} else {
+		inst.Metrics.StartTime = now
+		inst.Metrics.EndTime = nil // Clear end time since we're resuming
+	}
+
+	if o.logger != nil {
+		o.logger.Info("instance resumed",
+			"instance_id", inst.ID,
+			"claude_session_id", inst.ClaudeSessionID,
+			"tmux_session", inst.TmuxSession)
 	}
 
 	return o.saveSession()

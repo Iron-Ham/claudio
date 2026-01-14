@@ -159,24 +159,63 @@ func attachToSession(cwd, sessionID string, cfg *config.Config) error {
 		return fmt.Errorf("failed to load session: %w", err)
 	}
 
-	// Try to reconnect to running tmux sessions
+	// Check for interrupted session that needs recovery
+	needsRecovery := sess.NeedsRecovery()
+	if needsRecovery {
+		logger.Info("detected interrupted session, attempting recovery",
+			"session_id", sessionID,
+			"recovery_state", sess.RecoveryState,
+		)
+		fmt.Println("\nSession was interrupted - attempting recovery...")
+		sess.MarkInstancesInterrupted()
+	}
+
+	// Try to reconnect to running tmux sessions or resume interrupted ones
 	var reconnected []string
+	var resumed []string
 	for _, inst := range sess.Instances {
 		mgr := orch.GetInstanceManager(inst.ID)
 		if mgr == nil {
 			continue
 		}
+
 		if mgr.TmuxSessionExists() {
-			if err := mgr.Reconnect(); err == nil {
+			// Tmux session still exists - reconnect to it
+			if err := mgr.Reconnect(); err != nil {
+				logger.Warn("failed to reconnect to tmux session",
+					"instance_id", inst.ID,
+					"error", err.Error(),
+				)
+			} else {
 				inst.Status = orchestrator.StatusWorking
 				inst.PID = mgr.PID()
 				reconnected = append(reconnected, inst.ID)
+			}
+		} else if needsRecovery && inst.ClaudeSessionID != "" &&
+			(inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput) {
+			// Tmux session gone but we have Claude session ID - try to resume
+			if err := orch.ResumeInstance(inst); err == nil {
+				resumed = append(resumed, inst.ID)
+				logger.Info("resumed interrupted instance",
+					"instance_id", inst.ID,
+					"claude_session_id", inst.ClaudeSessionID,
+				)
+			} else {
+				logger.Warn("failed to resume instance, marking as paused",
+					"instance_id", inst.ID,
+					"error", err.Error(),
+				)
+				inst.Status = orchestrator.StatusPaused
 			}
 		}
 	}
 
 	if len(reconnected) > 0 {
 		fmt.Printf("Reconnected to %d running instance(s)\n", len(reconnected))
+	}
+	if len(resumed) > 0 {
+		fmt.Printf("Resumed %d interrupted instance(s)\n", len(resumed))
+		sess.MarkRecovered()
 	}
 
 	// Check if this is an ultraplan session - if so, resume it
