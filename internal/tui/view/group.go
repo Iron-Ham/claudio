@@ -102,7 +102,19 @@ func PhaseColor(phase orchestrator.GroupPhase) lipgloss.Color {
 
 // RenderGroupHeader renders the header line for a group.
 // Example: "▾ ⚡ Refactor auth [2/5] ●"
+// For multi-line wrapped headers, use RenderGroupHeaderWrapped instead.
 func RenderGroupHeader(group *orchestrator.InstanceGroup, progress GroupProgress, collapsed bool, isSelected bool, width int) string {
+	lines := RenderGroupHeaderWrapped(group, progress, collapsed, isSelected, width)
+	return strings.Join(lines, "\n")
+}
+
+// RenderGroupHeaderWrapped renders a group header with word-wrapped name support.
+// Returns a slice of lines where the first line contains the collapse indicator,
+// icon, and start of name, and subsequent lines contain wrapped name continuation.
+// The progress indicator and phase indicator are placed on the first line.
+// Example first line: "▾ ⚡ Refactor auth module [2/5] ●"
+// Example continuation: "     for better security"
+func RenderGroupHeaderWrapped(group *orchestrator.InstanceGroup, progress GroupProgress, collapsed bool, isSelected bool, width int) []string {
 	// Collapse indicator
 	collapseChar := styles.IconGroupExpand // down-pointing triangle (expanded)
 	if collapsed {
@@ -111,6 +123,7 @@ func RenderGroupHeader(group *orchestrator.InstanceGroup, progress GroupProgress
 
 	// Session type icon
 	sessionIcon := group.SessionType.Icon()
+	hasIcon := group.SessionType != "" && group.SessionType != orchestrator.SessionTypeStandard
 
 	// Phase styling
 	phaseColor := PhaseColor(group.Phase)
@@ -122,14 +135,24 @@ func RenderGroupHeader(group *orchestrator.InstanceGroup, progress GroupProgress
 	// Build the header components
 	progressStr := fmt.Sprintf("[%d/%d]", progress.Completed, progress.Total)
 
-	// Calculate how much space we have for the name
-	// Format: "V I <name> [x/y] P" where V=collapse, I=session icon, P=phase indicator
-	// overhead: collapse(1) + space(1) + icon(1-2) + space(1) + progress(varies) + space(1) + indicator(1)
-	iconLen := len([]rune(sessionIcon))
-	overhead := 1 + 1 + iconLen + 1 + len(progressStr) + 1 + 1
-	maxNameLen := width - overhead - 4 // padding
+	// Calculate prefix length for indentation of continuation lines
+	// Prefix: "V " or "V I " depending on whether there's an icon
+	prefixLen := 2 // collapse + space
+	if hasIcon {
+		prefixLen += len([]rune(sessionIcon)) + 1 // icon + space
+	}
 
-	displayName := truncateGroupName(group.Name, maxNameLen)
+	// Calculate how much space we have for the name on the first line
+	// Format: "V I <name> [x/y] P" where V=collapse, I=session icon, P=phase indicator
+	// Suffix: " [x/y] P"
+	suffixLen := 1 + len(progressStr) + 1 + 1                // space + progress + space + indicator
+	maxFirstLineNameLen := width - prefixLen - suffixLen - 2 // some padding
+
+	// Calculate max name length for continuation lines (full width minus indent)
+	maxContinuationNameLen := width - prefixLen - 2
+
+	// Wrap the group name with different widths for first line vs continuation
+	nameLines := wrapGroupNameWithWidths(group.Name, maxFirstLineNameLen, maxContinuationNameLen)
 
 	// Apply styling
 	var headerStyle lipgloss.Style
@@ -144,27 +167,38 @@ func RenderGroupHeader(group *orchestrator.InstanceGroup, progress GroupProgress
 			Foreground(phaseColor)
 	}
 
-	// Build the line
+	// Build styles
 	collapseStyle := lipgloss.NewStyle().Foreground(styles.MutedColor)
 	iconStyle := lipgloss.NewStyle().Foreground(sessionColor)
 	progressStyle := lipgloss.NewStyle().Foreground(styles.MutedColor)
 	indicatorStyle := lipgloss.NewStyle().Foreground(phaseColor)
 
-	var b strings.Builder
-	b.WriteString(collapseStyle.Render(collapseChar))
-	b.WriteString(" ")
-	// Only show session icon if not standard (standard instances don't need an icon prefix)
-	if group.SessionType != "" && group.SessionType != orchestrator.SessionTypeStandard {
-		b.WriteString(iconStyle.Render(sessionIcon))
-		b.WriteString(" ")
-	}
-	b.WriteString(headerStyle.Render(displayName))
-	b.WriteString(" ")
-	b.WriteString(progressStyle.Render(progressStr))
-	b.WriteString(" ")
-	b.WriteString(indicatorStyle.Render(phaseIndicator))
+	var result []string
 
-	return b.String()
+	// Build first line
+	var firstLine strings.Builder
+	firstLine.WriteString(collapseStyle.Render(collapseChar))
+	firstLine.WriteString(" ")
+	if hasIcon {
+		firstLine.WriteString(iconStyle.Render(sessionIcon))
+		firstLine.WriteString(" ")
+	}
+	if len(nameLines) > 0 {
+		firstLine.WriteString(headerStyle.Render(nameLines[0]))
+	}
+	firstLine.WriteString(" ")
+	firstLine.WriteString(progressStyle.Render(progressStr))
+	firstLine.WriteString(" ")
+	firstLine.WriteString(indicatorStyle.Render(phaseIndicator))
+	result = append(result, firstLine.String())
+
+	// Build continuation lines (if any)
+	indent := strings.Repeat(" ", prefixLen)
+	for i := 1; i < len(nameLines); i++ {
+		result = append(result, indent+headerStyle.Render(nameLines[i]))
+	}
+
+	return result
 }
 
 // truncateGroupName truncates a group name to fit within maxLen.
@@ -177,6 +211,76 @@ func truncateGroupName(name string, maxLen int) string {
 		return name
 	}
 	return string(runes[:maxLen-3]) + "..."
+}
+
+// wrapGroupName wraps a group name across multiple lines to fit within maxLen per line.
+// Returns a slice of lines. Word boundaries are preferred for wrapping.
+func wrapGroupName(name string, maxLen int) []string {
+	return wrapGroupNameWithWidths(name, maxLen, maxLen)
+}
+
+// wrapGroupNameWithWidths wraps a group name with different max lengths for first vs subsequent lines.
+// This is useful when the first line has additional elements (icons, progress) taking up space.
+func wrapGroupNameWithWidths(name string, firstLineMax, continuationMax int) []string {
+	if firstLineMax <= 0 {
+		return []string{name}
+	}
+
+	runes := []rune(name)
+	if len(runes) <= firstLineMax {
+		return []string{name}
+	}
+
+	var lines []string
+	var currentLine []rune
+	isFirstLine := true
+
+	// Split into words for better wrapping
+	words := strings.Fields(name)
+	if len(words) == 0 {
+		return []string{name}
+	}
+
+	currentMax := firstLineMax
+
+	for _, word := range words {
+		wordRunes := []rune(word)
+
+		// If adding this word would exceed the line limit
+		if len(currentLine) > 0 && len(currentLine)+1+len(wordRunes) > currentMax {
+			// Finish current line
+			lines = append(lines, string(currentLine))
+			currentLine = wordRunes
+			if isFirstLine {
+				isFirstLine = false
+				currentMax = continuationMax
+			}
+		} else if len(currentLine) == 0 {
+			// Start of line
+			currentLine = wordRunes
+		} else {
+			// Add word with space
+			currentLine = append(currentLine, ' ')
+			currentLine = append(currentLine, wordRunes...)
+		}
+
+		// Handle case where a single word is longer than currentMax
+		for len(currentLine) > currentMax {
+			lines = append(lines, string(currentLine[:currentMax]))
+			currentLine = currentLine[currentMax:]
+			if isFirstLine {
+				isFirstLine = false
+				currentMax = continuationMax
+			}
+		}
+	}
+
+	// Don't forget the last line
+	if len(currentLine) > 0 {
+		lines = append(lines, string(currentLine))
+	}
+
+	return lines
 }
 
 // GroupedInstance represents an instance within a group, with rendering context.
