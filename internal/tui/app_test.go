@@ -5,6 +5,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
+	"github.com/Iron-Ham/claudio/internal/util"
 )
 
 // TestNewWithUltraPlan_CreatesGroupForCLIStartedSession tests that
@@ -127,7 +128,7 @@ func TestNewInstanceGroupWithType_CreatesCorrectSessionType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			group := orchestrator.NewInstanceGroupWithType(
-				truncateString(tt.objective, 30),
+				util.TruncateString(tt.objective, 30),
 				tt.sessionType,
 				tt.objective,
 			)

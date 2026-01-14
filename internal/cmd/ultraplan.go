@@ -12,6 +12,7 @@ import (
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	sessutil "github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
+	"github.com/Iron-Ham/claudio/internal/util"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -192,7 +193,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	// Log startup with objective (truncated) and config summary
 	logger.Info("ultraplan started",
 		"session_id", sessionID,
-		"objective", truncateString(objective, 100),
+		"objective", util.TruncateString(objective, 100),
 		"max_parallel", ultraConfig.MaxParallel,
 		"multi_pass", ultraConfig.MultiPass,
 		"dry_run", ultraConfig.DryRun,

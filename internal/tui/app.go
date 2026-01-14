@@ -22,6 +22,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	"github.com/Iron-Ham/claudio/internal/tui/update"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
+	"github.com/Iron-Ham/claudio/internal/util"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/viper"
@@ -57,7 +58,7 @@ func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Ses
 			sessionType = orchestrator.SessionTypePlanMulti
 		}
 		ultraGroup := orchestrator.NewInstanceGroupWithType(
-			truncateString(ultraSession.Objective, 30),
+			util.TruncateString(ultraSession.Objective, 30),
 			sessionType,
 			ultraSession.Objective,
 		)
@@ -93,7 +94,7 @@ func NewWithTripleShot(orch *orchestrator.Orchestrator, session *orchestrator.Se
 			// Create a group if one doesn't exist (CLI-started tripleshots)
 			if tripleSession.GroupID == "" {
 				tripleGroup := orchestrator.NewInstanceGroupWithType(
-					truncateString(tripleSession.Task, 30),
+					util.TruncateString(tripleSession.Task, 30),
 					orchestrator.SessionTypeTripleShot,
 					tripleSession.Task,
 				)
@@ -130,7 +131,7 @@ func NewWithTripleShots(orch *orchestrator.Orchestrator, session *orchestrator.S
 				// Create a group if one doesn't exist (legacy sessions)
 				if tripleSession.GroupID == "" {
 					tripleGroup := orchestrator.NewInstanceGroupWithType(
-						truncateString(tripleSession.Task, 30),
+						util.TruncateString(tripleSession.Task, 30),
 						orchestrator.SessionTypeTripleShot,
 						tripleSession.Task,
 					)
@@ -1311,7 +1312,7 @@ func (m Model) renderTripleShotHelp() string {
 func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	// Create a group for this triple-shot session FIRST to get its ID
 	tripleGroup := orchestrator.NewInstanceGroupWithType(
-		truncateString(task, 30),
+		util.TruncateString(task, 30),
 		orchestrator.SessionTypeTripleShot,
 		task,
 	)

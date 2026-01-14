@@ -1782,48 +1782,7 @@ func TestPendingConfirmDelete(t *testing.T) {
 	}
 }
 
-func TestTruncateString(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		maxLen   int
-		expected string
-	}{
-		{
-			name:     "no truncation needed",
-			input:    "hello",
-			maxLen:   10,
-			expected: "hello",
-		},
-		{
-			name:     "exact length",
-			input:    "hello",
-			maxLen:   5,
-			expected: "hello",
-		},
-		{
-			name:     "needs truncation",
-			input:    "hello world",
-			maxLen:   8,
-			expected: "hello...",
-		},
-		{
-			name:     "very short max",
-			input:    "hello",
-			maxLen:   3,
-			expected: "hel",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := truncateString(tt.input, tt.maxLen)
-			if result != tt.expected {
-				t.Errorf("expected '%s', got '%s'", tt.expected, result)
-			}
-		})
-	}
-}
+// TestTruncateString tests are now in internal/util/strings_test.go
 
 func TestInlinePlanState_IsUltraPlan(t *testing.T) {
 	// Test regular plan state (not ultraplan)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/util"
 )
 
 // TripleShotCoordinatorCallbacks holds callbacks for coordinator events
@@ -222,7 +223,7 @@ func (c *TripleShotCoordinator) StartAttempts() error {
 	session := c.Session()
 	task := session.Task
 
-	c.logger.Info("starting triple-shot attempts", "task", truncateString(task, 100))
+	c.logger.Info("starting triple-shot attempts", "task", util.TruncateString(task, 100))
 
 	now := time.Now()
 	session.StartedAt = &now

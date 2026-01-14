@@ -10,6 +10,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/pr"
+	"github.com/Iron-Ham/claudio/internal/util"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 )
 
@@ -476,7 +477,7 @@ func (c *Consolidator) runStackedModeOriginal() error {
 
 		c.logger.Debug("git command executed",
 			"command", "create worktree",
-			"output", truncateString(groupWorktree, 100),
+			"output", util.TruncateString(groupWorktree, 100),
 		)
 
 		// Consolidate tasks into this group
@@ -596,7 +597,7 @@ func (c *Consolidator) runSingleMode() error {
 
 	c.logger.Debug("git command executed",
 		"command", "create worktree",
-		"output", truncateString(consolidatedWorktree, 100),
+		"output", util.TruncateString(consolidatedWorktree, 100),
 	)
 
 	// Merge all tasks from all groups in order
@@ -665,7 +666,7 @@ func (c *Consolidator) consolidateGroup(groupIdx int, taskIDs []string, groupWor
 	c.logger.Debug("starting group consolidation",
 		"group_index", groupIdx,
 		"task_count", len(taskIDs),
-		"worktree", truncateString(groupWorktree, 80),
+		"worktree", util.TruncateString(groupWorktree, 80),
 	)
 
 	result := &GroupConsolidationResult{
@@ -877,9 +878,9 @@ func (c *Consolidator) buildPRContent(groupIdx int) *PRContent {
 	var body strings.Builder
 
 	if c.config.Mode == ModeSinglePR {
-		title = fmt.Sprintf("ultraplan: %s", truncateString(c.session.Objective, 50))
+		title = fmt.Sprintf("ultraplan: %s", util.TruncateString(c.session.Objective, 50))
 	} else {
-		title = fmt.Sprintf("ultraplan: group %d - %s", groupIdx+1, truncateString(c.session.Objective, 40))
+		title = fmt.Sprintf("ultraplan: group %d - %s", groupIdx+1, util.TruncateString(c.session.Objective, 40))
 	}
 
 	// Body
@@ -1201,13 +1202,6 @@ func (a *AggregatedTaskContext) FormatForPR() string {
 }
 
 // Helper functions
-
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
-}
 
 func deduplicateStrings(strs []string) []string {
 	seen := make(map[string]bool)

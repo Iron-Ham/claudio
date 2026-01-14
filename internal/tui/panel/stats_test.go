@@ -293,27 +293,7 @@ func TestNewStatsPanel(t *testing.T) {
 	}
 }
 
-func TestTruncateString(t *testing.T) {
-	tests := []struct {
-		input    string
-		maxLen   int
-		expected string
-	}{
-		{"hello", 10, "hello"},
-		{"hello world", 8, "hello..."},
-		{"hi", 2, "..."},
-		{"test", 3, "..."},
-		{"", 5, ""},
-		{"longstring", 10, "longstring"},
-	}
-
-	for _, tt := range tests {
-		result := truncateString(tt.input, tt.maxLen)
-		if result != tt.expected {
-			t.Errorf("truncateString(%q, %d) = %q, want %q", tt.input, tt.maxLen, result, tt.expected)
-		}
-	}
-}
+// TruncateString tests are now in internal/util/strings_test.go
 
 func TestStatsPanel_RenderWithBox(t *testing.T) {
 	// Create a simple box style for testing
