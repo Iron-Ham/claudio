@@ -94,6 +94,7 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 			objective,
 		)
 		m.session.AddGroup(ultraGroup)
+		ultraSession.GroupID = ultraGroup.ID
 
 		// Auto-enable grouped sidebar mode
 		m.autoEnableGroupedMode()
@@ -130,6 +131,7 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 			objective,
 		)
 		m.session.AddGroup(ultraGroup)
+		ultraSession.GroupID = ultraGroup.ID
 
 		// Auto-enable grouped sidebar mode
 		m.autoEnableGroupedMode()
@@ -662,6 +664,7 @@ func (m *Model) handleUltraPlanObjectiveSubmit(objective string) {
 		objective,
 	)
 	m.session.AddGroup(ultraGroup)
+	ultraSession.GroupID = ultraGroup.ID
 
 	// Auto-enable grouped sidebar mode
 	m.autoEnableGroupedMode()

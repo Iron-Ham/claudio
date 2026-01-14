@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Inline Ultraplan Group Linkage** - Fixed inline ultraplan (`:ultraplan` command) not properly linking the ultraplan session to its group. The `ultraSession.GroupID` was not being set when creating groups, which could cause coexistence issues with standard instances. Now all three inline ultraplan creation paths (from file, immediate objective, and interactive objective) correctly set the GroupID.
 - **Inline Ultraplan Consolidation Failure** - Fixed `:ultraplan --plan <file>` failing with "no task branches with verified commits found" after Group 1 completed. The inline ultraplan config was missing `RequireVerifiedCommits: true`, causing commit counts to never be recorded. Now uses `DefaultUltraPlanConfig()` to ensure proper defaults.
 - **CLI-Started Ultraplan/Tripleshot Grouping** - Fixed `claudio ultraplan` and `claudio tripleshot` commands not displaying as grouped entries in the TUI sidebar. CLI-started sessions now create instance groups and enable grouped sidebar mode, matching the behavior of inline commands (`:ultraplan`, `:tripleshot`).
 - **Ultraplan File Path Tilde Expansion** - Fixed `:ultraplan --plan ~/path/to/file.yaml` failing because Go's `os.ReadFile()` doesn't expand shell shortcuts like `~`. Paths with `~/` prefix are now correctly expanded to the user's home directory.
