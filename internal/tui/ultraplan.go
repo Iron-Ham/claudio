@@ -1157,13 +1157,13 @@ func (m *Model) dispatchUltraPlanFileChecks() []tea.Cmd {
 	var cmds []tea.Cmd
 
 	// Dispatch async check for single-pass plan file
-	cmds = append(cmds, checkPlanFileAsync(m.orchestrator, m.ultraPlan))
+	cmds = append(cmds, tuimsg.CheckPlanFileAsync(m.orchestrator, m.ultraPlan))
 
 	// Dispatch async checks for multi-pass plan files
-	cmds = append(cmds, checkMultiPassPlanFilesAsync(m.orchestrator, m.ultraPlan)...)
+	cmds = append(cmds, tuimsg.CheckMultiPassPlanFilesAsync(m.orchestrator, m.ultraPlan)...)
 
 	// Dispatch async check for plan manager file
-	cmds = append(cmds, checkPlanManagerFileAsync(m.orchestrator, m.outputManager, m.ultraPlan))
+	cmds = append(cmds, tuimsg.CheckPlanManagerFileAsync(m.orchestrator, m.outputManager, m.ultraPlan))
 
 	return cmds
 }

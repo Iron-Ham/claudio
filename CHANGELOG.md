@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Instance Header Simplified** - Removed redundant status badge from instance detail header since task state is already displayed in the sidebar with 4-character abbreviations (WAIT, WORK, DONE, etc.)
+- **TUI Architecture Refactored** - Major restructuring of the TUI codebase: extracted `app.go` into focused packages (`msg/`, `filter/`, `update/`, `search/`, `view/`, `input/`), reducing it from ~3700 to 1369 lines (63% reduction). Added 14 new test files with comprehensive coverage. This creates a cleaner foundation for future TUI enhancements. (#443)
 
 ### Added
 
