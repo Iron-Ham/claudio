@@ -54,14 +54,15 @@ func TestGetMultiPassPlanningPrompt(t *testing.T) {
 func TestGetStrategyNames(t *testing.T) {
 	names := GetStrategyNames()
 
-	if len(names) != 3 {
-		t.Errorf("Expected 3 strategies, got %d", len(names))
+	if len(names) != 4 {
+		t.Errorf("Expected 4 strategies, got %d", len(names))
 	}
 
 	expected := map[string]bool{
 		"maximize-parallelism": true,
 		"minimize-complexity":  true,
 		"balanced-approach":    true,
+		"risk-aware":           true,
 	}
 
 	for _, name := range names {

@@ -106,6 +106,49 @@ When creating your plan, balance these competing concerns:
 
 5. **Maintain Flexibility**: Leave room for parallel execution where natural, but don't force artificial splits. The goal is a plan that's both efficient and maintainable.`,
 	},
+	{
+		Strategy:    "risk-aware",
+		Description: "Optimize for safe execution with risk-based task ordering",
+		Prompt: `## Strategic Focus: Risk-Aware Decomposition
+
+When creating your plan, prioritize safety and risk management:
+
+1. **Identify High-Risk Changes**: Classify tasks by risk level based on:
+   - Configuration/schema changes (high risk)
+   - Core module modifications (high risk)
+   - Cross-cutting concerns (medium-high risk)
+   - Isolated feature additions (low risk)
+   - Documentation/comment updates (minimal risk)
+
+2. **Sequential Execution for Risky Tasks**: High-risk tasks should either:
+   - Run alone in their own execution group
+   - Have explicit dependencies to prevent parallel execution with other risky tasks
+   - Complete before dependent tasks begin
+
+3. **Foundation First**: Structure dependencies so foundational changes complete before dependent work:
+   - Data model changes before business logic
+   - Interface definitions before implementations
+   - Configuration before feature code
+
+4. **Minimize Blast Radius**: Each task should affect the smallest possible scope:
+   - One package/module per task when possible
+   - Separate test updates from implementation
+   - Isolate breaking changes into dedicated tasks
+
+5. **File Conflict Prevention**: When multiple tasks must touch the same file:
+   - Designate one task as the "owner" of that file
+   - Other tasks depend on the owner task
+   - Consider creating a dedicated integration task at the end
+
+6. **Critical Path Awareness**: Identify and minimize the critical path:
+   - Tasks with many dependents should be small and focused
+   - Avoid deep dependency chains where possible
+   - Consider splitting critical-path tasks to enable parallelism
+
+7. **Rollback Considerations**: Structure tasks so partial completion is recoverable:
+   - Each task should leave the codebase in a valid state
+   - Avoid tasks that require "all or nothing" success`,
+	},
 }
 
 // GetPlanningPrompt returns the planning prompt for a given objective.
