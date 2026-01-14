@@ -20,21 +20,29 @@ const (
 // RenameCallback is invoked when an instance name is successfully generated.
 type RenameCallback func(instanceID, newName string)
 
+// GroupRenameCallback is invoked when a group name is successfully generated.
+type GroupRenameCallback func(groupID, newName string)
+
 // renameRequest represents a pending rename operation.
 type renameRequest struct {
 	InstanceID string
 	Task       string
+	IsGroup    bool // If true, this is a group rename (ID is groupID)
 }
 
 // Namer manages intelligent instance renaming using LLM summarization.
 // It processes rename requests in a background goroutine to avoid blocking.
 type Namer struct {
-	client   Client
-	logger   *logging.Logger
-	callback RenameCallback
+	client        Client
+	logger        *logging.Logger
+	callback      RenameCallback
+	groupCallback GroupRenameCallback
 
 	// renamed tracks which instances have already been renamed
 	renamed map[string]bool
+
+	// renamedGroups tracks which groups have already been renamed
+	renamedGroups map[string]bool
 
 	pending chan renameRequest
 	done    chan struct{}
@@ -49,19 +57,27 @@ func New(client Client, logger *logging.Logger) *Namer {
 		panic("namer: client is required")
 	}
 	return &Namer{
-		client:  client,
-		logger:  logger,
-		renamed: make(map[string]bool),
-		pending: make(chan renameRequest, pendingQueueSize),
-		done:    make(chan struct{}),
+		client:        client,
+		logger:        logger,
+		renamed:       make(map[string]bool),
+		renamedGroups: make(map[string]bool),
+		pending:       make(chan renameRequest, pendingQueueSize),
+		done:          make(chan struct{}),
 	}
 }
 
-// OnRename sets the callback invoked when a name is successfully generated.
+// OnRename sets the callback invoked when an instance name is successfully generated.
 func (n *Namer) OnRename(cb RenameCallback) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.callback = cb
+}
+
+// OnGroupRename sets the callback invoked when a group name is successfully generated.
+func (n *Namer) OnGroupRename(cb GroupRenameCallback) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.groupCallback = cb
 }
 
 // Start begins the background rename processor.
@@ -107,11 +123,38 @@ func (n *Namer) RequestRename(instanceID, task string) {
 	case n.pending <- renameRequest{
 		InstanceID: instanceID,
 		Task:       task,
+		IsGroup:    false,
 	}:
 	default:
 		if n.logger != nil {
 			n.logger.Warn("rename queue full, request dropped - instance will keep original name",
 				"instance_id", instanceID)
+		}
+	}
+}
+
+// RequestGroupRename queues a group for renaming based on its objective.
+// This is non-blocking; if the queue is full, the request is dropped.
+func (n *Namer) RequestGroupRename(groupID, objective string) {
+	// Skip if already renamed
+	n.mu.RLock()
+	if n.renamedGroups[groupID] {
+		n.mu.RUnlock()
+		return
+	}
+	n.mu.RUnlock()
+
+	// Non-blocking send - drop if queue is full
+	select {
+	case n.pending <- renameRequest{
+		InstanceID: groupID,
+		Task:       objective,
+		IsGroup:    true,
+	}:
+	default:
+		if n.logger != nil {
+			n.logger.Warn("rename queue full, request dropped - group will keep original name",
+				"group_id", groupID)
 		}
 	}
 }
@@ -123,12 +166,26 @@ func (n *Namer) IsRenamed(instanceID string) bool {
 	return n.renamed[instanceID]
 }
 
+// IsGroupRenamed returns true if the group has already been renamed.
+func (n *Namer) IsGroupRenamed(groupID string) bool {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.renamedGroups[groupID]
+}
+
 // Reset clears the renamed state for an instance, allowing re-renaming.
 // Useful when an instance is restarted.
 func (n *Namer) Reset(instanceID string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	delete(n.renamed, instanceID)
+}
+
+// ResetGroup clears the renamed state for a group, allowing re-renaming.
+func (n *Namer) ResetGroup(groupID string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.renamedGroups, groupID)
 }
 
 // processLoop runs in the background, processing rename requests.
@@ -157,6 +214,11 @@ func (n *Namer) processLoop() {
 
 // processRename handles a single rename request.
 func (n *Namer) processRename(req renameRequest) {
+	if req.IsGroup {
+		n.processGroupRename(req)
+		return
+	}
+
 	// Double-check renamed status (request may have been queued before marking)
 	n.mu.RLock()
 	if n.renamed[req.InstanceID] {
@@ -197,5 +259,52 @@ func (n *Namer) processRename(req renameRequest) {
 	// Invoke callback
 	if callback != nil {
 		callback(req.InstanceID, name)
+	}
+}
+
+// processGroupRename handles a group rename request.
+func (n *Namer) processGroupRename(req renameRequest) {
+	groupID := req.InstanceID
+
+	// Double-check renamed status
+	n.mu.RLock()
+	if n.renamedGroups[groupID] {
+		n.mu.RUnlock()
+		return
+	}
+	n.mu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	name, err := n.client.Summarize(ctx, req.Task)
+	if err != nil {
+		if n.logger != nil {
+			n.logger.Warn("failed to generate group name",
+				"group_id", groupID,
+				"error", err.Error())
+		}
+		// Mark as renamed anyway to avoid retrying indefinitely
+		n.mu.Lock()
+		n.renamedGroups[groupID] = true
+		n.mu.Unlock()
+		return
+	}
+
+	// Mark as renamed
+	n.mu.Lock()
+	n.renamedGroups[groupID] = true
+	callback := n.groupCallback
+	n.mu.Unlock()
+
+	if n.logger != nil {
+		n.logger.Debug("generated group name",
+			"group_id", groupID,
+			"name", name)
+	}
+
+	// Invoke callback
+	if callback != nil {
+		callback(groupID, name)
 	}
 }

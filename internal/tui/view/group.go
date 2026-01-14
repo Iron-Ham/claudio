@@ -101,25 +101,32 @@ func PhaseColor(phase orchestrator.GroupPhase) lipgloss.Color {
 }
 
 // RenderGroupHeader renders the header line for a group.
-// Example: "V Group 1: Setup [2/2] checkmark"
+// Example: "▾ ⚡ Refactor auth [2/5] ●"
 func RenderGroupHeader(group *orchestrator.InstanceGroup, progress GroupProgress, collapsed bool, isSelected bool, width int) string {
 	// Collapse indicator
-	collapseChar := "\u25bc" // down-pointing triangle (expanded)
+	collapseChar := styles.IconGroupExpand // down-pointing triangle (expanded)
 	if collapsed {
-		collapseChar = "\u25b6" // right-pointing triangle (collapsed)
+		collapseChar = styles.IconGroupCollapse // right-pointing triangle (collapsed)
 	}
+
+	// Session type icon
+	sessionIcon := group.SessionType.Icon()
 
 	// Phase styling
 	phaseColor := PhaseColor(group.Phase)
 	phaseIndicator := PhaseIndicator(group.Phase)
 
+	// Session type color (use for the icon)
+	sessionColor := styles.SessionTypeColor(string(group.SessionType))
+
 	// Build the header components
 	progressStr := fmt.Sprintf("[%d/%d]", progress.Completed, progress.Total)
 
 	// Calculate how much space we have for the name
-	// Format: "V <name> [x/y] I" where V=collapse indicator, I=phase indicator
-	// overhead: collapse(2) + space(1) + space before progress(1) + progress(varies) + space(1) + indicator(1)
-	overhead := 2 + 1 + 1 + len(progressStr) + 1 + 1
+	// Format: "V I <name> [x/y] P" where V=collapse, I=session icon, P=phase indicator
+	// overhead: collapse(1) + space(1) + icon(1-2) + space(1) + progress(varies) + space(1) + indicator(1)
+	iconLen := len([]rune(sessionIcon))
+	overhead := 1 + 1 + iconLen + 1 + len(progressStr) + 1 + 1
 	maxNameLen := width - overhead - 4 // padding
 
 	displayName := truncateGroupName(group.Name, maxNameLen)
@@ -139,12 +146,18 @@ func RenderGroupHeader(group *orchestrator.InstanceGroup, progress GroupProgress
 
 	// Build the line
 	collapseStyle := lipgloss.NewStyle().Foreground(styles.MutedColor)
+	iconStyle := lipgloss.NewStyle().Foreground(sessionColor)
 	progressStyle := lipgloss.NewStyle().Foreground(styles.MutedColor)
 	indicatorStyle := lipgloss.NewStyle().Foreground(phaseColor)
 
 	var b strings.Builder
 	b.WriteString(collapseStyle.Render(collapseChar))
 	b.WriteString(" ")
+	// Only show session icon if not standard (standard instances don't need an icon prefix)
+	if group.SessionType != "" && group.SessionType != orchestrator.SessionTypeStandard {
+		b.WriteString(iconStyle.Render(sessionIcon))
+		b.WriteString(" ")
+	}
 	b.WriteString(headerStyle.Render(displayName))
 	b.WriteString(" ")
 	b.WriteString(progressStyle.Render(progressStr))

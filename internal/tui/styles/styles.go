@@ -334,3 +334,35 @@ func StatusIcon(status string) string {
 		return "●"
 	}
 }
+
+// Session type icons for the grouped sidebar
+const (
+	IconStandard      = "●" // Filled circle for standard instances
+	IconPlan          = "◇" // Diamond for :plan instances
+	IconPlanMulti     = "◈" // Filled diamond for multi-pass plan
+	IconUltraPlan     = "⚡" // Lightning for :ultraplan orchestration
+	IconTripleShot    = "△" // Triangle for :tripleshot (three competing)
+	IconGroupExpand   = "▾" // Down-pointing triangle (expanded)
+	IconGroupCollapse = "▸" // Right-pointing triangle (collapsed)
+)
+
+// Session type colors
+var (
+	SessionTypePlanColor       = PurpleColor // Purple for planning
+	SessionTypeUltraPlanColor  = YellowColor // Yellow for orchestration
+	SessionTypeTripleShotColor = BlueColor   // Blue for competition
+)
+
+// SessionTypeColor returns the color for a session type string
+func SessionTypeColor(sessionType string) lipgloss.Color {
+	switch sessionType {
+	case "plan", "plan_multi":
+		return SessionTypePlanColor
+	case "ultraplan":
+		return SessionTypeUltraPlanColor
+	case "tripleshot":
+		return SessionTypeTripleShotColor
+	default:
+		return MutedColor
+	}
+}
