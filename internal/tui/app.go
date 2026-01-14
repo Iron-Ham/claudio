@@ -267,30 +267,6 @@ func (a *App) Run() error {
 	return err
 }
 
-// styleTheme implements panel.Theme by wrapping the styles package.
-// This allows panels to use consistent styling with the rest of the app.
-type styleTheme struct{}
-
-func (s *styleTheme) Primary() lipgloss.Style   { return styles.Primary }
-func (s *styleTheme) Secondary() lipgloss.Style { return styles.HelpKey } // Use HelpKey for better visibility
-func (s *styleTheme) Muted() lipgloss.Style     { return styles.Muted }
-func (s *styleTheme) Error() lipgloss.Style     { return styles.Error }
-func (s *styleTheme) Warning() lipgloss.Style   { return styles.Warning }
-func (s *styleTheme) Surface() lipgloss.Style   { return styles.Surface }
-func (s *styleTheme) Border() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(styles.BorderColor)
-}
-func (s *styleTheme) DiffAdd() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(styles.GreenColor)
-}
-func (s *styleTheme) DiffRemove() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(styles.RedColor)
-}
-func (s *styleTheme) DiffHeader() lipgloss.Style { return styles.Primary }
-func (s *styleTheme) DiffHunk() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(styles.BlueColor)
-}
-func (s *styleTheme) DiffContext() lipgloss.Style { return styles.Muted }
 
 // Messages
 
@@ -2834,7 +2810,7 @@ func (m Model) renderHelpPanel(width int) string {
 		Width:        width - 4, // Account for content box padding
 		Height:       m.terminalManager.Height() - 4,
 		ScrollOffset: m.helpScroll,
-		Theme:        &styleTheme{},
+		Theme:        styles.NewTheme(),
 	}
 
 	content := helpPanel.Render(state)
