@@ -15,10 +15,12 @@ import (
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
+	"github.com/Iron-Ham/claudio/internal/tui/filter"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/panel"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
+	"github.com/Iron-Ham/claudio/internal/tui/update"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -379,50 +381,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuimsg.OutputMsg:
-		m.outputManager.AddOutput(msg.InstanceID, string(msg.Data))
+		// Delegate to update handler
+		update.HandleOutput(m.newUpdateContext(), msg)
 		return m, nil
 
 	case tuimsg.ErrMsg:
-		m.errorMessage = msg.Err.Error()
+		// Delegate to update handler
+		update.HandleError(m.newUpdateContext(), msg)
 		return m, nil
 
 	case tuimsg.PRCompleteMsg:
-		// PR workflow completed - remove the instance
-		inst := m.session.GetInstance(msg.InstanceID)
-		if inst != nil {
-			if err := m.orchestrator.RemoveInstance(m.session, msg.InstanceID, true); err != nil {
-				m.errorMessage = fmt.Sprintf("Failed to remove instance after PR: %v", err)
-			} else if msg.Success {
-				m.infoMessage = fmt.Sprintf("PR created and instance %s removed", msg.InstanceID)
-			} else {
-				m.infoMessage = fmt.Sprintf("PR workflow finished (may have failed) - instance %s removed", msg.InstanceID)
-			}
-		}
+		// Delegate to update handler for PR workflow completion
+		update.HandlePRComplete(m.newUpdateContext(), msg)
 		return m, nil
 
 	case tuimsg.PROpenedMsg:
-		// PR URL detected in instance output - notify user but keep instance for potential review tools
-		inst := m.session.GetInstance(msg.InstanceID)
-		if inst != nil {
-			m.infoMessage = fmt.Sprintf("PR opened for instance %s - use :D to remove or run review tools", inst.ID)
-		}
+		// Delegate to update handler for PR opened notification
+		update.HandlePROpened(m.newUpdateContext(), msg)
 		return m, nil
 
 	case tuimsg.TimeoutMsg:
-		// Instance timeout detected - notify user
-		inst := m.session.GetInstance(msg.InstanceID)
-		if inst != nil {
-			var statusText string
-			switch msg.TimeoutType {
-			case instance.TimeoutActivity:
-				statusText = "stuck (no activity)"
-			case instance.TimeoutCompletion:
-				statusText = "timed out (max runtime exceeded)"
-			case instance.TimeoutStale:
-				statusText = "stuck (repeated output)"
-			}
-			m.infoMessage = fmt.Sprintf("Instance %s is %s - use Ctrl+R to restart or Ctrl+K to kill", inst.ID, statusText)
-		}
+		// Delegate to update handler for instance timeout notification
+		update.HandleTimeout(m.newUpdateContext(), msg)
 		return m, nil
 
 	case tuimsg.BellMsg:
@@ -430,67 +410,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tuimsg.RingBell()
 
 	case tuimsg.TaskAddedMsg:
-		// Async task addition completed
-		m.infoMessage = "" // Clear the "Adding task..." message
-		if msg.Err != nil {
-			m.errorMessage = msg.Err.Error()
-			if m.logger != nil {
-				m.logger.Error("failed to add task", "error", msg.Err.Error())
-			}
-		} else {
-			// Pause the old active instance before switching (new instance starts unpaused)
-			if oldInst := m.activeInstance(); oldInst != nil {
-				m.pauseInstance(oldInst.ID)
-			}
-			// Switch to the newly added task and ensure it's visible in sidebar
-			m.activeTab = len(m.session.Instances) - 1
-			m.ensureActiveVisible()
-			// Log user adding instance
-			if m.logger != nil && msg.Instance != nil {
-				m.logger.Info("user added instance", "task", msg.Instance.Task)
-			}
-		}
+		// Delegate to update handler for async task addition
+		update.HandleTaskAdded(m.newUpdateContext(), msg)
 		return m, nil
 
 	case tuimsg.DependentTaskAddedMsg:
-		// Async dependent task addition completed
-		m.infoMessage = "" // Clear the "Adding dependent task..." message
-		if msg.Err != nil {
-			m.errorMessage = msg.Err.Error()
-			if m.logger != nil {
-				m.logger.Error("failed to add dependent task",
-					"depends_on", msg.DependsOn,
-					"error", msg.Err.Error(),
-				)
-			}
-		} else {
-			// Pause the old active instance before switching (new instance starts unpaused)
-			if oldInst := m.activeInstance(); oldInst != nil {
-				m.pauseInstance(oldInst.ID)
-			}
-			// Switch to the newly added task and ensure it's visible in sidebar
-			m.activeTab = len(m.session.Instances) - 1
-			m.ensureActiveVisible()
-			// Find the parent instance name for a better message
-			parentTask := msg.DependsOn
-			for _, inst := range m.session.Instances {
-				if inst.ID == msg.DependsOn {
-					parentTask = inst.Task
-					if len(parentTask) > 50 {
-						parentTask = parentTask[:50] + "..."
-					}
-					break
-				}
-			}
-			m.infoMessage = fmt.Sprintf("Chained task added. Will auto-start when \"%s\" completes.", parentTask)
-			// Log user adding dependent instance
-			if m.logger != nil && msg.Instance != nil {
-				m.logger.Info("user added dependent instance",
-					"task", msg.Instance.Task,
-					"depends_on", msg.DependsOn,
-				)
-			}
-		}
+		// Delegate to update handler for async dependent task addition
+		update.HandleDependentTaskAdded(m.newUpdateContext(), msg)
 		return m, nil
 
 	case tuimsg.TripleShotStartedMsg:
@@ -1112,78 +1038,13 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	return instanceView.RenderWithSession(inst, renderState, m.session)
 }
 
-// renderFilterPanel renders the filter configuration panel
+// renderFilterPanel renders the filter configuration panel.
+// Delegates to filter.RenderPanel for rendering using the filter package.
 func (m Model) renderFilterPanel(width int) string {
-	var b strings.Builder
-
-	b.WriteString(styles.Title.Render("Output Filters"))
-	b.WriteString("\n\n")
-	b.WriteString(styles.Muted.Render("Toggle categories to show/hide specific output types:"))
-	b.WriteString("\n\n")
-
-	// Category checkboxes
-	categories := []struct {
-		key      string
-		label    string
-		shortcut string
-	}{
-		{"errors", "Errors", "e/1"},
-		{"warnings", "Warnings", "w/2"},
-		{"tools", "Tool calls", "t/3"},
-		{"thinking", "Thinking", "h/4"},
-		{"progress", "Progress", "p/5"},
-	}
-
-	for _, cat := range categories {
-		var checkbox string
-		var labelStyle lipgloss.Style
-		if m.filterCategories[cat.key] {
-			checkbox = styles.FilterCheckbox.Render("[✓]")
-			labelStyle = styles.FilterCategoryEnabled
-		} else {
-			checkbox = styles.FilterCheckboxEmpty.Render("[ ]")
-			labelStyle = styles.FilterCategoryDisabled
-		}
-
-		line := fmt.Sprintf("%s %s %s",
-			checkbox,
-			labelStyle.Render(cat.label),
-			styles.Muted.Render("("+cat.shortcut+")"))
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-
-	b.WriteString("\n")
-	b.WriteString(styles.Muted.Render("[a] Toggle all  [c] Clear custom filter"))
-	b.WriteString("\n\n")
-
-	// Custom filter input
-	b.WriteString(styles.Secondary.Render("Custom filter:"))
-	b.WriteString(" ")
-	if m.filterCustom != "" {
-		b.WriteString(styles.SearchInput.Render(m.filterCustom))
-	} else {
-		b.WriteString(styles.Muted.Render("(type to filter by pattern)"))
-	}
-	b.WriteString("\n\n")
-
-	// Help text
-	b.WriteString(styles.Muted.Render("Category descriptions:"))
-	b.WriteString("\n")
-	b.WriteString(styles.Muted.Render("  • Errors: Stack traces, error messages, failures"))
-	b.WriteString("\n")
-	b.WriteString(styles.Muted.Render("  • Warnings: Warning indicators"))
-	b.WriteString("\n")
-	b.WriteString(styles.Muted.Render("  • Tool calls: File operations, bash commands"))
-	b.WriteString("\n")
-	b.WriteString(styles.Muted.Render("  • Thinking: Claude's reasoning phrases"))
-	b.WriteString("\n")
-	b.WriteString(styles.Muted.Render("  • Progress: Progress indicators, spinners"))
-	b.WriteString("\n\n")
-
-	b.WriteString(styles.Muted.Render("Press [Esc] or [F] to close"))
-
-	return styles.ContentBox.Width(width - 4).Render(b.String())
+	// Build a Filter from the model's current filter state
+	f := filter.NewWithCategories(m.filterCategories)
+	f.SetCustomPattern(m.filterCustom)
+	return filter.RenderPanel(f, width)
 }
 
 // renderAddTask renders the add task input
