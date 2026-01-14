@@ -184,8 +184,11 @@ func TestDefaultHelpSections(t *testing.T) {
 	// Check that expected sections exist
 	expectedSections := []string{
 		"Navigation",
+		"Group Commands (g prefix)",
 		"Instance Control",
 		"Instance Management",
+		"Inline Planning (experimental)",
+		"Group Management",
 		"View Commands",
 		"Terminal Pane",
 		"Input Mode",
@@ -281,8 +284,11 @@ func TestHelpPanel_MultipleSectionsWithScrolling(t *testing.T) {
 }
 
 // TestDefaultHelpSectionsContainsAllCommands verifies that DefaultHelpSections()
-// documents all primary commands from the command handler's categories.
+// documents ALL commands from the command handler's categories.
 // This prevents the help panel from getting out of sync when new commands are added.
+//
+// IMPORTANT: Every command in buildCategories() must appear in DefaultHelpSections().
+// This includes subcommands (like "group create") and flag variants (like "pr --group").
 func TestDefaultHelpSectionsContainsAllCommands(t *testing.T) {
 	// Get all help content from DefaultHelpSections
 	sections := DefaultHelpSections()
@@ -308,12 +314,6 @@ func TestDefaultHelpSectionsContainsAllCommands(t *testing.T) {
 
 	for _, cat := range categories {
 		for _, cmd := range cat.Commands {
-			// Skip subcommands (contain spaces) and flag variants (contain "=")
-			// These are documented under their parent command
-			if strings.Contains(cmd.LongKey, " ") || strings.Contains(cmd.LongKey, "=") {
-				continue
-			}
-
 			// Check that the command's long key appears in the help content
 			// The key is rendered with a colon prefix in the help (e.g., ":start")
 			searchKey := ":" + cmd.LongKey

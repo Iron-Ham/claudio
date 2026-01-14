@@ -290,32 +290,18 @@ func TestWindowResizeUpdatesScroll(t *testing.T) {
 // to the main Config struct, this test will fail unless the field is either:
 // 1. Added to the TUI config categories, or
 // 2. Explicitly added to the excludedKeys list with a reason
+//
+// IMPORTANT: Keep the excludedKeys list minimal. Only exclude fields that truly
+// cannot be edited in the TUI (e.g., complex nested types, multi-line templates).
+// Simple types (bool, int, string, select) should always be added to the TUI.
 func TestTUIConfigCoversAllConfigFields(t *testing.T) {
 	// Keys that are intentionally excluded from the TUI config.
 	// Each exclusion should have a reason documented.
+	// KEEP THIS LIST MINIMAL - only truly uneditable types belong here.
 	excludedKeys := map[string]string{
-		// Session config is a placeholder with no fields
-		// Logging is typically configured via environment or CLI, not interactive TUI
-		"logging.enabled":     "logging is typically configured via CLI flags",
-		"logging.level":       "logging is typically configured via CLI flags",
-		"logging.max_size_mb": "advanced setting not needed in TUI",
-		"logging.max_backups": "advanced setting not needed in TUI",
-		// Complex types that don't fit the simple TUI editor
-		"pr.template":          "complex multi-line template, better edited in config file",
-		"pr.reviewers.default": "list type, better edited in config file",
-		"pr.reviewers.by_path": "map type, better edited in config file",
-		"pr.labels":            "list type, better edited in config file",
-		"plan.labels":          "list type, better edited in config file",
-		"ultraplan.pr_labels":  "list type, better edited in config file",
-		// Advanced ultraplan settings
-		"ultraplan.multi_pass":               "advanced setting, use plan.multi_pass instead",
-		"ultraplan.consolidation_mode":       "advanced setting for power users",
-		"ultraplan.create_draft_prs":         "advanced setting for power users",
-		"ultraplan.branch_prefix":            "advanced setting, uses branch.prefix by default",
-		"ultraplan.max_task_retries":         "advanced setting for power users",
-		"ultraplan.require_verified_commits": "advanced setting for power users",
-		// Advanced instance settings
-		"instance.tmux_history_limit": "advanced tmux setting",
+		// Complex types that cannot be edited with the simple TUI editor
+		"pr.template":          "multi-line template requires a full text editor",
+		"pr.reviewers.by_path": "nested map type requires structured editor",
 	}
 
 	// Get all keys from the TUI config
