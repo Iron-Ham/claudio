@@ -970,137 +970,84 @@ func (m *Model) tryParsePlan(inst *orchestrator.Instance, session *orchestrator.
 	return orchestrator.ParsePlanFromOutput(output, session.Objective)
 }
 
-// checkForPlanFile checks if the plan file exists and parses it (called during tick updates)
-// Returns true if a plan was found and successfully parsed
-func (m *Model) checkForPlanFile() bool {
+// handlePlanFileCheckResult handles the async result of checking for a plan file.
+// This is the handler for single-pass mode plan file detection.
+func (m *Model) handlePlanFileCheckResult(msg planFileCheckResultMsg) (tea.Model, tea.Cmd) {
+	if !msg.Found || msg.Plan == nil {
+		return m, nil
+	}
+
 	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
-		return false
+		return m, nil
 	}
 
 	session := m.ultraPlan.Coordinator.Session()
-	if session == nil || session.Phase != orchestrator.PhasePlanning || session.Plan != nil {
-		return false
+	if session == nil || session.Plan != nil {
+		return m, nil
 	}
 
-	// Get the coordinator instance
-	inst := m.orchestrator.GetInstance(session.CoordinatorID)
-	if inst == nil {
-		return false
+	// Set the plan
+	if err := m.ultraPlan.Coordinator.SetPlan(msg.Plan); err != nil {
+		return m, nil
 	}
 
-	// Check if plan file exists
-	planPath := orchestrator.PlanFilePath(inst.WorktreePath)
-	if _, err := os.Stat(planPath); err != nil {
-		return false
+	// Stop the coordinator instance (it's done its job)
+	if msg.InstanceID != "" {
+		inst := m.orchestrator.GetInstance(msg.InstanceID)
+		if inst != nil {
+			_ = m.orchestrator.StopInstance(inst)
+		}
 	}
-
-	// Parse the plan
-	plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
-	if err != nil {
-		// Don't show error yet - file might be partially written
-		return false
-	}
-
-	if err := m.ultraPlan.Coordinator.SetPlan(plan); err != nil {
-		return false
-	}
-
-	// Plan detected - stop the coordinator instance (it's done its job)
-	_ = m.orchestrator.StopInstance(inst)
 
 	// Determine whether to open plan editor or auto-start execution
-	// Review flag forces plan editor open, even if AutoApprove is also set
 	if session.Config.Review || !session.Config.AutoApprove {
 		// Enter plan editor for interactive review
 		m.enterPlanEditor()
 		m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
-			len(plan.Tasks), len(plan.ExecutionOrder))
+			len(msg.Plan.Tasks), len(msg.Plan.ExecutionOrder))
 		// Notify user that input is needed
 		m.ultraPlan.NeedsNotification = true
 		m.ultraPlan.LastNotifiedPhase = orchestrator.PhaseRefresh
 	} else {
-		// Auto-start execution (AutoApprove is true and Review is false)
+		// Auto-start execution
 		if err := m.ultraPlan.Coordinator.StartExecution(); err != nil {
 			m.errorMessage = fmt.Sprintf("Plan detected but failed to auto-start: %v", err)
 		} else {
 			m.infoMessage = fmt.Sprintf("Plan detected: %d tasks in %d groups. Auto-starting execution...",
-				len(plan.Tasks), len(plan.ExecutionOrder))
+				len(msg.Plan.Tasks), len(msg.Plan.ExecutionOrder))
 		}
 	}
 
-	return true
+	return m, nil
 }
 
-// checkForMultiPassPlanFiles checks for plan files from all multi-pass coordinators (called during tick updates).
-// This is the most reliable method for detecting plan completion in multi-pass mode,
-// as it polls for the actual plan files rather than relying on instance state transitions.
-// Returns true if all plans were found and the plan manager was triggered.
-func (m *Model) checkForMultiPassPlanFiles() bool {
+// handleMultiPassPlanFileCheckResult handles the async result of checking for multi-pass plan files.
+// This processes one coordinator's plan at a time and triggers the plan manager when all are collected.
+func (m *Model) handleMultiPassPlanFileCheckResult(msg multiPassPlanFileCheckResultMsg) (tea.Model, tea.Cmd) {
+	if msg.Plan == nil {
+		return m, nil
+	}
+
 	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
-		return false
+		return m, nil
 	}
 
 	session := m.ultraPlan.Coordinator.Session()
-	if session == nil {
-		return false
-	}
-
-	// Only check during planning phase in multi-pass mode
-	if session.Phase != orchestrator.PhasePlanning || !session.Config.MultiPass {
-		return false
-	}
-
-	// Skip if we don't have coordinator IDs yet
-	numCoordinators := len(session.PlanCoordinatorIDs)
-	if numCoordinators == 0 {
-		return false
+	if session == nil || session.Phase != orchestrator.PhasePlanning || !session.Config.MultiPass {
+		return m, nil
 	}
 
 	// Skip if plan manager is already running
 	if session.PlanManagerID != "" {
-		return false
+		return m, nil
 	}
 
-	strategyNames := orchestrator.GetMultiPassStrategyNames()
-	newPlansFound := false
+	numCoordinators := len(session.PlanCoordinatorIDs)
 
-	// Check each coordinator for a plan file
-	for i, coordID := range session.PlanCoordinatorIDs {
-		// Skip if we already have a plan for this coordinator
-		if i < len(session.CandidatePlans) && session.CandidatePlans[i] != nil {
-			continue
-		}
-
-		// Get the coordinator instance
-		inst := m.orchestrator.GetInstance(coordID)
-		if inst == nil {
-			continue
-		}
-
-		// Check if plan file exists
-		planPath := orchestrator.PlanFilePath(inst.WorktreePath)
-		if _, err := os.Stat(planPath); err != nil {
-			continue
-		}
-
-		// Parse the plan
-		plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
-		if err != nil {
-			// File might be partially written, skip for now
-			continue
-		}
-
-		// Store the plan
-		collectedCount := m.ultraPlan.Coordinator.StoreCandidatePlan(i, plan)
-		newPlansFound = true
-
-		strategyName := "unknown"
-		if i < len(strategyNames) {
-			strategyName = strategyNames[i]
-		}
-		m.infoMessage = fmt.Sprintf("Plan file detected %d/%d (%s): %d tasks",
-			collectedCount, numCoordinators, strategyName, len(plan.Tasks))
-	}
+	// Store the plan
+	collectedCount := m.ultraPlan.Coordinator.StoreCandidatePlan(msg.Index, msg.Plan)
+	m.infoMessage = fmt.Sprintf("Plan file detected %d/%d (%s): %d tasks",
+		collectedCount, numCoordinators, msg.StrategyName, len(msg.Plan.Tasks))
 
 	// Check if all plans are now collected
 	validCount := m.ultraPlan.Coordinator.CountCandidatePlans()
@@ -1109,88 +1056,60 @@ func (m *Model) checkForMultiPassPlanFiles() bool {
 		m.infoMessage = "All candidate plans collected via file detection. Starting plan evaluation..."
 		if err := m.ultraPlan.Coordinator.RunPlanManager(); err != nil {
 			m.errorMessage = fmt.Sprintf("Failed to start plan manager: %v", err)
-			return false
+		} else {
+			m.infoMessage = "Plan manager started - comparing strategies to select the best plan..."
 		}
-		m.infoMessage = "Plan manager started - comparing strategies to select the best plan..."
-		return true
 	}
 
-	return newPlansFound
+	return m, nil
 }
 
-// checkForPlanManagerPlanFile checks for the plan manager's output file during plan selection phase.
-// This is the most reliable method for detecting plan manager completion, as it polls for the actual
-// plan file rather than relying on instance state transitions (which can fail when the instance
-// is in StatusWaitingInput state).
-// Returns true if the plan was found and successfully processed.
-func (m *Model) checkForPlanManagerPlanFile() bool {
+// handlePlanManagerFileCheckResult handles the async result of checking for the plan manager's output file.
+// This processes the final selected/merged plan from multi-pass mode.
+func (m *Model) handlePlanManagerFileCheckResult(msg planManagerFileCheckResultMsg) (tea.Model, tea.Cmd) {
+	if !msg.Found {
+		return m, nil
+	}
+
 	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
-		return false
+		return m, nil
 	}
 
 	session := m.ultraPlan.Coordinator.Session()
-	if session == nil {
-		return false
+	if session == nil || session.Plan != nil {
+		return m, nil
 	}
 
-	// Only check during plan selection phase in multi-pass mode
-	if session.Phase != orchestrator.PhasePlanSelection || !session.Config.MultiPass {
-		return false
+	// Handle parse error
+	if msg.Err != nil {
+		m.errorMessage = fmt.Sprintf("Plan file found but parse error: %v", msg.Err)
+		return m, nil
 	}
 
-	// Need a plan manager ID to check
-	if session.PlanManagerID == "" {
-		return false
+	if msg.Plan == nil {
+		return m, nil
 	}
 
-	// Skip if we already have a plan set
-	if session.Plan != nil {
-		return false
+	// Store the decision info if available
+	if msg.Decision != nil {
+		session.SelectedPlanIndex = msg.Decision.SelectedIndex
 	}
 
-	// Get the plan manager instance
-	inst := m.orchestrator.GetInstance(session.PlanManagerID)
-	if inst == nil {
-		return false
-	}
-
-	// Check if plan file exists
-	planPath := orchestrator.PlanFilePath(inst.WorktreePath)
-	if _, err := os.Stat(planPath); err != nil {
-		return false
-	}
-
-	// Parse the plan from the file
-	plan, err := orchestrator.ParsePlanFromFile(planPath, session.Objective)
-	if err != nil {
-		// Show error if file exists but can't be parsed (helps debug)
-		m.errorMessage = fmt.Sprintf("Plan file found but parse error: %v", err)
-		return false
-	}
-
-	// Try to parse the plan decision from the output (for display purposes)
-	// This is optional - the plan file is the ground truth
-	output := m.outputManager.GetOutput(inst.ID)
-	decision, _ := orchestrator.ParsePlanDecisionFromOutput(output)
-	if decision != nil {
-		session.SelectedPlanIndex = decision.SelectedIndex
-	}
-
-	// Set the plan using the coordinator (validates and transitions to PhaseRefresh)
-	if err := m.ultraPlan.Coordinator.SetPlan(plan); err != nil {
+	// Set the plan using the coordinator
+	if err := m.ultraPlan.Coordinator.SetPlan(msg.Plan); err != nil {
 		m.errorMessage = fmt.Sprintf("Plan manager plan file found but invalid: %v", err)
-		return false
+		return m, nil
 	}
 
 	// Build info message based on decision type
 	var decisionDesc string
-	if decision != nil {
-		if decision.Action == "select" {
+	if msg.Decision != nil {
+		if msg.Decision.Action == "select" {
 			strategyNames := orchestrator.GetMultiPassStrategyNames()
-			if decision.SelectedIndex >= 0 && decision.SelectedIndex < len(strategyNames) {
-				decisionDesc = fmt.Sprintf("Selected '%s' plan", strategyNames[decision.SelectedIndex])
+			if msg.Decision.SelectedIndex >= 0 && msg.Decision.SelectedIndex < len(strategyNames) {
+				decisionDesc = fmt.Sprintf("Selected '%s' plan", strategyNames[msg.Decision.SelectedIndex])
 			} else {
-				decisionDesc = fmt.Sprintf("Selected plan %d", decision.SelectedIndex)
+				decisionDesc = fmt.Sprintf("Selected plan %d", msg.Decision.SelectedIndex)
 			}
 		} else {
 			decisionDesc = "Merged best elements from multiple plans"
@@ -1204,19 +1123,40 @@ func (m *Model) checkForPlanManagerPlanFile() bool {
 		// Enter plan editor for interactive review
 		m.enterPlanEditor()
 		m.infoMessage = fmt.Sprintf("%s: %d tasks in %d groups. Review and press [enter] to execute, or [esc] to cancel.",
-			decisionDesc, len(plan.Tasks), len(plan.ExecutionOrder))
+			decisionDesc, len(msg.Plan.Tasks), len(msg.Plan.ExecutionOrder))
 		// Notify user that input is needed
 		m.ultraPlan.NeedsNotification = true
 		m.ultraPlan.LastNotifiedPhase = orchestrator.PhaseRefresh
 	} else {
-		// Auto-start execution (AutoApprove is true and Review is false)
+		// Auto-start execution
 		if err := m.ultraPlan.Coordinator.StartExecution(); err != nil {
 			m.errorMessage = fmt.Sprintf("%s but failed to auto-start: %v", decisionDesc, err)
 		} else {
 			m.infoMessage = fmt.Sprintf("%s: %d tasks in %d groups. Auto-starting execution...",
-				decisionDesc, len(plan.Tasks), len(plan.ExecutionOrder))
+				decisionDesc, len(msg.Plan.Tasks), len(msg.Plan.ExecutionOrder))
 		}
 	}
 
-	return true
+	return m, nil
+}
+
+// dispatchUltraPlanFileChecks returns commands to check ultraplan files asynchronously.
+// This avoids blocking the UI event loop with file I/O.
+func (m *Model) dispatchUltraPlanFileChecks() []tea.Cmd {
+	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
+		return nil
+	}
+
+	var cmds []tea.Cmd
+
+	// Dispatch async check for single-pass plan file
+	cmds = append(cmds, checkPlanFileAsync(m.orchestrator, m.ultraPlan))
+
+	// Dispatch async checks for multi-pass plan files
+	cmds = append(cmds, checkMultiPassPlanFilesAsync(m.orchestrator, m.ultraPlan)...)
+
+	// Dispatch async check for plan manager file
+	cmds = append(cmds, checkPlanManagerFileAsync(m.orchestrator, m.outputManager, m.ultraPlan))
+
+	return cmds
 }

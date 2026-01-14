@@ -113,12 +113,15 @@ func (m *Model) handleTripleShotCheckResult(msg tripleShotCheckResultMsg) (tea.M
 }
 
 // processAttemptCheckResults handles completion check results for attempts.
+// Returns async commands to process any completed attempts without blocking the UI.
 func (m *Model) processAttemptCheckResults(
 	coordinator *orchestrator.TripleShotCoordinator,
 	session *orchestrator.TripleShotSession,
 	msg tripleShotCheckResultMsg,
 ) (tea.Model, tea.Cmd) {
-	// Process each attempt result
+	var cmds []tea.Cmd
+
+	// Dispatch async processing for each completed attempt
 	for i, complete := range msg.AttemptResults {
 		if err, hasErr := msg.AttemptErrors[i]; hasErr && err != nil {
 			if m.logger != nil {
@@ -131,24 +134,52 @@ func (m *Model) processAttemptCheckResults(
 		}
 
 		if complete {
-			// Process the completion result now that we know the file exists.
-			// Note: This still performs I/O to read/parse the completion file.
-			if err := coordinator.ProcessAttemptCompletion(i); err != nil {
-				if m.logger != nil {
-					m.logger.Error("failed to process attempt completion",
-						"attempt_index", i,
-						"error", err,
-					)
-				}
-				m.errorMessage = fmt.Sprintf("Failed to process attempt %d completion", i+1)
-			} else {
-				m.infoMessage = "Attempt completed - checking progress..."
-			}
+			// Dispatch async command to process the completion file
+			// This avoids blocking the UI with file I/O
+			cmds = append(cmds, processAttemptCompletionAsync(coordinator, msg.GroupID, i))
 		}
 	}
 
+	if len(cmds) > 0 {
+		return m, tea.Batch(cmds...)
+	}
+	return m, nil
+}
+
+// handleTripleShotAttemptProcessed handles the result of async attempt completion processing.
+func (m *Model) handleTripleShotAttemptProcessed(msg tripleShotAttemptProcessedMsg) (tea.Model, tea.Cmd) {
+	if m.tripleShot == nil {
+		return m, nil
+	}
+
+	// Find the coordinator for this result
+	var coordinator *orchestrator.TripleShotCoordinator
+	if msg.GroupID != "" {
+		coordinator = m.tripleShot.Coordinators[msg.GroupID]
+	} else {
+		coordinator = m.tripleShot.Coordinator
+	}
+
+	if coordinator == nil {
+		return m, nil
+	}
+
+	if msg.Err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to process attempt completion",
+				"attempt_index", msg.AttemptIndex,
+				"error", msg.Err,
+			)
+		}
+		m.errorMessage = fmt.Sprintf("Failed to process attempt %d completion", msg.AttemptIndex+1)
+		return m, nil
+	}
+
+	m.infoMessage = "Attempt completed - checking progress..."
+
 	// Check if all attempts are complete and we should start the judge
-	if session.AllAttemptsComplete() && session.JudgeID == "" {
+	session := coordinator.Session()
+	if session != nil && session.AllAttemptsComplete() && session.JudgeID == "" {
 		if session.SuccessfulAttemptCount() >= 2 {
 			// Return a command to start the judge in a goroutine
 			return m, func() tea.Msg {
@@ -164,6 +195,7 @@ func (m *Model) processAttemptCheckResults(
 }
 
 // processJudgeCheckResult handles completion check results for the judge.
+// Returns an async command to process the judge completion file without blocking the UI.
 func (m *Model) processJudgeCheckResult(
 	coordinator *orchestrator.TripleShotCoordinator,
 	msg tripleShotCheckResultMsg,
@@ -176,25 +208,30 @@ func (m *Model) processJudgeCheckResult(
 	}
 
 	if msg.JudgeComplete {
-		// Process the judge completion result now that we know the file exists.
-		// Note: This still performs I/O to read/parse the evaluation file.
-		if err := coordinator.ProcessJudgeCompletion(); err != nil {
-			if m.logger != nil {
-				m.logger.Error("failed to process judge completion", "error", err)
-			}
-			m.errorMessage = "Failed to process judge evaluation"
-		} else {
-			session := coordinator.Session()
-			taskPreview := ""
-			if session != nil && len(session.Task) > 30 {
-				taskPreview = session.Task[:27] + "..."
-			} else if session != nil {
-				taskPreview = session.Task
-			}
-			m.infoMessage = fmt.Sprintf("Triple-shot complete! (%s)", taskPreview)
-			m.tripleShot.NeedsNotification = true
-		}
+		// Dispatch async command to process the judge completion file
+		// This avoids blocking the UI with file I/O
+		return m, processJudgeCompletionAsync(coordinator, msg.GroupID)
 	}
+
+	return m, nil
+}
+
+// handleTripleShotJudgeProcessed handles the result of async judge completion processing.
+func (m *Model) handleTripleShotJudgeProcessed(msg tripleShotJudgeProcessedMsg) (tea.Model, tea.Cmd) {
+	if m.tripleShot == nil {
+		return m, nil
+	}
+
+	if msg.Err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to process judge completion", "error", msg.Err)
+		}
+		m.errorMessage = "Failed to process judge evaluation"
+		return m, nil
+	}
+
+	m.infoMessage = fmt.Sprintf("Triple-shot complete! (%s)", msg.TaskPreview)
+	m.tripleShot.NeedsNotification = true
 
 	return m, nil
 }
