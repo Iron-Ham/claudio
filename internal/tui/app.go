@@ -474,6 +474,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.logger.Error("failed to add task", "error", msg.err.Error())
 			}
 		} else {
+			// Pause the old active instance before switching (new instance starts unpaused)
+			if oldInst := m.activeInstance(); oldInst != nil {
+				m.pauseInstance(oldInst.ID)
+			}
 			// Switch to the newly added task and ensure it's visible in sidebar
 			m.activeTab = len(m.session.Instances) - 1
 			m.ensureActiveVisible()
@@ -496,6 +500,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				)
 			}
 		} else {
+			// Pause the old active instance before switching (new instance starts unpaused)
+			if oldInst := m.activeInstance(); oldInst != nil {
+				m.pauseInstance(oldInst.ID)
+			}
 			// Switch to the newly added task and ensure it's visible in sidebar
 			m.activeTab = len(m.session.Instances) - 1
 			m.ensureActiveVisible()
@@ -918,7 +926,8 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "tab", "l":
 		if m.instanceCount() > 0 {
-			m.activeTab = (m.activeTab + 1) % m.instanceCount()
+			newTab := (m.activeTab + 1) % m.instanceCount()
+			m.switchToInstance(newTab)
 			m.ensureActiveVisible()
 			m.updateTerminalOnInstanceChange()
 			// Log focus change
@@ -932,7 +941,8 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "shift+tab", "h":
 		if m.instanceCount() > 0 {
-			m.activeTab = (m.activeTab - 1 + m.instanceCount()) % m.instanceCount()
+			newTab := (m.activeTab - 1 + m.instanceCount()) % m.instanceCount()
+			m.switchToInstance(newTab)
 			m.ensureActiveVisible()
 			m.updateTerminalOnInstanceChange()
 			// Log focus change
