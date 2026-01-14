@@ -13,6 +13,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/command"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
+	"github.com/Iron-Ham/claudio/internal/util"
 )
 
 // initInlinePlanMode initializes inline plan mode when :plan command is executed.
@@ -115,7 +116,7 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 			objective = "Loaded Plan"
 		}
 		ultraGroup := orchestrator.NewInstanceGroupWithType(
-			truncateString(objective, 30),
+			util.TruncateString(objective, 30),
 			sessionType,
 			objective,
 		)
@@ -152,7 +153,7 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 			sessionType = orchestrator.SessionTypePlanMulti
 		}
 		ultraGroup := orchestrator.NewInstanceGroupWithType(
-			truncateString(objective, 30),
+			util.TruncateString(objective, 30),
 			sessionType,
 			objective,
 		)
@@ -246,7 +247,7 @@ func (m *Model) handleInlinePlanObjectiveSubmit(objective string) {
 	// Create a group for this plan's tasks
 	gm := m.getGroupManager()
 	if gm != nil {
-		planGroup := gm.CreateGroup(fmt.Sprintf("Plan: %s", truncateString(objective, 30)), nil)
+		planGroup := gm.CreateGroup(fmt.Sprintf("Plan: %s", util.TruncateString(objective, 30)), nil)
 		m.inlinePlan.GroupID = planGroup.ID
 
 		// Set session type on the group for proper icon display
@@ -323,7 +324,7 @@ func (m *Model) handleMultiPlanObjectiveSubmit(objective string) {
 	gm := m.getGroupManager()
 	var planGroup *group.InstanceGroup
 	if gm != nil {
-		planGroup = gm.CreateGroup(fmt.Sprintf("MultiPlan: %s", truncateString(objective, 25)), nil)
+		planGroup = gm.CreateGroup(fmt.Sprintf("MultiPlan: %s", util.TruncateString(objective, 25)), nil)
 		m.inlinePlan.GroupID = planGroup.ID
 
 		// Set session type on the group for proper icon display (use multi-pass icon)
@@ -685,7 +686,7 @@ func (m *Model) handleUltraPlanObjectiveSubmit(objective string) {
 		sessionType = orchestrator.SessionTypePlanMulti
 	}
 	ultraGroup := orchestrator.NewInstanceGroupWithType(
-		truncateString(objective, 30),
+		util.TruncateString(objective, 30),
 		sessionType,
 		objective,
 	)
@@ -879,17 +880,6 @@ func (m *Model) findInstanceIndex(instanceID string) int {
 	return 0
 }
 
-// truncateString truncates a string to maxLen characters, adding "..." if truncated
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
-}
-
 // expandTildePath expands a tilde prefix (~/) to the user's home directory.
 // Other path formats are returned unchanged.
 func expandTildePath(path string) string {
@@ -931,7 +921,7 @@ func (m *Model) syncPlanTasksToInstances() error {
 		planGroup = gm.GetGroup(m.inlinePlan.GroupID)
 	}
 	if planGroup == nil {
-		planGroup = gm.CreateGroup(fmt.Sprintf("Plan: %s", truncateString(m.inlinePlan.Objective, 30)), nil)
+		planGroup = gm.CreateGroup(fmt.Sprintf("Plan: %s", util.TruncateString(m.inlinePlan.Objective, 30)), nil)
 		m.inlinePlan.GroupID = planGroup.ID
 	}
 

@@ -12,6 +12,8 @@ import (
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	sessutil "github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
+	"github.com/Iron-Ham/claudio/internal/ultraplan"
+	"github.com/Iron-Ham/claudio/internal/util"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -126,38 +128,9 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	sessionID := orchsession.GenerateID()
 	cfg := config.Get()
 
-	// Create ultra-plan configuration from defaults, then override with config file, then flags
-	ultraConfig := orchestrator.DefaultUltraPlanConfig()
-
-	// Apply config file settings
-	ultraConfig.MaxParallel = cfg.Ultraplan.MaxParallel
-	ultraConfig.MultiPass = cfg.Ultraplan.MultiPass
-
-	// Apply consolidation settings from config
-	if cfg.Ultraplan.ConsolidationMode != "" {
-		ultraConfig.ConsolidationMode = orchestrator.ConsolidationMode(cfg.Ultraplan.ConsolidationMode)
-	}
-	ultraConfig.CreateDraftPRs = cfg.Ultraplan.CreateDraftPRs
-	if len(cfg.Ultraplan.PRLabels) > 0 {
-		ultraConfig.PRLabels = cfg.Ultraplan.PRLabels
-	}
-	ultraConfig.BranchPrefix = cfg.Ultraplan.BranchPrefix
-
-	// Apply task verification settings from config
-	ultraConfig.MaxTaskRetries = cfg.Ultraplan.MaxTaskRetries
-	ultraConfig.RequireVerifiedCommits = cfg.Ultraplan.RequireVerifiedCommits
-
-	// CLI flags override config file (only if explicitly set)
-	if cmd.Flags().Changed("max-parallel") {
-		ultraConfig.MaxParallel = ultraplanMaxParallel
-	}
-	if cmd.Flags().Changed("multi-pass") {
-		ultraConfig.MultiPass = ultraplanMultiPass
-	}
-	ultraConfig.DryRun = ultraplanDryRun
-	ultraConfig.NoSynthesis = ultraplanNoSynthesis
-	ultraConfig.AutoApprove = ultraplanAutoApprove
-	ultraConfig.Review = ultraplanReview
+	// Build ultraplan config from app config, then apply CLI flag overrides
+	ultraConfig := ultraplan.BuildConfigFromAppConfig(cfg)
+	applyUltraplanFlagOverrides(cmd, &ultraConfig)
 
 	// Create logger if enabled - we need session dir which requires session ID
 	sessionDir := sessutil.GetSessionDir(cwd, sessionID)
@@ -189,17 +162,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to start session: %w", err)
 	}
 
-	// Log startup with objective (truncated) and config summary
-	logger.Info("ultraplan started",
-		"session_id", sessionID,
-		"objective", truncateString(objective, 100),
-		"max_parallel", ultraConfig.MaxParallel,
-		"multi_pass", ultraConfig.MultiPass,
-		"dry_run", ultraConfig.DryRun,
-		"auto_approve", ultraConfig.AutoApprove,
-	)
-
-	// Create or load the plan
+	// Load plan file if provided
 	var plan *orchestrator.PlanSpec
 	if ultraplanPlanFile != "" {
 		plan, err = loadPlanFile(ultraplanPlanFile)
@@ -209,18 +172,38 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 		objective = plan.Objective
 	}
 
-	// Create ultra-plan session
-	ultraSession := orchestrator.NewUltraPlanSession(objective, ultraConfig)
-	if plan != nil {
-		ultraSession.Plan = plan
-		ultraSession.Phase = orchestrator.PhaseRefresh // Skip to refresh if plan provided
+	// Initialize ultraplan using shared initialization
+	initParams := ultraplan.InitParams{
+		Orchestrator: orch,
+		Session:      session,
+		Objective:    objective,
+		Config:       &ultraConfig,
+		Plan:         plan,
+		Logger:       logger,
+		CreateGroup:  false, // CLI TUI handles group creation separately
 	}
 
-	// Link ultra-plan session to main session for persistence
-	session.UltraPlan = ultraSession
+	var initResult *ultraplan.InitResult
+	if plan != nil {
+		// Use InitWithPlan for additional validation (plan already validated in loadPlanFile,
+		// but InitWithPlan also calls SetPlan to ensure coordinator state is synchronized)
+		initResult, err = ultraplan.InitWithPlan(initParams, plan)
+		if err != nil {
+			return fmt.Errorf("failed to initialize ultraplan with plan: %w", err)
+		}
+	} else {
+		initResult = ultraplan.Init(initParams)
+	}
 
-	// Create coordinator with logger
-	coordinator := orchestrator.NewCoordinator(orch, session, ultraSession, logger)
+	// Log startup with objective (truncated) and config summary
+	logger.Info("ultraplan started",
+		"session_id", sessionID,
+		"objective", util.TruncateString(objective, 100),
+		"max_parallel", initResult.Config.MaxParallel,
+		"multi_pass", initResult.Config.MultiPass,
+		"dry_run", initResult.Config.DryRun,
+		"auto_approve", initResult.Config.AutoApprove,
+	)
 
 	// Get terminal dimensions
 	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
@@ -231,12 +214,28 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	}
 
 	// Launch TUI with ultra-plan mode
-	app := tui.NewWithUltraPlan(orch, session, coordinator, logger.WithSession(session.ID))
+	app := tui.NewWithUltraPlan(orch, session, initResult.Coordinator, logger.WithSession(session.ID))
 	if err := app.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
 
 	return nil
+}
+
+// applyUltraplanFlagOverrides applies CLI flag values to the ultraplan config.
+// Flags only override config file values when explicitly set by the user.
+func applyUltraplanFlagOverrides(cmd *cobra.Command, cfg *orchestrator.UltraPlanConfig) {
+	if cmd.Flags().Changed("max-parallel") {
+		cfg.MaxParallel = ultraplanMaxParallel
+	}
+	if cmd.Flags().Changed("multi-pass") {
+		cfg.MultiPass = ultraplanMultiPass
+	}
+	// These flags always apply (no "changed" check needed since they have sensible defaults)
+	cfg.DryRun = ultraplanDryRun
+	cfg.NoSynthesis = ultraplanNoSynthesis
+	cfg.AutoApprove = ultraplanAutoApprove
+	cfg.Review = ultraplanReview
 }
 
 // promptObjective prompts the user to enter an objective

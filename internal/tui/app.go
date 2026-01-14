@@ -22,6 +22,8 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	"github.com/Iron-Ham/claudio/internal/tui/update"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
+	"github.com/Iron-Ham/claudio/internal/ultraplan"
+	"github.com/Iron-Ham/claudio/internal/util"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/viper"
@@ -49,20 +51,12 @@ func New(orch *orchestrator.Orchestrator, session *orchestrator.Session, logger 
 func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.Coordinator, logger *logging.Logger) *App {
 	model := NewModel(orch, session, logger)
 
-	// Create a group for this ultraplan session (similar to inline mode)
+	// Create a group for this ultraplan session if one doesn't exist.
+	// Uses the shared helper from the ultraplan package to ensure consistent
+	// group creation logic across all entry points (CLI, TUI inline, etc.)
 	ultraSession := coordinator.Session()
 	if ultraSession != nil && ultraSession.GroupID == "" {
-		sessionType := orchestrator.SessionTypeUltraPlan
-		if ultraSession.Config.MultiPass {
-			sessionType = orchestrator.SessionTypePlanMulti
-		}
-		ultraGroup := orchestrator.NewInstanceGroupWithType(
-			truncateString(ultraSession.Objective, 30),
-			sessionType,
-			ultraSession.Objective,
-		)
-		session.AddGroup(ultraGroup)
-		ultraSession.GroupID = ultraGroup.ID
+		ultraplan.CreateAndLinkUltraPlanGroup(session, ultraSession, ultraSession.Config.MultiPass)
 
 		// Auto-enable grouped sidebar mode
 		model.autoEnableGroupedMode()
@@ -93,7 +87,7 @@ func NewWithTripleShot(orch *orchestrator.Orchestrator, session *orchestrator.Se
 			// Create a group if one doesn't exist (CLI-started tripleshots)
 			if tripleSession.GroupID == "" {
 				tripleGroup := orchestrator.NewInstanceGroupWithType(
-					truncateString(tripleSession.Task, 30),
+					util.TruncateString(tripleSession.Task, 30),
 					orchestrator.SessionTypeTripleShot,
 					tripleSession.Task,
 				)
@@ -130,7 +124,7 @@ func NewWithTripleShots(orch *orchestrator.Orchestrator, session *orchestrator.S
 				// Create a group if one doesn't exist (legacy sessions)
 				if tripleSession.GroupID == "" {
 					tripleGroup := orchestrator.NewInstanceGroupWithType(
-						truncateString(tripleSession.Task, 30),
+						util.TruncateString(tripleSession.Task, 30),
 						orchestrator.SessionTypeTripleShot,
 						tripleSession.Task,
 					)
@@ -1311,7 +1305,7 @@ func (m Model) renderTripleShotHelp() string {
 func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	// Create a group for this triple-shot session FIRST to get its ID
 	tripleGroup := orchestrator.NewInstanceGroupWithType(
-		truncateString(task, 30),
+		util.TruncateString(task, 30),
 		orchestrator.SessionTypeTripleShot,
 		task,
 	)

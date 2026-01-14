@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
+	"github.com/Iron-Ham/claudio/internal/util"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // TerminalView handles rendering of the terminal pane at the bottom of the screen.
@@ -115,7 +115,7 @@ func (v *TerminalView) renderHeader(state TerminalState) string {
 	// Truncate if too long
 	maxWidth := v.Width - 4 // Account for borders and padding
 	if lipgloss.Width(header) > maxWidth {
-		header = truncateString(header, maxWidth)
+		header = util.TruncateANSI(header, maxWidth)
 	}
 
 	return header
@@ -144,18 +144,4 @@ func (v *TerminalView) renderOutput(output string, height int) string {
 
 	// Join and return
 	return strings.Join(lines, "\n")
-}
-
-// truncateString truncates a string to the given width, adding ellipsis if needed.
-// This function properly handles ANSI escape codes and wide characters.
-func truncateString(s string, maxWidth int) string {
-	if maxWidth <= 3 {
-		return "..."
-	}
-	if lipgloss.Width(s) <= maxWidth {
-		return s
-	}
-	// Use ANSI-aware truncation to preserve escape sequences
-	// ansi.Truncate includes the tail in the final width calculation
-	return ansi.Truncate(s, maxWidth, "...")
 }

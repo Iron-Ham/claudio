@@ -11,6 +11,7 @@ import (
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	sessutil "github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
+	"github.com/Iron-Ham/claudio/internal/util"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -106,7 +107,7 @@ func runTripleshot(cmd *cobra.Command, args []string) error {
 	// Log startup
 	logger.Info("tripleshot started",
 		"session_id", sessionID,
-		"task", truncateString(task, 100),
+		"task", util.TruncateString(task, 100),
 		"auto_approve", tripleConfig.AutoApprove,
 	)
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
+	"github.com/Iron-Ham/claudio/internal/util"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -172,7 +173,7 @@ func (p *StatsPanel) renderTopInstances(b *strings.Builder, state *RenderState) 
 			break
 		}
 		if ic.cost > 0 {
-			taskTrunc := truncateString(ic.task, state.Width-25)
+			taskTrunc := util.TruncateString(ic.task, state.Width-25)
 			fmt.Fprintf(b, "  %d. [%d] %s: %s\n",
 				shown+1, ic.num, taskTrunc, instmetrics.FormatCost(ic.cost))
 			shown++
@@ -191,15 +192,4 @@ func (p *StatsPanel) renderTopInstances(b *strings.Builder, state *RenderState) 
 // Height returns the rendered height of the panel.
 func (p *StatsPanel) Height() int {
 	return p.height
-}
-
-// truncateString truncates a string to maxLen characters, adding "..." if truncated.
-func truncateString(s string, maxLen int) string {
-	if maxLen <= 3 {
-		return "..."
-	}
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
 }

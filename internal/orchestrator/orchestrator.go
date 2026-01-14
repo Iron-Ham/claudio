@@ -25,6 +25,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prworkflow"
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	"github.com/Iron-Ham/claudio/internal/session"
+	"github.com/Iron-Ham/claudio/internal/util"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 	"github.com/spf13/viper"
 )
@@ -623,7 +624,7 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 	if o.logger != nil {
 		o.logger.Info("instance added",
 			"instance_id", inst.ID,
-			"task", truncateString(task, 100),
+			"task", util.TruncateString(task, 100),
 			"branch", inst.Branch,
 		)
 	}
@@ -691,7 +692,7 @@ func (o *Orchestrator) AddInstanceWithDependencies(session *Session, task string
 	if o.logger != nil {
 		o.logger.Info("instance added with dependencies",
 			"instance_id", inst.ID,
-			"task", truncateString(task, 100),
+			"task", util.TruncateString(task, 100),
 			"branch", inst.Branch,
 			"depends_on", resolvedDeps,
 			"auto_start", autoStart,
@@ -728,7 +729,7 @@ func (o *Orchestrator) resolveInstanceReference(session *Session, ref string) (*
 		// Build list of matching instances for error message
 		var matchDescs []string
 		for _, m := range matches {
-			matchDescs = append(matchDescs, fmt.Sprintf("%s (%s)", m.ID, truncateString(m.Task, 30)))
+			matchDescs = append(matchDescs, fmt.Sprintf("%s (%s)", m.ID, util.TruncateString(m.Task, 30)))
 		}
 		return nil, fmt.Errorf("ambiguous reference %q matches %d instances: %s (use instance ID for exact match)",
 			ref, len(matches), strings.Join(matchDescs, ", "))
@@ -802,7 +803,7 @@ func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, base
 	if o.logger != nil {
 		o.logger.Info("instance added",
 			"instance_id", inst.ID,
-			"task", truncateString(task, 100),
+			"task", util.TruncateString(task, 100),
 			"branch", inst.Branch,
 			"base_branch", baseBranch,
 		)

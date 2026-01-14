@@ -8,6 +8,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/pr"
+	"github.com/Iron-Ham/claudio/internal/util"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 	"github.com/spf13/cobra"
 )
@@ -186,7 +187,7 @@ func runPR(cmd *cobra.Command, args []string) error {
 		body = prBody
 	} else if !useAI {
 		// Simple defaults without AI
-		title = fmt.Sprintf("feat: %s", truncateString(inst.Task, 60))
+		title = fmt.Sprintf("feat: %s", util.TruncateString(inst.Task, 60))
 		body = fmt.Sprintf("## Task\n%s\n\n## Changed Files\n", inst.Task)
 		for _, f := range changedFiles {
 			body += fmt.Sprintf("- %s\n", f)
@@ -328,11 +329,4 @@ func containsIssue(issues []string, issue string) bool {
 		}
 	}
 	return false
-}
-
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
 }
