@@ -267,28 +267,6 @@ func (a *App) Run() error {
 	return err
 }
 
-// Layout constants
-const (
-	SidebarWidth    = 30 // Fixed sidebar width
-	SidebarMinWidth = 20 // Minimum sidebar width
-
-	// Layout offsets for content area calculation
-	ContentWidthOffset  = 7  // sidebar gap (3) + output area margin (4)
-	ContentHeightOffset = 12 // header + help bar + instance info + task + status + scroll indicator
-)
-
-// CalculateContentDimensions returns the effective content area dimensions
-// given the terminal width and height. This accounts for the sidebar and other UI elements.
-func CalculateContentDimensions(termWidth, termHeight int) (contentWidth, contentHeight int) {
-	effectiveSidebarWidth := SidebarWidth
-	if termWidth < 80 {
-		effectiveSidebarWidth = SidebarMinWidth
-	}
-	contentWidth = termWidth - effectiveSidebarWidth - ContentWidthOffset
-	contentHeight = termHeight - ContentHeightOffset
-	return contentWidth, contentHeight
-}
-
 // styleTheme implements panel.Theme by wrapping the styles package.
 // This allows panels to use consistent styling with the rest of the app.
 type styleTheme struct{}
