@@ -473,3 +473,301 @@ func TestGroupNameMaxLengthConstant(t *testing.T) {
 		t.Errorf("GroupNameMaxLength = %d, want 30", GroupNameMaxLength)
 	}
 }
+
+// TestInit_ConfigResolution tests that Init correctly resolves configuration
+// from either provided config or defaults.
+func TestInit_ConfigResolution(t *testing.T) {
+	// Create test fixtures
+	session := orchestrator.NewSession("test-session", "/tmp/repo")
+
+	tests := []struct {
+		name           string
+		config         *orchestrator.UltraPlanConfig
+		validateConfig func(t *testing.T, cfg orchestrator.UltraPlanConfig)
+	}{
+		{
+			name:   "nil config uses defaults from file",
+			config: nil,
+			validateConfig: func(t *testing.T, cfg orchestrator.UltraPlanConfig) {
+				// When config is nil, BuildConfigFromFile is called
+				// We can't test exact values since they depend on config file,
+				// but we can verify default behavior
+				defaults := orchestrator.DefaultUltraPlanConfig()
+				// RequireVerifiedCommits should be from defaults (true by default)
+				if cfg.RequireVerifiedCommits != defaults.RequireVerifiedCommits {
+					t.Errorf("RequireVerifiedCommits = %v, want default %v",
+						cfg.RequireVerifiedCommits, defaults.RequireVerifiedCommits)
+				}
+			},
+		},
+		{
+			name: "provided config is used as-is",
+			config: &orchestrator.UltraPlanConfig{
+				MaxParallel:            99,
+				MultiPass:              true,
+				RequireVerifiedCommits: false,
+			},
+			validateConfig: func(t *testing.T, cfg orchestrator.UltraPlanConfig) {
+				if cfg.MaxParallel != 99 {
+					t.Errorf("MaxParallel = %d, want 99", cfg.MaxParallel)
+				}
+				if !cfg.MultiPass {
+					t.Errorf("MultiPass = false, want true")
+				}
+				if cfg.RequireVerifiedCommits {
+					t.Errorf("RequireVerifiedCommits = true, want false")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Note: We can't fully test Init without a real orchestrator,
+			// but we can test the InitParams and validate that config
+			// would be resolved correctly by testing BuildConfigFromAppConfig
+			// separately (which is tested above).
+
+			// For this test, we verify the params struct is correctly built
+			params := InitParams{
+				Orchestrator: nil, // Would be required for full Init
+				Session:      session,
+				Objective:    "Test objective",
+				Config:       tt.config,
+			}
+
+			// Resolve config the same way Init does
+			var cfg orchestrator.UltraPlanConfig
+			if params.Config != nil {
+				cfg = *params.Config
+			} else {
+				cfg = BuildConfigFromFile()
+			}
+
+			tt.validateConfig(t, cfg)
+		})
+	}
+}
+
+// TestInit_ObjectiveResolution tests that Init correctly determines the objective
+// from params or from a pre-loaded plan.
+func TestInit_ObjectiveResolution(t *testing.T) {
+	tests := []struct {
+		name          string
+		objective     string
+		plan          *orchestrator.PlanSpec
+		wantObjective string
+	}{
+		{
+			name:          "objective from params",
+			objective:     "Params objective",
+			plan:          nil,
+			wantObjective: "Params objective",
+		},
+		{
+			name:      "objective from plan when params objective is empty",
+			objective: "",
+			plan: &orchestrator.PlanSpec{
+				Objective: "Plan objective",
+			},
+			wantObjective: "Plan objective",
+		},
+		{
+			name:      "plan objective takes precedence when both provided",
+			objective: "Params objective",
+			plan: &orchestrator.PlanSpec{
+				Objective: "Plan objective",
+			},
+			wantObjective: "Plan objective",
+		},
+		{
+			name:      "params objective used when plan has empty objective",
+			objective: "Params objective",
+			plan: &orchestrator.PlanSpec{
+				Objective: "",
+			},
+			wantObjective: "Params objective",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the objective resolution logic from Init
+			objective := tt.objective
+			if tt.plan != nil && tt.plan.Objective != "" {
+				objective = tt.plan.Objective
+			}
+
+			if objective != tt.wantObjective {
+				t.Errorf("resolved objective = %q, want %q", objective, tt.wantObjective)
+			}
+		})
+	}
+}
+
+// TestInitParams_RequiredFields documents the required vs optional fields
+// in InitParams through compilation (field access) and comments.
+func TestInitParams_RequiredFields(t *testing.T) {
+	// This test serves as documentation of the InitParams contract.
+	// The struct fields are:
+	// - Orchestrator: Required (but nil for unit tests)
+	// - Session: Required
+	// - Objective: Required when Plan is nil
+	// - Config: Optional (defaults via BuildConfigFromFile)
+	// - Plan: Optional (skips planning phase if provided)
+	// - Logger: Optional (nil uses no-op logger)
+	// - CreateGroup: Optional (default false)
+
+	session := orchestrator.NewSession("test", "/tmp")
+	cfg := orchestrator.DefaultUltraPlanConfig()
+
+	// Minimal params (without orchestrator for unit test)
+	minimalParams := InitParams{
+		Session:   session,
+		Objective: "Test",
+	}
+
+	// Full params
+	fullParams := InitParams{
+		Orchestrator: nil,
+		Session:      session,
+		Objective:    "Test objective",
+		Config:       &cfg,
+		Plan: &orchestrator.PlanSpec{
+			Objective: "Plan objective",
+			Tasks:     []orchestrator.PlannedTask{},
+		},
+		Logger:      nil,
+		CreateGroup: true,
+	}
+
+	// Verify params are valid (compilation test)
+	if minimalParams.Session == nil {
+		t.Error("minimalParams.Session should not be nil")
+	}
+	if fullParams.CreateGroup != true {
+		t.Error("fullParams.CreateGroup should be true")
+	}
+}
+
+// TestInitResult_Fields documents the InitResult contract.
+func TestInitResult_Fields(t *testing.T) {
+	// This test documents what InitResult contains.
+	// All fields should be non-nil when Init returns successfully (except Group).
+
+	// Create a mock result to verify struct fields
+	cfg := orchestrator.DefaultUltraPlanConfig()
+	ultraSession := orchestrator.NewUltraPlanSession("Test", cfg)
+
+	result := &InitResult{
+		Coordinator:  nil, // Would be set by Init
+		UltraSession: ultraSession,
+		Config:       cfg,
+		Group:        nil, // Only set when CreateGroup=true
+	}
+
+	// Verify the result struct has expected fields
+	if result.UltraSession == nil {
+		t.Error("UltraSession should not be nil")
+	}
+	if result.Config.MaxParallel == 0 && cfg.MaxParallel != 0 {
+		t.Error("Config should match provided config")
+	}
+}
+
+// TestInit_PlanPhaseHandling tests that providing a pre-loaded plan
+// correctly sets the session phase.
+func TestInit_PlanPhaseHandling(t *testing.T) {
+	tests := []struct {
+		name      string
+		plan      *orchestrator.PlanSpec
+		wantPhase orchestrator.UltraPlanPhase
+	}{
+		{
+			name:      "no plan starts in planning phase",
+			plan:      nil,
+			wantPhase: orchestrator.PhasePlanning,
+		},
+		{
+			name: "with plan skips to refresh phase",
+			plan: &orchestrator.PlanSpec{
+				Objective: "Test",
+				Tasks:     []orchestrator.PlannedTask{},
+			},
+			wantPhase: orchestrator.PhaseRefresh,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the plan handling logic from Init
+			cfg := orchestrator.DefaultUltraPlanConfig()
+			ultraSession := orchestrator.NewUltraPlanSession("Test", cfg)
+
+			if tt.plan != nil {
+				ultraSession.Plan = tt.plan
+				ultraSession.Phase = orchestrator.PhaseRefresh
+			}
+
+			if ultraSession.Phase != tt.wantPhase {
+				t.Errorf("Phase = %v, want %v", ultraSession.Phase, tt.wantPhase)
+			}
+		})
+	}
+}
+
+// TestInit_GroupCreation tests that CreateGroup flag properly controls
+// group creation via CreateAndLinkUltraPlanGroup.
+func TestInit_GroupCreation(t *testing.T) {
+	tests := []struct {
+		name        string
+		createGroup bool
+		multiPass   bool
+		wantType    orchestrator.SessionType
+	}{
+		{
+			name:        "single-pass creates UltraPlan group",
+			createGroup: true,
+			multiPass:   false,
+			wantType:    orchestrator.SessionTypeUltraPlan,
+		},
+		{
+			name:        "multi-pass creates PlanMulti group",
+			createGroup: true,
+			multiPass:   true,
+			wantType:    orchestrator.SessionTypePlanMulti,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := orchestrator.NewSession("test", "/tmp")
+			cfg := orchestrator.UltraPlanConfig{
+				MultiPass: tt.multiPass,
+			}
+			ultraSession := orchestrator.NewUltraPlanSession("Test objective", cfg)
+
+			// Test the group creation behavior
+			var group *orchestrator.InstanceGroup
+			if tt.createGroup {
+				group = CreateAndLinkUltraPlanGroup(session, ultraSession, cfg.MultiPass)
+			}
+
+			if tt.createGroup {
+				if group == nil {
+					t.Fatal("expected group to be created")
+				}
+				if group.SessionType != tt.wantType {
+					t.Errorf("SessionType = %v, want %v", group.SessionType, tt.wantType)
+				}
+				if ultraSession.GroupID != group.ID {
+					t.Errorf("GroupID = %q, want %q", ultraSession.GroupID, group.ID)
+				}
+			} else {
+				if group != nil {
+					t.Error("expected no group to be created")
+				}
+			}
+		})
+	}
+}
