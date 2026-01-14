@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Ultraplan Sidebar Coexistence** - Fixed ultraplan mode taking over the entire TUI sidebar, preventing navigation to standard instances. Ultraplans now render as collapsible groups within the standard grouped sidebar, allowing standard instances to run alongside ultraplans with proper navigation support.
 - **Ultraplan Sidebar First Line Highlighting** - Fixed selected task highlighting not being applied to the first line of wrapped task names in ultraplan sidebar. When a task title wrapped to multiple lines, only continuation lines were highlighted because pre-applying `statusStyle.Render(icon)` embedded ANSI reset codes that broke the background color.
 - **Inline Ultraplan Group Linkage** - Fixed inline ultraplan (`:ultraplan` command) not properly linking the ultraplan session to its group. The `ultraSession.GroupID` was not being set when creating groups, which could cause coexistence issues with standard instances. Now all three inline ultraplan creation paths (from file, immediate objective, and interactive objective) correctly set the GroupID.
 - **Inline Ultraplan Consolidation Failure** - Fixed `:ultraplan --plan <file>` failing with "no task branches with verified commits found" after Group 1 completed. The inline ultraplan config was missing `RequireVerifiedCommits: true`, causing commit counts to never be recorded. Now uses `DefaultUltraPlanConfig()` to ensure proper defaults.

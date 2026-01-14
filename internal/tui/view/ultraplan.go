@@ -535,6 +535,131 @@ func (v *UltraplanView) RenderSidebar(width int, height int) string {
 	return styles.Sidebar.Width(width - 2).Render(b.String())
 }
 
+// RenderInlineContent renders the ultraplan phase content for display inline within a group.
+// This is a simplified version of RenderSidebar that shows the essential phase information
+// without the full sidebar chrome. Used when ultraplan is shown as a collapsible group.
+func (v *UltraplanView) RenderInlineContent(width int, maxLines int) string {
+	if v.ctx.UltraPlan == nil || v.ctx.UltraPlan.Coordinator == nil {
+		return ""
+	}
+
+	session := v.ctx.UltraPlan.Coordinator.Session()
+	if session == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	lineCount := 0
+
+	// Indent for inline content within group
+	indent := "  "
+
+	// ========== GROUP DECISION SECTION (if awaiting decision) ==========
+	if session.GroupDecision != nil && session.GroupDecision.AwaitingDecision {
+		b.WriteString(indent)
+		b.WriteString(lipgloss.NewStyle().Foreground(styles.YellowColor).Bold(true).Render("⚠ DECISION NEEDED"))
+		b.WriteString("\n")
+		lineCount++
+		if lineCount >= maxLines {
+			return b.String()
+		}
+	}
+
+	// ========== PHASE STATUS ==========
+	phaseStr := PhaseToString(session.Phase)
+	pStyle := PhaseStyle(session.Phase)
+	b.WriteString(indent)
+	b.WriteString(pStyle.Render(fmt.Sprintf("Phase: %s", phaseStr)))
+	b.WriteString("\n")
+	lineCount++
+	if lineCount >= maxLines {
+		return b.String()
+	}
+
+	// ========== PLANNING SECTION ==========
+	planningStatus := v.getPhaseSectionStatus(orchestrator.PhasePlanning, session)
+	b.WriteString(indent)
+	b.WriteString(styles.Muted.Render(fmt.Sprintf("Planning %s", planningStatus)))
+	b.WriteString("\n")
+	lineCount++
+	if lineCount >= maxLines {
+		return b.String()
+	}
+
+	// Show coordinator if active
+	if session.Phase == orchestrator.PhasePlanning && session.CoordinatorID != "" {
+		inst := v.ctx.GetInstance(session.CoordinatorID)
+		selected := v.ctx.IsSelected(session.CoordinatorID)
+		line := v.renderPhaseInstanceLine(inst, "Coordinator", selected, true, width-6)
+		b.WriteString(indent)
+		b.WriteString(line)
+		b.WriteString("\n")
+		lineCount++
+		if lineCount >= maxLines {
+			return b.String()
+		}
+	}
+
+	// ========== EXECUTION SECTION ==========
+	if session.Plan != nil {
+		execStatus := v.getPhaseSectionStatus(orchestrator.PhaseExecuting, session)
+		b.WriteString(indent)
+		b.WriteString(styles.Muted.Render(fmt.Sprintf("Execution %s", execStatus)))
+		b.WriteString("\n")
+		lineCount++
+		if lineCount >= maxLines {
+			return b.String()
+		}
+
+		// Show execution groups (collapsed view)
+		for groupIdx, group := range session.Plan.ExecutionOrder {
+			if lineCount >= maxLines-2 {
+				b.WriteString(indent)
+				b.WriteString(styles.Muted.Render("  ...more groups"))
+				b.WriteString("\n")
+				lineCount++
+				break
+			}
+
+			groupStatus := v.getGroupStatus(session, group)
+			b.WriteString(indent)
+			b.WriteString(styles.Muted.Render(fmt.Sprintf("  Group %d %s (%d tasks)", groupIdx+1, groupStatus, len(group))))
+			b.WriteString("\n")
+			lineCount++
+		}
+	}
+
+	// ========== SYNTHESIS SECTION ==========
+	if session.SynthesisID != "" || session.Phase == orchestrator.PhaseSynthesis {
+		synthStatus := v.getPhaseSectionStatus(orchestrator.PhaseSynthesis, session)
+		b.WriteString(indent)
+		b.WriteString(styles.Muted.Render(fmt.Sprintf("Synthesis %s", synthStatus)))
+		b.WriteString("\n")
+		lineCount++
+		if lineCount >= maxLines {
+			return b.String()
+		}
+	}
+
+	// ========== CONSOLIDATION SECTION ==========
+	if session.ConsolidationID != "" || session.Phase == orchestrator.PhaseConsolidating {
+		consStatus := v.getPhaseSectionStatus(orchestrator.PhaseConsolidating, session)
+		b.WriteString(indent)
+		b.WriteString(styles.Muted.Render(fmt.Sprintf("Consolidation %s", consStatus)))
+		b.WriteString("\n")
+		lineCount++ //nolint:ineffassign // lineCount tracks rendering progress
+
+		// Show PR count if any
+		if len(session.PRUrls) > 0 {
+			b.WriteString(indent)
+			b.WriteString(styles.Muted.Render(fmt.Sprintf("  %d PR(s) created", len(session.PRUrls))))
+			b.WriteString("\n")
+		}
+	}
+
+	return b.String()
+}
+
 // renderGroupDecisionSection renders the group decision dialog when user input is needed
 func (v *UltraplanView) renderGroupDecisionSection(decision *orchestrator.GroupDecisionState, maxWidth int) string {
 	var b strings.Builder

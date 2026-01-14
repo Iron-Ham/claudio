@@ -105,23 +105,6 @@ func (m Model) renderUltraPlanHeader() string {
 	return v.RenderHeader()
 }
 
-// renderUltraPlanSidebar renders a unified sidebar showing all phases with their instances
-func (m Model) renderUltraPlanSidebar(width int, height int) string {
-	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
-		dashboardView := view.NewDashboardView()
-		return dashboardView.RenderSidebar(m, width, height)
-	}
-
-	session := m.ultraPlan.Coordinator.Session()
-	if session == nil {
-		dashboardView := view.NewDashboardView()
-		return dashboardView.RenderSidebar(m, width, height)
-	}
-
-	v := m.createUltraplanView()
-	return v.RenderSidebar(width, height)
-}
-
 // isInstanceSelected checks if the given instance ID is currently selected in the TUI
 func (m Model) isInstanceSelected(instanceID string) bool {
 	if instanceID == "" {
@@ -147,12 +130,14 @@ func (m *Model) getNavigableInstances() []string {
 	}
 
 	var instances []string
+	ultraPlanInstanceIDs := make(map[string]bool)
 
 	// Planning - navigable once started (has instance)
 	if session.CoordinatorID != "" {
 		inst := m.orchestrator.GetInstance(session.CoordinatorID)
 		if inst != nil && inst.Status != orchestrator.StatusPending {
 			instances = append(instances, session.CoordinatorID)
+			ultraPlanInstanceIDs[session.CoordinatorID] = true
 		}
 	}
 
@@ -162,6 +147,7 @@ func (m *Model) getNavigableInstances() []string {
 			inst := m.orchestrator.GetInstance(coordID)
 			if inst != nil && inst.Status != orchestrator.StatusPending {
 				instances = append(instances, coordID)
+				ultraPlanInstanceIDs[coordID] = true
 			}
 		}
 	}
@@ -169,6 +155,7 @@ func (m *Model) getNavigableInstances() []string {
 		inst := m.orchestrator.GetInstance(session.PlanManagerID)
 		if inst != nil && inst.Status != orchestrator.StatusPending {
 			instances = append(instances, session.PlanManagerID)
+			ultraPlanInstanceIDs[session.PlanManagerID] = true
 		}
 	}
 
@@ -180,6 +167,7 @@ func (m *Model) getNavigableInstances() []string {
 				// Check if task has an instance (either still in TaskToInstance or was completed)
 				if instID, ok := session.TaskToInstance[taskID]; ok && instID != "" {
 					instances = append(instances, instID)
+					ultraPlanInstanceIDs[instID] = true
 				} else {
 					// Task might be completed - find instance by checking completed tasks
 					for _, completedTaskID := range session.CompletedTasks {
@@ -188,6 +176,7 @@ func (m *Model) getNavigableInstances() []string {
 							for _, inst := range m.session.Instances {
 								if strings.Contains(inst.Task, taskID) {
 									instances = append(instances, inst.ID)
+									ultraPlanInstanceIDs[inst.ID] = true
 									break
 								}
 							}
@@ -200,6 +189,7 @@ func (m *Model) getNavigableInstances() []string {
 			// Add group consolidator instance if it exists
 			if groupIdx < len(session.GroupConsolidatorIDs) && session.GroupConsolidatorIDs[groupIdx] != "" {
 				instances = append(instances, session.GroupConsolidatorIDs[groupIdx])
+				ultraPlanInstanceIDs[session.GroupConsolidatorIDs[groupIdx]] = true
 			}
 		}
 	}
@@ -207,16 +197,29 @@ func (m *Model) getNavigableInstances() []string {
 	// Synthesis - navigable once created
 	if session.SynthesisID != "" {
 		instances = append(instances, session.SynthesisID)
+		ultraPlanInstanceIDs[session.SynthesisID] = true
 	}
 
 	// Revision - navigable once created
 	if session.RevisionID != "" {
 		instances = append(instances, session.RevisionID)
+		ultraPlanInstanceIDs[session.RevisionID] = true
 	}
 
 	// Consolidation - navigable once created
 	if session.ConsolidationID != "" {
 		instances = append(instances, session.ConsolidationID)
+		ultraPlanInstanceIDs[session.ConsolidationID] = true
+	}
+
+	// Also add non-ultraplan instances (instances not belonging to the ultraplan)
+	// These are standard instances that can run alongside the ultraplan
+	for _, inst := range m.session.Instances {
+		if !ultraPlanInstanceIDs[inst.ID] {
+			// Check that this instance is not part of the ultraplan group
+			// by verifying it's not in the ultraPlanInstanceIDs set
+			instances = append(instances, inst.ID)
+		}
 	}
 
 	return instances
