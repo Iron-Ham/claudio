@@ -273,9 +273,15 @@ func (m *Model) navigateToNextInstance(direction int) bool {
 	targetInstID := instances[nextIdx]
 	for i, inst := range m.session.Instances {
 		if inst.ID == targetInstID {
+			// Pause the old active instance before switching
+			if oldInst := m.activeInstance(); oldInst != nil {
+				m.pauseInstance(oldInst.ID)
+			}
 			m.activeTab = i
 			m.ultraPlan.SelectedNavIdx = nextIdx
 			m.ensureActiveVisible()
+			// Resume the new active instance's capture
+			m.resumeActiveInstance()
 			return true
 		}
 	}

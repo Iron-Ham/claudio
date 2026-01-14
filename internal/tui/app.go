@@ -469,6 +469,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errorMessage = fmt.Sprintf("Failed to start planning: %v", err)
 				} else {
 					m.infoMessage = "Planning started. Claude is analyzing the codebase..."
+					// Pause the old active instance before switching
+					if oldInst := m.activeInstance(); oldInst != nil {
+						m.pauseInstance(oldInst.ID)
+					}
 					// Select the coordinator instance so user can see the output
 					for i, inst := range m.session.Instances {
 						if inst.ID == session.CoordinatorID {
@@ -476,6 +480,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							break
 						}
 					}
+					// Resume the new active instance's capture
+					m.resumeActiveInstance()
 				}
 			}
 		}
@@ -1260,6 +1266,8 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.activeTab >= len(m.session.Instances) && m.activeTab > 0 {
 					m.activeTab--
 				}
+				// Resume the new active instance's capture (it may have been paused)
+				m.resumeActiveInstance()
 			}
 		}
 		return m, nil
@@ -1541,6 +1549,8 @@ func (m *Model) applyCommandResult(result command.Result) {
 				m.activeTab = 0
 			}
 		}
+		// Resume the new active instance's capture (it may have been paused)
+		m.resumeActiveInstance()
 	}
 	if result.EnsureActiveVisible {
 		m.ensureActiveVisible()

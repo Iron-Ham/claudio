@@ -221,8 +221,14 @@ func (m *Model) handleInlinePlanObjectiveSubmit(objective string) {
 		}
 		m.infoMessage = "Planning started (group view unavailable)..."
 	}
+	// Pause the old active instance before switching
+	if oldInst := m.activeInstance(); oldInst != nil {
+		m.pauseInstance(oldInst.ID)
+	}
 	m.activeTab = m.findInstanceIndex(inst.ID)
 	m.ensureActiveVisible()
+	// Resume the new active instance's capture
+	m.resumeActiveInstance()
 }
 
 // handleUltraPlanObjectiveSubmit handles submission of an ultraplan objective.
