@@ -319,7 +319,7 @@ func (c *TripleShotCoordinator) StartJudge() error {
 		return fmt.Errorf("failed to create judge instance: %w", err)
 	}
 
-	// Add judge to the triple-shot group for sidebar display
+	// Reorganize the triple-shot group: move implementers to a sub-group, add judge to parent
 	// Use GroupID for multi-tripleshot support; fall back to session type for backward compatibility
 	var tripleGroup *InstanceGroup
 	if session.GroupID != "" {
@@ -329,7 +329,26 @@ func (c *TripleShotCoordinator) StartJudge() error {
 		tripleGroup = c.baseSession.GetGroupBySessionType(SessionTypeTripleShot)
 	}
 	if tripleGroup != nil {
+		// Create a sub-group for the implementers
+		implementersGroup := NewInstanceGroup("Implementers")
+		implementersGroup.SessionType = SessionTypeTripleShot
+
+		// Move existing instances (the 3 implementers) to the sub-group
+		for _, instID := range tripleGroup.Instances {
+			implementersGroup.AddInstance(instID)
+		}
+
+		// Clear the parent group's instances and add the sub-group
+		tripleGroup.Instances = nil
+		tripleGroup.AddSubGroup(implementersGroup)
+
+		// Add the judge to the parent group (so it appears at the top level)
 		tripleGroup.AddInstance(inst.ID)
+	} else {
+		c.logger.Warn("triple-shot group not found, judge will not be grouped with implementers",
+			"session_id", session.ID,
+			"group_id", session.GroupID,
+		)
 	}
 
 	session.JudgeID = inst.ID

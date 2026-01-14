@@ -1535,9 +1535,9 @@ func (m *Model) applyCommandResult(result command.Result) {
 		m.taskInputCursor = 0
 	}
 
-	// Handle triple-shot accept
-	if result.AcceptTripleShot != nil && *result.AcceptTripleShot {
-		m.handleTripleShotAccept()
+	// Handle triple-shot judge stopped - clean up the entire triple-shot session
+	if result.StoppedTripleShotJudgeID != nil {
+		m.handleTripleShotJudgeStopped(*result.StoppedTripleShotJudgeID)
 	}
 
 	// Handle inline plan mode transition

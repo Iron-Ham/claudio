@@ -998,3 +998,25 @@ func (m Model) GetLogger() *logging.Logger {
 func (m Model) GetStartTime() time.Time {
 	return m.startTime
 }
+
+// IsInstanceTripleShotJudge checks if an instance is a judge in any active triple-shot session.
+func (m Model) IsInstanceTripleShotJudge(instanceID string) bool {
+	if m.tripleShot == nil {
+		return false
+	}
+	// Check all coordinators in the map
+	for _, coord := range m.tripleShot.Coordinators {
+		session := coord.Session()
+		if session != nil && session.JudgeID == instanceID {
+			return true
+		}
+	}
+	// Also check deprecated single coordinator for backward compatibility
+	if m.tripleShot.Coordinator != nil {
+		session := m.tripleShot.Coordinator.Session()
+		if session != nil && session.JudgeID == instanceID {
+			return true
+		}
+	}
+	return false
+}
