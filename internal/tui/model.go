@@ -220,9 +220,9 @@ func (m Model) IsUltraPlanMode() bool {
 	return m.ultraPlan != nil
 }
 
-// IsTripleShotMode returns true if the model is in triple-shot mode
+// IsTripleShotMode returns true if there are any active tripleshot sessions.
 func (m Model) IsTripleShotMode() bool {
-	return m.tripleShot != nil
+	return m.tripleShot != nil && m.tripleShot.HasActiveCoordinators()
 }
 
 // IsInlinePlanMode returns true if the model is in inline plan mode
@@ -979,6 +979,14 @@ func (m Model) GetTripleShotCoordinator() *orchestrator.TripleShotCoordinator {
 		return nil
 	}
 	return m.tripleShot.Coordinator
+}
+
+// GetTripleShotCoordinators returns all active tripleshot coordinators.
+func (m Model) GetTripleShotCoordinators() []*orchestrator.TripleShotCoordinator {
+	if m.tripleShot == nil {
+		return nil
+	}
+	return m.tripleShot.GetAllCoordinators()
 }
 
 // GetLogger returns the logger instance.

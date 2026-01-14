@@ -13,26 +13,56 @@ type TripleShotState = view.TripleShotState
 
 // checkForTripleShotCompletion checks if any triple-shot attempts or the judge have completed.
 // This is called from the tick handler to poll for completion files.
+// For multiple tripleshots, iterates through all active coordinators.
 func (m *Model) checkForTripleShotCompletion() {
-	if m.tripleShot == nil || m.tripleShot.Coordinator == nil {
+	if m.tripleShot == nil || !m.tripleShot.HasActiveCoordinators() {
 		return
 	}
 
-	coordinator := m.tripleShot.Coordinator
-	session := coordinator.Session()
-	if session == nil {
-		return
+	// Process each coordinator
+	for groupID, coordinator := range m.tripleShot.Coordinators {
+		session := coordinator.Session()
+		if session == nil {
+			continue
+		}
+
+		switch session.Phase {
+		case orchestrator.PhaseTripleShotWorking:
+			m.checkTripleShotAttempts(coordinator, session)
+		case orchestrator.PhaseTripleShotEvaluating:
+			m.checkTripleShotJudge(coordinator, groupID)
+		case orchestrator.PhaseTripleShotComplete:
+			m.handleTripleShotComplete(session)
+		case orchestrator.PhaseTripleShotFailed:
+			m.handleTripleShotFailed(session)
+		}
 	}
 
-	switch session.Phase {
-	case orchestrator.PhaseTripleShotWorking:
-		m.checkTripleShotAttempts(coordinator, session)
-	case orchestrator.PhaseTripleShotEvaluating:
-		m.checkTripleShotJudge(coordinator)
-	case orchestrator.PhaseTripleShotComplete:
-		m.handleTripleShotComplete(session)
-	case orchestrator.PhaseTripleShotFailed:
-		m.handleTripleShotFailed(session)
+	// Also check the deprecated single Coordinator for backward compatibility
+	if m.tripleShot.Coordinator != nil {
+		// Only process if it's not already in Coordinators map
+		alreadyProcessed := false
+		for _, coord := range m.tripleShot.Coordinators {
+			if coord == m.tripleShot.Coordinator {
+				alreadyProcessed = true
+				break
+			}
+		}
+		if !alreadyProcessed {
+			session := m.tripleShot.Coordinator.Session()
+			if session != nil {
+				switch session.Phase {
+				case orchestrator.PhaseTripleShotWorking:
+					m.checkTripleShotAttempts(m.tripleShot.Coordinator, session)
+				case orchestrator.PhaseTripleShotEvaluating:
+					m.checkTripleShotJudge(m.tripleShot.Coordinator, "")
+				case orchestrator.PhaseTripleShotComplete:
+					m.handleTripleShotComplete(session)
+				case orchestrator.PhaseTripleShotFailed:
+					m.handleTripleShotFailed(session)
+				}
+			}
+		}
 	}
 }
 
@@ -85,11 +115,11 @@ func (m *Model) checkTripleShotAttempts(coordinator *orchestrator.TripleShotCoor
 }
 
 // checkTripleShotJudge checks if the judge has completed evaluation
-func (m *Model) checkTripleShotJudge(coordinator *orchestrator.TripleShotCoordinator) {
+func (m *Model) checkTripleShotJudge(coordinator *orchestrator.TripleShotCoordinator, groupID string) {
 	complete, err := coordinator.CheckJudgeCompletion()
 	if err != nil {
 		if m.logger != nil {
-			m.logger.Warn("failed to check judge completion", "error", err)
+			m.logger.Warn("failed to check judge completion", "error", err, "group_id", groupID)
 		}
 		return
 	}
@@ -101,7 +131,14 @@ func (m *Model) checkTripleShotJudge(coordinator *orchestrator.TripleShotCoordin
 			}
 			m.errorMessage = "Failed to process judge evaluation"
 		} else {
-			m.infoMessage = "Triple-shot complete! Use :accept to apply the winning solution"
+			session := coordinator.Session()
+			taskPreview := ""
+			if session != nil && len(session.Task) > 30 {
+				taskPreview = session.Task[:27] + "..."
+			} else if session != nil {
+				taskPreview = session.Task
+			}
+			m.infoMessage = fmt.Sprintf("Triple-shot complete! (%s) Use :accept to apply the solution", taskPreview)
 			m.tripleShot.NeedsNotification = true
 		}
 	}
@@ -122,10 +159,10 @@ func (m *Model) handleTripleShotFailed(session *orchestrator.TripleShotSession) 
 }
 
 // handleTripleShotAccept handles accepting the winning triple-shot solution.
-// It identifies the winning attempt, displays acceptance info, and exits triple-shot mode.
+// For multiple tripleshots, accepts the one whose instance is currently focused.
 // On error, the user remains in triple-shot mode so they can investigate or retry.
 func (m *Model) handleTripleShotAccept() {
-	if m.tripleShot == nil || m.tripleShot.Coordinator == nil {
+	if m.tripleShot == nil || !m.tripleShot.HasActiveCoordinators() {
 		if m.logger != nil {
 			m.logger.Warn("triple-shot accept failed", "reason", "no active session")
 		}
@@ -133,13 +170,18 @@ func (m *Model) handleTripleShotAccept() {
 		return
 	}
 
-	coordinator := m.tripleShot.Coordinator
-	session := coordinator.Session()
-	if session == nil || session.Evaluation == nil {
+	// Find the tripleshot session for the currently active instance
+	session := m.findActiveTripleShotSession()
+	if session == nil {
+		m.errorMessage = "No triple-shot session found for the selected instance"
+		return
+	}
+
+	if session.Evaluation == nil {
 		if m.logger != nil {
 			m.logger.Warn("triple-shot accept failed", "reason", "no evaluation available")
 		}
-		m.errorMessage = "No evaluation available"
+		m.errorMessage = "No evaluation available for this triple-shot"
 		return
 	}
 
@@ -196,6 +238,58 @@ func (m *Model) handleTripleShotAccept() {
 		return
 	}
 
-	// Exit triple-shot mode only on successful acceptance
-	m.tripleShot = nil
+	// Remove this tripleshot from the coordinators map
+	if session.GroupID != "" && m.tripleShot.Coordinators != nil {
+		delete(m.tripleShot.Coordinators, session.GroupID)
+	}
+
+	// If no more coordinators, clear tripleshot state entirely
+	if !m.tripleShot.HasActiveCoordinators() {
+		m.tripleShot = nil
+	}
+}
+
+// findActiveTripleShotSession finds the tripleshot session that contains
+// the currently active instance (based on activeTab).
+func (m *Model) findActiveTripleShotSession() *orchestrator.TripleShotSession {
+	if m.session == nil || m.activeTab >= len(m.session.Instances) {
+		// If no instance is selected, return the first coordinator's session
+		coords := m.tripleShot.GetAllCoordinators()
+		if len(coords) > 0 {
+			return coords[0].Session()
+		}
+		return nil
+	}
+
+	activeInst := m.session.Instances[m.activeTab]
+	if activeInst == nil {
+		return nil
+	}
+
+	// Search through all coordinators to find which tripleshot owns this instance
+	for _, coord := range m.tripleShot.GetAllCoordinators() {
+		session := coord.Session()
+		if session == nil {
+			continue
+		}
+
+		// Check if active instance is one of the attempts
+		for _, attempt := range session.Attempts {
+			if attempt.InstanceID == activeInst.ID {
+				return session
+			}
+		}
+
+		// Check if active instance is the judge
+		if session.JudgeID == activeInst.ID {
+			return session
+		}
+	}
+
+	// Default to first coordinator's session if no match
+	coords := m.tripleShot.GetAllCoordinators()
+	if len(coords) > 0 {
+		return coords[0].Session()
+	}
+	return nil
 }

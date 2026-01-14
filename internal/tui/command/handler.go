@@ -35,7 +35,8 @@ type Dependencies interface {
 	IsUltraPlanMode() bool
 	IsTripleShotMode() bool
 	GetUltraPlanCoordinator() *orchestrator.Coordinator
-	GetTripleShotCoordinator() *orchestrator.TripleShotCoordinator
+	GetTripleShotCoordinator() *orchestrator.TripleShotCoordinator    // Deprecated: use GetTripleShotCoordinators
+	GetTripleShotCoordinators() []*orchestrator.TripleShotCoordinator // Returns all active tripleshot coordinators
 
 	// Logger access
 	GetLogger() *logging.Logger
@@ -931,20 +932,23 @@ func cmdTripleShot(deps Dependencies) Result {
 		return Result{ErrorMessage: "Triple-shot mode is disabled. Enable it in :config under Experimental"}
 	}
 
-	// Don't allow starting triple-shot if already in a special mode
+	// Don't allow starting triple-shot if in ultraplan mode
 	if deps.IsUltraPlanMode() {
 		return Result{ErrorMessage: "Cannot start triple-shot while in ultraplan mode"}
 	}
-	if deps.IsTripleShotMode() {
-		return Result{ErrorMessage: "Already in triple-shot mode"}
-	}
+
+	// Multiple tripleshots are now allowed - no check for IsTripleShotMode()
 
 	// Signal to the model that we want to enter triple-shot mode
 	// The model will handle prompting for the task
 	startTripleShot := true
+	infoMsg := "Enter a task for triple-shot mode"
+	if deps.IsTripleShotMode() {
+		infoMsg = "Enter a task for additional triple-shot"
+	}
 	return Result{
 		StartTripleShot: &startTripleShot,
-		InfoMessage:     "Enter a task for triple-shot mode",
+		InfoMessage:     infoMsg,
 	}
 }
 
@@ -954,27 +958,37 @@ func cmdAccept(deps Dependencies) Result {
 		return Result{ErrorMessage: "Not in triple-shot mode. Use :tripleshot to start a new session."}
 	}
 
-	coordinator := deps.GetTripleShotCoordinator()
-	if coordinator == nil {
-		return Result{ErrorMessage: "No active triple-shot session"}
+	// The model will find the appropriate tripleshot based on the currently
+	// selected instance. We just need to verify at least one is complete.
+	hasComplete := false
+	for _, coord := range deps.GetTripleShotCoordinators() {
+		if coord == nil {
+			continue
+		}
+		session := coord.Session()
+		if session != nil && session.Phase == orchestrator.PhaseTripleShotComplete && session.Evaluation != nil {
+			hasComplete = true
+			break
+		}
 	}
 
-	session := coordinator.Session()
-	if session == nil {
-		return Result{ErrorMessage: "No active triple-shot session"}
+	if !hasComplete {
+		// Fall back to deprecated single coordinator for backward compatibility
+		coordinator := deps.GetTripleShotCoordinator()
+		if coordinator != nil {
+			session := coordinator.Session()
+			if session != nil && session.Phase == orchestrator.PhaseTripleShotComplete && session.Evaluation != nil {
+				hasComplete = true
+			}
+		}
 	}
 
-	// Check if triple-shot is complete
-	if session.Phase != orchestrator.PhaseTripleShotComplete {
-		return Result{ErrorMessage: fmt.Sprintf("Triple-shot not complete (current phase: %s)", session.Phase)}
-	}
-
-	// Check if we have an evaluation
-	if session.Evaluation == nil {
-		return Result{ErrorMessage: "No evaluation available"}
+	if !hasComplete {
+		return Result{ErrorMessage: "No complete triple-shot session. Wait for evaluation to finish."}
 	}
 
 	// Signal to the model that we want to accept the winning solution
+	// The model will determine which tripleshot to accept based on active instance
 	acceptTripleShot := true
 	return Result{
 		AcceptTripleShot: &acceptTripleShot,

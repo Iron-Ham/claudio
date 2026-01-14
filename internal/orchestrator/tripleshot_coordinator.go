@@ -228,7 +228,14 @@ func (c *TripleShotCoordinator) StartAttempts() error {
 	session.StartedAt = &now
 
 	// Find the triple-shot group to add instances to
-	tripleGroup := c.baseSession.GetGroupBySessionType(SessionTypeTripleShot)
+	// Use GroupID for multi-tripleshot support; fall back to session type for backward compatibility
+	var tripleGroup *InstanceGroup
+	if session.GroupID != "" {
+		tripleGroup = c.baseSession.GetGroup(session.GroupID)
+	}
+	if tripleGroup == nil {
+		tripleGroup = c.baseSession.GetGroupBySessionType(SessionTypeTripleShot)
+	}
 
 	// Create and start all three attempts
 	for i := range 3 {
@@ -313,7 +320,15 @@ func (c *TripleShotCoordinator) StartJudge() error {
 	}
 
 	// Add judge to the triple-shot group for sidebar display
-	if tripleGroup := c.baseSession.GetGroupBySessionType(SessionTypeTripleShot); tripleGroup != nil {
+	// Use GroupID for multi-tripleshot support; fall back to session type for backward compatibility
+	var tripleGroup *InstanceGroup
+	if session.GroupID != "" {
+		tripleGroup = c.baseSession.GetGroup(session.GroupID)
+	}
+	if tripleGroup == nil {
+		tripleGroup = c.baseSession.GetGroupBySessionType(SessionTypeTripleShot)
+	}
+	if tripleGroup != nil {
 		tripleGroup.AddInstance(inst.ID)
 	}
 

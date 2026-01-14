@@ -2,6 +2,7 @@ package view
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
@@ -20,13 +21,65 @@ var (
 
 // TripleShotState holds the state for triple-shot mode
 type TripleShotState struct {
-	Coordinator       *orchestrator.TripleShotCoordinator
+	// Coordinators maps group IDs to their tripleshot coordinators.
+	// This enables multiple concurrent tripleshot sessions.
+	Coordinators map[string]*orchestrator.TripleShotCoordinator
+
+	// Coordinator is kept for backward compatibility during transition.
+	// Deprecated: Use Coordinators map instead.
+	Coordinator *orchestrator.TripleShotCoordinator
+
 	NeedsNotification bool // Set when user input is needed (checked on tick)
 
 	// PlanGroupIDs tracks groups created by :plan commands while in triple-shot mode.
 	// These appear as separate sections in the sidebar.
 	// Note: :ultraplan is not allowed in triple-shot mode.
 	PlanGroupIDs []string
+}
+
+// GetCoordinatorForGroup returns the coordinator for a specific group ID.
+func (s *TripleShotState) GetCoordinatorForGroup(groupID string) *orchestrator.TripleShotCoordinator {
+	if s.Coordinators != nil {
+		if coord, ok := s.Coordinators[groupID]; ok {
+			return coord
+		}
+	}
+	// Fall back to single coordinator for backward compatibility
+	return s.Coordinator
+}
+
+// GetAllCoordinators returns all active tripleshot coordinators.
+// Results are sorted by group ID for deterministic ordering.
+func (s *TripleShotState) GetAllCoordinators() []*orchestrator.TripleShotCoordinator {
+	if s == nil {
+		return nil
+	}
+	if len(s.Coordinators) > 0 {
+		// Sort keys for deterministic iteration order
+		keys := make([]string, 0, len(s.Coordinators))
+		for k := range s.Coordinators {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		coords := make([]*orchestrator.TripleShotCoordinator, 0, len(s.Coordinators))
+		for _, k := range keys {
+			coords = append(coords, s.Coordinators[k])
+		}
+		return coords
+	}
+	if s.Coordinator != nil {
+		return []*orchestrator.TripleShotCoordinator{s.Coordinator}
+	}
+	return nil
+}
+
+// HasActiveCoordinators returns true if there are any active tripleshot coordinators.
+func (s *TripleShotState) HasActiveCoordinators() bool {
+	if s == nil {
+		return false
+	}
+	return len(s.Coordinators) > 0 || s.Coordinator != nil
 }
 
 // TripleShotRenderContext provides the necessary context for rendering triple-shot views
@@ -39,13 +92,49 @@ type TripleShotRenderContext struct {
 	Height       int
 }
 
-// RenderTripleShotHeader renders a compact header showing triple-shot status
+// RenderTripleShotHeader renders a compact header showing triple-shot status.
+// For multiple tripleshots, shows a summary count.
 func RenderTripleShotHeader(ctx TripleShotRenderContext) string {
-	if ctx.TripleShot == nil || ctx.TripleShot.Coordinator == nil {
+	if ctx.TripleShot == nil || !ctx.TripleShot.HasActiveCoordinators() {
 		return ""
 	}
 
-	session := ctx.TripleShot.Coordinator.Session()
+	coordinators := ctx.TripleShot.GetAllCoordinators()
+	if len(coordinators) == 0 {
+		return ""
+	}
+
+	// For multiple tripleshots, show a summary
+	if len(coordinators) > 1 {
+		working := 0
+		complete := 0
+		failed := 0
+		for _, coord := range coordinators {
+			session := coord.Session()
+			if session == nil {
+				continue
+			}
+			switch session.Phase {
+			case orchestrator.PhaseTripleShotWorking, orchestrator.PhaseTripleShotEvaluating:
+				working++
+			case orchestrator.PhaseTripleShotComplete:
+				complete++
+			case orchestrator.PhaseTripleShotFailed:
+				failed++
+			}
+		}
+		summary := fmt.Sprintf("%d active", len(coordinators))
+		if complete > 0 {
+			summary += fmt.Sprintf(", %d complete", complete)
+		}
+		if failed > 0 {
+			summary += fmt.Sprintf(", %d failed", failed)
+		}
+		return tsSubtle.Render("Triple-Shots: ") + summary
+	}
+
+	// Single tripleshot - show detailed status
+	session := coordinators[0].Session()
 	if session == nil {
 		return ""
 	}
@@ -108,30 +197,70 @@ func RenderTripleShotHeader(ctx TripleShotRenderContext) string {
 	return tsSubtle.Render("Triple-Shot: ") + header
 }
 
-// RenderTripleShotSidebarSection renders a sidebar section for triple-shot mode
+// RenderTripleShotSidebarSection renders a sidebar section for triple-shot mode.
+// For multiple tripleshots, iterates through all tripleshot groups.
 func RenderTripleShotSidebarSection(ctx TripleShotRenderContext, width int) string {
-	if ctx.TripleShot == nil || ctx.TripleShot.Coordinator == nil {
-		return ""
-	}
-
-	session := ctx.TripleShot.Coordinator.Session()
-	if session == nil {
+	if ctx.TripleShot == nil || !ctx.TripleShot.HasActiveCoordinators() {
 		return ""
 	}
 
 	var lines []string
 
-	// Title
+	// Title - show count if multiple
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(styles.PurpleColor)
-	lines = append(lines, titleStyle.Render("Triple-Shot"))
+	coordinators := ctx.TripleShot.GetAllCoordinators()
+	if len(coordinators) > 1 {
+		lines = append(lines, titleStyle.Render(fmt.Sprintf("Triple-Shots (%d)", len(coordinators))))
+	} else {
+		lines = append(lines, titleStyle.Render("Triple-Shot"))
+	}
 	lines = append(lines, "")
 
-	// Task preview
-	task := session.Task
-	if len(task) > width-4 {
-		task = task[:width-7] + "..."
+	// Render each tripleshot session
+	for idx, coord := range coordinators {
+		session := coord.Session()
+		if session == nil {
+			continue
+		}
+
+		// Add separator between tripleshots
+		if idx > 0 {
+			lines = append(lines, "")
+			lines = append(lines, strings.Repeat("─", width-4))
+			lines = append(lines, "")
+		}
+
+		lines = append(lines, renderSingleTripleShotSection(ctx, session, width, idx+1, len(coordinators) > 1)...)
 	}
-	lines = append(lines, tsSubtle.Render("Task: ")+task)
+
+	// Render plan groups if any exist
+	planGroupLines := renderTripleShotPlanGroups(ctx, width)
+	if planGroupLines != "" {
+		lines = append(lines, "")
+		lines = append(lines, planGroupLines)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// renderSingleTripleShotSection renders a single tripleshot session's status.
+func renderSingleTripleShotSection(ctx TripleShotRenderContext, session *orchestrator.TripleShotSession, width int, index int, showIndex bool) []string {
+	var lines []string
+
+	// Task preview with optional index
+	task := session.Task
+	maxTaskLen := width - 10
+	if showIndex {
+		maxTaskLen -= 4 // Account for "#N: " prefix
+	}
+	if len(task) > maxTaskLen {
+		task = task[:maxTaskLen-3] + "..."
+	}
+	if showIndex {
+		lines = append(lines, tsSubtle.Render(fmt.Sprintf("#%d: ", index))+task)
+	} else {
+		lines = append(lines, tsSubtle.Render("Task: ")+task)
+	}
 	lines = append(lines, "")
 
 	// Attempt status
@@ -221,23 +350,54 @@ func RenderTripleShotSidebarSection(ctx TripleShotRenderContext, width int) stri
 		}
 	}
 
-	// Render plan groups if any exist
-	planGroupLines := renderTripleShotPlanGroups(ctx, width)
-	if planGroupLines != "" {
-		lines = append(lines, "")
-		lines = append(lines, planGroupLines)
-	}
-
-	return strings.Join(lines, "\n")
+	return lines
 }
 
-// RenderTripleShotEvaluation renders the full evaluation results
+// findTripleShotForActiveInstance finds the tripleshot session that contains
+// the currently active instance (based on activeTab).
+func findTripleShotForActiveInstance(ctx TripleShotRenderContext) *orchestrator.TripleShotSession {
+	if ctx.Session == nil || ctx.ActiveTab >= len(ctx.Session.Instances) {
+		return nil
+	}
+
+	activeInst := ctx.Session.Instances[ctx.ActiveTab]
+	if activeInst == nil {
+		return nil
+	}
+
+	// Search through all coordinators to find which tripleshot owns this instance
+	for _, coord := range ctx.TripleShot.GetAllCoordinators() {
+		session := coord.Session()
+		if session == nil {
+			continue
+		}
+
+		// Check if active instance is one of the attempts
+		for _, attempt := range session.Attempts {
+			if attempt.InstanceID == activeInst.ID {
+				return session
+			}
+		}
+
+		// Check if active instance is the judge
+		if session.JudgeID == activeInst.ID {
+			return session
+		}
+	}
+
+	return nil
+}
+
+// RenderTripleShotEvaluation renders the full evaluation results.
+// For multiple tripleshots, renders the evaluation for the tripleshot
+// whose instance is currently selected (based on activeTab).
 func RenderTripleShotEvaluation(ctx TripleShotRenderContext) string {
-	if ctx.TripleShot == nil || ctx.TripleShot.Coordinator == nil {
+	if ctx.TripleShot == nil || !ctx.TripleShot.HasActiveCoordinators() {
 		return ""
 	}
 
-	session := ctx.TripleShot.Coordinator.Session()
+	// Find the tripleshot session for the currently active instance
+	session := findTripleShotForActiveInstance(ctx)
 	if session == nil || session.Evaluation == nil {
 		return ""
 	}
