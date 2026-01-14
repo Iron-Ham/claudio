@@ -128,11 +128,23 @@ type CommandCategory struct {
 	Commands []CommandInfo
 }
 
+// CommandFlagInfo documents a flag for a command that accepts arguments.
+// These flags are used in the TUI command mode (e.g., ":ultraplan --multi-pass").
+type CommandFlagInfo struct {
+	// Command is the base command (e.g., "ultraplan", "pr")
+	Command string
+	// Flag is the flag syntax as it should appear in help (e.g., "--multi-pass", "--plan <file>")
+	Flag string
+	// Description is a brief description of what the flag does
+	Description string
+}
+
 // Handler processes vim-style commands for the TUI.
 type Handler struct {
 	commands    map[string]commandFunc
 	argCommands map[string]commandArgFunc // Commands that accept arguments
 	categories  []CommandCategory
+	flags       []CommandFlagInfo
 }
 
 // commandFunc is the signature for command implementations.
@@ -151,12 +163,18 @@ func New() *Handler {
 	}
 	h.registerCommands()
 	h.buildCategories()
+	h.buildFlags()
 	return h
 }
 
 // Categories returns the command categories for help display.
 func (h *Handler) Categories() []CommandCategory {
 	return h.categories
+}
+
+// Flags returns the documented command flags for help display validation.
+func (h *Handler) Flags() []CommandFlagInfo {
+	return h.flags
 }
 
 // Execute parses and executes a command string.
@@ -324,7 +342,7 @@ func (h *Handler) buildCategories() {
 				{ShortKey: "", LongKey: "tripleshot", Description: "Start triple-shot mode (3 parallel attempts + judge)", Category: "utility"},
 				{ShortKey: "", LongKey: "plan", Description: "Start inline plan mode for structured task planning", Category: "utility"},
 				{ShortKey: "", LongKey: "multiplan", Description: "Start multi-pass plan mode (3 planners + 1 assessor)", Category: "utility"},
-				{ShortKey: "", LongKey: "ultraplan", Description: "Start ultraplan mode for parallel task execution", Category: "utility"},
+				{ShortKey: "", LongKey: "ultraplan", Description: "Start ultraplan mode (use --multi-pass or --plan flags)", Category: "utility"},
 			},
 		},
 		{
@@ -346,6 +364,23 @@ func (h *Handler) buildCategories() {
 				{ShortKey: "", LongKey: "group show", Description: "Toggle grouped instance view on/off", Category: "group"},
 			},
 		},
+	}
+}
+
+// buildFlags populates the flags slice with all documented command flags.
+// These flags should be documented in the help panel (DefaultHelpSections).
+//
+// IMPORTANT: When adding new flags to TUI commands, add them here too.
+// The TestDefaultHelpSectionsContainsAllFlags test will fail if any
+// flags listed here are not documented in the help panel.
+func (h *Handler) buildFlags() {
+	h.flags = []CommandFlagInfo{
+		// Ultraplan flags
+		{Command: "ultraplan", Flag: "--multi-pass", Description: "Use multi-pass planning (3 strategies)"},
+		{Command: "ultraplan", Flag: "--plan <file>", Description: "Load plan from existing file"},
+
+		// PR flags (these are already documented as separate commands in buildCategories,
+		// so we only need to add truly new flags here that aren't full commands)
 	}
 }
 

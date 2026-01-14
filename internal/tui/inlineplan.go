@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
@@ -51,12 +52,36 @@ func (m *Model) initInlineMultiPlanMode() {
 // This creates the UltraPlan coordinator and enters the planning workflow.
 func (m *Model) initInlineUltraPlanMode(result command.Result) {
 	// Start with default config to get proper defaults (e.g., RequireVerifiedCommits: true)
-	cfg := orchestrator.DefaultUltraPlanConfig()
-	cfg.AutoApprove = false // Default to requiring approval in inline mode
-	cfg.Review = true       // Always review in inline mode
+	ultraCfg := orchestrator.DefaultUltraPlanConfig()
+	ultraCfg.AutoApprove = false // Default to requiring approval in inline mode
+	ultraCfg.Review = true       // Always review in inline mode
 
+	// Apply config file settings (same as CLI ultraplan does)
+	// Use Load() instead of Get() so we can warn users if config fails to load
+	appCfg, err := config.Load()
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Warn("failed to load config file, using defaults for ultraplan",
+				"error", err)
+		}
+		appCfg = config.Default()
+	}
+	ultraCfg.MaxParallel = appCfg.Ultraplan.MaxParallel
+	ultraCfg.MultiPass = appCfg.Ultraplan.MultiPass
+	if appCfg.Ultraplan.ConsolidationMode != "" {
+		ultraCfg.ConsolidationMode = orchestrator.ConsolidationMode(appCfg.Ultraplan.ConsolidationMode)
+	}
+	ultraCfg.CreateDraftPRs = appCfg.Ultraplan.CreateDraftPRs
+	if len(appCfg.Ultraplan.PRLabels) > 0 {
+		ultraCfg.PRLabels = appCfg.Ultraplan.PRLabels
+	}
+	ultraCfg.BranchPrefix = appCfg.Ultraplan.BranchPrefix
+	ultraCfg.MaxTaskRetries = appCfg.Ultraplan.MaxTaskRetries
+	ultraCfg.RequireVerifiedCommits = appCfg.Ultraplan.RequireVerifiedCommits
+
+	// Command flags override config file settings
 	if result.UltraPlanMultiPass != nil && *result.UltraPlanMultiPass {
-		cfg.MultiPass = true
+		ultraCfg.MultiPass = true
 	}
 
 	// If loading from file, handle that case
@@ -69,7 +94,7 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 		}
 
 		// Create ultraplan session with loaded plan
-		ultraSession := orchestrator.NewUltraPlanSession("", cfg)
+		ultraSession := orchestrator.NewUltraPlanSession("", ultraCfg)
 		ultraSession.Plan = plan
 		ultraSession.Phase = orchestrator.PhaseRefresh
 
@@ -82,7 +107,7 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 
 		// Create a group for this ultraplan session
 		sessionType := orchestrator.SessionTypeUltraPlan
-		if cfg.MultiPass {
+		if ultraCfg.MultiPass {
 			sessionType = orchestrator.SessionTypePlanMulti
 		}
 		objective := plan.Objective
@@ -116,14 +141,14 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 		objective := *result.UltraPlanObjective
 
 		// Create ultraplan session
-		ultraSession := orchestrator.NewUltraPlanSession(objective, cfg)
+		ultraSession := orchestrator.NewUltraPlanSession(objective, ultraCfg)
 
 		// Initialize coordinator
 		coordinator := orchestrator.NewCoordinator(m.orchestrator, m.session, ultraSession, m.logger)
 
 		// Create a group for this ultraplan session
 		sessionType := orchestrator.SessionTypeUltraPlan
-		if cfg.MultiPass {
+		if ultraCfg.MultiPass {
 			sessionType = orchestrator.SessionTypePlanMulti
 		}
 		ultraGroup := orchestrator.NewInstanceGroupWithType(
@@ -157,7 +182,7 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 		AwaitingObjective: true,
 		TaskToInstance:    make(map[string]string),
 		IsUltraPlan:       true,
-		UltraPlanConfig:   &cfg,
+		UltraPlanConfig:   &ultraCfg,
 	}
 
 	m.addingTask = true
