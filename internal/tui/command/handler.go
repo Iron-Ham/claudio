@@ -82,8 +82,9 @@ type Result struct {
 	TerminalDirMode   *int // 0 = invocation, 1 = worktree
 
 	// Mode transition - Triple-Shot
-	StartTripleShot  *bool // Request to switch to triple-shot mode
-	AcceptTripleShot *bool // Request to accept/apply the winning triple-shot solution
+	StartTripleShot      *bool    // Request to switch to triple-shot mode
+	AcceptTripleShot     *bool    // Request to accept/apply the winning triple-shot solution
+	TripleShotApproaches []string // Guided divergence approaches for tripleshot (up to 3)
 
 	// Mode transition - Plan Mode
 	StartPlanMode *bool // Request to switch to inline plan mode
@@ -245,9 +246,9 @@ func (h *Handler) registerCommands() {
 	h.argCommands["up"] = cmdUltraPlan
 
 	// Triple-shot commands
-	h.commands["tripleshot"] = cmdTripleShot
-	h.commands["triple"] = cmdTripleShot
-	h.commands["3shot"] = cmdTripleShot
+	h.argCommands["tripleshot"] = cmdTripleShotWithArgs
+	h.argCommands["triple"] = cmdTripleShotWithArgs
+	h.argCommands["3shot"] = cmdTripleShotWithArgs
 	h.commands["accept"] = cmdAccept
 
 	// Plan mode commands
@@ -926,7 +927,14 @@ func cmdUltraPlanCancel(deps Dependencies) Result {
 	return Result{InfoMessage: "Execution cancelled"}
 }
 
-func cmdTripleShot(deps Dependencies) Result {
+// cmdTripleShotWithArgs handles the :tripleshot command with optional approach arguments.
+// Usage:
+//   - :tripleshot                           - Start tripleshot, prompt for task
+//   - :tripleshot --approach "use X"        - Add a guided approach (can use up to 3 times)
+//   - :tripleshot -a "approach 1" -a "approach 2" -a "approach 3"
+//
+// Approaches guide each of the three instances on which solution strategy to use.
+func cmdTripleShotWithArgs(deps Dependencies, args string) Result {
 	// Check if triple-shot is enabled in config
 	if !viper.GetBool("experimental.triple_shot") {
 		return Result{ErrorMessage: "Triple-shot mode is disabled. Enable it in :config under Experimental"}
@@ -939,6 +947,12 @@ func cmdTripleShot(deps Dependencies) Result {
 
 	// Multiple tripleshots are now allowed - no check for IsTripleShotMode()
 
+	// Parse approaches from args
+	approaches := parseTripleShotApproaches(args)
+	if len(approaches) > 3 {
+		return Result{ErrorMessage: "At most 3 approaches can be specified (one per instance)"}
+	}
+
 	// Signal to the model that we want to enter triple-shot mode
 	// The model will handle prompting for the task
 	startTripleShot := true
@@ -946,10 +960,111 @@ func cmdTripleShot(deps Dependencies) Result {
 	if deps.IsTripleShotMode() {
 		infoMsg = "Enter a task for additional triple-shot"
 	}
-	return Result{
+	if len(approaches) == 1 {
+		infoMsg += " (1 approach specified)"
+	} else if len(approaches) > 1 {
+		infoMsg += fmt.Sprintf(" (%d approaches specified)", len(approaches))
+	}
+
+	result := Result{
 		StartTripleShot: &startTripleShot,
 		InfoMessage:     infoMsg,
 	}
+
+	// Include approaches if any were specified
+	if len(approaches) > 0 {
+		// Pad to 3 elements to match the 3 instances
+		paddedApproaches := make([]string, 3)
+		copy(paddedApproaches, approaches)
+		result.TripleShotApproaches = paddedApproaches
+	}
+
+	return result
+}
+
+// parseTripleShotApproaches parses --approach or -a flags from the command arguments.
+// Returns a slice of approach strings.
+func parseTripleShotApproaches(args string) []string {
+	if args == "" {
+		return nil
+	}
+
+	var approaches []string
+	remaining := args
+
+	for remaining != "" {
+		remaining = strings.TrimSpace(remaining)
+		if remaining == "" {
+			break
+		}
+
+		// Check for --approach or -a flag
+		var hasFlag bool
+		if rest, found := strings.CutPrefix(remaining, "--approach"); found {
+			remaining = strings.TrimSpace(rest)
+			hasFlag = true
+		} else if rest, found := strings.CutPrefix(remaining, "-a"); found {
+			remaining = strings.TrimSpace(rest)
+			hasFlag = true
+		}
+
+		if hasFlag {
+			// Parse the value (either quoted or unquoted)
+			approach, rest := parseQuotedOrWord(remaining)
+			if approach != "" {
+				approaches = append(approaches, approach)
+			}
+			remaining = rest
+		} else {
+			// Unknown flag or trailing content - skip to next word
+			_, rest := parseQuotedOrWord(remaining)
+			remaining = rest
+		}
+	}
+
+	return approaches
+}
+
+// parseQuotedOrWord parses either a quoted string or an unquoted word from the input.
+// Returns the parsed value and the remaining string.
+func parseQuotedOrWord(s string) (string, string) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", ""
+	}
+
+	// Check for quoted string
+	if s[0] == '"' || s[0] == '\'' {
+		quote := s[0]
+		end := strings.IndexByte(s[1:], quote)
+		if end >= 0 {
+			return s[1 : end+1], strings.TrimSpace(s[end+2:])
+		}
+		// No closing quote - take rest of string
+		return s[1:], ""
+	}
+
+	// Unquoted word - take until next space or flag
+	for i, r := range s {
+		if r == ' ' || r == '\t' {
+			return s[:i], strings.TrimSpace(s[i:])
+		}
+		// Stop at next flag (must be followed by space/quote/end to avoid matching mid-word like "use-a-cache")
+		if i > 0 {
+			rest := s[i:]
+			if strings.HasPrefix(rest, "--") {
+				return strings.TrimSpace(s[:i]), rest
+			}
+			// -a must be followed by space, quote, or be at end to be a flag
+			if strings.HasPrefix(rest, "-a") {
+				afterFlag := rest[2:]
+				if afterFlag == "" || afterFlag[0] == ' ' || afterFlag[0] == '\t' || afterFlag[0] == '"' || afterFlag[0] == '\'' {
+					return strings.TrimSpace(s[:i]), rest
+				}
+			}
+		}
+	}
+	return s, ""
 }
 
 func cmdAccept(deps Dependencies) Result {

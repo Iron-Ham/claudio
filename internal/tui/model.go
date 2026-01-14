@@ -158,7 +158,8 @@ type Model struct {
 	dependentOnInstanceID string // The instance ID that the new task will depend on
 
 	// Triple-shot task state (for :tripleshot command)
-	startingTripleShot bool // When true, taskInput will start a triple-shot session
+	startingTripleShot   bool     // When true, taskInput will start a triple-shot session
+	tripleShotApproaches []string // Guided divergence approaches for the pending tripleshot
 
 	errorMessage string
 	infoMessage  string // Non-error status message

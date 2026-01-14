@@ -32,24 +32,43 @@ The process has three phases:
 2. EVALUATING: A judge instance reviews all three solutions
 3. COMPLETE: The judge provides an evaluation with a recommended approach
 
+Guided Divergence:
+You can specify different approaches for each of the three instances using --approach
+flags. This lets you explore specific solution strategies rather than letting each
+instance choose its own approach.
+
 Examples:
   # Start triple-shot with a task
   claudio tripleshot "Implement a rate limiter for the API"
 
   # Start with auto-approve (apply winning solution automatically)
-  claudio tripleshot --auto-approve "Refactor the authentication module"`,
+  claudio tripleshot --auto-approve "Refactor the authentication module"
+
+  # Guided divergence - specify approaches for each instance
+  claudio tripleshot "Implement sorting" \
+    --approach "Use quicksort algorithm" \
+    --approach "Use merge sort algorithm" \
+    --approach "Use heap sort algorithm"
+
+  # Partial guidance - only specify some approaches (others choose freely)
+  claudio tripleshot "Build a cache" \
+    --approach "Use in-memory LRU cache" \
+    --approach "" \
+    --approach "Use Redis-based distributed cache"`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runTripleshot,
 }
 
 var (
 	tripleshotAutoApprove bool
+	tripleshotApproaches  []string
 )
 
 func init() {
 	rootCmd.AddCommand(tripleshotCmd)
 
 	tripleshotCmd.Flags().BoolVar(&tripleshotAutoApprove, "auto-approve", false, "Auto-approve applying the winning solution")
+	tripleshotCmd.Flags().StringArrayVar(&tripleshotApproaches, "approach", nil, "Specify an approach for one of the three instances (can be used up to 3 times)")
 }
 
 func runTripleshot(cmd *cobra.Command, args []string) error {
@@ -76,6 +95,17 @@ func runTripleshot(cmd *cobra.Command, args []string) error {
 	// Create triple-shot configuration
 	tripleConfig := orchestrator.DefaultTripleShotConfig()
 	tripleConfig.AutoApprove = tripleshotAutoApprove
+
+	// Set guided divergence approaches if specified
+	if len(tripleshotApproaches) > 0 {
+		if len(tripleshotApproaches) > 3 {
+			return fmt.Errorf("at most 3 approaches can be specified (one per instance)")
+		}
+		// Pad to 3 elements if fewer were provided
+		approaches := make([]string, 3)
+		copy(approaches, tripleshotApproaches)
+		tripleConfig.Approaches = approaches
+	}
 
 	// Create logger if enabled
 	sessionDir := sessutil.GetSessionDir(cwd, sessionID)

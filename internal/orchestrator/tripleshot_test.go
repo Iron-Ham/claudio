@@ -487,6 +487,173 @@ func TestTripleShotConfig_Default(t *testing.T) {
 	if config.AutoApprove {
 		t.Error("default AutoApprove should be false")
 	}
+	if config.Approaches != nil {
+		t.Error("default Approaches should be nil")
+	}
+}
+
+func TestTripleShotConfig_GetApproach(t *testing.T) {
+	tests := []struct {
+		name         string
+		approaches   []string
+		attemptIndex int
+		want         string
+	}{
+		{
+			name:         "nil approaches",
+			approaches:   nil,
+			attemptIndex: 0,
+			want:         "",
+		},
+		{
+			name:         "empty approaches",
+			approaches:   []string{},
+			attemptIndex: 0,
+			want:         "",
+		},
+		{
+			name:         "valid index 0",
+			approaches:   []string{"approach 1", "approach 2", "approach 3"},
+			attemptIndex: 0,
+			want:         "approach 1",
+		},
+		{
+			name:         "valid index 2",
+			approaches:   []string{"approach 1", "approach 2", "approach 3"},
+			attemptIndex: 2,
+			want:         "approach 3",
+		},
+		{
+			name:         "index out of bounds negative",
+			approaches:   []string{"approach 1", "approach 2", "approach 3"},
+			attemptIndex: -1,
+			want:         "",
+		},
+		{
+			name:         "index out of bounds too large",
+			approaches:   []string{"approach 1", "approach 2", "approach 3"},
+			attemptIndex: 3,
+			want:         "",
+		},
+		{
+			name:         "partial approaches with empty string",
+			approaches:   []string{"approach 1", "", "approach 3"},
+			attemptIndex: 1,
+			want:         "",
+		},
+		{
+			name:         "partial approaches shorter than 3",
+			approaches:   []string{"approach 1"},
+			attemptIndex: 0,
+			want:         "approach 1",
+		},
+		{
+			name:         "partial approaches index beyond length",
+			approaches:   []string{"approach 1"},
+			attemptIndex: 1,
+			want:         "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := TripleShotConfig{Approaches: tt.approaches}
+			got := config.GetApproach(tt.attemptIndex)
+			if got != tt.want {
+				t.Errorf("GetApproach(%d) = %q, want %q", tt.attemptIndex, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildAttemptPrompt(t *testing.T) {
+	task := "Implement a sorting algorithm"
+
+	tests := []struct {
+		name         string
+		approach     string
+		attemptIndex int
+		wantContains []string
+		wantAbsent   []string
+	}{
+		{
+			name:         "no approach uses unguided template",
+			approach:     "",
+			attemptIndex: 0,
+			wantContains: []string{
+				task,
+				"solve the problem using your own approach",
+				"attempt_index\": 0",
+			},
+			wantAbsent: []string{
+				"Your Assigned Approach",
+				"You must use this approach",
+			},
+		},
+		{
+			name:         "with approach uses guided template",
+			approach:     "Use quicksort algorithm",
+			attemptIndex: 1,
+			wantContains: []string{
+				task,
+				"Your Assigned Approach",
+				"Use quicksort algorithm",
+				"attempt_index\": 1",
+				"Follow the assigned approach",
+			},
+			wantAbsent: []string{
+				"solve the problem using your own approach",
+			},
+		},
+		{
+			name:         "attempt index 2",
+			approach:     "Use merge sort",
+			attemptIndex: 2,
+			wantContains: []string{
+				"attempt_index\": 2",
+				"Use merge sort",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prompt := BuildAttemptPrompt(task, tt.attemptIndex, tt.approach)
+
+			for _, want := range tt.wantContains {
+				if !strings.Contains(prompt, want) {
+					t.Errorf("prompt should contain %q", want)
+				}
+			}
+
+			for _, absent := range tt.wantAbsent {
+				if strings.Contains(prompt, absent) {
+					t.Errorf("prompt should not contain %q", absent)
+				}
+			}
+		})
+	}
+}
+
+func TestTripleShotGuidedAttemptPromptTemplate(t *testing.T) {
+	// Verify the guided template contains expected placeholders
+	if len(TripleShotGuidedAttemptPromptTemplate) == 0 {
+		t.Error("TripleShotGuidedAttemptPromptTemplate should not be empty")
+	}
+	// First %s is task, second %s is approach, %d is attempt index
+	count := strings.Count(TripleShotGuidedAttemptPromptTemplate, "%s")
+	if count != 2 {
+		t.Errorf("template should contain 2 %%s placeholders (task and approach), got %d", count)
+	}
+	if !strings.Contains(TripleShotGuidedAttemptPromptTemplate, "%d") {
+		t.Error("template should contain attempt index placeholder")
+	}
+	if !strings.Contains(TripleShotGuidedAttemptPromptTemplate, "Your Assigned Approach") {
+		t.Error("template should contain 'Your Assigned Approach' section")
+	}
+	if !strings.Contains(TripleShotGuidedAttemptPromptTemplate, TripleShotCompletionFileName) {
+		t.Error("template should reference completion file name")
+	}
 }
 
 func TestTripleShotPhases(t *testing.T) {

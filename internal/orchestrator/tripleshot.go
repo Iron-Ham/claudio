@@ -57,6 +57,12 @@ const (
 type TripleShotConfig struct {
 	// AutoApprove skips user confirmation for applying the winning solution
 	AutoApprove bool `json:"auto_approve"`
+
+	// Approaches specifies the guided approaches for each of the three instances.
+	// If empty or nil, instances choose their own approaches.
+	// If specified, each entry guides the corresponding instance (index 0, 1, 2).
+	// Partial specification is allowed - empty strings mean "choose your own approach".
+	Approaches []string `json:"approaches,omitempty"`
 }
 
 // DefaultTripleShotConfig returns the default configuration
@@ -361,7 +367,7 @@ func (m *TripleShotManager) SetEvaluation(eval *TripleShotEvaluation) {
 	})
 }
 
-// TripleShotAttemptPromptTemplate is the prompt template for each attempt
+// TripleShotAttemptPromptTemplate is the prompt template for each attempt (unguided)
 const TripleShotAttemptPromptTemplate = `You are one of three Claude instances working on the same problem.
 Your goal is to solve the problem using your own approach - be creative and thorough.
 
@@ -396,6 +402,67 @@ When your solution is complete, you MUST write a completion file:
 4. The approach field is important - it helps the judge understand your solution
 
 This file signals that your work is done and provides context for evaluation.`
+
+// TripleShotGuidedAttemptPromptTemplate is the prompt template for guided attempts
+// where the user has specified a particular approach for this instance to explore.
+const TripleShotGuidedAttemptPromptTemplate = `You are one of three Claude instances working on the same problem.
+Your goal is to solve the problem using a specific approach that has been assigned to you.
+
+## Task
+%s
+
+## Your Assigned Approach
+**You must use this approach:** %s
+
+This approach was chosen by the user to explore this particular solution strategy.
+Focus on implementing the solution using this approach while maintaining code quality.
+
+## Important Instructions
+
+1. **Follow the assigned approach** - Use the approach specified above as your implementation strategy
+2. **Solve the problem independently** - Don't try to coordinate with other instances
+3. **Document your approach** - Write clear commit messages and code comments explaining how you applied this approach
+4. **Be thorough** - Make sure your solution is complete and well-tested
+
+## Completion Protocol
+
+When your solution is complete, you MUST write a completion file:
+
+1. Use Write tool to create ` + "`" + TripleShotCompletionFileName + "`" + ` in your worktree root
+2. Include this JSON structure:
+` + "```json" + `
+{
+  "attempt_index": %d,
+  "status": "complete",
+  "summary": "Brief summary of what you implemented",
+  "files_modified": ["file1.go", "file2.go"],
+  "approach": "Description of the approach you took and why",
+  "notes": "Any additional notes or concerns"
+}
+` + "```" + `
+
+3. Set status to "complete" if you finished successfully, or "failed" if you couldn't complete the task
+4. The approach field is important - it helps the judge understand your solution
+
+This file signals that your work is done and provides context for evaluation.`
+
+// BuildAttemptPrompt creates the appropriate prompt for an attempt based on whether
+// a guided approach is specified. If approach is empty, uses the unguided template.
+func BuildAttemptPrompt(task string, attemptIndex int, approach string) string {
+	if approach == "" {
+		return fmt.Sprintf(TripleShotAttemptPromptTemplate, task, attemptIndex)
+	}
+	return fmt.Sprintf(TripleShotGuidedAttemptPromptTemplate, task, approach, attemptIndex)
+}
+
+// GetApproach returns the approach for a given attempt index from the config.
+// Returns empty string if no approaches are configured or if index is out of bounds.
+func (c *TripleShotConfig) GetApproach(attemptIndex int) string {
+	if c.Approaches == nil || attemptIndex < 0 || attemptIndex >= len(c.Approaches) {
+		return ""
+	}
+	return c.Approaches[attemptIndex]
+}
 
 // TripleShotJudgePromptTemplate is the prompt template for the judge instance
 const TripleShotJudgePromptTemplate = `You are a senior software architect evaluating three different solutions to the same problem.

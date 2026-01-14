@@ -239,7 +239,9 @@ func (c *TripleShotCoordinator) StartAttempts() error {
 
 	// Create and start all three attempts
 	for i := range 3 {
-		prompt := fmt.Sprintf(TripleShotAttemptPromptTemplate, task, i)
+		// Get approach for this attempt if guided divergence is configured
+		approach := session.Config.GetApproach(i)
+		prompt := BuildAttemptPrompt(task, i, approach)
 
 		// Create instance for this attempt
 		inst, err := c.orch.AddInstance(c.baseSession, prompt)

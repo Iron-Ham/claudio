@@ -1128,6 +1128,214 @@ func TestAcceptCommand(t *testing.T) {
 	})
 }
 
+// TestTripleShotCommandWithApproaches tests the tripleshot command with approach arguments
+func TestTripleShotCommandWithApproaches(t *testing.T) {
+	t.Run("single approach", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.triple_shot", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("tripleshot --approach \"use quicksort\"", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartTripleShot == nil || !*result.StartTripleShot {
+			t.Error("expected StartTripleShot to be true")
+		}
+		if len(result.TripleShotApproaches) != 3 {
+			t.Errorf("expected 3 approaches (padded), got %d", len(result.TripleShotApproaches))
+		}
+		if result.TripleShotApproaches[0] != "use quicksort" {
+			t.Errorf("expected first approach 'use quicksort', got %q", result.TripleShotApproaches[0])
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("three approaches", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.triple_shot", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("tripleshot --approach \"quicksort\" --approach \"mergesort\" --approach \"heapsort\"", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if len(result.TripleShotApproaches) != 3 {
+			t.Errorf("expected 3 approaches, got %d", len(result.TripleShotApproaches))
+		}
+		expected := []string{"quicksort", "mergesort", "heapsort"}
+		for i, want := range expected {
+			if result.TripleShotApproaches[i] != want {
+				t.Errorf("approach %d = %q, want %q", i, result.TripleShotApproaches[i], want)
+			}
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("short flag -a", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.triple_shot", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("tripleshot -a \"approach1\" -a \"approach2\"", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if len(result.TripleShotApproaches) != 3 {
+			t.Errorf("expected 3 approaches (padded), got %d", len(result.TripleShotApproaches))
+		}
+		if result.TripleShotApproaches[0] != "approach1" {
+			t.Errorf("expected first approach 'approach1', got %q", result.TripleShotApproaches[0])
+		}
+		if result.TripleShotApproaches[1] != "approach2" {
+			t.Errorf("expected second approach 'approach2', got %q", result.TripleShotApproaches[1])
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("too many approaches", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.triple_shot", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("tripleshot -a \"1\" -a \"2\" -a \"3\" -a \"4\"", deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error when more than 3 approaches")
+		}
+		if result.ErrorMessage != "At most 3 approaches can be specified (one per instance)" {
+			t.Errorf("unexpected error message: %q", result.ErrorMessage)
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("no approaches", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.triple_shot", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("tripleshot", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.TripleShotApproaches != nil {
+			t.Error("expected nil approaches when none specified")
+		}
+
+		viper.Reset()
+	})
+
+	t.Run("info message includes approach count", func(t *testing.T) {
+		viper.Reset()
+		viper.Set("experimental.triple_shot", true)
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("tripleshot --approach \"test\"", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		expected := "Enter a task for triple-shot mode (1 approach specified)"
+		if result.InfoMessage != expected {
+			t.Errorf("expected info message %q, got %q", expected, result.InfoMessage)
+		}
+
+		viper.Reset()
+	})
+}
+
+// TestParseTripleShotApproaches tests the approach parsing helper function
+func TestParseTripleShotApproaches(t *testing.T) {
+	tests := []struct {
+		name string
+		args string
+		want []string
+	}{
+		{
+			name: "empty string",
+			args: "",
+			want: nil,
+		},
+		{
+			name: "single approach with --approach",
+			args: "--approach \"use recursion\"",
+			want: []string{"use recursion"},
+		},
+		{
+			name: "single approach with -a",
+			args: "-a \"use iteration\"",
+			want: []string{"use iteration"},
+		},
+		{
+			name: "multiple approaches",
+			args: "--approach \"approach 1\" --approach \"approach 2\" --approach \"approach 3\"",
+			want: []string{"approach 1", "approach 2", "approach 3"},
+		},
+		{
+			name: "mixed flags",
+			args: "-a \"first\" --approach \"second\" -a \"third\"",
+			want: []string{"first", "second", "third"},
+		},
+		{
+			name: "single quoted approach",
+			args: "--approach 'single quoted'",
+			want: []string{"single quoted"},
+		},
+		{
+			name: "unquoted single word",
+			args: "--approach simple",
+			want: []string{"simple"},
+		},
+		{
+			name: "unquoted word with -a in middle",
+			args: "--approach use-a-cache",
+			want: []string{"use-a-cache"},
+		},
+		{
+			name: "unquoted word followed by -a flag",
+			args: "--approach first -a second",
+			want: []string{"first", "second"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseTripleShotApproaches(tt.args)
+			if len(got) != len(tt.want) {
+				t.Errorf("parseTripleShotApproaches(%q) = %v (len %d), want %v (len %d)",
+					tt.args, got, len(got), tt.want, len(tt.want))
+				return
+			}
+			for i, w := range tt.want {
+				if got[i] != w {
+					t.Errorf("parseTripleShotApproaches(%q)[%d] = %q, want %q",
+						tt.args, i, got[i], w)
+				}
+			}
+		})
+	}
+}
+
 // TestPlanCommand tests the plan command with config check
 func TestPlanCommand(t *testing.T) {
 	t.Run("disabled by default", func(t *testing.T) {

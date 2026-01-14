@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Guided Divergence for Tripleshot** - Specify different approaches for each of the three instances in a tripleshot session. In CLI: `claudio tripleshot --approach "use X" --approach "use Y" --approach "use Z"`. In TUI: `:tripleshot --approach "approach 1" --approach "approach 2" --approach "approach 3"`. This enables exploring specific solution strategies rather than letting each instance choose freely.
 - **Enhanced Task Decomposition** - Comprehensive `decomposition` package provides intelligent task breakdown for UltraPlan with multiple analysis strategies:
   - **Code Structure Analysis**: Parses Go source files to build package dependency graphs with centrality calculations
   - **Risk-Based Prioritization**: Multi-factor risk scoring (complexity, file count, centrality, shared files, cross-package scope) with blocking scores for execution ordering

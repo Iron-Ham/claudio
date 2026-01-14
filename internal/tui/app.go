@@ -758,6 +758,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.addingDependentTask = false
 			m.dependentOnInstanceID = ""
 			m.startingTripleShot = false
+			m.tripleShotApproaches = nil
 			m.taskInput = ""
 			m.taskInputCursor = 0
 			m.templateSuffix = ""        // Clear suffix on cancel
@@ -774,10 +775,12 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				dependsOn := m.dependentOnInstanceID
 				baseBranch := m.selectedBaseBranch
 				isTripleShot := m.startingTripleShot
+				approaches := m.tripleShotApproaches
 				m.addingTask = false
 				m.addingDependentTask = false
 				m.dependentOnInstanceID = ""
 				m.startingTripleShot = false
+				m.tripleShotApproaches = nil
 				m.taskInput = ""
 				m.taskInputCursor = 0
 				m.templateSuffix = ""        // Clear suffix after use
@@ -799,7 +802,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 				// Handle triple-shot mode initiation
 				if isTripleShot {
-					return m.initiateTripleShotMode(task)
+					return m.initiateTripleShotMode(task, approaches)
 				}
 
 				// Add instance asynchronously to avoid blocking UI during git worktree creation
@@ -820,6 +823,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.addingDependentTask = false
 			m.dependentOnInstanceID = ""
 			m.startingTripleShot = false
+			m.tripleShotApproaches = nil
 			m.taskInput = ""
 			m.taskInputCursor = 0
 			m.templateSuffix = ""        // Clear suffix on cancel
@@ -874,10 +878,12 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					dependsOn := m.dependentOnInstanceID
 					baseBranch := m.selectedBaseBranch
 					isTripleShot := m.startingTripleShot
+					approaches := m.tripleShotApproaches
 					m.addingTask = false
 					m.addingDependentTask = false
 					m.dependentOnInstanceID = ""
 					m.startingTripleShot = false
+					m.tripleShotApproaches = nil
 					m.taskInput = ""
 					m.taskInputCursor = 0
 					m.templateSuffix = ""        // Clear suffix after use
@@ -887,7 +893,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 					// Handle triple-shot mode initiation
 					if isTripleShot {
-						return m.initiateTripleShotMode(task)
+						return m.initiateTripleShotMode(task, approaches)
 					}
 
 					// Add instance asynchronously to avoid blocking UI during git worktree creation
@@ -908,6 +914,7 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.addingDependentTask = false
 				m.dependentOnInstanceID = ""
 				m.startingTripleShot = false
+				m.tripleShotApproaches = nil
 				m.taskInput = ""
 				m.taskInputCursor = 0
 				m.templateSuffix = ""        // Clear suffix on cancel
@@ -1533,6 +1540,8 @@ func (m *Model) applyCommandResult(result command.Result) {
 		m.addingTask = true
 		m.taskInput = ""
 		m.taskInputCursor = 0
+		// Store approaches for guided divergence if specified
+		m.tripleShotApproaches = result.TripleShotApproaches
 	}
 
 	// Handle triple-shot accept
@@ -3064,7 +3073,9 @@ func (m Model) renderTripleShotHelp() string {
 
 // initiateTripleShotMode creates and starts a triple-shot session.
 // Supports multiple concurrent tripleshots by adding to the Coordinators map.
-func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
+// If approaches is non-nil, it enables guided divergence where each instance uses
+// the specified approach (up to 3 approaches, one per instance).
+func (m Model) initiateTripleShotMode(task string, approaches []string) (Model, tea.Cmd) {
 	// Create a group for this triple-shot session FIRST to get its ID
 	tripleGroup := orchestrator.NewInstanceGroupWithType(
 		truncateString(task, 30),
@@ -3073,8 +3084,12 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	)
 	m.session.AddGroup(tripleGroup)
 
-	// Create triple-shot session with default config
+	// Create triple-shot session with config
 	tripleConfig := orchestrator.DefaultTripleShotConfig()
+	// Set guided divergence approaches if specified
+	if len(approaches) > 0 {
+		tripleConfig.Approaches = approaches
+	}
 	tripleSession := orchestrator.NewTripleShotSession(task, tripleConfig)
 
 	// Link group ID to session for multi-tripleshot support
