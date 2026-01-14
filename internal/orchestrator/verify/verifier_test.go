@@ -392,7 +392,7 @@ func TestVerifyTaskWork_VerificationDisabled(t *testing.T) {
 	// Default config has RequireVerifiedCommits=false
 	v := NewTaskVerifier(wt, rt, events)
 
-	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main")
+	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main", nil)
 
 	if !result.Success {
 		t.Error("expected success when verification is disabled")
@@ -410,7 +410,7 @@ func TestVerifyTaskWork_WithCommits(t *testing.T) {
 	cfg := Config{RequireVerifiedCommits: true, MaxTaskRetries: 3}
 	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
 
-	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main")
+	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main", nil)
 
 	if !result.Success {
 		t.Error("expected success when commits were produced")
@@ -432,7 +432,7 @@ func TestVerifyTaskWork_NoCommits_FirstRetry(t *testing.T) {
 	cfg := Config{RequireVerifiedCommits: true, MaxTaskRetries: 3}
 	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
 
-	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main")
+	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main", nil)
 
 	if result.Success {
 		t.Error("expected failure when no commits and retries available")
@@ -461,7 +461,7 @@ func TestVerifyTaskWork_NoCommits_MaxRetriesExhausted(t *testing.T) {
 	cfg := Config{RequireVerifiedCommits: true, MaxTaskRetries: 3}
 	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
 
-	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main")
+	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main", nil)
 
 	if result.Success {
 		t.Error("expected failure when max retries exhausted")
@@ -485,7 +485,7 @@ func TestVerifyTaskWork_CountCommitsError(t *testing.T) {
 	cfg := Config{RequireVerifiedCommits: true, MaxTaskRetries: 3}
 	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
 
-	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main")
+	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main", nil)
 
 	// Should succeed (graceful degradation)
 	if !result.Success {
@@ -508,7 +508,7 @@ func TestVerifyTaskWork_EmptyBaseBranch(t *testing.T) {
 	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
 
 	// Empty base branch should use FindMainBranch
-	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "")
+	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "", nil)
 
 	if !result.Success {
 		t.Error("expected success")
@@ -528,7 +528,7 @@ func TestVerifyTaskWork_UseDefaultMaxRetries(t *testing.T) {
 	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
 
 	// First attempt
-	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main")
+	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main", nil)
 
 	if result.Success {
 		t.Error("expected failure")
@@ -634,12 +634,130 @@ func TestVerifyTaskWork_CommitCountRecorded(t *testing.T) {
 	cfg := Config{RequireVerifiedCommits: true, MaxTaskRetries: 3}
 	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
 
-	v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main")
+	v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main", nil)
 
 	if len(rt.commitCounts["task-1"]) != 1 {
 		t.Errorf("expected 1 commit count recorded, got %d", len(rt.commitCounts["task-1"]))
 	}
 	if rt.commitCounts["task-1"][0] != 0 {
 		t.Errorf("expected commit count 0, got %d", rt.commitCounts["task-1"][0])
+	}
+}
+
+func TestVerifyTaskWork_NoCodeOption_SkipsCommitVerification(t *testing.T) {
+	wt := &mockWorktreeOps{commitCount: 0} // No commits
+	rt := newMockRetryTracker()
+	rt.maxRetries["task-1"] = 3
+	events := newMockEventEmitter()
+
+	cfg := Config{RequireVerifiedCommits: true, MaxTaskRetries: 3}
+	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
+
+	// With NoCode option, task should succeed even without commits
+	opts := &TaskVerifyOptions{NoCode: true}
+	result := v.VerifyTaskWork("task-1", "inst-1", "/tmp/worktree", "main", opts)
+
+	if !result.Success {
+		t.Error("expected success for no-code task even without commits")
+	}
+	if result.NeedsRetry {
+		t.Error("expected no retry for no-code task")
+	}
+	if len(events.retries) != 0 {
+		t.Errorf("expected 0 retry events for no-code task, got %d", len(events.retries))
+	}
+	if len(events.failures) != 0 {
+		t.Errorf("expected 0 failure events for no-code task, got %d", len(events.failures))
+	}
+}
+
+func TestVerifyTaskWork_CompletionFileOverride_NoCommits(t *testing.T) {
+	tempDir := t.TempDir()
+
+	wt := &mockWorktreeOps{commitCount: 0} // No commits
+	rt := newMockRetryTracker()
+	rt.maxRetries["task-1"] = 3
+	events := newMockEventEmitter()
+
+	cfg := Config{RequireVerifiedCommits: true, MaxTaskRetries: 3}
+	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
+
+	// Write a completion file with status="complete"
+	completion := TaskCompletionFile{
+		TaskID:  "task-1",
+		Status:  "complete",
+		Summary: "Verification task completed successfully - no code changes needed",
+	}
+	data, _ := json.Marshal(completion)
+	if err := os.WriteFile(filepath.Join(tempDir, TaskCompletionFileName), data, 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	// Should succeed because completion file has status="complete"
+	result := v.VerifyTaskWork("task-1", "inst-1", tempDir, "main", nil)
+
+	if !result.Success {
+		t.Error("expected success when completion file has status='complete'")
+	}
+	if result.NeedsRetry {
+		t.Error("expected no retry when completion file indicates success")
+	}
+	if len(events.retries) != 0 {
+		t.Errorf("expected 0 retry events, got %d", len(events.retries))
+	}
+}
+
+func TestVerifyTaskWork_CompletionFileBlocked_StillFails(t *testing.T) {
+	tempDir := t.TempDir()
+
+	wt := &mockWorktreeOps{commitCount: 0} // No commits
+	rt := newMockRetryTracker()
+	rt.maxRetries["task-1"] = 3
+	events := newMockEventEmitter()
+
+	cfg := Config{RequireVerifiedCommits: true, MaxTaskRetries: 3}
+	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
+
+	// Write a completion file with status="blocked" (not "complete")
+	completion := TaskCompletionFile{
+		TaskID:  "task-1",
+		Status:  "blocked",
+		Summary: "Task is blocked by external dependency",
+	}
+	data, _ := json.Marshal(completion)
+	if err := os.WriteFile(filepath.Join(tempDir, TaskCompletionFileName), data, 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	// Should fail because status is not "complete"
+	result := v.VerifyTaskWork("task-1", "inst-1", tempDir, "main", nil)
+
+	if result.Success {
+		t.Error("expected failure when completion file has status='blocked'")
+	}
+	if !result.NeedsRetry {
+		t.Error("expected retry when completion file doesn't indicate success")
+	}
+}
+
+func TestVerifyTaskWork_NoCompletionFile_FailsNormally(t *testing.T) {
+	tempDir := t.TempDir()
+
+	wt := &mockWorktreeOps{commitCount: 0} // No commits
+	rt := newMockRetryTracker()
+	rt.maxRetries["task-1"] = 3
+	events := newMockEventEmitter()
+
+	cfg := Config{RequireVerifiedCommits: true, MaxTaskRetries: 3}
+	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
+
+	// No completion file written - should fail as before
+	result := v.VerifyTaskWork("task-1", "inst-1", tempDir, "main", nil)
+
+	if result.Success {
+		t.Error("expected failure when no commits and no completion file")
+	}
+	if !result.NeedsRetry {
+		t.Error("expected retry when no completion file")
 	}
 }
