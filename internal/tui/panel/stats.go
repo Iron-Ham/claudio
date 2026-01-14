@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // StatsPanel renders session statistics and metrics.
@@ -126,6 +127,14 @@ func (p *StatsPanel) Render(state *RenderState) string {
 	p.height = strings.Count(b.String(), "\n") + 1
 
 	return b.String()
+}
+
+// RenderWithBox renders the stats panel and wraps it in a styled box.
+// This is the preferred method for rendering in the main TUI where
+// the ContentBox style should wrap the panel content.
+func (p *StatsPanel) RenderWithBox(state *RenderState, boxStyle lipgloss.Style) string {
+	content := p.Render(state)
+	return boxStyle.Width(state.Width - 4).Render(content)
 }
 
 // renderTopInstances renders the top instances by cost.

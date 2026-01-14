@@ -15,7 +15,6 @@ import (
 	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
-	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
@@ -265,7 +264,6 @@ func (a *App) Run() error {
 
 	return err
 }
-
 
 // Messages
 
@@ -2519,7 +2517,7 @@ func (m Model) renderDiffPanel(width int) string {
 		Width:          width - 4, // Account for content box padding
 		Height:         m.terminalManager.Height() - 4,
 		ScrollOffset:   m.diffScroll,
-		Theme:          &styleTheme{},
+		Theme:          styles.NewTheme(),
 		ActiveInstance: m.activeInstance(),
 		DiffContent:    m.diffContent,
 	}
@@ -2624,123 +2622,29 @@ func (m Model) renderHelp() string {
 	return view.RenderHelp(m.buildHelpBarState())
 }
 
-// Helper functions
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-3] + "..."
-}
-
-// renderStatsPanel renders the session statistics/metrics panel
+// renderStatsPanel renders the session statistics/metrics panel.
+// Delegates to the panel package's StatsPanel for rendering.
 func (m Model) renderStatsPanel(width int) string {
-	var b strings.Builder
-
-	b.WriteString(styles.Title.Render("📊 Session Statistics"))
-	b.WriteString("\n\n")
-
-	if m.session == nil {
-		b.WriteString(styles.Muted.Render("No active session"))
-		return styles.ContentBox.Width(width - 4).Render(b.String())
-	}
-
-	// Get aggregated session metrics
-	sessionMetrics := m.orchestrator.GetSessionMetrics()
-
-	// Session summary
-	b.WriteString(styles.Subtitle.Render("Session Summary"))
-	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("  Total Instances: %d (%d active)\n",
-		sessionMetrics.InstanceCount, sessionMetrics.ActiveCount))
-	b.WriteString(fmt.Sprintf("  Session Started: %s\n",
-		m.session.Created.Format("2006-01-02 15:04:05")))
-	b.WriteString("\n")
-
-	// Token usage
-	b.WriteString(styles.Subtitle.Render("Token Usage"))
-	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("  Input:  %s\n", instmetrics.FormatTokens(sessionMetrics.TotalInputTokens)))
-	b.WriteString(fmt.Sprintf("  Output: %s\n", instmetrics.FormatTokens(sessionMetrics.TotalOutputTokens)))
-	totalTokens := sessionMetrics.TotalInputTokens + sessionMetrics.TotalOutputTokens
-	b.WriteString(fmt.Sprintf("  Total:  %s\n", instmetrics.FormatTokens(totalTokens)))
-	if sessionMetrics.TotalCacheRead > 0 || sessionMetrics.TotalCacheWrite > 0 {
-		b.WriteString(fmt.Sprintf("  Cache:  %s read / %s write\n",
-			instmetrics.FormatTokens(sessionMetrics.TotalCacheRead),
-			instmetrics.FormatTokens(sessionMetrics.TotalCacheWrite)))
-	}
-	b.WriteString("\n")
-
-	// Cost summary
-	b.WriteString(styles.Subtitle.Render("Estimated Cost"))
-	b.WriteString("\n")
-	costStr := instmetrics.FormatCost(sessionMetrics.TotalCost)
 	cfg := config.Get()
-	if cfg.Resources.CostWarningThreshold > 0 && sessionMetrics.TotalCost >= cfg.Resources.CostWarningThreshold {
-		b.WriteString(styles.Warning.Render(fmt.Sprintf("  Total: %s (⚠ exceeds warning threshold)", costStr)))
-	} else {
-		b.WriteString(fmt.Sprintf("  Total: %s\n", costStr))
-	}
-	if cfg.Resources.CostLimit > 0 {
-		b.WriteString(fmt.Sprintf("  Limit: %s\n", instmetrics.FormatCost(cfg.Resources.CostLimit)))
-	}
-	b.WriteString("\n")
 
-	// Per-instance breakdown
-	b.WriteString(styles.Subtitle.Render("Top Instances by Cost"))
-	b.WriteString("\n")
-
-	// Sort instances by cost (simple bubble for small lists)
-	type instCost struct {
-		id   string
-		num  int
-		task string
-		cost float64
-	}
-	var costList []instCost
-	for i, inst := range m.session.Instances {
-		cost := 0.0
-		if inst.Metrics != nil {
-			cost = inst.Metrics.Cost
-		}
-		costList = append(costList, instCost{
-			id:   inst.ID,
-			num:  i + 1,
-			task: inst.Task,
-			cost: cost,
-		})
-	}
-	// Sort descending by cost
-	for i := 0; i < len(costList)-1; i++ {
-		for j := i + 1; j < len(costList); j++ {
-			if costList[j].cost > costList[i].cost {
-				costList[i], costList[j] = costList[j], costList[i]
-			}
-		}
+	// Build render state for the panel
+	state := &panel.RenderState{
+		Width:                width,
+		Height:               m.terminalManager.Height(),
+		Theme:                styles.NewTheme(),
+		CostWarningThreshold: cfg.Resources.CostWarningThreshold,
+		CostLimit:            cfg.Resources.CostLimit,
 	}
 
-	// Show top 5
-	shown := 0
-	for _, ic := range costList {
-		if shown >= 5 {
-			break
-		}
-		if ic.cost > 0 {
-			taskTrunc := truncate(ic.task, width-25)
-			b.WriteString(fmt.Sprintf("  %d. [%d] %s: %s\n",
-				shown+1, ic.num, taskTrunc, instmetrics.FormatCost(ic.cost)))
-			shown++
-		}
-	}
-	if shown == 0 {
-		b.WriteString(styles.Muted.Render("  No cost data available yet"))
-		b.WriteString("\n")
+	// Add session data if available
+	if m.session != nil {
+		state.SessionCreated = m.session.Created
+		state.SessionMetrics = m.orchestrator.GetSessionMetrics()
+		state.Instances = m.session.Instances
 	}
 
-	b.WriteString("\n")
-	b.WriteString(styles.Muted.Render("Press [m] to close this view"))
-
-	return styles.ContentBox.Width(width - 4).Render(b.String())
+	statsPanel := panel.NewStatsPanel()
+	return statsPanel.RenderWithBox(state, styles.ContentBox)
 }
 
 // renderTripleShotHeader renders the header for triple-shot mode
