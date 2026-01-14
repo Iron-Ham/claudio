@@ -272,8 +272,14 @@ func (dv *DashboardView) renderExpandedInstance(
 		}
 
 		// Indent continuation lines to align under the name
+		// Pad the chunk to fill available width so background styling is consistent
+		paddedChunk := chunk
+		chunkLen := len([]rune(chunk))
+		if chunkLen < continuationAvailable {
+			paddedChunk = chunk + strings.Repeat(" ", continuationAvailable-chunkLen)
+		}
 		indent := strings.Repeat(" ", continuationIndent)
-		lines = append(lines, indent+itemStyle.Render(chunk))
+		lines = append(lines, indent+itemStyle.Render(paddedChunk))
 	}
 
 	return strings.Join(lines, "\n")

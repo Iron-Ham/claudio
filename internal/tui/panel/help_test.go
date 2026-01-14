@@ -3,6 +3,8 @@ package panel
 import (
 	"strings"
 	"testing"
+
+	"github.com/Iron-Ham/claudio/internal/tui/command"
 )
 
 func TestHelpPanel_Render(t *testing.T) {
@@ -275,5 +277,55 @@ func TestHelpPanel_MultipleSectionsWithScrolling(t *testing.T) {
 	// Should show different content due to scroll
 	if strings.HasPrefix(result, "Section A") {
 		t.Error("expected different content after scrolling")
+	}
+}
+
+// TestDefaultHelpSectionsContainsAllCommands verifies that DefaultHelpSections()
+// documents all primary commands from the command handler's categories.
+// This prevents the help panel from getting out of sync when new commands are added.
+func TestDefaultHelpSectionsContainsAllCommands(t *testing.T) {
+	// Get all help content from DefaultHelpSections
+	sections := DefaultHelpSections()
+
+	// Build a single string containing all help keys for searching
+	var helpContent strings.Builder
+	for _, section := range sections {
+		for _, item := range section.Items {
+			helpContent.WriteString(item.Key)
+			helpContent.WriteString(" ")
+			helpContent.WriteString(item.Description)
+			helpContent.WriteString("\n")
+		}
+	}
+	helpText := helpContent.String()
+
+	// Get all commands from the handler's categories
+	handler := command.New()
+	categories := handler.Categories()
+
+	// Track missing commands for better error reporting
+	var missingCommands []string
+
+	for _, cat := range categories {
+		for _, cmd := range cat.Commands {
+			// Skip subcommands (contain spaces) and flag variants (contain "=")
+			// These are documented under their parent command
+			if strings.Contains(cmd.LongKey, " ") || strings.Contains(cmd.LongKey, "=") {
+				continue
+			}
+
+			// Check that the command's long key appears in the help content
+			// The key is rendered with a colon prefix in the help (e.g., ":start")
+			searchKey := ":" + cmd.LongKey
+			if !strings.Contains(helpText, searchKey) {
+				missingCommands = append(missingCommands, cmd.LongKey)
+			}
+		}
+	}
+
+	if len(missingCommands) > 0 {
+		t.Errorf("DefaultHelpSections() is missing the following commands: %v\n"+
+			"Update DefaultHelpSections() in help.go to include these commands",
+			missingCommands)
 	}
 }

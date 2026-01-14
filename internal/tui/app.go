@@ -20,6 +20,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
+	"github.com/Iron-Ham/claudio/internal/tui/panel"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
@@ -64,8 +65,46 @@ func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Ses
 func NewWithTripleShot(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.TripleShotCoordinator, logger *logging.Logger) *App {
 	model := NewModel(orch, session, logger)
 	model.tripleShot = &TripleShotState{
-		Coordinator: coordinator,
+		Coordinator:  coordinator,
+		Coordinators: make(map[string]*orchestrator.TripleShotCoordinator),
 	}
+	// Add the coordinator to the map keyed by its group ID for multiple tripleshot support
+	if coordinator != nil {
+		tripleSession := coordinator.Session()
+		if tripleSession != nil && tripleSession.GroupID != "" {
+			model.tripleShot.Coordinators[tripleSession.GroupID] = coordinator
+		}
+	}
+	return &App{
+		model:        model,
+		orchestrator: orch,
+		session:      session,
+	}
+}
+
+// NewWithTripleShots creates a new TUI application with multiple tripleshot coordinators.
+// This is used when restoring a session that had multiple concurrent tripleshots.
+func NewWithTripleShots(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinators []*orchestrator.TripleShotCoordinator, logger *logging.Logger) *App {
+	model := NewModel(orch, session, logger)
+	model.tripleShot = &TripleShotState{
+		Coordinators: make(map[string]*orchestrator.TripleShotCoordinator),
+	}
+
+	// Add all coordinators to the map keyed by their group IDs
+	for _, coordinator := range coordinators {
+		if coordinator != nil {
+			tripleSession := coordinator.Session()
+			if tripleSession != nil && tripleSession.GroupID != "" {
+				model.tripleShot.Coordinators[tripleSession.GroupID] = coordinator
+			}
+		}
+	}
+
+	// Set the first coordinator as the deprecated single Coordinator for backward compatibility
+	if len(coordinators) > 0 {
+		model.tripleShot.Coordinator = coordinators[0]
+	}
+
 	return &App{
 		model:        model,
 		orchestrator: orch,
@@ -196,6 +235,31 @@ func CalculateContentDimensions(termWidth, termHeight int) (contentWidth, conten
 	contentHeight = termHeight - ContentHeightOffset
 	return contentWidth, contentHeight
 }
+
+// styleTheme implements panel.Theme by wrapping the styles package.
+// This allows panels to use consistent styling with the rest of the app.
+type styleTheme struct{}
+
+func (s *styleTheme) Primary() lipgloss.Style   { return styles.Primary }
+func (s *styleTheme) Secondary() lipgloss.Style { return styles.HelpKey } // Use HelpKey for better visibility
+func (s *styleTheme) Muted() lipgloss.Style     { return styles.Muted }
+func (s *styleTheme) Error() lipgloss.Style     { return styles.Error }
+func (s *styleTheme) Warning() lipgloss.Style   { return styles.Warning }
+func (s *styleTheme) Surface() lipgloss.Style   { return styles.Surface }
+func (s *styleTheme) Border() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(styles.BorderColor)
+}
+func (s *styleTheme) DiffAdd() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(styles.GreenColor)
+}
+func (s *styleTheme) DiffRemove() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(styles.RedColor)
+}
+func (s *styleTheme) DiffHeader() lipgloss.Style { return styles.Primary }
+func (s *styleTheme) DiffHunk() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(styles.BlueColor)
+}
+func (s *styleTheme) DiffContext() lipgloss.Style { return styles.Muted }
 
 // Messages
 
@@ -2551,157 +2615,18 @@ func (m Model) buildBranchItems() []view.BranchItem {
 	return items
 }
 
-// renderHelpPanel renders the help overlay with coloration and scrolling support.
+// renderHelpPanel renders the help overlay using the panel package.
+// Help content is sourced from panel.DefaultHelpSections() for single source of truth.
 func (m Model) renderHelpPanel(width int) string {
-	// Build help content with styling
-	var lines []string
-
-	// Title
-	lines = append(lines, styles.Title.Render("Claudio Help"))
-	lines = append(lines, styles.Muted.Render("Press : to enter command mode. Use j/k to scroll, ? or :h to close."))
-	lines = append(lines, "")
-
-	// Helper function to format a section header with subtle prefix
-	section := func(name string) string {
-		return styles.Primary.Bold(true).Render("▸ " + name)
+	helpPanel := panel.NewHelpPanel()
+	state := &panel.RenderState{
+		Width:        width - 4, // Account for content box padding
+		Height:       m.terminalManager.Height() - 4,
+		ScrollOffset: m.helpScroll,
+		Theme:        &styleTheme{},
 	}
 
-	// Helper function to format a key
-	key := func(k string) string {
-		return styles.HelpKey.Render(k)
-	}
-
-	// Helper function to format a description
-	desc := func(d string) string {
-		return styles.Muted.Render(d)
-	}
-
-	// Helper to format a help line with consistent alignment
-	// Keys column is ~22 chars, then description starts
-	helpLine := func(keys, description string) string {
-		// Pad keys to fixed width for alignment
-		const keyColWidth = 22
-		keyLen := len(keys) // Note: this is byte length, not display width
-		padding := keyColWidth - keyLen
-		if padding < 1 {
-			padding = 1
-		}
-		return fmt.Sprintf("    %s%s%s", key(keys), strings.Repeat(" ", padding), desc(description))
-	}
-
-	// Navigation section
-	lines = append(lines, section("Navigation"))
-	lines = append(lines, helpLine("Tab/l  Shift+Tab/h", "Next / Previous instance"))
-	lines = append(lines, helpLine("j/↓  k/↑", "Scroll down / up one line"))
-	lines = append(lines, helpLine("Ctrl+D/U  Ctrl+F/B", "Scroll half / full page"))
-	lines = append(lines, helpLine("g  G", "Jump to top / bottom"))
-	lines = append(lines, "")
-
-	// Instance Control section
-	lines = append(lines, section("Instance Control"))
-	lines = append(lines, helpLine(":s  :start", "Start a stopped/new instance"))
-	lines = append(lines, helpLine(":x  :stop", "Stop instance + auto-PR workflow"))
-	lines = append(lines, helpLine(":e  :exit", "Stop instance (no auto-PR)"))
-	lines = append(lines, helpLine(":p  :pause", "Pause/resume instance"))
-	lines = append(lines, helpLine(":R  :reconnect", "Reattach to stopped tmux session"))
-	lines = append(lines, helpLine(":restart", "Restart stuck/timeout instance"))
-	lines = append(lines, "")
-
-	// Instance Management section
-	lines = append(lines, section("Instance Management"))
-	lines = append(lines, helpLine(":a  :add", "Create and add new instance"))
-	lines = append(lines, helpLine(":chain  :dep  :depends", "Add dependent task"))
-	lines = append(lines, helpLine(":D  :remove", "Remove instance (keeps branch)"))
-	lines = append(lines, helpLine(":kill", "Force kill and remove instance"))
-	lines = append(lines, helpLine(":C  :clear", "Remove all completed instances"))
-	lines = append(lines, "")
-
-	// View Commands section
-	lines = append(lines, section("View Commands"))
-	lines = append(lines, helpLine(":d  :diff", "Toggle diff preview panel"))
-	lines = append(lines, helpLine(":m  :stats", "Toggle metrics panel"))
-	lines = append(lines, helpLine(":c  :conflicts", "Toggle conflict view"))
-	lines = append(lines, helpLine(":f  :filter", "Open filter panel"))
-	lines = append(lines, helpLine(":tmux", "Show tmux attach command"))
-	lines = append(lines, helpLine(":r  :pr", "Show PR creation command"))
-	lines = append(lines, "")
-
-	// Terminal section
-	lines = append(lines, section("Terminal Pane"))
-	lines = append(lines, helpLine("`  :term", "Toggle terminal pane"))
-	lines = append(lines, helpLine(":t", "Focus terminal for typing"))
-	lines = append(lines, helpLine("Ctrl+]", "Exit terminal mode"))
-	lines = append(lines, helpLine("Ctrl+Shift+T", "Switch terminal directory"))
-	lines = append(lines, "")
-
-	// Input Mode section
-	lines = append(lines, section("Input Mode"))
-	lines = append(lines, helpLine("i  Enter", "Enter input mode (talk to Claude)"))
-	lines = append(lines, helpLine("Ctrl+]", "Exit input mode"))
-	lines = append(lines, "")
-
-	// Search section
-	lines = append(lines, section("Search"))
-	lines = append(lines, helpLine("/", "Start search"))
-	lines = append(lines, helpLine("n  N", "Next / previous match"))
-	lines = append(lines, helpLine("Ctrl+/", "Clear search"))
-	lines = append(lines, helpLine("r:pattern", "Use regex search"))
-	lines = append(lines, "")
-
-	// Inline Planning section (experimental)
-	lines = append(lines, section("Inline Planning (experimental)"))
-	lines = append(lines, helpLine(":plan", "Start inline plan mode"))
-	lines = append(lines, helpLine(":ultraplan  :up", "Start ultraplan mode"))
-	lines = append(lines, helpLine(":tripleshot", "Run 3 parallel attempts + judge"))
-	lines = append(lines, helpLine(":accept", "Accept winning triple-shot solution"))
-	lines = append(lines, helpLine(":cancel", "Cancel ultraplan execution"))
-	lines = append(lines, helpLine(":group", "Manage instance groups"))
-	lines = append(lines, "")
-
-	// Session section
-	lines = append(lines, section("Session"))
-	lines = append(lines, helpLine(":h  :help", "Toggle this help panel"))
-	lines = append(lines, helpLine(":q  :quit", "Quit (instances continue in tmux)"))
-	lines = append(lines, helpLine("?", "Quick toggle help"))
-
-	// Calculate visible lines based on terminal height
-	maxLines := m.terminalManager.Height() - 10
-	if maxLines < 10 {
-		maxLines = 10
-	}
-
-	// Clamp scroll to valid range
-	maxScroll := len(lines) - maxLines
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	scroll := m.helpScroll
-	if scroll > maxScroll {
-		scroll = maxScroll
-	}
-
-	// Slice visible lines
-	endLine := scroll + maxLines
-	if endLine > len(lines) {
-		endLine = len(lines)
-	}
-	visibleLines := lines[scroll:endLine]
-
-	// Add scroll indicator if needed
-	var content string
-	if maxScroll > 0 {
-		scrollInfo := styles.Muted.Render(fmt.Sprintf(" [%d/%d] ", scroll+1, maxScroll+1))
-		if scroll > 0 {
-			scrollInfo = styles.Warning.Render("▲ ") + scrollInfo
-		}
-		if scroll < maxScroll {
-			scrollInfo = scrollInfo + styles.Warning.Render(" ▼")
-		}
-		content = strings.Join(visibleLines, "\n") + "\n" + scrollInfo
-	} else {
-		content = strings.Join(visibleLines, "\n")
-	}
-
+	content := helpPanel.Render(state)
 	return styles.ContentBox.Width(width - 4).Render(content)
 }
 
