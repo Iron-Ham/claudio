@@ -2653,142 +2653,50 @@ func (m Model) buildInstanceInfoList() []view.InstanceInfo {
 	return instances
 }
 
+// buildHelpBarState creates the view.HelpBarState from the current model state.
+func (m Model) buildHelpBarState() *view.HelpBarState {
+	state := &view.HelpBarState{
+		CommandMode:   m.commandMode,
+		CommandBuffer: m.commandBuffer,
+		InputMode:     m.inputMode,
+		ShowDiff:      m.showDiff,
+		FilterMode:    m.filterMode,
+		SearchMode:    m.searchMode,
+		ConflictCount: len(m.conflicts),
+	}
+
+	// Terminal manager may be nil in tests
+	if m.terminalManager != nil {
+		state.TerminalFocused = m.terminalManager.IsFocused()
+		state.TerminalVisible = m.terminalManager.IsVisible()
+		if m.terminalManager.DirMode() == terminal.DirWorktree {
+			state.TerminalDirMode = "worktree"
+		} else {
+			state.TerminalDirMode = "invoke"
+		}
+	}
+
+	// Search engine may be nil in tests
+	if m.searchEngine != nil {
+		state.SearchHasMatches = m.searchEngine.HasMatches()
+		state.SearchCurrentIndex = m.searchEngine.CurrentIndex()
+		state.SearchMatchCount = m.searchEngine.MatchCount()
+	}
+
+	return state
+}
+
 // renderCommandModeHelp renders the help bar when in command mode.
 // This is separate so it can take priority in all modes (normal, ultra-plan, plan editor).
+// Delegates to view.RenderCommandModeHelp for the actual rendering.
 func (m Model) renderCommandModeHelp() string {
-	if viper.GetBool("tui.verbose_command_help") {
-		return m.renderVerboseCommandHelp()
-	}
-	return m.renderCompactCommandHelp()
+	return view.RenderCommandModeHelp(m.buildHelpBarState())
 }
 
-// renderCompactCommandHelp renders the compact single-line command help (for experts).
-func (m Model) renderCompactCommandHelp() string {
-	return styles.HelpBar.Render(
-		styles.Primary.Bold(true).Render(":") + styles.Primary.Render(m.commandBuffer) +
-			styles.Muted.Render("█") + "  " +
-			styles.HelpKey.Render("[Enter]") + " execute  " +
-			styles.HelpKey.Render("[Esc]") + " cancel  " +
-			styles.Muted.Render("Commands: s/x/e/p/R a/D/C d/m/c/f t/r h/q (or :help)"),
-	)
-}
-
-// renderVerboseCommandHelp renders a multi-line command help panel with descriptions.
-// Shows only the most commonly used commands, with a hint to use :help for more.
-func (m Model) renderVerboseCommandHelp() string {
-	var lines []string
-
-	// Command input line
-	inputLine := styles.Primary.Bold(true).Render(":") + styles.Primary.Render(m.commandBuffer) +
-		styles.Muted.Render("█") + "  " +
-		styles.HelpKey.Render("[Enter]") + " execute  " +
-		styles.HelpKey.Render("[Esc]") + " cancel"
-	lines = append(lines, inputLine)
-
-	// Show prioritized commands grouped by function
-	// Line 1: Instance control (most common operations)
-	line1 := styles.Secondary.Bold(true).Render("Control:") + " " +
-		styles.HelpKey.Render("s/start") + " " + styles.Muted.Render("start") + "  " +
-		styles.HelpKey.Render("x/stop") + " " + styles.Muted.Render("stop+PR") + "  " +
-		styles.HelpKey.Render("p/pause") + " " + styles.Muted.Render("pause/resume") + "  " +
-		styles.HelpKey.Render("a/add") + " " + styles.Muted.Render("new instance")
-	lines = append(lines, line1)
-
-	// Line 2: Views and navigation
-	line2 := styles.Secondary.Bold(true).Render("View:") + " " +
-		styles.HelpKey.Render("d/diff") + " " + styles.Muted.Render("changes") + "  " +
-		styles.HelpKey.Render("m/stats") + " " + styles.Muted.Render("metrics") + "  " +
-		styles.HelpKey.Render("t/term") + " " + styles.Muted.Render("terminal") + "  " +
-		styles.HelpKey.Render("h/help") + " " + styles.Muted.Render("full help") + "  " +
-		styles.HelpKey.Render("q/quit") + " " + styles.Muted.Render("exit")
-	lines = append(lines, line2)
-
-	return styles.HelpBar.Render(strings.Join(lines, "\n"))
-}
-
-// renderHelp renders the help bar
+// renderHelp renders the help bar.
+// Delegates to view.RenderHelp for the actual rendering.
 func (m Model) renderHelp() string {
-	if m.inputMode {
-		return styles.HelpBar.Render(
-			styles.Warning.Bold(true).Render("INPUT MODE") + "  " +
-				styles.HelpKey.Render("[Ctrl+]]") + " exit input mode  " +
-				"All keystrokes forwarded to Claude",
-		)
-	}
-
-	if m.terminalManager.IsFocused() {
-		dirMode := "invoke"
-		if m.terminalManager.DirMode() == terminal.DirWorktree {
-			dirMode = "worktree"
-		}
-		return styles.HelpBar.Render(
-			styles.Secondary.Bold(true).Render("TERMINAL") + "  " +
-				styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
-				styles.HelpKey.Render("[Ctrl+Shift+T]") + " switch dir  " +
-				styles.Muted.Render("("+dirMode+")") + "  " +
-				"All keystrokes forwarded to terminal",
-		)
-	}
-
-	if m.showDiff {
-		return styles.HelpBar.Render(
-			styles.Primary.Bold(true).Render("DIFF VIEW") + "  " +
-				styles.HelpKey.Render("[j/k]") + " scroll  " +
-				styles.HelpKey.Render("[g/G]") + " top/bottom  " +
-				styles.HelpKey.Render("[:d/Esc]") + " close",
-		)
-	}
-
-	if m.filterMode {
-		return styles.HelpBar.Render(
-			styles.Primary.Bold(true).Render("FILTER MODE") + "  " +
-				styles.HelpKey.Render("[e/w/t/h/p]") + " toggle categories  " +
-				styles.HelpKey.Render("[a]") + " all  " +
-				styles.HelpKey.Render("[c]") + " clear  " +
-				styles.HelpKey.Render("[Esc]") + " close",
-		)
-	}
-
-	if m.searchMode {
-		return styles.HelpBar.Render(
-			styles.Primary.Bold(true).Render("SEARCH") + "  " +
-				"Type pattern  " +
-				styles.HelpKey.Render("[Enter]") + " confirm  " +
-				styles.HelpKey.Render("[Esc]") + " cancel  " +
-				styles.Muted.Render("r:pattern for regex"),
-		)
-	}
-
-	keys := []string{
-		styles.HelpKey.Render("[:]") + " cmd",
-		styles.HelpKey.Render("[j/k]") + " scroll",
-		styles.HelpKey.Render("[Tab]") + " switch",
-		styles.HelpKey.Render("[i]") + " input",
-		styles.HelpKey.Render("[/]") + " search",
-		styles.HelpKey.Render("[?]") + " help",
-		styles.HelpKey.Render("[:q]") + " quit",
-	}
-
-	// Add terminal key based on visibility
-	if m.terminalManager.IsVisible() {
-		keys = append(keys, styles.HelpKey.Render("[:t]")+" term "+styles.HelpKey.Render("[`]")+" hide")
-	} else {
-		keys = append(keys, styles.HelpKey.Render("[`]")+" term")
-	}
-
-	// Add conflict indicator when conflicts exist
-	if len(m.conflicts) > 0 {
-		conflictKey := styles.Warning.Bold(true).Render("[:c]") + styles.Warning.Render(" conflicts")
-		keys = append([]string{conflictKey}, keys...)
-	}
-
-	// Add search status indicator if search is active
-	if m.searchEngine.HasMatches() {
-		searchStatus := styles.Secondary.Render(fmt.Sprintf("[%d/%d]", m.searchEngine.CurrentIndex()+1, m.searchEngine.MatchCount()))
-		keys = append(keys, searchStatus+" "+styles.HelpKey.Render("[n/N]")+" match")
-	}
-
-	return styles.HelpBar.Render(strings.Join(keys, "  "))
+	return view.RenderHelp(m.buildHelpBarState())
 }
 
 // Helper functions
@@ -2929,17 +2837,10 @@ func (m Model) renderTripleShotSidebar(width, height int) string {
 	return view.NewSidebarView().RenderSidebar(m, width, height)
 }
 
-// renderTripleShotHelp renders the help bar for triple-shot mode
+// renderTripleShotHelp renders the help bar for triple-shot mode.
+// Delegates to view.RenderTripleShotHelp for the actual rendering.
 func (m Model) renderTripleShotHelp() string {
-	keys := []string{
-		styles.HelpKey.Render("[:]") + " cmd",
-		styles.HelpKey.Render("[j/k]") + " scroll",
-		styles.HelpKey.Render("[Tab]") + " switch",
-		styles.HelpKey.Render("[/]") + " search",
-		styles.HelpKey.Render("[?]") + " help",
-		styles.HelpKey.Render("[:q]") + " quit",
-	}
-	return styles.HelpBar.Render(strings.Join(keys, "  "))
+	return view.RenderTripleShotHelp()
 }
 
 // initiateTripleShotMode creates and starts a triple-shot session.
