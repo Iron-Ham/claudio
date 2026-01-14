@@ -31,6 +31,16 @@ type SidebarState interface {
 
 	// SidebarMode returns the current display mode.
 	SidebarMode() SidebarMode
+
+	// UltraPlanState returns the ultraplan state if in ultraplan mode.
+	// Returns nil if not in ultraplan mode.
+	UltraPlanState() *UltraPlanState
+
+	// Orchestrator returns the orchestrator for instance lookups.
+	Orchestrator() *orchestrator.Orchestrator
+
+	// IsInstanceSelected returns true if the given instance ID is currently selected.
+	IsInstanceSelected(instanceID string) bool
 }
 
 // SidebarView handles rendering of the sidebar in both flat and grouped modes.
@@ -91,8 +101,17 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 	}
 	availableSlots := max(height-reservedLines, 5)
 
-	// Get flattened items for display
-	items := FlattenGroupsForDisplay(session, groupState)
+	// Get ultraplan state and group ID for special rendering
+	ultraPlanState := state.UltraPlanState()
+	var ultraPlanGroupID string
+	if ultraPlanState != nil && ultraPlanState.Coordinator != nil {
+		if upSession := ultraPlanState.Coordinator.Session(); upSession != nil {
+			ultraPlanGroupID = upSession.GroupID
+		}
+	}
+
+	// Get flattened items for display (with ultraplan-aware flattening)
+	items := FlattenGroupsForDisplayWithUltraPlan(session, groupState, ultraPlanGroupID, ultraPlanState)
 	if len(items) == 0 && !isAddingTask {
 		b.WriteString(styles.Muted.Render("No instances"))
 		b.WriteString("\n")
@@ -139,6 +158,11 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 				line := RenderGroupedInstance(v, isActive, hasConflict, width)
 				b.WriteString(line)
 				b.WriteString("\n")
+
+			case UltraPlanContentItem:
+				// Render ultraplan phase content within the group
+				content := sv.renderUltraPlanContent(v, state, width-4, availableSlots-(i-startIdx))
+				b.WriteString(content)
 			}
 		}
 
@@ -175,6 +199,40 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 
 	// Wrap in sidebar box
 	return styles.Sidebar.Width(width - 2).Render(b.String())
+}
+
+// renderUltraPlanContent renders the ultraplan phase content inline within a group.
+func (sv *SidebarView) renderUltraPlanContent(item UltraPlanContentItem, state SidebarState, width, maxLines int) string {
+	if item.UltraPlan == nil || item.UltraPlan.Coordinator == nil {
+		return ""
+	}
+
+	upSession := item.UltraPlan.Coordinator.Session()
+	if upSession == nil {
+		return ""
+	}
+
+	// Create a render context for the ultraplan view
+	ctx := &RenderContext{
+		Orchestrator: state.Orchestrator(),
+		Session:      state.Session(),
+		UltraPlan:    item.UltraPlan,
+		ActiveTab:    state.ActiveTab(),
+		Width:        width,
+		Height:       maxLines,
+		GetInstance: func(id string) *orchestrator.Instance {
+			if orch := state.Orchestrator(); orch != nil {
+				return orch.GetInstance(id)
+			}
+			return nil
+		},
+		IsSelected: func(instanceID string) bool {
+			return state.IsInstanceSelected(instanceID)
+		},
+	}
+
+	v := NewUltraplanView(ctx)
+	return v.RenderInlineContent(width, maxLines)
 }
 
 // buildConflictMap creates a map of instance IDs that have conflicts.

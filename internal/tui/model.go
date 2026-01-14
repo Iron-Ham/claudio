@@ -280,6 +280,30 @@ func (m Model) SidebarMode() view.SidebarMode {
 	return m.sidebarMode
 }
 
+// UltraPlanState returns the ultraplan state if in ultraplan mode.
+// Implements view.SidebarState interface.
+func (m Model) UltraPlanState() *view.UltraPlanState {
+	return m.ultraPlan
+}
+
+// Orchestrator returns the orchestrator for instance lookups.
+// Implements view.SidebarState interface.
+func (m Model) Orchestrator() *orchestrator.Orchestrator {
+	return m.orchestrator
+}
+
+// IsInstanceSelected returns true if the given instance ID is currently selected.
+// Implements view.SidebarState interface.
+func (m Model) IsInstanceSelected(instanceID string) bool {
+	if instanceID == "" {
+		return false
+	}
+	if m.activeTab >= 0 && m.activeTab < len(m.session.Instances) {
+		return m.session.Instances[m.activeTab].ID == instanceID
+	}
+	return false
+}
+
 // autoEnableGroupedMode switches to grouped sidebar mode when groups exist.
 // Call this after creating a new group to automatically show the grouped view.
 func (m *Model) autoEnableGroupedMode() {

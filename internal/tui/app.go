@@ -856,20 +856,22 @@ func (m Model) View() string {
 	mainAreaHeight := dims.MainAreaHeight
 
 	// Sidebar + Content area (horizontal layout)
-	// Use mode-specific rendering if applicable
+	// Use view component for sidebar rendering - handles all modes including ultraplan
+	// The SidebarView automatically handles flat, grouped, and ultraplan modes by
+	// rendering ultraplan content inline within its group when expanded
 	var sidebar, content string
-	if m.IsUltraPlanMode() {
-		sidebar = m.renderUltraPlanSidebar(effectiveSidebarWidth, mainAreaHeight)
-		content = m.renderUltraPlanContent(mainContentWidth)
-	} else if m.IsTripleShotMode() {
+	if m.IsTripleShotMode() {
 		sidebar = m.renderTripleShotSidebar(effectiveSidebarWidth, mainAreaHeight)
 		content = m.renderContent(mainContentWidth) // Reuse normal content for now
 	} else {
-		// Use view component for sidebar rendering
-		// SidebarView automatically handles both flat and grouped modes
 		sidebarView := view.NewSidebarView()
 		sidebar = sidebarView.RenderSidebar(m, effectiveSidebarWidth, mainAreaHeight)
-		content = m.renderContent(mainContentWidth)
+		// Use ultraplan content renderer when in ultraplan mode
+		if m.IsUltraPlanMode() {
+			content = m.renderUltraPlanContent(mainContentWidth)
+		} else {
+			content = m.renderContent(mainContentWidth)
+		}
 	}
 
 	// Apply height constraints to both panels and join horizontally

@@ -33,6 +33,16 @@ func (m *mockSidebarState) IsAddingTask() bool                 { return m.isAddi
 func (m *mockSidebarState) IntelligentNamingEnabled() bool     { return m.intelligentNamingEnabled }
 func (m *mockSidebarState) GroupViewState() *GroupViewState    { return m.groupViewState }
 func (m *mockSidebarState) SidebarMode() SidebarMode           { return m.sidebarMode }
+func (m *mockSidebarState) UltraPlanState() *UltraPlanState    { return nil }
+func (m *mockSidebarState) Orchestrator() *orchestrator.Orchestrator {
+	return nil
+}
+func (m *mockSidebarState) IsInstanceSelected(instanceID string) bool {
+	if m.session == nil || m.activeTab < 0 || m.activeTab >= len(m.session.Instances) {
+		return false
+	}
+	return m.session.Instances[m.activeTab].ID == instanceID
+}
 
 func TestSidebarView_FlatModeFallback(t *testing.T) {
 	// When in flat mode, should render like DashboardView
