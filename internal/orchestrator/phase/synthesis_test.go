@@ -2,6 +2,8 @@ package phase
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1262,4 +1264,666 @@ func TestSynthesisOrchestrator_ShouldSkipRevision(t *testing.T) {
 			t.Error("shouldSkipRevision() should return false when under max revisions")
 		}
 	})
+}
+
+// Tests for the revision phase functionality
+
+func TestNewRevisionState(t *testing.T) {
+	t.Run("creates state with issues", func(t *testing.T) {
+		issues := []RevisionIssue{
+			{TaskID: "task-1", Description: "Bug in auth"},
+			{TaskID: "task-2", Description: "Missing validation"},
+			{TaskID: "task-1", Description: "Another bug"}, // Duplicate task ID
+		}
+
+		state := NewRevisionState(issues)
+
+		if state.RevisionRound != 1 {
+			t.Errorf("RevisionRound = %d, want 1", state.RevisionRound)
+		}
+		if state.MaxRevisions != DefaultMaxRevisions {
+			t.Errorf("MaxRevisions = %d, want %d", state.MaxRevisions, DefaultMaxRevisions)
+		}
+		if len(state.Issues) != 3 {
+			t.Errorf("Issues len = %d, want 3", len(state.Issues))
+		}
+		// TasksToRevise should have unique task IDs
+		if len(state.TasksToRevise) != 2 {
+			t.Errorf("TasksToRevise len = %d, want 2 (unique)", len(state.TasksToRevise))
+		}
+		if len(state.RevisedTasks) != 0 {
+			t.Errorf("RevisedTasks len = %d, want 0", len(state.RevisedTasks))
+		}
+	})
+
+	t.Run("creates state with empty issues", func(t *testing.T) {
+		state := NewRevisionState(nil)
+
+		if len(state.TasksToRevise) != 0 {
+			t.Errorf("TasksToRevise len = %d, want 0", len(state.TasksToRevise))
+		}
+	})
+}
+
+func TestExtractTasksToRevise(t *testing.T) {
+	tests := []struct {
+		name     string
+		issues   []RevisionIssue
+		expected []string
+	}{
+		{
+			name:     "nil issues",
+			issues:   nil,
+			expected: nil,
+		},
+		{
+			name:     "empty issues",
+			issues:   []RevisionIssue{},
+			expected: nil,
+		},
+		{
+			name: "unique task IDs",
+			issues: []RevisionIssue{
+				{TaskID: "task-1"},
+				{TaskID: "task-2"},
+				{TaskID: "task-3"},
+			},
+			expected: []string{"task-1", "task-2", "task-3"},
+		},
+		{
+			name: "duplicate task IDs",
+			issues: []RevisionIssue{
+				{TaskID: "task-1"},
+				{TaskID: "task-2"},
+				{TaskID: "task-1"}, // Duplicate
+			},
+			expected: []string{"task-1", "task-2"},
+		},
+		{
+			name: "skips empty task IDs",
+			issues: []RevisionIssue{
+				{TaskID: "task-1"},
+				{TaskID: ""},
+				{TaskID: "task-2"},
+			},
+			expected: []string{"task-1", "task-2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractTasksToRevise(tt.issues)
+			if len(result) != len(tt.expected) {
+				t.Errorf("extractTasksToRevise() len = %d, want %d", len(result), len(tt.expected))
+				return
+			}
+			for i, taskID := range result {
+				if taskID != tt.expected[i] {
+					t.Errorf("extractTasksToRevise()[%d] = %q, want %q", i, taskID, tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestRevisionState_IsComplete(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    *RevisionState
+		expected bool
+	}{
+		{
+			name:     "nil state is complete",
+			state:    nil,
+			expected: true,
+		},
+		{
+			name: "no tasks to revise is complete",
+			state: &RevisionState{
+				TasksToRevise: []string{},
+				RevisedTasks:  []string{},
+			},
+			expected: true,
+		},
+		{
+			name: "some tasks revised is not complete",
+			state: &RevisionState{
+				TasksToRevise: []string{"task-1", "task-2"},
+				RevisedTasks:  []string{"task-1"},
+			},
+			expected: false,
+		},
+		{
+			name: "all tasks revised is complete",
+			state: &RevisionState{
+				TasksToRevise: []string{"task-1", "task-2"},
+				RevisedTasks:  []string{"task-1", "task-2"},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.state.IsComplete() != tt.expected {
+				t.Errorf("IsComplete() = %v, want %v", tt.state.IsComplete(), tt.expected)
+			}
+		})
+	}
+}
+
+func TestSynthesisOrchestrator_GetRevisionState(t *testing.T) {
+	t.Run("returns nil when no revision state", func(t *testing.T) {
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		if synth.GetRevisionState() != nil {
+			t.Error("GetRevisionState() should return nil when no revision started")
+		}
+	})
+
+	t.Run("returns copy of revision state", func(t *testing.T) {
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Directly set revision state
+		synth.mu.Lock()
+		synth.state.Revision = &RevisionState{
+			Issues:        []RevisionIssue{{TaskID: "task-1", Description: "Bug"}},
+			RevisionRound: 2,
+			TasksToRevise: []string{"task-1"},
+			RevisedTasks:  []string{},
+		}
+		synth.mu.Unlock()
+
+		state := synth.GetRevisionState()
+		if state == nil {
+			t.Fatal("GetRevisionState() should return non-nil")
+		}
+
+		if state.RevisionRound != 2 {
+			t.Errorf("RevisionRound = %d, want 2", state.RevisionRound)
+		}
+		if len(state.Issues) != 1 {
+			t.Errorf("Issues len = %d, want 1", len(state.Issues))
+		}
+
+		// Verify it's a copy
+		state.RevisionRound = 99
+		actualState := synth.GetRevisionState()
+		if actualState.RevisionRound == 99 {
+			t.Error("GetRevisionState() should return a copy, not the actual state")
+		}
+	})
+}
+
+func TestSynthesisOrchestrator_IsInRevision(t *testing.T) {
+	synth, err := NewSynthesisOrchestrator(&PhaseContext{
+		Manager:      &mockManager{},
+		Orchestrator: &mockOrchestrator{},
+		Session:      &mockSession{},
+	})
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("false when no revision state", func(t *testing.T) {
+		if synth.IsInRevision() {
+			t.Error("IsInRevision() should return false when no revision started")
+		}
+	})
+
+	t.Run("true when revision in progress", func(t *testing.T) {
+		synth.mu.Lock()
+		synth.state.Revision = &RevisionState{
+			RevisionRound: 1,
+			CompletedAt:   nil,
+		}
+		synth.mu.Unlock()
+
+		if !synth.IsInRevision() {
+			t.Error("IsInRevision() should return true when revision is in progress")
+		}
+	})
+
+	t.Run("false when revision completed", func(t *testing.T) {
+		now := time.Now()
+		synth.mu.Lock()
+		synth.state.Revision.CompletedAt = &now
+		synth.mu.Unlock()
+
+		if synth.IsInRevision() {
+			t.Error("IsInRevision() should return false when revision is completed")
+		}
+	})
+}
+
+func TestSynthesisOrchestrator_GetRunningRevisionTaskCount(t *testing.T) {
+	synth, err := NewSynthesisOrchestrator(&PhaseContext{
+		Manager:      &mockManager{},
+		Orchestrator: &mockOrchestrator{},
+		Session:      &mockSession{},
+	})
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("returns 0 initially", func(t *testing.T) {
+		if synth.GetRunningRevisionTaskCount() != 0 {
+			t.Errorf("GetRunningRevisionTaskCount() = %d, want 0", synth.GetRunningRevisionTaskCount())
+		}
+	})
+
+	t.Run("returns correct count", func(t *testing.T) {
+		synth.mu.Lock()
+		synth.state.RunningRevisionTasks = map[string]string{
+			"task-1": "inst-1",
+			"task-2": "inst-2",
+		}
+		synth.mu.Unlock()
+
+		if synth.GetRunningRevisionTaskCount() != 2 {
+			t.Errorf("GetRunningRevisionTaskCount() = %d, want 2", synth.GetRunningRevisionTaskCount())
+		}
+	})
+}
+
+func TestSynthesisOrchestrator_BuildRevisionPrompt(t *testing.T) {
+	synth, err := NewSynthesisOrchestrator(&PhaseContext{
+		Manager:      &mockManager{},
+		Orchestrator: &mockOrchestrator{},
+		Session: &mockSession{
+			objective: "Build a user authentication system",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	// Set up revision state
+	synth.mu.Lock()
+	synth.state.Revision = &RevisionState{
+		Issues: []RevisionIssue{
+			{
+				TaskID:      "task-1",
+				Description: "Missing input validation",
+				Severity:    "critical",
+				Files:       []string{"auth.go", "handler.go"},
+				Suggestion:  "Add input validation for username field",
+			},
+			{
+				TaskID:      "task-1",
+				Description: "Another issue",
+				Severity:    "major",
+			},
+			{
+				TaskID:      "task-2",
+				Description: "Different task issue",
+				Severity:    "major",
+			},
+		},
+		RevisionRound: 2,
+	}
+	synth.mu.Unlock()
+
+	task := &mockTask{
+		id:          "task-1",
+		title:       "Implement Login",
+		description: "Create the login functionality",
+	}
+
+	prompt := synth.buildRevisionPrompt(task)
+
+	// Check that the prompt contains expected elements
+	if !strings.Contains(prompt, "Build a user authentication system") {
+		t.Error("prompt should contain the objective")
+	}
+	if !strings.Contains(prompt, "task-1") {
+		t.Error("prompt should contain the task ID")
+	}
+	if !strings.Contains(prompt, "Implement Login") {
+		t.Error("prompt should contain the task title")
+	}
+	if !strings.Contains(prompt, "Missing input validation") {
+		t.Error("prompt should contain the issue description")
+	}
+	if !strings.Contains(prompt, "auth.go") {
+		t.Error("prompt should contain affected files")
+	}
+	if !strings.Contains(prompt, "Revision Round: 2") {
+		t.Error("prompt should contain the revision round")
+	}
+	// Should not contain issues for other tasks
+	// Note: task-2 issues are included because they have empty TaskID or match task-1
+	// But "Different task issue" belongs to task-2, so should be excluded
+}
+
+
+// mockRevisionOrchestrator implements RevisionOrchestratorInterface for tests
+type mockRevisionOrchestrator struct {
+	mockOrchestratorForSynthesis
+	addInstanceToWorktreeCalled bool
+	addInstanceToWorktreeErr    error
+	runSynthesisCalled          bool
+	runSynthesisErr             error
+	stopInstanceCalled          bool
+}
+
+func (m *mockRevisionOrchestrator) AddInstanceToWorktree(session any, task string, worktreePath string, branch string) (InstanceInterface, error) {
+	m.addInstanceToWorktreeCalled = true
+	if m.addInstanceToWorktreeErr != nil {
+		return nil, m.addInstanceToWorktreeErr
+	}
+	return &mockInstanceForSynthesis{
+		id:           "revision-inst-1",
+		worktreePath: worktreePath,
+		branch:       branch,
+		status:       StatusRunning,
+	}, nil
+}
+
+func (m *mockRevisionOrchestrator) StopInstance(inst any) error {
+	m.stopInstanceCalled = true
+	return nil
+}
+
+func (m *mockRevisionOrchestrator) RunSynthesis() error {
+	m.runSynthesisCalled = true
+	return m.runSynthesisErr
+}
+
+// mockRevisionSession implements RevisionSessionInterface for tests
+type mockRevisionSession struct {
+	mockSession
+	revisionState *RevisionState
+	revisionID    string
+}
+
+func (m *mockRevisionSession) GetRevisionState() *RevisionState { return m.revisionState }
+func (m *mockRevisionSession) SetRevisionState(state *RevisionState) {
+	m.revisionState = state
+}
+func (m *mockRevisionSession) GetRevisionID() string      { return m.revisionID }
+func (m *mockRevisionSession) SetRevisionID(id string)    { m.revisionID = id }
+
+func TestSynthesisOrchestrator_StartRevision(t *testing.T) {
+	t.Run("initializes revision state for first round", func(t *testing.T) {
+		mockOrch := &mockRevisionOrchestrator{}
+		mockSession := &mockRevisionSession{
+			mockSession: mockSession{
+				tasks: map[string]any{
+					"task-1": &mockTask{id: "task-1", title: "Test Task"},
+				},
+			},
+		}
+		mockBaseSession := &mockBaseSessionExtended{
+			instances: []InstanceExtendedInterface{
+				&mockInstanceExtended{
+					id:           "orig-inst-1",
+					worktreePath: "/tmp/wt1",
+					branch:       "claudio/test-task",
+					task:         "task-1",
+				},
+			},
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+			BaseSession:  mockBaseSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Initialize context for goroutine management
+		synth.mu.Lock()
+		synth.ctx, synth.cancel = context.WithCancel(context.Background())
+		synth.mu.Unlock()
+
+		issues := []RevisionIssue{
+			{TaskID: "task-1", Description: "Bug", Severity: "critical"},
+		}
+
+		err = synth.StartRevision(issues)
+		if err != nil {
+			t.Errorf("StartRevision() error = %v", err)
+		}
+
+		// Cancel to clean up goroutines
+		synth.Cancel()
+
+		state := synth.GetRevisionState()
+		if state == nil {
+			t.Fatal("revision state should be set after StartRevision")
+		}
+		if state.RevisionRound != 1 {
+			t.Errorf("RevisionRound = %d, want 1", state.RevisionRound)
+		}
+		if len(state.TasksToRevise) != 1 {
+			t.Errorf("TasksToRevise len = %d, want 1", len(state.TasksToRevise))
+		}
+
+		// Verify session was updated
+		if mockSession.revisionState == nil {
+			t.Error("session revision state should be updated")
+		}
+	})
+
+	t.Run("increments revision round for subsequent rounds", func(t *testing.T) {
+		mockOrch := &mockRevisionOrchestrator{}
+		mockSession := &mockRevisionSession{
+			mockSession: mockSession{
+				tasks: map[string]any{
+					"task-1": &mockTask{id: "task-1", title: "Test Task"},
+				},
+			},
+		}
+		mockBaseSession := &mockBaseSessionExtended{
+			instances: []InstanceExtendedInterface{
+				&mockInstanceExtended{
+					id:           "orig-inst-1",
+					worktreePath: "/tmp/wt1",
+					branch:       "claudio/test-task",
+					task:         "task-1",
+				},
+			},
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+			BaseSession:  mockBaseSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Set up existing revision state
+		synth.mu.Lock()
+		synth.ctx, synth.cancel = context.WithCancel(context.Background())
+		synth.state.Revision = &RevisionState{
+			RevisionRound: 1,
+			TasksToRevise: []string{"task-1"},
+			RevisedTasks:  []string{"task-1"},
+		}
+		synth.mu.Unlock()
+
+		issues := []RevisionIssue{
+			{TaskID: "task-1", Description: "New bug", Severity: "critical"},
+		}
+
+		err = synth.StartRevision(issues)
+		if err != nil {
+			t.Errorf("StartRevision() error = %v", err)
+		}
+
+		synth.Cancel()
+
+		state := synth.GetRevisionState()
+		if state.RevisionRound != 2 {
+			t.Errorf("RevisionRound = %d, want 2 (incremented)", state.RevisionRound)
+		}
+	})
+}
+
+func TestSynthesisOrchestrator_HandleRevisionTaskCompletion(t *testing.T) {
+	taskCompletions := make([]string, 0)
+	taskFailures := make([]string, 0)
+
+	callbacks := &mockCallbacksExtended{
+		onTaskComplete: func(taskID string) {
+			taskCompletions = append(taskCompletions, taskID)
+		},
+		onTaskFailed: func(taskID, reason string) {
+			taskFailures = append(taskFailures, taskID)
+		},
+	}
+
+	synth, err := NewSynthesisOrchestrator(&PhaseContext{
+		Manager:      &mockManager{},
+		Orchestrator: &mockOrchestrator{},
+		Session:      &mockSession{},
+		Callbacks:    callbacks,
+	})
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	// Set up revision state
+	synth.mu.Lock()
+	synth.state.Revision = &RevisionState{
+		RevisionRound: 1,
+		TasksToRevise: []string{"task-1", "task-2"},
+		RevisedTasks:  []string{},
+	}
+	synth.state.RunningRevisionTasks = map[string]string{
+		"task-1": "inst-1",
+		"task-2": "inst-2",
+	}
+	synth.mu.Unlock()
+
+	t.Run("handles successful completion", func(t *testing.T) {
+		taskCompletions = taskCompletions[:0]
+
+		synth.handleRevisionTaskCompletion(revisionTaskCompletion{
+			taskID:     "task-1",
+			instanceID: "inst-1",
+			success:    true,
+		})
+
+		// Task should be removed from running tasks
+		if synth.GetRunningRevisionTaskCount() != 1 {
+			t.Errorf("running task count = %d, want 1", synth.GetRunningRevisionTaskCount())
+		}
+
+		// Task should be added to revised tasks
+		state := synth.GetRevisionState()
+		if len(state.RevisedTasks) != 1 || state.RevisedTasks[0] != "task-1" {
+			t.Errorf("RevisedTasks = %v, want [task-1]", state.RevisedTasks)
+		}
+
+		// Callback should be called
+		if len(taskCompletions) != 1 || taskCompletions[0] != "task-1" {
+			t.Errorf("task completions = %v, want [task-1]", taskCompletions)
+		}
+	})
+
+	t.Run("handles failed completion", func(t *testing.T) {
+		taskFailures = taskFailures[:0]
+
+		synth.handleRevisionTaskCompletion(revisionTaskCompletion{
+			taskID:     "task-2",
+			instanceID: "inst-2",
+			success:    false,
+			err:        "timeout",
+		})
+
+		// Task should be removed from running tasks
+		if synth.GetRunningRevisionTaskCount() != 0 {
+			t.Errorf("running task count = %d, want 0", synth.GetRunningRevisionTaskCount())
+		}
+
+		// Task should NOT be added to revised tasks
+		state := synth.GetRevisionState()
+		for _, taskID := range state.RevisedTasks {
+			if taskID == "task-2" {
+				t.Error("failed task should not be in revised tasks")
+			}
+		}
+
+		// Failure callback should be called
+		if len(taskFailures) != 1 || taskFailures[0] != "task-2" {
+			t.Errorf("task failures = %v, want [task-2]", taskFailures)
+		}
+	})
+}
+
+// mockCallbacks with additional fields for revision testing
+type mockCallbacksExtended struct {
+	mockCallbacks
+	onPhaseChange  func(UltraPlanPhase)
+	onTaskComplete func(string)
+	onTaskFailed   func(string, string)
+}
+
+func (m *mockCallbacksExtended) OnPhaseChange(phase UltraPlanPhase) {
+	if m.onPhaseChange != nil {
+		m.onPhaseChange(phase)
+	}
+}
+
+func (m *mockCallbacksExtended) OnTaskComplete(taskID string) {
+	if m.onTaskComplete != nil {
+		m.onTaskComplete(taskID)
+	}
+}
+
+func (m *mockCallbacksExtended) OnTaskFailed(taskID, reason string) {
+	if m.onTaskFailed != nil {
+		m.onTaskFailed(taskID, reason)
+	}
+}
+
+func TestRevisionPromptTemplate(t *testing.T) {
+	// Verify the template can be formatted correctly
+	prompt := fmt.Sprintf(RevisionPromptTemplate,
+		"Build a user auth system",   // objective
+		"task-1",                     // task ID
+		"Implement Login",            // title
+		"Create login functionality", // description
+		1,                            // revision round
+		"1. **critical**: Bug\n",     // issues
+		"task-1",                     // task ID for JSON
+		1,                            // revision round for JSON
+	)
+
+	// Verify key elements are present
+	expectedElements := []string{
+		"Build a user auth system",
+		"task-1",
+		"Implement Login",
+		"Revision Round: 1",
+		RevisionCompletionFileName,
+	}
+
+	for _, elem := range expectedElements {
+		if !strings.Contains(prompt, elem) {
+			t.Errorf("prompt should contain %q", elem)
+		}
+	}
 }
