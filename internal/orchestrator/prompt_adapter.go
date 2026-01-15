@@ -15,6 +15,12 @@ var (
 	// ErrNilUltraPlanSession is returned when a PromptAdapter method requires
 	// an UltraPlanSession but the coordinator's manager returns nil.
 	ErrNilUltraPlanSession = errors.New("coordinator has nil ultra-plan session")
+
+	// ErrNilManager is returned when the coordinator's manager is nil.
+	ErrNilManager = errors.New("prompt adapter: manager is required")
+
+	// ErrNilSession is returned when the manager's session is nil.
+	ErrNilSession = errors.New("prompt adapter: session is required")
 )
 
 // PromptAdapter bridges orchestrator types to prompt.Context, enabling the
@@ -298,4 +304,122 @@ func (a *PromptAdapter) BuildPlanningContext() (*prompt.Context, error) {
 	}
 
 	return ctx, nil
+}
+
+// planInfoWithCommitCounts creates a PlanInfo from a PlanSpec, enriching task info
+// with commit counts from the provided map. This is used during synthesis to include
+// the number of commits each task made in its work.
+func planInfoWithCommitCounts(spec *PlanSpec, commitCounts map[string]int) *prompt.PlanInfo {
+	if spec == nil {
+		return nil
+	}
+
+	planInfo := &prompt.PlanInfo{
+		ID:             spec.ID,
+		Summary:        spec.Summary,
+		ExecutionOrder: spec.ExecutionOrder,
+		Insights:       spec.Insights,
+		Constraints:    spec.Constraints,
+	}
+
+	// Convert tasks with commit counts
+	if spec.Tasks != nil {
+		planInfo.Tasks = make([]prompt.TaskInfo, len(spec.Tasks))
+		for i, task := range spec.Tasks {
+			taskInfo := taskInfoFromPlannedTask(task)
+			if commitCounts != nil {
+				if count, ok := commitCounts[task.ID]; ok {
+					taskInfo.CommitCount = count
+				}
+			}
+			planInfo.Tasks[i] = taskInfo
+		}
+	}
+
+	return planInfo
+}
+
+// BuildSynthesisContext creates a prompt.Context configured for the synthesis phase.
+// It populates the context with plan info (including commit counts), completed tasks,
+// failed tasks, and previous group context strings from consolidation outputs.
+//
+// Returns an error if the adapter has no coordinator, no manager, no session,
+// or if the resulting context fails validation.
+func (a *PromptAdapter) BuildSynthesisContext() (*prompt.Context, error) {
+	if a.coordinator == nil {
+		return nil, ErrNilCoordinator
+	}
+
+	manager := a.coordinator.manager
+	if manager == nil {
+		return nil, ErrNilManager
+	}
+
+	session := manager.Session()
+	if session == nil {
+		return nil, ErrNilSession
+	}
+
+	ctx := &prompt.Context{
+		Phase:     prompt.PhaseSynthesis,
+		SessionID: session.ID,
+		Objective: session.Objective,
+	}
+
+	// Populate Plan with commit counts from TaskCommitCounts
+	ctx.Plan = planInfoWithCommitCounts(session.Plan, session.TaskCommitCounts)
+
+	// Populate completed and failed tasks
+	ctx.CompletedTasks = session.CompletedTasks
+	ctx.FailedTasks = session.FailedTasks
+
+	// Populate PreviousGroupContext strings from GroupConsolidationContexts
+	ctx.PreviousGroupContext = buildPreviousGroupContextStrings(session.GroupConsolidationContexts)
+
+	if err := ctx.Validate(); err != nil {
+		return nil, err
+	}
+
+	return ctx, nil
+}
+
+// buildPreviousGroupContextStrings extracts context strings from GroupConsolidationCompletionFile entries.
+// For each completed group, it formats the notes and issues into a readable string.
+func buildPreviousGroupContextStrings(contexts []*GroupConsolidationCompletionFile) []string {
+	if contexts == nil {
+		return nil
+	}
+
+	result := make([]string, 0, len(contexts))
+	for _, ctx := range contexts {
+		if ctx == nil {
+			continue
+		}
+
+		var contextStr string
+		if ctx.Notes != "" {
+			contextStr = ctx.Notes
+		}
+		if len(ctx.IssuesForNextGroup) > 0 {
+			if contextStr != "" {
+				contextStr += " | Issues: "
+			} else {
+				contextStr = "Issues: "
+			}
+			for i, issue := range ctx.IssuesForNextGroup {
+				if i > 0 {
+					contextStr += "; "
+				}
+				contextStr += issue
+			}
+		}
+		if contextStr != "" {
+			result = append(result, contextStr)
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }

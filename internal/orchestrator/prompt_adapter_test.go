@@ -1460,3 +1460,390 @@ func TestBuildPlanningContext(t *testing.T) {
 		})
 	}
 }
+
+func TestPlanInfoWithCommitCounts(t *testing.T) {
+	tests := []struct {
+		name         string
+		spec         *PlanSpec
+		commitCounts map[string]int
+		want         *prompt.PlanInfo
+	}{
+		{
+			name:         "nil spec returns nil",
+			spec:         nil,
+			commitCounts: nil,
+			want:         nil,
+		},
+		{
+			name: "empty commit counts",
+			spec: &PlanSpec{
+				ID: "plan-1",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1"},
+				},
+			},
+			commitCounts: nil,
+			want: &prompt.PlanInfo{
+				ID: "plan-1",
+				Tasks: []prompt.TaskInfo{
+					{ID: "task-1", Title: "Task 1", CommitCount: 0},
+				},
+			},
+		},
+		{
+			name: "commit counts populated",
+			spec: &PlanSpec{
+				ID:      "plan-1",
+				Summary: "Test plan",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1", EstComplexity: ComplexityLow},
+					{ID: "task-2", Title: "Task 2", EstComplexity: ComplexityHigh},
+					{ID: "task-3", Title: "Task 3", EstComplexity: ComplexityMedium},
+				},
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2", "task-3"}},
+			},
+			commitCounts: map[string]int{
+				"task-1": 3,
+				"task-2": 1,
+				// task-3 intentionally missing
+			},
+			want: &prompt.PlanInfo{
+				ID:      "plan-1",
+				Summary: "Test plan",
+				Tasks: []prompt.TaskInfo{
+					{ID: "task-1", Title: "Task 1", EstComplexity: "low", CommitCount: 3},
+					{ID: "task-2", Title: "Task 2", EstComplexity: "high", CommitCount: 1},
+					{ID: "task-3", Title: "Task 3", EstComplexity: "medium", CommitCount: 0},
+				},
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2", "task-3"}},
+			},
+		},
+		{
+			name: "nil tasks in spec",
+			spec: &PlanSpec{
+				ID:      "plan-1",
+				Summary: "No tasks plan",
+				Tasks:   nil,
+			},
+			commitCounts: map[string]int{"task-1": 5},
+			want: &prompt.PlanInfo{
+				ID:      "plan-1",
+				Summary: "No tasks plan",
+				Tasks:   nil,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := planInfoWithCommitCounts(tt.spec, tt.commitCounts)
+
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("planInfoWithCommitCounts() = %v, want nil", got)
+				}
+				return
+			}
+
+			if got == nil {
+				t.Error("planInfoWithCommitCounts() = nil, want non-nil")
+				return
+			}
+
+			if got.ID != tt.want.ID {
+				t.Errorf("planInfoWithCommitCounts().ID = %q, want %q", got.ID, tt.want.ID)
+			}
+			if got.Summary != tt.want.Summary {
+				t.Errorf("planInfoWithCommitCounts().Summary = %q, want %q", got.Summary, tt.want.Summary)
+			}
+
+			if len(got.Tasks) != len(tt.want.Tasks) {
+				t.Errorf("planInfoWithCommitCounts().Tasks length = %d, want %d", len(got.Tasks), len(tt.want.Tasks))
+				return
+			}
+
+			for i, task := range got.Tasks {
+				if task.ID != tt.want.Tasks[i].ID {
+					t.Errorf("Tasks[%d].ID = %q, want %q", i, task.ID, tt.want.Tasks[i].ID)
+				}
+				if task.CommitCount != tt.want.Tasks[i].CommitCount {
+					t.Errorf("Tasks[%d].CommitCount = %d, want %d", i, task.CommitCount, tt.want.Tasks[i].CommitCount)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildPreviousGroupContextStrings(t *testing.T) {
+	tests := []struct {
+		name     string
+		contexts []*GroupConsolidationCompletionFile
+		want     []string
+	}{
+		{
+			name:     "nil contexts returns nil",
+			contexts: nil,
+			want:     nil,
+		},
+		{
+			name:     "empty contexts returns nil",
+			contexts: []*GroupConsolidationCompletionFile{},
+			want:     nil,
+		},
+		{
+			name: "contexts with only nil entries returns nil",
+			contexts: []*GroupConsolidationCompletionFile{
+				nil,
+				nil,
+			},
+			want: nil,
+		},
+		{
+			name: "context with notes only",
+			contexts: []*GroupConsolidationCompletionFile{
+				{
+					GroupIndex: 0,
+					Notes:      "Group 0 completed successfully",
+				},
+			},
+			want: []string{"Group 0 completed successfully"},
+		},
+		{
+			name: "context with issues only",
+			contexts: []*GroupConsolidationCompletionFile{
+				{
+					GroupIndex:         0,
+					IssuesForNextGroup: []string{"Watch out for API changes", "Tests may be flaky"},
+				},
+			},
+			want: []string{"Issues: Watch out for API changes; Tests may be flaky"},
+		},
+		{
+			name: "context with notes and issues",
+			contexts: []*GroupConsolidationCompletionFile{
+				{
+					GroupIndex:         0,
+					Notes:              "Consolidated 3 tasks",
+					IssuesForNextGroup: []string{"Needs review"},
+				},
+			},
+			want: []string{"Consolidated 3 tasks | Issues: Needs review"},
+		},
+		{
+			name: "multiple contexts",
+			contexts: []*GroupConsolidationCompletionFile{
+				{
+					GroupIndex: 0,
+					Notes:      "First group done",
+				},
+				nil, // Should be skipped
+				{
+					GroupIndex:         2,
+					Notes:              "Third group done",
+					IssuesForNextGroup: []string{"Issue A", "Issue B"},
+				},
+			},
+			want: []string{
+				"First group done",
+				"Third group done | Issues: Issue A; Issue B",
+			},
+		},
+		{
+			name: "context with empty notes and empty issues",
+			contexts: []*GroupConsolidationCompletionFile{
+				{
+					GroupIndex:         0,
+					Notes:              "",
+					IssuesForNextGroup: []string{},
+				},
+			},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildPreviousGroupContextStrings(tt.contexts)
+
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("buildPreviousGroupContextStrings() = %v, want nil", got)
+				}
+				return
+			}
+
+			if got == nil {
+				t.Errorf("buildPreviousGroupContextStrings() = nil, want %v", tt.want)
+				return
+			}
+
+			if len(got) != len(tt.want) {
+				t.Errorf("buildPreviousGroupContextStrings() length = %d, want %d", len(got), len(tt.want))
+				return
+			}
+
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("buildPreviousGroupContextStrings()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestBuildSynthesisContext(t *testing.T) {
+	t.Run("nil coordinator returns error", func(t *testing.T) {
+		adapter := NewPromptAdapter(nil)
+		ctx, err := adapter.BuildSynthesisContext()
+		if err != ErrNilCoordinator {
+			t.Errorf("BuildSynthesisContext() error = %v, want %v", err, ErrNilCoordinator)
+		}
+		if ctx != nil {
+			t.Errorf("BuildSynthesisContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("nil manager returns error", func(t *testing.T) {
+		coordinator := &Coordinator{manager: nil}
+		adapter := NewPromptAdapter(coordinator)
+		ctx, err := adapter.BuildSynthesisContext()
+		if err != ErrNilManager {
+			t.Errorf("BuildSynthesisContext() error = %v, want %v", err, ErrNilManager)
+		}
+		if ctx != nil {
+			t.Errorf("BuildSynthesisContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("nil session returns error", func(t *testing.T) {
+		manager := &UltraPlanManager{session: nil}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+		ctx, err := adapter.BuildSynthesisContext()
+		if err != ErrNilSession {
+			t.Errorf("BuildSynthesisContext() error = %v, want %v", err, ErrNilSession)
+		}
+		if ctx != nil {
+			t.Errorf("BuildSynthesisContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("validation error for empty objective", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "", // Empty objective should fail validation
+			Plan: &PlanSpec{
+				ID: "plan-1",
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildSynthesisContext()
+		if err == nil {
+			t.Error("BuildSynthesisContext() error = nil, want validation error")
+		}
+		if ctx != nil {
+			t.Errorf("BuildSynthesisContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("successful synthesis context creation", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-123",
+			Objective: "Implement feature X",
+			Plan: &PlanSpec{
+				ID:      "plan-456",
+				Summary: "Feature implementation plan",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1", EstComplexity: ComplexityLow},
+					{ID: "task-2", Title: "Task 2", EstComplexity: ComplexityMedium},
+				},
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+			},
+			CompletedTasks: []string{"task-1"},
+			FailedTasks:    []string{},
+			TaskCommitCounts: map[string]int{
+				"task-1": 2,
+			},
+			GroupConsolidationContexts: []*GroupConsolidationCompletionFile{
+				{
+					GroupIndex: 0,
+					Notes:      "Group 0 completed",
+				},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildSynthesisContext()
+		if err != nil {
+			t.Fatalf("BuildSynthesisContext() error = %v, want nil", err)
+		}
+
+		if ctx.Phase != prompt.PhaseSynthesis {
+			t.Errorf("ctx.Phase = %v, want %v", ctx.Phase, prompt.PhaseSynthesis)
+		}
+		if ctx.SessionID != "session-123" {
+			t.Errorf("ctx.SessionID = %q, want %q", ctx.SessionID, "session-123")
+		}
+		if ctx.Objective != "Implement feature X" {
+			t.Errorf("ctx.Objective = %q, want %q", ctx.Objective, "Implement feature X")
+		}
+
+		// Check plan
+		if ctx.Plan == nil {
+			t.Fatal("ctx.Plan = nil, want non-nil")
+		}
+		if ctx.Plan.ID != "plan-456" {
+			t.Errorf("ctx.Plan.ID = %q, want %q", ctx.Plan.ID, "plan-456")
+		}
+		if len(ctx.Plan.Tasks) != 2 {
+			t.Fatalf("ctx.Plan.Tasks length = %d, want 2", len(ctx.Plan.Tasks))
+		}
+		// Check commit count was populated
+		if ctx.Plan.Tasks[0].CommitCount != 2 {
+			t.Errorf("ctx.Plan.Tasks[0].CommitCount = %d, want 2", ctx.Plan.Tasks[0].CommitCount)
+		}
+		if ctx.Plan.Tasks[1].CommitCount != 0 {
+			t.Errorf("ctx.Plan.Tasks[1].CommitCount = %d, want 0", ctx.Plan.Tasks[1].CommitCount)
+		}
+
+		// Check completed/failed tasks
+		if len(ctx.CompletedTasks) != 1 || ctx.CompletedTasks[0] != "task-1" {
+			t.Errorf("ctx.CompletedTasks = %v, want [task-1]", ctx.CompletedTasks)
+		}
+		if len(ctx.FailedTasks) != 0 {
+			t.Errorf("ctx.FailedTasks = %v, want empty", ctx.FailedTasks)
+		}
+
+		// Check previous group context
+		if len(ctx.PreviousGroupContext) != 1 {
+			t.Fatalf("ctx.PreviousGroupContext length = %d, want 1", len(ctx.PreviousGroupContext))
+		}
+		if ctx.PreviousGroupContext[0] != "Group 0 completed" {
+			t.Errorf("ctx.PreviousGroupContext[0] = %q, want %q", ctx.PreviousGroupContext[0], "Group 0 completed")
+		}
+	})
+
+	t.Run("synthesis context with nil plan fails validation", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "Test objective",
+			Plan:      nil, // Synthesis phase requires a plan
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildSynthesisContext()
+		if err == nil {
+			t.Error("BuildSynthesisContext() error = nil, want validation error for missing plan")
+		}
+		if ctx != nil {
+			t.Errorf("BuildSynthesisContext() ctx = %v, want nil", ctx)
+		}
+	})
+}
