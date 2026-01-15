@@ -22,23 +22,54 @@ func (m *mockManager) AssignTaskToInstance(taskID, instanceID string) {}
 func (m *mockManager) Stop()                                          {}
 
 // mockOrchestrator implements OrchestratorInterface for testing
-type mockOrchestrator struct{}
+type mockOrchestrator struct {
+	instance InstanceInterface
+}
 
 func (m *mockOrchestrator) AddInstance(session any, task string) (any, error) { return nil, nil }
 func (m *mockOrchestrator) StartInstance(inst any) error                      { return nil }
 func (m *mockOrchestrator) SaveSession() error                                { return nil }
 func (m *mockOrchestrator) GetInstanceManager(id string) any                  { return nil }
+func (m *mockOrchestrator) GetInstance(id string) InstanceInterface           { return m.instance }
 func (m *mockOrchestrator) BranchPrefix() string                              { return "test" }
 
 // mockSession implements UltraPlanSessionInterface for testing
-type mockSession struct{}
+type mockSession struct {
+	objective         string
+	completedTasks    []string
+	taskToInstance    map[string]string
+	taskCommitCounts  map[string]int
+	synthesisID       string
+	revisionRound     int
+	awaitingApproval  bool
+	phase             UltraPlanPhase
+	errorMsg          string
+	config            UltraPlanConfigInterface
+	synthesisComplete *SynthesisCompletionFile
+}
 
-func (m *mockSession) GetTask(taskID string) any           { return nil }
-func (m *mockSession) GetReadyTasks() []string             { return nil }
-func (m *mockSession) IsCurrentGroupComplete() bool        { return false }
-func (m *mockSession) AdvanceGroupIfComplete() (bool, int) { return false, 0 }
-func (m *mockSession) HasMoreGroups() bool                 { return false }
-func (m *mockSession) Progress() float64                   { return 0 }
+func (m *mockSession) GetTask(taskID string) any                  { return nil }
+func (m *mockSession) GetReadyTasks() []string                    { return nil }
+func (m *mockSession) IsCurrentGroupComplete() bool               { return false }
+func (m *mockSession) AdvanceGroupIfComplete() (bool, int)        { return false, 0 }
+func (m *mockSession) HasMoreGroups() bool                        { return false }
+func (m *mockSession) Progress() float64                          { return 0 }
+func (m *mockSession) GetObjective() string                       { return m.objective }
+func (m *mockSession) GetCompletedTasks() []string                { return m.completedTasks }
+func (m *mockSession) GetTaskToInstance() map[string]string       { return m.taskToInstance }
+func (m *mockSession) GetTaskCommitCounts() map[string]int        { return m.taskCommitCounts }
+func (m *mockSession) GetSynthesisID() string                     { return m.synthesisID }
+func (m *mockSession) SetSynthesisID(id string)                   { m.synthesisID = id }
+func (m *mockSession) GetRevisionRound() int                      { return m.revisionRound }
+func (m *mockSession) SetSynthesisAwaitingApproval(awaiting bool) { m.awaitingApproval = awaiting }
+func (m *mockSession) IsSynthesisAwaitingApproval() bool          { return m.awaitingApproval }
+func (m *mockSession) SetSynthesisCompletion(completion *SynthesisCompletionFile) {
+	m.synthesisComplete = completion
+}
+func (m *mockSession) GetPhase() UltraPlanPhase            { return m.phase }
+func (m *mockSession) SetPhase(phase UltraPlanPhase)       { m.phase = phase }
+func (m *mockSession) SetError(err string)                 { m.errorMsg = err }
+func (m *mockSession) GetConfig() UltraPlanConfigInterface { return m.config }
 
 // mockCallbacks implements CoordinatorCallbacksInterface for testing
 type mockCallbacks struct{}

@@ -34,6 +34,7 @@ func (m *mockManagerForConsolidation) Stop() {}
 // mockOrchestratorForConsolidation implements OrchestratorInterface for consolidation tests
 type mockOrchestratorForConsolidation struct {
 	branchPrefix string
+	instance     InstanceInterface
 }
 
 func (m *mockOrchestratorForConsolidation) AddInstance(session any, task string) (any, error) {
@@ -44,17 +45,31 @@ func (m *mockOrchestratorForConsolidation) SaveSession() error           { retur
 func (m *mockOrchestratorForConsolidation) GetInstanceManager(id string) any {
 	return nil
 }
+func (m *mockOrchestratorForConsolidation) GetInstance(id string) InstanceInterface {
+	return m.instance
+}
 func (m *mockOrchestratorForConsolidation) BranchPrefix() string { return m.branchPrefix }
 
 // mockSessionForConsolidation implements UltraPlanSessionInterface for consolidation tests
 type mockSessionForConsolidation struct {
-	tasks         map[string]any
-	readyTasks    []string
-	groupComplete bool
-	advancedGroup bool
-	hasMoreGroups bool
-	progress      float64
-	previousGroup int
+	tasks             map[string]any
+	readyTasks        []string
+	groupComplete     bool
+	advancedGroup     bool
+	hasMoreGroups     bool
+	progress          float64
+	previousGroup     int
+	objective         string
+	completedTasks    []string
+	taskToInstance    map[string]string
+	taskCommitCounts  map[string]int
+	synthesisID       string
+	revisionRound     int
+	awaitingApproval  bool
+	phase             UltraPlanPhase
+	errorMsg          string
+	config            UltraPlanConfigInterface
+	synthesisComplete *SynthesisCompletionFile
 }
 
 func (m *mockSessionForConsolidation) GetTask(taskID string) any {
@@ -71,8 +86,26 @@ func (m *mockSessionForConsolidation) AdvanceGroupIfComplete() (advanced bool, p
 	}
 	return false, 0
 }
-func (m *mockSessionForConsolidation) HasMoreGroups() bool { return m.hasMoreGroups }
-func (m *mockSessionForConsolidation) Progress() float64   { return m.progress }
+func (m *mockSessionForConsolidation) HasMoreGroups() bool                  { return m.hasMoreGroups }
+func (m *mockSessionForConsolidation) Progress() float64                    { return m.progress }
+func (m *mockSessionForConsolidation) GetObjective() string                 { return m.objective }
+func (m *mockSessionForConsolidation) GetCompletedTasks() []string          { return m.completedTasks }
+func (m *mockSessionForConsolidation) GetTaskToInstance() map[string]string { return m.taskToInstance }
+func (m *mockSessionForConsolidation) GetTaskCommitCounts() map[string]int  { return m.taskCommitCounts }
+func (m *mockSessionForConsolidation) GetSynthesisID() string               { return m.synthesisID }
+func (m *mockSessionForConsolidation) SetSynthesisID(id string)             { m.synthesisID = id }
+func (m *mockSessionForConsolidation) GetRevisionRound() int                { return m.revisionRound }
+func (m *mockSessionForConsolidation) SetSynthesisAwaitingApproval(awaiting bool) {
+	m.awaitingApproval = awaiting
+}
+func (m *mockSessionForConsolidation) IsSynthesisAwaitingApproval() bool { return m.awaitingApproval }
+func (m *mockSessionForConsolidation) SetSynthesisCompletion(completion *SynthesisCompletionFile) {
+	m.synthesisComplete = completion
+}
+func (m *mockSessionForConsolidation) GetPhase() UltraPlanPhase            { return m.phase }
+func (m *mockSessionForConsolidation) SetPhase(phase UltraPlanPhase)       { m.phase = phase }
+func (m *mockSessionForConsolidation) SetError(err string)                 { m.errorMsg = err }
+func (m *mockSessionForConsolidation) GetConfig() UltraPlanConfigInterface { return m.config }
 
 // mockCallbacksForConsolidation implements CoordinatorCallbacksInterface for consolidation tests
 type mockCallbacksForConsolidation struct {

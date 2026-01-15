@@ -142,6 +142,68 @@ func (a *coordinatorOrchestratorAdapter) BranchPrefix() string {
 	return a.c.orch.BranchPrefix()
 }
 
+// GetInstance returns an instance by ID wrapped in the InstanceInterface.
+func (a *coordinatorOrchestratorAdapter) GetInstance(id string) phase.InstanceInterface {
+	if a.c == nil || a.c.orch == nil {
+		return nil
+	}
+	inst := a.c.orch.GetInstance(id)
+	if inst == nil {
+		return nil
+	}
+	return newInstanceInterfaceAdapter(inst)
+}
+
+// instanceInterfaceAdapter adapts *Instance to phase.InstanceInterface.
+type instanceInterfaceAdapter struct {
+	inst *Instance
+}
+
+// newInstanceInterfaceAdapter creates a new instance interface adapter.
+func newInstanceInterfaceAdapter(inst *Instance) *instanceInterfaceAdapter {
+	return &instanceInterfaceAdapter{inst: inst}
+}
+
+// GetID returns the instance ID.
+func (a *instanceInterfaceAdapter) GetID() string {
+	if a.inst == nil {
+		return ""
+	}
+	return a.inst.ID
+}
+
+// GetWorktreePath returns the path to the instance's worktree.
+func (a *instanceInterfaceAdapter) GetWorktreePath() string {
+	if a.inst == nil {
+		return ""
+	}
+	return a.inst.WorktreePath
+}
+
+// GetBranch returns the branch name for the instance.
+func (a *instanceInterfaceAdapter) GetBranch() string {
+	if a.inst == nil {
+		return ""
+	}
+	return a.inst.Branch
+}
+
+// GetStatus returns the current status of the instance.
+func (a *instanceInterfaceAdapter) GetStatus() phase.InstanceStatus {
+	if a.inst == nil {
+		return phase.StatusPending
+	}
+	return phase.InstanceStatus(a.inst.Status)
+}
+
+// GetFilesModified returns the list of files modified by this instance.
+func (a *instanceInterfaceAdapter) GetFilesModified() []string {
+	if a.inst == nil {
+		return nil
+	}
+	return a.inst.FilesModified
+}
+
 // coordinatorSessionAdapter adapts UltraPlanSession to phase.UltraPlanSessionInterface.
 // This provides phase executors with access to session state like task lists and group progress.
 type coordinatorSessionAdapter struct {
@@ -203,6 +265,149 @@ func (a *coordinatorSessionAdapter) Progress() float64 {
 		return 0.0
 	}
 	return a.session.Progress()
+}
+
+// GetObjective returns the original user objective for the ultra-plan.
+func (a *coordinatorSessionAdapter) GetObjective() string {
+	if a.session == nil {
+		return ""
+	}
+	return a.session.Objective
+}
+
+// GetCompletedTasks returns the list of completed task IDs.
+func (a *coordinatorSessionAdapter) GetCompletedTasks() []string {
+	if a.session == nil {
+		return nil
+	}
+	return a.session.CompletedTasks
+}
+
+// GetTaskToInstance returns the mapping of task IDs to instance IDs.
+func (a *coordinatorSessionAdapter) GetTaskToInstance() map[string]string {
+	if a.session == nil {
+		return nil
+	}
+	return a.session.TaskToInstance
+}
+
+// GetTaskCommitCounts returns the commit counts for each task.
+func (a *coordinatorSessionAdapter) GetTaskCommitCounts() map[string]int {
+	if a.session == nil {
+		return nil
+	}
+	return a.session.TaskCommitCounts
+}
+
+// GetSynthesisID returns the ID of the synthesis instance, or empty if not set.
+func (a *coordinatorSessionAdapter) GetSynthesisID() string {
+	if a.session == nil {
+		return ""
+	}
+	return a.session.SynthesisID
+}
+
+// SetSynthesisID sets the ID of the synthesis instance.
+func (a *coordinatorSessionAdapter) SetSynthesisID(id string) {
+	if a.session == nil {
+		return
+	}
+	a.session.SynthesisID = id
+}
+
+// GetRevisionRound returns the current revision round (0 for first synthesis).
+func (a *coordinatorSessionAdapter) GetRevisionRound() int {
+	if a.session == nil || a.session.Revision == nil {
+		return 0
+	}
+	return a.session.Revision.RevisionRound
+}
+
+// SetSynthesisAwaitingApproval sets whether synthesis is waiting for approval.
+func (a *coordinatorSessionAdapter) SetSynthesisAwaitingApproval(awaiting bool) {
+	if a.session == nil {
+		return
+	}
+	a.session.SynthesisAwaitingApproval = awaiting
+}
+
+// IsSynthesisAwaitingApproval returns true if synthesis is waiting for approval.
+func (a *coordinatorSessionAdapter) IsSynthesisAwaitingApproval() bool {
+	if a.session == nil {
+		return false
+	}
+	return a.session.SynthesisAwaitingApproval
+}
+
+// SetSynthesisCompletion sets the synthesis completion data.
+func (a *coordinatorSessionAdapter) SetSynthesisCompletion(completion *phase.SynthesisCompletionFile) {
+	if a.session == nil || completion == nil {
+		return
+	}
+	// Convert phase.SynthesisCompletionFile to orchestrator.SynthesisCompletionFile
+	orchCompletion := &SynthesisCompletionFile{
+		Status:           completion.Status,
+		RevisionRound:    completion.RevisionRound,
+		TasksAffected:    completion.TasksAffected,
+		IntegrationNotes: completion.IntegrationNotes,
+		Recommendations:  completion.Recommendations,
+	}
+	// Convert issues
+	for _, issue := range completion.IssuesFound {
+		orchCompletion.IssuesFound = append(orchCompletion.IssuesFound, RevisionIssue{
+			TaskID:      issue.TaskID,
+			Description: issue.Description,
+			Files:       issue.Files,
+			Severity:    issue.Severity,
+			Suggestion:  issue.Suggestion,
+		})
+	}
+	a.session.SynthesisCompletion = orchCompletion
+}
+
+// GetPhase returns the current phase of the ultra-plan.
+func (a *coordinatorSessionAdapter) GetPhase() phase.UltraPlanPhase {
+	if a.session == nil {
+		return phase.PhasePlanning
+	}
+	return phase.UltraPlanPhase(a.session.Phase)
+}
+
+// SetPhase sets the current phase of the ultra-plan.
+func (a *coordinatorSessionAdapter) SetPhase(p phase.UltraPlanPhase) {
+	if a.session == nil {
+		return
+	}
+	a.session.Phase = UltraPlanPhase(p)
+}
+
+// SetError sets an error message on the session.
+func (a *coordinatorSessionAdapter) SetError(err string) {
+	if a.session == nil {
+		return
+	}
+	a.session.Error = err
+}
+
+// GetConfig returns the ultra-plan configuration.
+func (a *coordinatorSessionAdapter) GetConfig() phase.UltraPlanConfigInterface {
+	if a.session == nil {
+		return nil
+	}
+	return &configAdapter{config: &a.session.Config}
+}
+
+// configAdapter adapts UltraPlanConfig to phase.UltraPlanConfigInterface.
+type configAdapter struct {
+	config *UltraPlanConfig
+}
+
+// IsMultiPass returns true if multi-pass planning is enabled.
+func (a *configAdapter) IsMultiPass() bool {
+	if a.config == nil {
+		return false
+	}
+	return a.config.MultiPass
 }
 
 // coordinatorCallbacksAdapter adapts CoordinatorCallbacks to phase.CoordinatorCallbacksInterface.

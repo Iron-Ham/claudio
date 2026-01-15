@@ -99,18 +99,87 @@ func TestSynthesisOrchestrator_Phase(t *testing.T) {
 	}
 }
 
+// mockInstanceForSynthesis implements the interface that Execute expects to extract instance ID
+type mockInstanceForSynthesis struct {
+	id           string
+	worktreePath string
+	branch       string
+	status       InstanceStatus
+}
+
+func (m *mockInstanceForSynthesis) GetID() string              { return m.id }
+func (m *mockInstanceForSynthesis) GetWorktreePath() string    { return m.worktreePath }
+func (m *mockInstanceForSynthesis) GetBranch() string          { return m.branch }
+func (m *mockInstanceForSynthesis) GetStatus() InstanceStatus  { return m.status }
+func (m *mockInstanceForSynthesis) GetFilesModified() []string { return nil }
+
+// mockOrchestratorForSynthesis provides a complete mock for synthesis tests
+type mockOrchestratorForSynthesis struct {
+	instances      map[string]*mockInstanceForSynthesis
+	addedInstance  *mockInstanceForSynthesis
+	startErr       error
+	saveSessionErr error
+}
+
+func (m *mockOrchestratorForSynthesis) AddInstance(session any, task string) (any, error) {
+	if m.addedInstance == nil {
+		m.addedInstance = &mockInstanceForSynthesis{
+			id:           "test-synthesis-instance",
+			worktreePath: "/tmp/test-worktree",
+			status:       StatusCompleted, // Complete immediately for tests
+		}
+	}
+	return m.addedInstance, nil
+}
+
+func (m *mockOrchestratorForSynthesis) StartInstance(inst any) error {
+	return m.startErr
+}
+
+func (m *mockOrchestratorForSynthesis) SaveSession() error {
+	return m.saveSessionErr
+}
+
+func (m *mockOrchestratorForSynthesis) GetInstanceManager(id string) any {
+	return nil
+}
+
+func (m *mockOrchestratorForSynthesis) GetInstance(id string) InstanceInterface {
+	if m.instances != nil {
+		if inst, ok := m.instances[id]; ok {
+			return inst
+		}
+	}
+	if m.addedInstance != nil && m.addedInstance.id == id {
+		return m.addedInstance
+	}
+	return nil
+}
+
+func (m *mockOrchestratorForSynthesis) BranchPrefix() string {
+	return "test"
+}
+
 func TestSynthesisOrchestrator_Execute(t *testing.T) {
 	t.Run("Execute with background context", func(t *testing.T) {
+		mockOrch := &mockOrchestratorForSynthesis{
+			addedInstance: &mockInstanceForSynthesis{
+				id:           "test-synth",
+				worktreePath: "/tmp/test",
+				status:       StatusCompleted,
+			},
+		}
+
 		synth, err := NewSynthesisOrchestrator(&PhaseContext{
 			Manager:      &mockManager{},
-			Orchestrator: &mockOrchestrator{},
+			Orchestrator: mockOrch,
 			Session:      &mockSession{},
 		})
 		if err != nil {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		// Execute should complete without error (currently stub implementation)
+		// Execute should complete without error
 		err = synth.Execute(context.Background())
 		if err != nil {
 			t.Errorf("Execute() unexpected error: %v", err)
@@ -118,9 +187,18 @@ func TestSynthesisOrchestrator_Execute(t *testing.T) {
 	})
 
 	t.Run("Execute respects context cancellation", func(t *testing.T) {
+		// Create an instance that stays running so we can test cancellation
+		mockOrch := &mockOrchestratorForSynthesis{
+			addedInstance: &mockInstanceForSynthesis{
+				id:           "test-synth",
+				worktreePath: "/tmp/test",
+				status:       StatusRunning, // Keep running
+			},
+		}
+
 		synth, err := NewSynthesisOrchestrator(&PhaseContext{
 			Manager:      &mockManager{},
-			Orchestrator: &mockOrchestrator{},
+			Orchestrator: mockOrch,
 			Session:      &mockSession{},
 		})
 		if err != nil {
@@ -128,12 +206,26 @@ func TestSynthesisOrchestrator_Execute(t *testing.T) {
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // Cancel immediately
 
-		// Execute should complete (stub doesn't check context yet)
-		err = synth.Execute(ctx)
-		if err != nil {
-			t.Errorf("Execute() unexpected error: %v", err)
+		// Start Execute in a goroutine
+		done := make(chan error, 1)
+		go func() {
+			done <- synth.Execute(ctx)
+		}()
+
+		// Cancel after a short delay
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+
+		// Wait for Execute to complete
+		select {
+		case err := <-done:
+			// Execute should complete when context is cancelled (no error expected)
+			if err != nil {
+				t.Errorf("Execute() unexpected error: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("Execute did not complete after context cancellation")
 		}
 	})
 }
@@ -170,9 +262,17 @@ func TestSynthesisOrchestrator_Cancel(t *testing.T) {
 	})
 
 	t.Run("Cancel during Execute", func(t *testing.T) {
+		mockOrch := &mockOrchestratorForSynthesis{
+			addedInstance: &mockInstanceForSynthesis{
+				id:           "test-synth",
+				worktreePath: "/tmp/test",
+				status:       StatusRunning, // Keep running so Cancel can interrupt
+			},
+		}
+
 		synth, err := NewSynthesisOrchestrator(&PhaseContext{
 			Manager:      &mockManager{},
-			Orchestrator: &mockOrchestrator{},
+			Orchestrator: mockOrch,
 			Session:      &mockSession{},
 		})
 		if err != nil {
