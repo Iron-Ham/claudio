@@ -3,6 +3,7 @@ package phase
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 )
@@ -2047,6 +2048,2030 @@ func TestResumeErrors(t *testing.T) {
 	t.Run("ErrUnresolvedConflicts has correct message", func(t *testing.T) {
 		if ErrUnresolvedConflicts.Error() != "unresolved conflicts remain" {
 			t.Errorf("ErrUnresolvedConflicts = %v, want %v", ErrUnresolvedConflicts.Error(), "unresolved conflicts remain")
+		}
+	})
+}
+
+// ============================================================================
+// Per-Group Consolidation Tests
+// ============================================================================
+
+func TestAggregatedTaskContext_HasContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		context *AggregatedTaskContext
+		want    bool
+	}{
+		{
+			name:    "empty context has no content",
+			context: &AggregatedTaskContext{},
+			want:    false,
+		},
+		{
+			name: "context with issues has content",
+			context: &AggregatedTaskContext{
+				AllIssues: []string{"issue 1"},
+			},
+			want: true,
+		},
+		{
+			name: "context with suggestions has content",
+			context: &AggregatedTaskContext{
+				AllSuggestions: []string{"suggestion 1"},
+			},
+			want: true,
+		},
+		{
+			name: "context with dependencies has content",
+			context: &AggregatedTaskContext{
+				Dependencies: []string{"dep 1"},
+			},
+			want: true,
+		},
+		{
+			name: "context with notes has content",
+			context: &AggregatedTaskContext{
+				Notes: []string{"note 1"},
+			},
+			want: true,
+		},
+		{
+			name: "context with only summaries has no content",
+			context: &AggregatedTaskContext{
+				TaskSummaries: map[string]string{"task-1": "summary"},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.context.HasContent(); got != tt.want {
+				t.Errorf("HasContent() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGroupConsolidationCompletionFileName(t *testing.T) {
+	expected := ".claudio-group-consolidation-complete.json"
+	if GroupConsolidationCompletionFileName != expected {
+		t.Errorf("GroupConsolidationCompletionFileName = %v, want %v",
+			GroupConsolidationCompletionFileName, expected)
+	}
+}
+
+func TestConsolidationTaskWorktreeInfo(t *testing.T) {
+	info := ConsolidationTaskWorktreeInfo{
+		TaskID:       "task-1",
+		TaskTitle:    "Test Task",
+		WorktreePath: "/path/to/worktree",
+		Branch:       "feature/test",
+	}
+
+	if info.TaskID != "task-1" {
+		t.Errorf("TaskID = %v, want task-1", info.TaskID)
+	}
+	if info.TaskTitle != "Test Task" {
+		t.Errorf("TaskTitle = %v, want Test Task", info.TaskTitle)
+	}
+	if info.WorktreePath != "/path/to/worktree" {
+		t.Errorf("WorktreePath = %v, want /path/to/worktree", info.WorktreePath)
+	}
+	if info.Branch != "feature/test" {
+		t.Errorf("Branch = %v, want feature/test", info.Branch)
+	}
+}
+
+func TestConflictResolution(t *testing.T) {
+	resolution := ConflictResolution{
+		File:       "path/to/file.go",
+		Resolution: "Merged both changes",
+	}
+
+	if resolution.File != "path/to/file.go" {
+		t.Errorf("File = %v, want path/to/file.go", resolution.File)
+	}
+	if resolution.Resolution != "Merged both changes" {
+		t.Errorf("Resolution = %v, want 'Merged both changes'", resolution.Resolution)
+	}
+}
+
+func TestVerificationResult(t *testing.T) {
+	result := VerificationResult{
+		ProjectType: "go",
+		CommandsRun: []VerificationStep{
+			{Name: "build", Command: "go build ./...", Success: true},
+			{Name: "test", Command: "go test ./...", Success: false, Output: "test failed"},
+		},
+		OverallSuccess: false,
+		Summary:        "Build passed, tests failed",
+	}
+
+	if result.ProjectType != "go" {
+		t.Errorf("ProjectType = %v, want go", result.ProjectType)
+	}
+	if len(result.CommandsRun) != 2 {
+		t.Errorf("len(CommandsRun) = %d, want 2", len(result.CommandsRun))
+	}
+	if result.CommandsRun[1].Output != "test failed" {
+		t.Errorf("CommandsRun[1].Output = %v, want 'test failed'", result.CommandsRun[1].Output)
+	}
+	if result.OverallSuccess {
+		t.Error("OverallSuccess should be false")
+	}
+}
+
+func TestGroupConsolidationCompletionFile(t *testing.T) {
+	file := GroupConsolidationCompletionFile{
+		GroupIndex:        0,
+		Status:            "complete",
+		BranchName:        "feature/consolidated",
+		TasksConsolidated: []string{"task-1", "task-2"},
+		ConflictsResolved: []ConflictResolution{
+			{File: "file.go", Resolution: "merged"},
+		},
+		Verification: VerificationResult{
+			OverallSuccess: true,
+		},
+		AggregatedContext: &AggregatedTaskContext{
+			AllIssues: []string{"issue 1"},
+		},
+		Notes:              "Consolidation notes",
+		IssuesForNextGroup: []string{"watch out for X"},
+	}
+
+	if file.GroupIndex != 0 {
+		t.Errorf("GroupIndex = %d, want 0", file.GroupIndex)
+	}
+	if file.Status != "complete" {
+		t.Errorf("Status = %v, want complete", file.Status)
+	}
+	if len(file.TasksConsolidated) != 2 {
+		t.Errorf("len(TasksConsolidated) = %d, want 2", len(file.TasksConsolidated))
+	}
+	if len(file.ConflictsResolved) != 1 {
+		t.Errorf("len(ConflictsResolved) = %d, want 1", len(file.ConflictsResolved))
+	}
+	if !file.Verification.OverallSuccess {
+		t.Error("Verification.OverallSuccess should be true")
+	}
+	if file.AggregatedContext == nil {
+		t.Error("AggregatedContext should not be nil")
+	}
+	if len(file.IssuesForNextGroup) != 1 {
+		t.Errorf("len(IssuesForNextGroup) = %d, want 1", len(file.IssuesForNextGroup))
+	}
+}
+
+func TestTaskCompletionFile(t *testing.T) {
+	file := TaskCompletionFile{
+		TaskID:        "task-1",
+		Status:        "complete",
+		Summary:       "Implemented feature X",
+		FilesModified: []string{"file1.go", "file2.go"},
+		Issues:        []string{"issue 1"},
+		Suggestions:   []string{"suggestion 1"},
+		Dependencies:  []string{"dep 1"},
+		Notes:         "Implementation notes",
+	}
+
+	if file.TaskID != "task-1" {
+		t.Errorf("TaskID = %v, want task-1", file.TaskID)
+	}
+	if len(file.FilesModified) != 2 {
+		t.Errorf("len(FilesModified) = %d, want 2", len(file.FilesModified))
+	}
+	if len(file.Issues) != 1 {
+		t.Errorf("len(Issues) = %d, want 1", len(file.Issues))
+	}
+}
+
+// ============================================================================
+// Mock implementations for per-group consolidation tests
+// ============================================================================
+
+// mockGroupConsolidationSession implements GroupConsolidationSessionInterface
+type mockGroupConsolidationSession struct {
+	mockSessionForConsolidation
+	executionOrder            [][]string
+	planSummary               string
+	sessionID                 string
+	branchPrefix              string
+	groupConsolidatedBranches []string
+	groupConsolidatorIDs      []string
+	groupConsolidationCtxs    []*GroupConsolidationCompletionFile
+	isMultiPass               bool
+}
+
+func newMockGroupConsolidationSession() *mockGroupConsolidationSession {
+	return &mockGroupConsolidationSession{
+		mockSessionForConsolidation: mockSessionForConsolidation{
+			tasks:            make(map[string]any),
+			taskCommitCounts: make(map[string]int),
+		},
+		groupConsolidatedBranches: make([]string, 0),
+		groupConsolidatorIDs:      make([]string, 0),
+		groupConsolidationCtxs:    make([]*GroupConsolidationCompletionFile, 0),
+	}
+}
+
+func (m *mockGroupConsolidationSession) GetPlanExecutionOrder() [][]string {
+	return m.executionOrder
+}
+
+func (m *mockGroupConsolidationSession) GetPlanSummary() string {
+	return m.planSummary
+}
+
+func (m *mockGroupConsolidationSession) GetID() string {
+	return m.sessionID
+}
+
+func (m *mockGroupConsolidationSession) GetBranchPrefix() string {
+	return m.branchPrefix
+}
+
+func (m *mockGroupConsolidationSession) GetGroupConsolidatedBranches() []string {
+	return m.groupConsolidatedBranches
+}
+
+func (m *mockGroupConsolidationSession) SetGroupConsolidatedBranch(groupIndex int, branch string) {
+	for len(m.groupConsolidatedBranches) <= groupIndex {
+		m.groupConsolidatedBranches = append(m.groupConsolidatedBranches, "")
+	}
+	m.groupConsolidatedBranches[groupIndex] = branch
+}
+
+func (m *mockGroupConsolidationSession) GetGroupConsolidatorIDs() []string {
+	return m.groupConsolidatorIDs
+}
+
+func (m *mockGroupConsolidationSession) SetGroupConsolidatorID(groupIndex int, instanceID string) {
+	for len(m.groupConsolidatorIDs) <= groupIndex {
+		m.groupConsolidatorIDs = append(m.groupConsolidatorIDs, "")
+	}
+	m.groupConsolidatorIDs[groupIndex] = instanceID
+}
+
+func (m *mockGroupConsolidationSession) GetGroupConsolidationContexts() []*GroupConsolidationCompletionFile {
+	return m.groupConsolidationCtxs
+}
+
+func (m *mockGroupConsolidationSession) SetGroupConsolidationContext(groupIndex int, ctx *GroupConsolidationCompletionFile) {
+	for len(m.groupConsolidationCtxs) <= groupIndex {
+		m.groupConsolidationCtxs = append(m.groupConsolidationCtxs, nil)
+	}
+	m.groupConsolidationCtxs[groupIndex] = ctx
+}
+
+func (m *mockGroupConsolidationSession) IsMultiPass() bool {
+	return m.isMultiPass
+}
+
+// mockInstanceForGroupConsolidation implements InstanceInterface for per-group consolidation tests
+type mockInstanceForGroupConsolidation struct {
+	id            string
+	worktreePath  string
+	branch        string
+	status        InstanceStatus
+	filesModified []string
+}
+
+func (m *mockInstanceForGroupConsolidation) GetID() string           { return m.id }
+func (m *mockInstanceForGroupConsolidation) GetWorktreePath() string { return m.worktreePath }
+func (m *mockInstanceForGroupConsolidation) GetBranch() string       { return m.branch }
+func (m *mockInstanceForGroupConsolidation) GetStatus() InstanceStatus {
+	if m.status == "" {
+		return StatusRunning
+	}
+	return m.status
+}
+func (m *mockInstanceForGroupConsolidation) GetFilesModified() []string { return m.filesModified }
+
+// mockGroupConsolidationBaseSession implements GroupConsolidationBaseSessionInterface
+type mockGroupConsolidationBaseSession struct {
+	instancesByTask map[string]*mockInstanceForGroupConsolidation
+	ultraGroup      *mockInstanceGroup
+	instances       []InstanceInterface
+}
+
+func newMockGroupConsolidationBaseSession() *mockGroupConsolidationBaseSession {
+	return &mockGroupConsolidationBaseSession{
+		instancesByTask: make(map[string]*mockInstanceForGroupConsolidation),
+		ultraGroup:      &mockInstanceGroup{instances: make([]string, 0)},
+		instances:       make([]InstanceInterface, 0),
+	}
+}
+
+func (m *mockGroupConsolidationBaseSession) GetInstanceByTask(taskID string) InstanceInterface {
+	if inst, ok := m.instancesByTask[taskID]; ok {
+		return inst
+	}
+	return nil
+}
+
+func (m *mockGroupConsolidationBaseSession) GetGroupBySessionType(sessionType string) InstanceGroupInterface {
+	return m.ultraGroup
+}
+
+func (m *mockGroupConsolidationBaseSession) GetInstances() []InstanceInterface {
+	return m.instances
+}
+
+// mockInstanceGroup implements InstanceGroupInterface - tracks instances added to a group
+type mockInstanceGroup struct {
+	instances []string
+}
+
+func (m *mockInstanceGroup) AddInstance(id string) {
+	m.instances = append(m.instances, id)
+}
+
+// mockTaskCompletionParser implements TaskCompletionFileParser
+type mockTaskCompletionParser struct {
+	taskCompletions  map[string]*TaskCompletionFile
+	groupCompletions map[string]*GroupConsolidationCompletionFile
+	parseErr         error
+}
+
+func newMockTaskCompletionParser() *mockTaskCompletionParser {
+	return &mockTaskCompletionParser{
+		taskCompletions:  make(map[string]*TaskCompletionFile),
+		groupCompletions: make(map[string]*GroupConsolidationCompletionFile),
+	}
+}
+
+func (m *mockTaskCompletionParser) ParseTaskCompletionFile(worktreePath string) (*TaskCompletionFile, error) {
+	if m.parseErr != nil {
+		return nil, m.parseErr
+	}
+	if completion, ok := m.taskCompletions[worktreePath]; ok {
+		return completion, nil
+	}
+	return nil, errors.New("completion file not found")
+}
+
+func (m *mockTaskCompletionParser) ParseGroupConsolidationCompletionFile(worktreePath string) (*GroupConsolidationCompletionFile, error) {
+	if m.parseErr != nil {
+		return nil, m.parseErr
+	}
+	if completion, ok := m.groupCompletions[worktreePath]; ok {
+		return completion, nil
+	}
+	return nil, errors.New("group completion file not found")
+}
+
+func (m *mockTaskCompletionParser) GroupConsolidationCompletionFilePath(worktreePath string) string {
+	return worktreePath + "/" + GroupConsolidationCompletionFileName
+}
+
+// mockGroupConsolidationOrchestrator implements GroupConsolidationOrchestratorInterface
+type mockGroupConsolidationOrchestrator struct {
+	mockOrchestratorForConsolidation
+	mainBranch         string
+	claudioDir         string
+	tmuxExists         map[string]bool
+	addedFromBranch    []addFromBranchCall
+	startedInstances   []InstanceInterface
+	stoppedInstances   []any
+	createdBranches    []createBranchCall
+	createdWorktrees   []createWorktreeCall
+	removedWorktrees   []string
+	cherryPickCalls    []cherryPickCall
+	abortedCherryPicks []string
+	commitCounts       map[string]int
+	pushCalls          []pushCall
+	saveSessionCalls   int
+	addInstanceErr     error
+	startInstanceErr   error
+	cherryPickErr      error
+	countCommitsErr    error
+	pushErr            error
+	createBranchErr    error
+	createWorktreeErr  error
+}
+
+type addFromBranchCall struct {
+	session    any
+	task       string
+	baseBranch string
+}
+
+type createBranchCall struct {
+	newBranch  string
+	baseBranch string
+}
+
+type createWorktreeCall struct {
+	worktreePath string
+	branch       string
+}
+
+type cherryPickCall struct {
+	worktreePath string
+	branch       string
+}
+
+type pushCall struct {
+	worktreePath string
+	force        bool
+}
+
+func newMockGroupConsolidationOrchestrator() *mockGroupConsolidationOrchestrator {
+	return &mockGroupConsolidationOrchestrator{
+		tmuxExists:   make(map[string]bool),
+		commitCounts: make(map[string]int),
+	}
+}
+
+func (m *mockGroupConsolidationOrchestrator) AddInstanceFromBranch(session any, task string, baseBranch string) (InstanceInterface, error) {
+	m.addedFromBranch = append(m.addedFromBranch, addFromBranchCall{session, task, baseBranch})
+	if m.addInstanceErr != nil {
+		return nil, m.addInstanceErr
+	}
+	inst := &mockInstanceForGroupConsolidation{
+		id:           "consolidated-inst-" + baseBranch,
+		worktreePath: "/tmp/worktree-" + baseBranch,
+		branch:       baseBranch,
+	}
+	return inst, nil
+}
+
+func (m *mockGroupConsolidationOrchestrator) StopInstance(inst any) error {
+	m.stoppedInstances = append(m.stoppedInstances, inst)
+	return nil
+}
+
+func (m *mockGroupConsolidationOrchestrator) FindMainBranch() string {
+	if m.mainBranch == "" {
+		return "main"
+	}
+	return m.mainBranch
+}
+
+func (m *mockGroupConsolidationOrchestrator) CreateBranchFrom(newBranch, baseBranch string) error {
+	m.createdBranches = append(m.createdBranches, createBranchCall{newBranch, baseBranch})
+	return m.createBranchErr
+}
+
+func (m *mockGroupConsolidationOrchestrator) CreateWorktreeFromBranch(worktreePath, branch string) error {
+	m.createdWorktrees = append(m.createdWorktrees, createWorktreeCall{worktreePath, branch})
+	return m.createWorktreeErr
+}
+
+func (m *mockGroupConsolidationOrchestrator) RemoveWorktree(worktreePath string) error {
+	m.removedWorktrees = append(m.removedWorktrees, worktreePath)
+	return nil
+}
+
+func (m *mockGroupConsolidationOrchestrator) CherryPickBranch(worktreePath, branch string) error {
+	m.cherryPickCalls = append(m.cherryPickCalls, cherryPickCall{worktreePath, branch})
+	return m.cherryPickErr
+}
+
+func (m *mockGroupConsolidationOrchestrator) AbortCherryPick(worktreePath string) error {
+	m.abortedCherryPicks = append(m.abortedCherryPicks, worktreePath)
+	return nil
+}
+
+func (m *mockGroupConsolidationOrchestrator) CountCommitsBetween(worktreePath, base, head string) (int, error) {
+	if m.countCommitsErr != nil {
+		return 0, m.countCommitsErr
+	}
+	key := worktreePath + ":" + base + ":" + head
+	if count, ok := m.commitCounts[key]; ok {
+		return count, nil
+	}
+	// Default: return number of cherry-pick calls as proxy for commits
+	return len(m.cherryPickCalls), nil
+}
+
+func (m *mockGroupConsolidationOrchestrator) Push(worktreePath string, force bool) error {
+	m.pushCalls = append(m.pushCalls, pushCall{worktreePath, force})
+	return m.pushErr
+}
+
+func (m *mockGroupConsolidationOrchestrator) GetClaudioDir() string {
+	if m.claudioDir == "" {
+		return "/tmp/.claudio"
+	}
+	return m.claudioDir
+}
+
+func (m *mockGroupConsolidationOrchestrator) TmuxSessionExists(instanceID string) bool {
+	return m.tmuxExists[instanceID]
+}
+
+func (m *mockGroupConsolidationOrchestrator) SaveSession() error {
+	m.saveSessionCalls++
+	return nil
+}
+
+func (m *mockGroupConsolidationOrchestrator) StartInstance(inst any) error {
+	if i, ok := inst.(InstanceInterface); ok {
+		m.startedInstances = append(m.startedInstances, i)
+	}
+	return m.startInstanceErr
+}
+
+// mockGroupConsolidationEventEmitter implements GroupConsolidationEventEmitter
+type mockGroupConsolidationEventEmitter struct {
+	events []groupConsolidationEvent
+}
+
+type groupConsolidationEvent struct {
+	eventType  string
+	groupIndex int
+	message    string
+}
+
+func (m *mockGroupConsolidationEventEmitter) EmitGroupConsolidationEvent(eventType string, groupIndex int, message string) {
+	m.events = append(m.events, groupConsolidationEvent{eventType, groupIndex, message})
+}
+
+// ============================================================================
+// GatherTaskCompletionContextForGroup Tests
+// ============================================================================
+
+func TestConsolidationOrchestrator_GatherTaskCompletionContextForGroup(t *testing.T) {
+	t.Run("returns empty context for invalid group index", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1", "task-2"}}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		parser := newMockTaskCompletionParser()
+
+		// Request group 5 when only group 0 exists
+		ctx := orch.GatherTaskCompletionContextForGroup(5, session, baseSession, parser)
+
+		if ctx == nil {
+			t.Fatal("Context should not be nil")
+		}
+		if len(ctx.TaskSummaries) != 0 {
+			t.Errorf("TaskSummaries should be empty, got %d", len(ctx.TaskSummaries))
+		}
+	})
+
+	t.Run("gathers context from task completion files", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1", "task-2"}}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:           "inst-1",
+			worktreePath: "/worktree/task-1",
+			branch:       "feature/task-1",
+		}
+		baseSession.instancesByTask["task-2"] = &mockInstanceForGroupConsolidation{
+			id:           "inst-2",
+			worktreePath: "/worktree/task-2",
+			branch:       "feature/task-2",
+		}
+
+		parser := newMockTaskCompletionParser()
+		parser.taskCompletions["/worktree/task-1"] = &TaskCompletionFile{
+			TaskID:       "task-1",
+			Summary:      "Implemented feature A",
+			Issues:       []string{"issue 1"},
+			Suggestions:  []string{"suggestion 1"},
+			Dependencies: []string{"dep-1"},
+			Notes:        "Notes for task 1",
+		}
+		parser.taskCompletions["/worktree/task-2"] = &TaskCompletionFile{
+			TaskID:       "task-2",
+			Summary:      "Implemented feature B",
+			Issues:       []string{"issue 2"},
+			Dependencies: []string{"dep-1", "dep-2"}, // dep-1 is duplicate
+			Notes:        "Notes for task 2",
+		}
+
+		ctx := orch.GatherTaskCompletionContextForGroup(0, session, baseSession, parser)
+
+		// Check summaries
+		if len(ctx.TaskSummaries) != 2 {
+			t.Errorf("TaskSummaries length = %d, want 2", len(ctx.TaskSummaries))
+		}
+		if ctx.TaskSummaries["task-1"] != "Implemented feature A" {
+			t.Errorf("TaskSummaries[task-1] = %v, want 'Implemented feature A'", ctx.TaskSummaries["task-1"])
+		}
+
+		// Check issues (should be prefixed with task ID)
+		if len(ctx.AllIssues) != 2 {
+			t.Errorf("AllIssues length = %d, want 2", len(ctx.AllIssues))
+		}
+
+		// Check suggestions
+		if len(ctx.AllSuggestions) != 1 {
+			t.Errorf("AllSuggestions length = %d, want 1", len(ctx.AllSuggestions))
+		}
+
+		// Check deduplicated dependencies
+		if len(ctx.Dependencies) != 2 {
+			t.Errorf("Dependencies length = %d, want 2 (deduplicated)", len(ctx.Dependencies))
+		}
+
+		// Check notes
+		if len(ctx.Notes) != 2 {
+			t.Errorf("Notes length = %d, want 2", len(ctx.Notes))
+		}
+	})
+
+	t.Run("skips tasks without instances", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1", "task-2"}}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		// Only task-1 has an instance
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:           "inst-1",
+			worktreePath: "/worktree/task-1",
+		}
+
+		parser := newMockTaskCompletionParser()
+		parser.taskCompletions["/worktree/task-1"] = &TaskCompletionFile{
+			TaskID:  "task-1",
+			Summary: "Task 1 summary",
+		}
+
+		ctx := orch.GatherTaskCompletionContextForGroup(0, session, baseSession, parser)
+
+		// Should only have task-1
+		if len(ctx.TaskSummaries) != 1 {
+			t.Errorf("TaskSummaries length = %d, want 1", len(ctx.TaskSummaries))
+		}
+	})
+
+	t.Run("skips tasks with empty worktree path", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:           "inst-1",
+			worktreePath: "", // Empty worktree
+		}
+
+		parser := newMockTaskCompletionParser()
+
+		ctx := orch.GatherTaskCompletionContextForGroup(0, session, baseSession, parser)
+
+		if len(ctx.TaskSummaries) != 0 {
+			t.Errorf("TaskSummaries length = %d, want 0", len(ctx.TaskSummaries))
+		}
+	})
+
+	t.Run("handles empty strings in issues and suggestions", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:           "inst-1",
+			worktreePath: "/worktree/task-1",
+		}
+
+		parser := newMockTaskCompletionParser()
+		parser.taskCompletions["/worktree/task-1"] = &TaskCompletionFile{
+			TaskID:       "task-1",
+			Summary:      "Summary",
+			Issues:       []string{"", "real issue", ""},
+			Suggestions:  []string{"", "real suggestion"},
+			Dependencies: []string{"", "real-dep"},
+		}
+
+		ctx := orch.GatherTaskCompletionContextForGroup(0, session, baseSession, parser)
+
+		// Empty strings should be filtered out
+		if len(ctx.AllIssues) != 1 {
+			t.Errorf("AllIssues length = %d, want 1", len(ctx.AllIssues))
+		}
+		if len(ctx.AllSuggestions) != 1 {
+			t.Errorf("AllSuggestions length = %d, want 1", len(ctx.AllSuggestions))
+		}
+		if len(ctx.Dependencies) != 1 {
+			t.Errorf("Dependencies length = %d, want 1", len(ctx.Dependencies))
+		}
+	})
+}
+
+// ============================================================================
+// GetTaskBranchesForGroup Tests
+// ============================================================================
+
+func TestConsolidationOrchestrator_GetTaskBranchesForGroup(t *testing.T) {
+	t.Run("returns nil for invalid group index", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+
+		branches := orch.GetTaskBranchesForGroup(10, session, baseSession)
+
+		if branches != nil {
+			t.Errorf("Expected nil for invalid group index, got %v", branches)
+		}
+	})
+
+	t.Run("returns task branches for valid group", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1", "task-2"}}
+		session.tasks["task-1"] = map[string]any{"title": "Task 1 Title"}
+		session.tasks["task-2"] = map[string]any{"title": "Task 2 Title"}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:           "inst-1",
+			worktreePath: "/worktree/task-1",
+			branch:       "feature/task-1",
+		}
+		baseSession.instancesByTask["task-2"] = &mockInstanceForGroupConsolidation{
+			id:           "inst-2",
+			worktreePath: "/worktree/task-2",
+			branch:       "feature/task-2",
+		}
+
+		branches := orch.GetTaskBranchesForGroup(0, session, baseSession)
+
+		if len(branches) != 2 {
+			t.Fatalf("Expected 2 branches, got %d", len(branches))
+		}
+		if branches[0].TaskID != "task-1" {
+			t.Errorf("First branch TaskID = %v, want task-1", branches[0].TaskID)
+		}
+		if branches[0].Branch != "feature/task-1" {
+			t.Errorf("First branch Branch = %v, want feature/task-1", branches[0].Branch)
+		}
+		if branches[0].TaskTitle != "Task 1 Title" {
+			t.Errorf("First branch TaskTitle = %v, want 'Task 1 Title'", branches[0].TaskTitle)
+		}
+	})
+
+	t.Run("skips tasks without instances", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1", "task-2"}}
+		session.tasks["task-1"] = map[string]any{"title": "Task 1"}
+		session.tasks["task-2"] = map[string]any{"title": "Task 2"}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		// Only task-1 has an instance
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-1",
+			branch: "feature/task-1",
+		}
+
+		branches := orch.GetTaskBranchesForGroup(0, session, baseSession)
+
+		if len(branches) != 1 {
+			t.Errorf("Expected 1 branch, got %d", len(branches))
+		}
+	})
+
+	t.Run("skips tasks with nil task info", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1", "task-2"}}
+		session.tasks["task-1"] = map[string]any{"title": "Task 1"}
+		// task-2 has no entry in tasks map
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-1",
+			branch: "feature/task-1",
+		}
+
+		branches := orch.GetTaskBranchesForGroup(0, session, baseSession)
+
+		if len(branches) != 1 {
+			t.Errorf("Expected 1 branch, got %d", len(branches))
+		}
+	})
+}
+
+// ============================================================================
+// extractTaskTitle Tests
+// ============================================================================
+
+func TestExtractTaskTitle(t *testing.T) {
+	t.Run("extracts title from map with lowercase key", func(t *testing.T) {
+		task := map[string]any{"title": "My Task Title"}
+		got := extractTaskTitle(task)
+		if got != "My Task Title" {
+			t.Errorf("extractTaskTitle() = %v, want 'My Task Title'", got)
+		}
+	})
+
+	t.Run("extracts title from map with uppercase key", func(t *testing.T) {
+		task := map[string]any{"Title": "My Task Title"}
+		got := extractTaskTitle(task)
+		if got != "My Task Title" {
+			t.Errorf("extractTaskTitle() = %v, want 'My Task Title'", got)
+		}
+	})
+
+	t.Run("returns Unknown Task for nil", func(t *testing.T) {
+		got := extractTaskTitle(nil)
+		if got != "Unknown Task" {
+			t.Errorf("extractTaskTitle(nil) = %v, want 'Unknown Task'", got)
+		}
+	})
+
+	t.Run("returns Unknown Task for empty map", func(t *testing.T) {
+		task := map[string]any{}
+		got := extractTaskTitle(task)
+		if got != "Unknown Task" {
+			t.Errorf("extractTaskTitle() = %v, want 'Unknown Task'", got)
+		}
+	})
+
+	t.Run("returns Unknown Task for non-string title", func(t *testing.T) {
+		task := map[string]any{"title": 123}
+		got := extractTaskTitle(task)
+		if got != "Unknown Task" {
+			t.Errorf("extractTaskTitle() = %v, want 'Unknown Task'", got)
+		}
+	})
+
+	t.Run("extracts title from struct with GetTitle method", func(t *testing.T) {
+		task := &mockTaskWithTitle{title: "Struct Task Title"}
+		got := extractTaskTitle(task)
+		if got != "Struct Task Title" {
+			t.Errorf("extractTaskTitle() = %v, want 'Struct Task Title'", got)
+		}
+	})
+
+	t.Run("returns Unknown Task for struct without GetTitle", func(t *testing.T) {
+		task := struct{ Name string }{Name: "test"}
+		got := extractTaskTitle(task)
+		if got != "Unknown Task" {
+			t.Errorf("extractTaskTitle() = %v, want 'Unknown Task'", got)
+		}
+	})
+}
+
+type mockTaskWithTitle struct {
+	title string
+}
+
+func (m *mockTaskWithTitle) GetTitle() string {
+	return m.title
+}
+
+// ============================================================================
+// fileExists Tests
+// ============================================================================
+
+func TestFileExists(t *testing.T) {
+	// Save original and restore after test
+	originalStatFile := statFile
+	defer func() { statFile = originalStatFile }()
+
+	t.Run("returns true when file exists", func(t *testing.T) {
+		statFile = func(path string) (os.FileInfo, error) {
+			return nil, nil // No error means file exists
+		}
+
+		if !fileExists("/some/path") {
+			t.Error("fileExists should return true when file exists")
+		}
+	})
+
+	t.Run("returns false when file does not exist", func(t *testing.T) {
+		statFile = func(path string) (os.FileInfo, error) {
+			return nil, os.ErrNotExist
+		}
+
+		if fileExists("/some/path") {
+			t.Error("fileExists should return false when file does not exist")
+		}
+	})
+}
+
+// ============================================================================
+// BuildGroupConsolidatorPrompt Tests
+// ============================================================================
+
+func TestConsolidationOrchestrator_BuildGroupConsolidatorPrompt(t *testing.T) {
+	t.Run("builds prompt with all sections", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+		session.planSummary = "Test Plan Summary"
+		session.sessionID = "session-12345678"
+		session.branchPrefix = "test-prefix"
+		session.tasks["task-1"] = map[string]any{"title": "Task 1 Title"}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:           "inst-1",
+			worktreePath: "/worktree/task-1",
+			branch:       "feature/task-1",
+		}
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.mainBranch = "main"
+
+		parser := newMockTaskCompletionParser()
+		parser.taskCompletions["/worktree/task-1"] = &TaskCompletionFile{
+			TaskID:      "task-1",
+			Summary:     "Task 1 summary",
+			Issues:      []string{"issue 1"},
+			Suggestions: []string{"suggestion 1"},
+			Notes:       "Task 1 notes",
+		}
+
+		prompt := orch.BuildGroupConsolidatorPrompt(0, session, baseSession, mockOrch, parser)
+
+		// Check header
+		if !contains(prompt, "# Group 1 Consolidation") {
+			t.Error("Prompt should contain group header")
+		}
+		if !contains(prompt, "Test Plan Summary") {
+			t.Error("Prompt should contain plan summary")
+		}
+
+		// Check tasks section
+		if !contains(prompt, "## Tasks Completed in This Group") {
+			t.Error("Prompt should contain tasks section")
+		}
+		if !contains(prompt, "task-1: Task 1 Title") {
+			t.Error("Prompt should contain task info")
+		}
+
+		// Check context sections
+		if !contains(prompt, "## Implementation Notes from Tasks") {
+			t.Error("Prompt should contain notes section")
+		}
+		if !contains(prompt, "## Issues Raised by Tasks") {
+			t.Error("Prompt should contain issues section")
+		}
+		if !contains(prompt, "## Integration Suggestions from Tasks") {
+			t.Error("Prompt should contain suggestions section")
+		}
+
+		// Check branch configuration
+		if !contains(prompt, "## Branch Configuration") {
+			t.Error("Prompt should contain branch configuration")
+		}
+		if !contains(prompt, "main") {
+			t.Error("Prompt should contain base branch")
+		}
+
+		// Check instructions
+		if !contains(prompt, "## Your Tasks") {
+			t.Error("Prompt should contain instructions")
+		}
+
+		// Check completion protocol
+		if !contains(prompt, "## Completion Protocol") {
+			t.Error("Prompt should contain completion protocol")
+		}
+		if !contains(prompt, GroupConsolidationCompletionFileName) {
+			t.Error("Prompt should contain completion file name")
+		}
+	})
+
+	t.Run("includes previous group context for group > 0", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}, {"task-2"}}
+		session.planSummary = "Test Plan"
+		session.sessionID = "session-12345678"
+		session.tasks["task-2"] = map[string]any{"title": "Task 2"}
+		session.groupConsolidationCtxs = []*GroupConsolidationCompletionFile{
+			{
+				GroupIndex: 0,
+				Notes:      "Notes from group 0",
+				IssuesForNextGroup: []string{
+					"Watch out for X",
+					"Consider Y",
+				},
+			},
+		}
+		session.groupConsolidatedBranches = []string{"group-0-branch"}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-2"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-2",
+			branch: "feature/task-2",
+		}
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		parser := newMockTaskCompletionParser()
+
+		prompt := orch.BuildGroupConsolidatorPrompt(1, session, baseSession, mockOrch, parser)
+
+		// Check previous context section
+		if !contains(prompt, "## Context from Previous Group's Consolidator") {
+			t.Error("Prompt should contain previous group context")
+		}
+		if !contains(prompt, "Notes from group 0") {
+			t.Error("Prompt should contain previous group notes")
+		}
+		if !contains(prompt, "Watch out for X") {
+			t.Error("Prompt should contain previous group issues")
+		}
+
+		// Base branch should be previous group's consolidated branch
+		if !contains(prompt, "group-0-branch") {
+			t.Error("Prompt should use previous group's branch as base")
+		}
+	})
+
+	t.Run("uses main branch for group 0", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+		session.planSummary = "Test Plan"
+		session.sessionID = "session-12345678"
+		session.tasks["task-1"] = map[string]any{"title": "Task 1"}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-1",
+			branch: "feature/task-1",
+		}
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.mainBranch = "master"
+
+		parser := newMockTaskCompletionParser()
+
+		prompt := orch.BuildGroupConsolidatorPrompt(0, session, baseSession, mockOrch, parser)
+
+		if !contains(prompt, "master") {
+			t.Error("Prompt should use main branch for group 0")
+		}
+	})
+}
+
+// ============================================================================
+// determineBaseBranchForGroup Tests
+// ============================================================================
+
+func TestConsolidationOrchestrator_determineBaseBranchForGroup(t *testing.T) {
+	t.Run("returns main branch for group 0", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.mainBranch = "develop"
+
+		branch := orch.determineBaseBranchForGroup(0, session, mockOrch)
+
+		if branch != "develop" {
+			t.Errorf("Expected 'develop', got '%s'", branch)
+		}
+	})
+
+	t.Run("returns previous group branch for group > 0", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.groupConsolidatedBranches = []string{"group-0-consolidated"}
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.mainBranch = "main"
+
+		branch := orch.determineBaseBranchForGroup(1, session, mockOrch)
+
+		if branch != "group-0-consolidated" {
+			t.Errorf("Expected 'group-0-consolidated', got '%s'", branch)
+		}
+	})
+
+	t.Run("falls back to main branch if previous group branch is empty", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.groupConsolidatedBranches = []string{""} // Empty branch
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.mainBranch = "main"
+
+		branch := orch.determineBaseBranchForGroup(1, session, mockOrch)
+
+		if branch != "main" {
+			t.Errorf("Expected 'main', got '%s'", branch)
+		}
+	})
+
+	t.Run("falls back to main branch if previous group not in slice", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.groupConsolidatedBranches = []string{} // Empty slice
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.mainBranch = "main"
+
+		branch := orch.determineBaseBranchForGroup(5, session, mockOrch)
+
+		if branch != "main" {
+			t.Errorf("Expected 'main', got '%s'", branch)
+		}
+	})
+}
+
+// ============================================================================
+// generateGroupBranchName Tests
+// ============================================================================
+
+func TestConsolidationOrchestrator_generateGroupBranchName(t *testing.T) {
+	t.Run("uses session branch prefix", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.branchPrefix = "my-prefix"
+		session.sessionID = "abcdefghij"
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+
+		branchName := orch.generateGroupBranchName(0, session, mockOrch)
+
+		if branchName != "my-prefix/ultraplan-abcdefgh-group-1" {
+			t.Errorf("Expected 'my-prefix/ultraplan-abcdefgh-group-1', got '%s'", branchName)
+		}
+	})
+
+	t.Run("falls back to orchestrator branch prefix", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.branchPrefix = ""
+		session.sessionID = "abcdefghij"
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.branchPrefix = "orch-prefix"
+
+		branchName := orch.generateGroupBranchName(1, session, mockOrch)
+
+		if branchName != "orch-prefix/ultraplan-abcdefgh-group-2" {
+			t.Errorf("Expected 'orch-prefix/ultraplan-abcdefgh-group-2', got '%s'", branchName)
+		}
+	})
+
+	t.Run("uses default prefix when both are empty", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.branchPrefix = ""
+		session.sessionID = "shortid"
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.branchPrefix = ""
+
+		branchName := orch.generateGroupBranchName(0, session, mockOrch)
+
+		if branchName != "Iron-Ham/ultraplan-shortid-group-1" {
+			t.Errorf("Expected 'Iron-Ham/ultraplan-shortid-group-1', got '%s'", branchName)
+		}
+	})
+
+	t.Run("truncates long session IDs", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.branchPrefix = "prefix"
+		session.sessionID = "very-long-session-id-12345"
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+
+		branchName := orch.generateGroupBranchName(0, session, mockOrch)
+
+		// Should truncate to first 8 chars
+		if branchName != "prefix/ultraplan-very-lon-group-1" {
+			t.Errorf("Expected 'prefix/ultraplan-very-lon-group-1', got '%s'", branchName)
+		}
+	})
+}
+
+// ============================================================================
+// ConsolidateGroupWithVerification Tests
+// ============================================================================
+
+func TestConsolidationOrchestrator_ConsolidateGroupWithVerification(t *testing.T) {
+	t.Run("returns error for invalid group index", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+
+		err := orch.ConsolidateGroupWithVerification(-1, session, baseSession, mockOrch, nil)
+		if err == nil || !contains(err.Error(), "invalid group index") {
+			t.Errorf("Expected error for invalid group index, got %v", err)
+		}
+
+		err = orch.ConsolidateGroupWithVerification(10, session, baseSession, mockOrch, nil)
+		if err == nil || !contains(err.Error(), "invalid group index") {
+			t.Errorf("Expected error for out-of-bounds group index, got %v", err)
+		}
+	})
+
+	t.Run("returns nil for empty group", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{}} // Empty group
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+
+		err := orch.ConsolidateGroupWithVerification(0, session, baseSession, mockOrch, nil)
+		if err != nil {
+			t.Errorf("Expected nil for empty group, got %v", err)
+		}
+	})
+
+	t.Run("returns error when no tasks have commits", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1", "task-2"}}
+		session.taskCommitCounts = map[string]int{
+			"task-1": 0, // No commits
+			"task-2": 0, // No commits
+		}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+
+		err := orch.ConsolidateGroupWithVerification(0, session, baseSession, mockOrch, nil)
+		if err == nil || !contains(err.Error(), "no task branches with verified commits") {
+			t.Errorf("Expected error for no commits, got %v", err)
+		}
+	})
+
+	t.Run("consolidates successfully", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1", "task-2"}}
+		session.sessionID = "session-id"
+		session.branchPrefix = "test"
+		session.taskCommitCounts = map[string]int{
+			"task-1": 3,
+			"task-2": 2,
+		}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-1",
+			branch: "feature/task-1",
+		}
+		baseSession.instancesByTask["task-2"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-2",
+			branch: "feature/task-2",
+		}
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.mainBranch = "main"
+		mockOrch.claudioDir = "/tmp/.claudio"
+		// Set commit count for verification
+		mockOrch.commitCounts["/tmp/.claudio/consolidation-group-0:main:HEAD"] = 5
+
+		emitter := &mockGroupConsolidationEventEmitter{}
+
+		err := orch.ConsolidateGroupWithVerification(0, session, baseSession, mockOrch, emitter)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		// Verify branch was created
+		if len(mockOrch.createdBranches) != 1 {
+			t.Errorf("Expected 1 branch creation, got %d", len(mockOrch.createdBranches))
+		}
+
+		// Verify worktree was created and removed
+		if len(mockOrch.createdWorktrees) != 1 {
+			t.Errorf("Expected 1 worktree creation, got %d", len(mockOrch.createdWorktrees))
+		}
+		if len(mockOrch.removedWorktrees) != 1 {
+			t.Errorf("Expected 1 worktree removal, got %d", len(mockOrch.removedWorktrees))
+		}
+
+		// Verify cherry-picks
+		if len(mockOrch.cherryPickCalls) != 2 {
+			t.Errorf("Expected 2 cherry-pick calls, got %d", len(mockOrch.cherryPickCalls))
+		}
+
+		// Verify push
+		if len(mockOrch.pushCalls) != 1 {
+			t.Errorf("Expected 1 push call, got %d", len(mockOrch.pushCalls))
+		}
+
+		// Verify consolidated branch was set in session
+		if len(session.groupConsolidatedBranches) < 1 {
+			t.Error("Consolidated branch should be set in session")
+		}
+
+		// Verify event was emitted
+		if len(emitter.events) < 1 {
+			t.Error("Expected at least one event")
+		}
+	})
+
+	t.Run("handles cherry-pick failure", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+		session.sessionID = "session-id"
+		session.taskCommitCounts = map[string]int{"task-1": 1}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-1",
+			branch: "feature/task-1",
+		}
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.cherryPickErr = errors.New("cherry-pick conflict")
+
+		err := orch.ConsolidateGroupWithVerification(0, session, baseSession, mockOrch, nil)
+		if err == nil || !contains(err.Error(), "failed to cherry-pick") {
+			t.Errorf("Expected cherry-pick error, got %v", err)
+		}
+
+		// Verify cherry-pick was aborted
+		if len(mockOrch.abortedCherryPicks) != 1 {
+			t.Errorf("Expected 1 aborted cherry-pick, got %d", len(mockOrch.abortedCherryPicks))
+		}
+	})
+
+	t.Run("handles zero commits after consolidation", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+		session.sessionID = "session-id"
+		session.taskCommitCounts = map[string]int{"task-1": 1}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-1",
+			branch: "feature/task-1",
+		}
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		// Force zero commit count
+		mockOrch.commitCounts["/tmp/.claudio/consolidation-group-0:main:HEAD"] = 0
+
+		err := orch.ConsolidateGroupWithVerification(0, session, baseSession, mockOrch, nil)
+		if err == nil || !contains(err.Error(), "no commits") {
+			t.Errorf("Expected error for zero commits, got %v", err)
+		}
+	})
+
+	t.Run("handles push failure gracefully", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+		session.sessionID = "session-id"
+		session.taskCommitCounts = map[string]int{"task-1": 1}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-1",
+			branch: "feature/task-1",
+		}
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.claudioDir = "/tmp/.claudio"
+		mockOrch.commitCounts["/tmp/.claudio/consolidation-group-0:main:HEAD"] = 1
+		mockOrch.pushErr = errors.New("push failed")
+
+		emitter := &mockGroupConsolidationEventEmitter{}
+
+		// Push failure should not cause overall failure
+		err := orch.ConsolidateGroupWithVerification(0, session, baseSession, mockOrch, emitter)
+		if err != nil {
+			t.Errorf("Push failure should not cause overall failure, got %v", err)
+		}
+
+		// Should emit a warning event
+		foundWarning := false
+		for _, e := range emitter.events {
+			if e.eventType == "group_push_warning" {
+				foundWarning = true
+				break
+			}
+		}
+		if !foundWarning {
+			t.Error("Expected push warning event")
+		}
+	})
+
+	t.Run("handles branch creation failure", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+		session.sessionID = "session-id"
+		session.taskCommitCounts = map[string]int{"task-1": 1}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-1",
+			branch: "feature/task-1",
+		}
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.createBranchErr = errors.New("branch exists")
+
+		err := orch.ConsolidateGroupWithVerification(0, session, baseSession, mockOrch, nil)
+		if err == nil || !contains(err.Error(), "failed to create consolidated branch") {
+			t.Errorf("Expected branch creation error, got %v", err)
+		}
+	})
+
+	t.Run("handles worktree creation failure", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+		session.sessionID = "session-id"
+		session.taskCommitCounts = map[string]int{"task-1": 1}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-1",
+			branch: "feature/task-1",
+		}
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.createWorktreeErr = errors.New("worktree error")
+
+		err := orch.ConsolidateGroupWithVerification(0, session, baseSession, mockOrch, nil)
+		if err == nil || !contains(err.Error(), "failed to create consolidation worktree") {
+			t.Errorf("Expected worktree creation error, got %v", err)
+		}
+	})
+
+	t.Run("handles count commits failure", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+		session.sessionID = "session-id"
+		session.taskCommitCounts = map[string]int{"task-1": 1}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-1",
+			branch: "feature/task-1",
+		}
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.countCommitsErr = errors.New("git error")
+
+		err := orch.ConsolidateGroupWithVerification(0, session, baseSession, mockOrch, nil)
+		if err == nil || !contains(err.Error(), "failed to verify consolidated branch") {
+			t.Errorf("Expected commit count error, got %v", err)
+		}
+	})
+}
+
+// ============================================================================
+// StartGroupConsolidatorSession Tests
+// ============================================================================
+
+func TestConsolidationOrchestrator_StartGroupConsolidatorSession(t *testing.T) {
+	t.Run("returns error for invalid group index", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		parser := newMockTaskCompletionParser()
+
+		err := orch.StartGroupConsolidatorSession(-1, session, baseSession, mockOrch, parser, nil)
+		if err == nil || !contains(err.Error(), "invalid group index") {
+			t.Errorf("Expected error for invalid group index, got %v", err)
+		}
+	})
+
+	t.Run("returns nil for empty group", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{}} // Empty group
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		parser := newMockTaskCompletionParser()
+
+		err := orch.StartGroupConsolidatorSession(0, session, baseSession, mockOrch, parser, nil)
+		if err != nil {
+			t.Errorf("Expected nil for empty group, got %v", err)
+		}
+	})
+
+	t.Run("returns error when no tasks have commits", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+		session.taskCommitCounts = map[string]int{"task-1": 0}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		parser := newMockTaskCompletionParser()
+
+		err := orch.StartGroupConsolidatorSession(0, session, baseSession, mockOrch, parser, nil)
+		if err == nil || !contains(err.Error(), "no task branches with verified commits") {
+			t.Errorf("Expected error for no commits, got %v", err)
+		}
+	})
+
+	t.Run("returns error when instance creation fails", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+		session.sessionID = "session-id"
+		session.taskCommitCounts = map[string]int{"task-1": 1}
+		session.tasks["task-1"] = map[string]any{"title": "Task 1"}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-1",
+			branch: "feature/task-1",
+		}
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.addInstanceErr = errors.New("instance creation failed")
+		parser := newMockTaskCompletionParser()
+
+		err := orch.StartGroupConsolidatorSession(0, session, baseSession, mockOrch, parser, nil)
+		if err == nil || !contains(err.Error(), "failed to create group consolidator instance") {
+			t.Errorf("Expected instance creation error, got %v", err)
+		}
+	})
+
+	t.Run("returns error when instance start fails", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		session.executionOrder = [][]string{{"task-1"}}
+		session.sessionID = "session-id"
+		session.taskCommitCounts = map[string]int{"task-1": 1}
+		session.tasks["task-1"] = map[string]any{"title": "Task 1"}
+
+		baseSession := newMockGroupConsolidationBaseSession()
+		baseSession.instancesByTask["task-1"] = &mockInstanceForGroupConsolidation{
+			id:     "inst-1",
+			branch: "feature/task-1",
+		}
+
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.startInstanceErr = errors.New("start failed")
+		parser := newMockTaskCompletionParser()
+		emitter := &mockGroupConsolidationEventEmitter{}
+
+		err := orch.StartGroupConsolidatorSession(0, session, baseSession, mockOrch, parser, emitter)
+		if err == nil || !contains(err.Error(), "failed to start group consolidator instance") {
+			t.Errorf("Expected start instance error, got %v", err)
+		}
+
+		// Verify event was emitted for start
+		foundStart := false
+		for _, e := range emitter.events {
+			if e.eventType == "group_consolidator_started" {
+				foundStart = true
+				break
+			}
+		}
+		if !foundStart {
+			t.Error("Expected group_consolidator_started event")
+		}
+	})
+}
+
+// ============================================================================
+// MonitorGroupConsolidator Tests
+// ============================================================================
+
+func TestConsolidationOrchestrator_MonitorGroupConsolidator(t *testing.T) {
+	// Save original statFile and restore after tests
+	originalStatFile := statFile
+	defer func() { statFile = originalStatFile }()
+
+	t.Run("returns error when instance not found", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.instance = nil // Instance not found
+		parser := newMockTaskCompletionParser()
+
+		err := orch.MonitorGroupConsolidator(0, "inst-1", session, mockOrch, parser, nil)
+		if err == nil || !contains(err.Error(), "consolidator instance not found") {
+			t.Errorf("Expected instance not found error, got %v", err)
+		}
+	})
+
+	t.Run("returns error when completion file indicates failure", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.instance = &mockInstanceForGroupConsolidation{
+			id:           "inst-1",
+			worktreePath: "/tmp/worktree",
+			status:       StatusRunning,
+		}
+
+		parser := newMockTaskCompletionParser()
+		parser.groupCompletions["/tmp/worktree"] = &GroupConsolidationCompletionFile{
+			GroupIndex: 0,
+			Status:     "failed",
+			Notes:      "Something went wrong",
+		}
+
+		// Mock file exists
+		statFile = func(path string) (os.FileInfo, error) {
+			if path == "/tmp/worktree/"+GroupConsolidationCompletionFileName {
+				return nil, nil
+			}
+			return nil, os.ErrNotExist
+		}
+
+		err := orch.MonitorGroupConsolidator(0, "inst-1", session, mockOrch, parser, nil)
+		if err == nil || !contains(err.Error(), "consolidation failed") {
+			t.Errorf("Expected consolidation failed error, got %v", err)
+		}
+
+		// Verify instance was stopped even on failure
+		if len(mockOrch.stoppedInstances) != 1 {
+			t.Errorf("Expected instance to be stopped on failure, got %d stopped", len(mockOrch.stoppedInstances))
+		}
+	})
+
+	t.Run("returns error when context cancelled", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		// Cancel immediately
+		orch.Cancel()
+
+		session := newMockGroupConsolidationSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.instance = &mockInstanceForGroupConsolidation{
+			id:           "inst-1",
+			worktreePath: "/tmp/worktree",
+			status:       StatusRunning,
+		}
+
+		parser := newMockTaskCompletionParser()
+
+		err := orch.MonitorGroupConsolidator(0, "inst-1", session, mockOrch, parser, nil)
+		if err == nil || !contains(err.Error(), "context cancelled") {
+			t.Errorf("Expected context cancelled error, got %v", err)
+		}
+	})
+
+	t.Run("returns error when instance status is Error", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.instance = &mockInstanceForGroupConsolidation{
+			id:           "inst-1",
+			worktreePath: "/tmp/worktree",
+			status:       StatusError,
+		}
+
+		parser := newMockTaskCompletionParser()
+
+		// Mock file doesn't exist
+		statFile = func(path string) (os.FileInfo, error) {
+			return nil, os.ErrNotExist
+		}
+
+		err := orch.MonitorGroupConsolidator(0, "inst-1", session, mockOrch, parser, nil)
+		if err == nil || !contains(err.Error(), "failed with error") {
+			t.Errorf("Expected instance failed error, got %v", err)
+		}
+	})
+
+	t.Run("returns error when instance completes without completion file", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.instance = &mockInstanceForGroupConsolidation{
+			id:           "inst-1",
+			worktreePath: "/tmp/worktree",
+			status:       StatusCompleted,
+		}
+		mockOrch.tmuxExists["inst-1"] = false // Tmux session doesn't exist
+
+		parser := newMockTaskCompletionParser()
+
+		// Mock file doesn't exist
+		statFile = func(path string) (os.FileInfo, error) {
+			return nil, os.ErrNotExist
+		}
+
+		err := orch.MonitorGroupConsolidator(0, "inst-1", session, mockOrch, parser, nil)
+		if err == nil || !contains(err.Error(), "without writing completion file") {
+			t.Errorf("Expected 'without writing completion file' error, got %v", err)
+		}
+	})
+
+	t.Run("completes successfully when completion file indicates success", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		session := newMockGroupConsolidationSession()
+		mockOrch := newMockGroupConsolidationOrchestrator()
+		mockOrch.instance = &mockInstanceForGroupConsolidation{
+			id:           "inst-1",
+			worktreePath: "/tmp/worktree",
+			status:       StatusRunning,
+		}
+
+		parser := newMockTaskCompletionParser()
+		parser.groupCompletions["/tmp/worktree"] = &GroupConsolidationCompletionFile{
+			GroupIndex:        0,
+			Status:            "complete",
+			BranchName:        "consolidated-branch",
+			TasksConsolidated: []string{"task-1", "task-2"},
+			Verification:      VerificationResult{OverallSuccess: true},
+		}
+
+		emitter := &mockGroupConsolidationEventEmitter{}
+
+		// Mock file exists
+		statFile = func(path string) (os.FileInfo, error) {
+			if path == "/tmp/worktree/"+GroupConsolidationCompletionFileName {
+				return nil, nil
+			}
+			return nil, os.ErrNotExist
+		}
+
+		err := orch.MonitorGroupConsolidator(0, "inst-1", session, mockOrch, parser, emitter)
+		if err != nil {
+			t.Errorf("Expected success, got error: %v", err)
+		}
+
+		// Verify branch was stored in session
+		if len(session.groupConsolidatedBranches) < 1 || session.groupConsolidatedBranches[0] != "consolidated-branch" {
+			t.Error("Consolidated branch should be stored in session")
+		}
+
+		// Verify context was stored
+		if len(session.groupConsolidationCtxs) < 1 || session.groupConsolidationCtxs[0] == nil {
+			t.Error("Consolidation context should be stored in session")
+		}
+
+		// Verify instance was stopped
+		if len(mockOrch.stoppedInstances) != 1 {
+			t.Errorf("Expected instance to be stopped, got %d stopped", len(mockOrch.stoppedInstances))
+		}
+
+		// Verify session was saved
+		if mockOrch.saveSessionCalls < 1 {
+			t.Error("Session should be saved after completion")
+		}
+
+		// Verify completion event was emitted
+		foundComplete := false
+		for _, e := range emitter.events {
+			if e.eventType == "group_consolidation_complete" {
+				foundComplete = true
+				break
+			}
+		}
+		if !foundComplete {
+			t.Error("Expected group_consolidation_complete event")
 		}
 	})
 }

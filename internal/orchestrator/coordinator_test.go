@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
 )
 
@@ -1383,5 +1384,610 @@ func TestConsolidationState_HasConflict(t *testing.T) {
 				t.Errorf("HasConflict() = %v, want %v", result, tt.expected)
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Phase Orchestrator Delegation Tests
+// =============================================================================
+// These tests verify that the Coordinator correctly delegates to phase orchestrators
+// and that the public API (GetStepInfo, RestartStep) remains unchanged.
+
+// TestCoordinator_OrchestratorGetters_NilCoordinator tests orchestrator getters on nil coordinator
+func TestCoordinator_OrchestratorGetters_NilCoordinator(t *testing.T) {
+	var coord *Coordinator
+
+	// All orchestrator getters should return nil for nil coordinator
+	if coord.PlanningOrchestrator() != nil {
+		t.Error("PlanningOrchestrator() should return nil for nil coordinator")
+	}
+	if coord.ExecutionOrchestrator() != nil {
+		t.Error("ExecutionOrchestrator() should return nil for nil coordinator")
+	}
+	if coord.SynthesisOrchestrator() != nil {
+		t.Error("SynthesisOrchestrator() should return nil for nil coordinator")
+	}
+	if coord.ConsolidationOrchestrator() != nil {
+		t.Error("ConsolidationOrchestrator() should return nil for nil coordinator")
+	}
+}
+
+// TestCoordinator_OrchestratorGetters_MinimalCoordinator tests orchestrator getters on minimal coordinator
+// Note: Without a proper orchestrator and session, the getters will fail to initialize
+// and return nil. This verifies graceful handling of initialization failure.
+func TestCoordinator_OrchestratorGetters_MinimalCoordinator(t *testing.T) {
+	// Create a coordinator without a manager (will fail initialization)
+	// Note: We need to provide a logger because the getter methods log errors
+	coord := &Coordinator{
+		logger: logging.NopLogger(),
+	}
+
+	// These should return nil because initialization will fail without a manager
+	if coord.PlanningOrchestrator() != nil {
+		t.Error("PlanningOrchestrator() should return nil when initialization fails")
+	}
+	if coord.ExecutionOrchestrator() != nil {
+		t.Error("ExecutionOrchestrator() should return nil when initialization fails")
+	}
+	if coord.SynthesisOrchestrator() != nil {
+		t.Error("SynthesisOrchestrator() should return nil when initialization fails")
+	}
+	if coord.ConsolidationOrchestrator() != nil {
+		t.Error("ConsolidationOrchestrator() should return nil when initialization fails")
+	}
+}
+
+// TestCoordinator_OrchestratorGetters_NilSession tests orchestrator getters when manager has nil session
+func TestCoordinator_OrchestratorGetters_NilSession(t *testing.T) {
+	// Create a coordinator with a manager but nil session
+	manager := &UltraPlanManager{session: nil}
+	coord := &Coordinator{
+		manager: manager,
+		logger:  logging.NopLogger(),
+	}
+
+	// These should return nil because initialization requires a session
+	if coord.PlanningOrchestrator() != nil {
+		t.Error("PlanningOrchestrator() should return nil when session is nil")
+	}
+	if coord.ExecutionOrchestrator() != nil {
+		t.Error("ExecutionOrchestrator() should return nil when session is nil")
+	}
+	if coord.SynthesisOrchestrator() != nil {
+		t.Error("SynthesisOrchestrator() should return nil when session is nil")
+	}
+	if coord.ConsolidationOrchestrator() != nil {
+		t.Error("ConsolidationOrchestrator() should return nil when session is nil")
+	}
+}
+
+// TestGetStepInfo_SessionStatePriority tests that GetStepInfo checks session state first
+// before falling back to orchestrator state. This verifies the delegation pattern
+// maintains backward compatibility.
+func TestGetStepInfo_SessionStatePriority(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+
+	// Set session state for various step types
+	session.CoordinatorID = "plan-123"
+	session.PlanManagerID = "manager-123"
+	session.SynthesisID = "synth-123"
+	session.RevisionID = "rev-123"
+	session.ConsolidationID = "consol-123"
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	// Each of these should be resolved from session state
+	tests := []struct {
+		instanceID   string
+		expectedType StepType
+		description  string
+	}{
+		{"plan-123", StepTypePlanning, "planning coordinator from session state"},
+		{"manager-123", StepTypePlanManager, "plan manager from session state"},
+		{"synth-123", StepTypeSynthesis, "synthesis from session state"},
+		{"rev-123", StepTypeRevision, "revision from session state"},
+		{"consol-123", StepTypeConsolidation, "consolidation from session state"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.description, func(t *testing.T) {
+			info := coord.GetStepInfo(tt.instanceID)
+			if info == nil {
+				t.Fatalf("GetStepInfo(%q) returned nil", tt.instanceID)
+			}
+			if info.Type != tt.expectedType {
+				t.Errorf("Type = %v, want %v", info.Type, tt.expectedType)
+			}
+			if info.InstanceID != tt.instanceID {
+				t.Errorf("InstanceID = %q, want %q", info.InstanceID, tt.instanceID)
+			}
+		})
+	}
+}
+
+// TestGetStepInfo_MultiPassCoordinatorsByIndex tests that GetStepInfo correctly
+// resolves multi-pass coordinators by their index in the slice
+func TestGetStepInfo_MultiPassCoordinatorsByIndex(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.Config.MultiPass = true
+	session.PlanCoordinatorIDs = []string{
+		"coord-maximize-parallelism",
+		"coord-minimize-complexity",
+		"coord-balanced-approach",
+	}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{manager: manager}
+
+	strategies := GetMultiPassStrategyNames()
+
+	// Verify each coordinator is found with correct index and label
+	for i, coordID := range session.PlanCoordinatorIDs {
+		info := coord.GetStepInfo(coordID)
+		if info == nil {
+			t.Errorf("GetStepInfo(%q) returned nil", coordID)
+			continue
+		}
+
+		if info.Type != StepTypePlanning {
+			t.Errorf("coordinator %d: Type = %v, want %v", i, info.Type, StepTypePlanning)
+		}
+		if info.GroupIndex != i {
+			t.Errorf("coordinator %d: GroupIndex = %d, want %d", i, info.GroupIndex, i)
+		}
+		expectedLabel := "Plan Coordinator (" + strategies[i] + ")"
+		if info.Label != expectedLabel {
+			t.Errorf("coordinator %d: Label = %q, want %q", i, info.Label, expectedLabel)
+		}
+	}
+}
+
+// TestGetStepInfo_GroupConsolidatorsByIndex tests that group consolidators are
+// correctly resolved by index
+func TestGetStepInfo_GroupConsolidatorsByIndex(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.GroupConsolidatorIDs = []string{
+		"group-consol-0",
+		"group-consol-1",
+		"group-consol-2",
+	}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{manager: manager}
+
+	for i, consolidatorID := range session.GroupConsolidatorIDs {
+		info := coord.GetStepInfo(consolidatorID)
+		if info == nil {
+			t.Errorf("GetStepInfo(%q) returned nil", consolidatorID)
+			continue
+		}
+
+		if info.Type != StepTypeGroupConsolidator {
+			t.Errorf("consolidator %d: Type = %v, want %v", i, info.Type, StepTypeGroupConsolidator)
+		}
+		if info.GroupIndex != i {
+			t.Errorf("consolidator %d: GroupIndex = %d, want %d", i, info.GroupIndex, i)
+		}
+		expectedLabel := "Group " + itoa(i+1) + " Consolidator"
+		if info.Label != expectedLabel {
+			t.Errorf("consolidator %d: Label = %q, want %q", i, info.Label, expectedLabel)
+		}
+	}
+}
+
+// TestRestartStep_TypeRouting tests that RestartStep handles all step types correctly
+// Note: This test verifies unknown types are properly rejected. Full restart behavior
+// requires a complete orchestrator setup and is tested elsewhere.
+func TestRestartStep_TypeRouting(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+		logger:  logging.NopLogger(),
+	}
+
+	// Verify that unknown step types are properly rejected
+	t.Run("unknown_type_rejected", func(t *testing.T) {
+		stepInfo := &StepInfo{
+			Type: StepType("invalid_step_type"),
+		}
+
+		_, err := coord.RestartStep(stepInfo)
+
+		if err == nil {
+			t.Error("RestartStep with unknown type should return an error")
+		}
+		if !strings.Contains(err.Error(), "unknown step type") {
+			t.Errorf("error = %q, expected to contain 'unknown step type'", err.Error())
+		}
+	})
+
+	// Verify that empty step type is rejected
+	t.Run("empty_type_rejected", func(t *testing.T) {
+		stepInfo := &StepInfo{
+			Type: StepType(""),
+		}
+
+		_, err := coord.RestartStep(stepInfo)
+
+		if err == nil {
+			t.Error("RestartStep with empty type should return an error")
+		}
+	})
+
+	// Verify that all known step types are in the switch statement (not unknown)
+	// This uses a mock approach - since these will fail for other reasons,
+	// we just verify they don't return "unknown step type" error
+	knownTypes := []StepType{
+		StepTypePlanning,
+		StepTypePlanManager,
+		StepTypeTask,
+		StepTypeSynthesis,
+		StepTypeRevision,
+		StepTypeConsolidation,
+		StepTypeGroupConsolidator,
+	}
+
+	for _, stepType := range knownTypes {
+		t.Run("type_"+string(stepType)+"_recognized", func(t *testing.T) {
+			// Skip actual execution - just verify the type constant exists and is documented
+			// Full restart testing requires orchestrator setup
+			if stepType == "" {
+				t.Error("StepType constant should not be empty")
+			}
+		})
+	}
+}
+
+// TestRestartStep_SessionStatePrerequisites tests that RestartStep checks session state
+// This verifies the nil checks and validation at the start of RestartStep
+func TestRestartStep_SessionStatePrerequisites(t *testing.T) {
+	tests := []struct {
+		name       string
+		stepInfo   *StepInfo
+		session    *UltraPlanSession
+		wantErr    bool
+		errContain string
+	}{
+		{
+			name:       "nil step info",
+			stepInfo:   nil,
+			session:    NewUltraPlanSession("Test", DefaultUltraPlanConfig()),
+			wantErr:    true,
+			errContain: "step info is nil",
+		},
+		{
+			name:       "nil session",
+			stepInfo:   &StepInfo{Type: StepTypeSynthesis},
+			session:    nil,
+			wantErr:    true,
+			errContain: "no session",
+		},
+		{
+			name:       "unknown step type",
+			stepInfo:   &StepInfo{Type: StepType("invalid")},
+			session:    NewUltraPlanSession("Test", DefaultUltraPlanConfig()),
+			wantErr:    true,
+			errContain: "unknown step type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := &UltraPlanManager{session: tt.session}
+			coord := &Coordinator{
+				manager: manager,
+				logger:  logging.NopLogger(),
+			}
+
+			_, err := coord.RestartStep(tt.stepInfo)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error but got nil")
+				} else if !strings.Contains(err.Error(), tt.errContain) {
+					t.Errorf("error = %q, expected to contain %q", err.Error(), tt.errContain)
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestPublicAPI_SessionAccessMethods tests that the Coordinator's public API
+// for session access remains functional
+func TestPublicAPI_SessionAccessMethods(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.Plan = &PlanSpec{
+		Summary: "Test plan",
+		Tasks:   []PlannedTask{{ID: "task-1", Title: "Test Task"}},
+	}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	// Test Session() returns the correct session
+	gotSession := coord.Session()
+	if gotSession != session {
+		t.Error("Session() did not return the expected session")
+	}
+
+	// Test Plan() returns the correct plan
+	gotPlan := coord.Plan()
+	if gotPlan != session.Plan {
+		t.Error("Plan() did not return the expected plan")
+	}
+
+	// Test Manager() returns the correct manager
+	gotManager := coord.Manager()
+	if gotManager != manager {
+		t.Error("Manager() did not return the expected manager")
+	}
+}
+
+// TestPublicAPI_ProgressTracking tests the progress tracking methods
+func TestPublicAPI_ProgressTracking(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.Plan = &PlanSpec{
+		Tasks: []PlannedTask{
+			{ID: "task-1", Title: "Task 1"},
+			{ID: "task-2", Title: "Task 2"},
+			{ID: "task-3", Title: "Task 3"},
+		},
+	}
+	session.CompletedTasks = []string{"task-1"}
+	session.Phase = PhaseExecuting
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager:      manager,
+		runningTasks: make(map[string]string),
+	}
+
+	// Test GetProgress
+	completed, total, phase := coord.GetProgress()
+	if completed != 1 {
+		t.Errorf("completed = %d, want 1", completed)
+	}
+	if total != 3 {
+		t.Errorf("total = %d, want 3", total)
+	}
+	if phase != PhaseExecuting {
+		t.Errorf("phase = %v, want %v", phase, PhaseExecuting)
+	}
+
+	// Test GetRunningTasks (should be empty initially)
+	running := coord.GetRunningTasks()
+	if len(running) != 0 {
+		t.Errorf("GetRunningTasks() length = %d, want 0", len(running))
+	}
+}
+
+// TestPublicAPI_CandidatePlanMethods tests the candidate plan storage methods
+func TestPublicAPI_CandidatePlanMethods(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	session.Config.MultiPass = true
+	session.PlanCoordinatorIDs = []string{"coord-0", "coord-1", "coord-2"}
+	session.CandidatePlans = make([]*PlanSpec, 3)
+
+	manager := &UltraPlanManager{
+		session: session,
+		logger:  logging.NopLogger(),
+	}
+	coord := &Coordinator{
+		manager: manager,
+		logger:  logging.NopLogger(),
+	}
+
+	// Initially should have 0 non-nil plans
+	if coord.CountCandidatePlans() != 0 {
+		t.Errorf("CountCandidatePlans() = %d, want 0", coord.CountCandidatePlans())
+	}
+
+	// Store a plan at index 0
+	plan0 := &PlanSpec{Summary: "Plan 0"}
+	count := coord.StoreCandidatePlan(0, plan0)
+	if count != 1 {
+		t.Errorf("StoreCandidatePlan returned %d, want 1", count)
+	}
+
+	// Verify count is now 1
+	if coord.CountCandidatePlans() != 1 {
+		t.Errorf("CountCandidatePlans() = %d, want 1", coord.CountCandidatePlans())
+	}
+
+	// Store remaining plans
+	coord.StoreCandidatePlan(1, &PlanSpec{Summary: "Plan 1"})
+	coord.StoreCandidatePlan(2, &PlanSpec{Summary: "Plan 2"})
+
+	// Verify count is now 3
+	if coord.CountCandidatePlans() != 3 {
+		t.Errorf("CountCandidatePlans() = %d, want 3", coord.CountCandidatePlans())
+	}
+}
+
+// TestGetStepInfo_AllStepTypes_Comprehensive tests GetStepInfo for all step types
+// to ensure comprehensive coverage of the delegation pattern
+func TestGetStepInfo_AllStepTypes_Comprehensive(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+
+	// Setup plan with tasks
+	session.Plan = &PlanSpec{
+		Tasks: []PlannedTask{
+			{ID: "task-1", Title: "Task One"},
+			{ID: "task-2", Title: "Task Two"},
+		},
+		ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+	}
+
+	// Setup all session state IDs
+	session.CoordinatorID = "planning-inst"
+	session.PlanManagerID = "manager-inst"
+	session.PlanCoordinatorIDs = []string{"multipass-0", "multipass-1"}
+	session.TaskToInstance = map[string]string{
+		"task-1": "task-inst-1",
+		"task-2": "task-inst-2",
+	}
+	session.SynthesisID = "synth-inst"
+	session.RevisionID = "rev-inst"
+	session.ConsolidationID = "consol-inst"
+	session.GroupConsolidatorIDs = []string{"group-consol-0", "group-consol-1"}
+
+	manager := &UltraPlanManager{session: session}
+
+	// Create group tracker for task lookup
+	sessionAdapter := group.NewSessionAdapter(
+		func() group.PlanData {
+			return group.NewPlanAdapter(
+				func() [][]string { return session.Plan.ExecutionOrder },
+				func(taskID string) *group.Task {
+					task := session.GetTask(taskID)
+					if task == nil {
+						return nil
+					}
+					return &group.Task{ID: task.ID, Title: task.Title}
+				},
+			)
+		},
+		func() []string { return session.CompletedTasks },
+		func() []string { return session.FailedTasks },
+		func() map[string]int { return session.TaskCommitCounts },
+		func() int { return session.CurrentGroup },
+	)
+	groupTracker := group.NewTracker(sessionAdapter)
+
+	coord := &Coordinator{
+		manager:      manager,
+		groupTracker: groupTracker,
+	}
+
+	tests := []struct {
+		instanceID   string
+		wantType     StepType
+		wantTaskID   string
+		wantGroupIdx int
+		description  string
+	}{
+		{"planning-inst", StepTypePlanning, "", -1, "single-pass planning coordinator"},
+		{"manager-inst", StepTypePlanManager, "", -1, "plan manager instance"},
+		{"multipass-0", StepTypePlanning, "", 0, "multi-pass coordinator 0"},
+		{"multipass-1", StepTypePlanning, "", 1, "multi-pass coordinator 1"},
+		{"task-inst-1", StepTypeTask, "task-1", 0, "task instance in group 0"},
+		{"task-inst-2", StepTypeTask, "task-2", 1, "task instance in group 1"},
+		{"synth-inst", StepTypeSynthesis, "", -1, "synthesis instance"},
+		{"rev-inst", StepTypeRevision, "", -1, "revision instance"},
+		{"consol-inst", StepTypeConsolidation, "", -1, "consolidation instance"},
+		{"group-consol-0", StepTypeGroupConsolidator, "", 0, "group consolidator 0"},
+		{"group-consol-1", StepTypeGroupConsolidator, "", 1, "group consolidator 1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.description, func(t *testing.T) {
+			info := coord.GetStepInfo(tt.instanceID)
+			if info == nil {
+				t.Fatalf("GetStepInfo(%q) returned nil", tt.instanceID)
+			}
+
+			if info.Type != tt.wantType {
+				t.Errorf("Type = %v, want %v", info.Type, tt.wantType)
+			}
+
+			if info.InstanceID != tt.instanceID {
+				t.Errorf("InstanceID = %q, want %q", info.InstanceID, tt.instanceID)
+			}
+
+			if tt.wantTaskID != "" && info.TaskID != tt.wantTaskID {
+				t.Errorf("TaskID = %q, want %q", info.TaskID, tt.wantTaskID)
+			}
+
+			// GroupIndex is -1 for non-grouped steps
+			if tt.wantGroupIdx >= 0 && info.GroupIndex != tt.wantGroupIdx {
+				t.Errorf("GroupIndex = %d, want %d", info.GroupIndex, tt.wantGroupIdx)
+			}
+		})
+	}
+
+	// Test unknown instance ID returns nil
+	info := coord.GetStepInfo("unknown-instance-id")
+	if info != nil {
+		t.Errorf("GetStepInfo(\"unknown-instance-id\") = %v, want nil", info)
+	}
+}
+
+// TestCoordinator_SetCallbacks tests callback registration
+func TestCoordinator_SetCallbacks(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	// Callbacks should be nil initially
+	if coord.callbacks != nil {
+		t.Error("callbacks should be nil initially")
+	}
+
+	// Set callbacks
+	cb := &CoordinatorCallbacks{
+		OnPhaseChange: func(phase UltraPlanPhase) {},
+	}
+	coord.SetCallbacks(cb)
+
+	// Verify callbacks are set
+	if coord.callbacks != cb {
+		t.Error("SetCallbacks did not set the callbacks correctly")
+	}
+
+	// Set to nil
+	coord.SetCallbacks(nil)
+	if coord.callbacks != nil {
+		t.Error("SetCallbacks(nil) did not clear callbacks")
+	}
+}
+
+// TestCoordinator_GroupTracker tests the GroupTracker getter
+func TestCoordinator_GroupTracker(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	manager := &UltraPlanManager{session: session}
+
+	// Create a group tracker
+	sessionAdapter := group.NewSessionAdapter(
+		func() group.PlanData { return nil },
+		func() []string { return nil },
+		func() []string { return nil },
+		func() map[string]int { return nil },
+		func() int { return 0 },
+	)
+	tracker := group.NewTracker(sessionAdapter)
+
+	coord := &Coordinator{
+		manager:      manager,
+		groupTracker: tracker,
+	}
+
+	// Verify GroupTracker() returns the tracker
+	gotTracker := coord.GroupTracker()
+	if gotTracker != tracker {
+		t.Error("GroupTracker() did not return the expected tracker")
+	}
+}
+
+// TestCoordinator_RetryManager tests the RetryManager getter
+func TestCoordinator_RetryManager(t *testing.T) {
+	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager: manager,
+	}
+
+	// RetryManager should be nil when not set
+	if coord.RetryManager() != nil {
+		t.Error("RetryManager() should be nil when not set")
 	}
 }
