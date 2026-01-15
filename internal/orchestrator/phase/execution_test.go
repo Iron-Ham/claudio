@@ -90,27 +90,43 @@ func (m *mockInstance) GetWorktreePath() string { return m.worktreePath }
 
 // mockExecutionCoordinator implements ExecutionCoordinatorInterface for testing.
 type mockExecutionCoordinator struct {
-	baseBranches    map[int]string
-	runningTasks    map[string]string
-	taskGroups      map[string]int
-	completionCalls []TaskCompletion
-	verifyResults   map[string]TaskCompletion
-	completionFiles map[string]bool
-	taskStartCalls  []struct{ taskID, instanceID string }
-	taskFailedCalls []struct{ taskID, reason string }
-	progressCalls   int
-	finishCalls     int
-	groupAddCalls   []string
-	mu              sync.Mutex
+	baseBranches        map[int]string
+	runningTasks        map[string]string
+	taskGroups          map[string]int
+	completionCalls     []TaskCompletion
+	verifyResults       map[string]TaskCompletion
+	completionFiles     map[string]bool
+	taskStartCalls      []struct{ taskID, instanceID string }
+	taskFailedCalls     []struct{ taskID, reason string }
+	progressCalls       int
+	finishCalls         int
+	groupAddCalls       []string
+	consolidationCalls  []int
+	partialFailureCalls []int
+	clearTaskCalls      []string
+	saveCalls           int
+	synthesisCalls      int
+	completeCalls       []struct {
+		success bool
+		summary string
+	}
+	sessionPhase     UltraPlanPhase
+	sessionError     string
+	noSynthesis      bool
+	taskCommitCounts map[string]int
+	consolidationErr error
+	synthesisErr     error
+	mu               sync.Mutex
 }
 
 func newMockExecutionCoordinator() *mockExecutionCoordinator {
 	return &mockExecutionCoordinator{
-		baseBranches:    make(map[int]string),
-		runningTasks:    make(map[string]string),
-		taskGroups:      make(map[string]int),
-		verifyResults:   make(map[string]TaskCompletion),
-		completionFiles: make(map[string]bool),
+		baseBranches:     make(map[int]string),
+		runningTasks:     make(map[string]string),
+		taskGroups:       make(map[string]int),
+		verifyResults:    make(map[string]TaskCompletion),
+		completionFiles:  make(map[string]bool),
+		taskCommitCounts: make(map[string]int),
 	}
 }
 
@@ -215,6 +231,72 @@ func (m *mockExecutionCoordinator) AddInstanceToGroup(instanceID string, isMulti
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.groupAddCalls = append(m.groupAddCalls, instanceID)
+}
+
+func (m *mockExecutionCoordinator) StartGroupConsolidation(groupIndex int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.consolidationCalls = append(m.consolidationCalls, groupIndex)
+	return m.consolidationErr
+}
+
+func (m *mockExecutionCoordinator) HandlePartialGroupFailure(groupIndex int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.partialFailureCalls = append(m.partialFailureCalls, groupIndex)
+}
+
+func (m *mockExecutionCoordinator) ClearTaskFromInstance(taskID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clearTaskCalls = append(m.clearTaskCalls, taskID)
+}
+
+func (m *mockExecutionCoordinator) SaveSession() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.saveCalls++
+	return nil
+}
+
+func (m *mockExecutionCoordinator) RunSynthesis() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.synthesisCalls++
+	return m.synthesisErr
+}
+
+func (m *mockExecutionCoordinator) NotifyComplete(success bool, summary string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.completeCalls = append(m.completeCalls, struct {
+		success bool
+		summary string
+	}{success, summary})
+}
+
+func (m *mockExecutionCoordinator) SetSessionPhase(phase UltraPlanPhase) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sessionPhase = phase
+}
+
+func (m *mockExecutionCoordinator) SetSessionError(err string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sessionError = err
+}
+
+func (m *mockExecutionCoordinator) GetNoSynthesis() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.noSynthesis
+}
+
+func (m *mockExecutionCoordinator) RecordTaskCommitCount(taskID string, count int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.taskCommitCounts[taskID] = count
 }
 
 // mockPlannedTask implements PlannedTaskData for testing.
@@ -927,9 +1009,10 @@ func TestErrExecutionCancelled(t *testing.T) {
 // trackingCallbacks tracks callback invocations for testing.
 type trackingCallbacks struct {
 	mockCallbacks
-	taskCompleteCalls []string
-	taskFailedCalls   []struct{ taskID, reason string }
-	phaseChangeCalls  []UltraPlanPhase
+	taskCompleteCalls  []string
+	taskFailedCalls    []struct{ taskID, reason string }
+	phaseChangeCalls   []UltraPlanPhase
+	groupCompleteCalls []int
 }
 
 func (t *trackingCallbacks) OnTaskComplete(taskID string) {
@@ -942,6 +1025,10 @@ func (t *trackingCallbacks) OnTaskFailed(taskID, reason string) {
 
 func (t *trackingCallbacks) OnPhaseChange(phase UltraPlanPhase) {
 	t.phaseChangeCalls = append(t.phaseChangeCalls, phase)
+}
+
+func (t *trackingCallbacks) OnGroupComplete(groupIndex int) {
+	t.groupCompleteCalls = append(t.groupCompleteCalls, groupIndex)
 }
 
 // Helper function
@@ -1468,4 +1555,567 @@ func TestTaskVerifyResult(t *testing.T) {
 			t.Errorf("CommitCount = %d, want 5", result.CommitCount)
 		}
 	})
+}
+
+// mockGroupTracker implements GroupTrackerInterface for testing.
+type mockGroupTracker struct {
+	taskGroups      map[string]int
+	groupComplete   map[int]bool
+	partialFailure  map[int]bool
+	nextGroupMap    map[int]int
+	doneMap         map[int]bool
+	groupTasks      map[int][]GroupTaskInfo
+	totalGroupCount int
+	mu              sync.Mutex
+}
+
+func newMockGroupTracker() *mockGroupTracker {
+	return &mockGroupTracker{
+		taskGroups:     make(map[string]int),
+		groupComplete:  make(map[int]bool),
+		partialFailure: make(map[int]bool),
+		nextGroupMap:   make(map[int]int),
+		doneMap:        make(map[int]bool),
+		groupTasks:     make(map[int][]GroupTaskInfo),
+	}
+}
+
+func (m *mockGroupTracker) GetTaskGroupIndex(taskID string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.taskGroups[taskID]
+}
+
+func (m *mockGroupTracker) IsGroupComplete(groupIndex int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.groupComplete[groupIndex]
+}
+
+func (m *mockGroupTracker) HasPartialFailure(groupIndex int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.partialFailure[groupIndex]
+}
+
+func (m *mockGroupTracker) AdvanceGroup(groupIndex int) (int, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	next := m.nextGroupMap[groupIndex]
+	done := m.doneMap[groupIndex]
+	return next, done
+}
+
+func (m *mockGroupTracker) GetGroupTasks(groupIndex int) []GroupTaskInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.groupTasks[groupIndex]
+}
+
+func (m *mockGroupTracker) TotalGroups() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.totalGroupCount
+}
+
+func (m *mockGroupTracker) HasMoreGroups(groupIndex int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return groupIndex+1 < m.totalGroupCount
+}
+
+// mockSessionWithPhase extends mockSession with SetPhase and SetError.
+type mockSessionWithPhase struct {
+	mockSession
+	phase UltraPlanPhase
+	err   string
+}
+
+func (m *mockSessionWithPhase) SetPhase(phase UltraPlanPhase) { m.phase = phase }
+func (m *mockSessionWithPhase) SetError(err string)           { m.err = err }
+func (m *mockSessionWithPhase) GetPhase() UltraPlanPhase      { return m.phase }
+
+func TestExecutionOrchestrator_HandleTaskCompletion_DuplicateDetection(t *testing.T) {
+	mgr := &mockManager{}
+	cb := &trackingCallbacks{}
+	coord := newMockExecutionCoordinator()
+
+	exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+		PhaseContext: &PhaseContext{
+			Manager:      mgr,
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+			Callbacks:    cb,
+		},
+		Coordinator: coord,
+	})
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	// Add a running task
+	exec.mu.Lock()
+	exec.state.RunningTasks["task-1"] = "inst-1"
+	exec.state.RunningCount = 1
+	exec.mu.Unlock()
+
+	// First completion should be processed
+	completion := TaskCompletion{
+		TaskID:      "task-1",
+		InstanceID:  "inst-1",
+		Success:     true,
+		CommitCount: 2,
+	}
+	exec.handleTaskCompletion(completion)
+
+	state := exec.State()
+	if state.CompletedCount != 1 {
+		t.Errorf("CompletedCount = %d, want 1", state.CompletedCount)
+	}
+	if !state.ProcessedTasks["task-1"] {
+		t.Error("task-1 should be marked as processed")
+	}
+
+	// Reset completed count to verify duplicate detection
+	completedBefore := state.CompletedCount
+
+	// Second completion (duplicate) should be skipped
+	exec.handleTaskCompletion(completion)
+
+	state = exec.State()
+	if state.CompletedCount != completedBefore {
+		t.Errorf("CompletedCount changed from %d to %d, duplicate should have been skipped",
+			completedBefore, state.CompletedCount)
+	}
+}
+
+func TestExecutionOrchestrator_HandleTaskCompletion_RetryHandling(t *testing.T) {
+	mgr := &mockManager{}
+	coord := newMockExecutionCoordinator()
+
+	exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+		PhaseContext: &PhaseContext{
+			Manager:      mgr,
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		},
+		Coordinator: coord,
+	})
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	// Add a running task
+	exec.mu.Lock()
+	exec.state.RunningTasks["task-1"] = "inst-1"
+	exec.state.RunningCount = 1
+	exec.mu.Unlock()
+
+	// Completion with NeedsRetry should clear task from instance
+	completion := TaskCompletion{
+		TaskID:     "task-1",
+		InstanceID: "inst-1",
+		Success:    false,
+		NeedsRetry: true,
+	}
+	exec.handleTaskCompletion(completion)
+
+	state := exec.State()
+	// Task should be removed from running but NOT marked as processed
+	if state.RunningCount != 0 {
+		t.Errorf("RunningCount = %d, want 0", state.RunningCount)
+	}
+	if state.ProcessedTasks["task-1"] {
+		t.Error("task-1 should NOT be marked as processed for retry")
+	}
+	if state.CompletedCount != 0 {
+		t.Errorf("CompletedCount = %d, want 0 (retry)", state.CompletedCount)
+	}
+	if state.FailedCount != 0 {
+		t.Errorf("FailedCount = %d, want 0 (retry)", state.FailedCount)
+	}
+
+	// Coordinator should have been asked to clear the task
+	coord.mu.Lock()
+	if len(coord.clearTaskCalls) != 1 || coord.clearTaskCalls[0] != "task-1" {
+		t.Errorf("ClearTaskFromInstance calls = %v, want [task-1]", coord.clearTaskCalls)
+	}
+	if coord.saveCalls != 1 {
+		t.Errorf("SaveSession calls = %d, want 1", coord.saveCalls)
+	}
+	coord.mu.Unlock()
+}
+
+func TestExecutionOrchestrator_HandleTaskCompletion_RecordCommitCount(t *testing.T) {
+	coord := newMockExecutionCoordinator()
+
+	exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+		PhaseContext: &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		},
+		Coordinator: coord,
+	})
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	// Add a running task
+	exec.mu.Lock()
+	exec.state.RunningTasks["task-1"] = "inst-1"
+	exec.state.RunningCount = 1
+	exec.mu.Unlock()
+
+	// Successful completion with commits should record count
+	completion := TaskCompletion{
+		TaskID:      "task-1",
+		InstanceID:  "inst-1",
+		Success:     true,
+		CommitCount: 5,
+	}
+	exec.handleTaskCompletion(completion)
+
+	coord.mu.Lock()
+	if coord.taskCommitCounts["task-1"] != 5 {
+		t.Errorf("taskCommitCounts[task-1] = %d, want 5", coord.taskCommitCounts["task-1"])
+	}
+	coord.mu.Unlock()
+}
+
+func TestExecutionOrchestrator_CheckAndAdvanceGroup(t *testing.T) {
+	t.Run("advances group after completion", func(t *testing.T) {
+		groupTracker := newMockGroupTracker()
+		groupTracker.groupComplete[0] = true
+		groupTracker.partialFailure[0] = false
+		groupTracker.nextGroupMap[0] = 1
+		groupTracker.doneMap[0] = false
+		groupTracker.groupTasks[0] = []GroupTaskInfo{{ID: "task-1", Title: "Task 1"}}
+
+		execSession := newMockExecutionSession()
+		execSession.currentGroup = 0
+
+		coord := newMockExecutionCoordinator()
+		cb := &trackingCallbacks{}
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      &mockSession{},
+				Callbacks:    cb,
+			},
+			Coordinator:      coord,
+			ExecutionSession: execSession,
+			GroupTracker:     groupTracker,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		exec.checkAndAdvanceGroup()
+
+		// Should have triggered consolidation
+		coord.mu.Lock()
+		if len(coord.consolidationCalls) != 1 || coord.consolidationCalls[0] != 0 {
+			t.Errorf("consolidationCalls = %v, want [0]", coord.consolidationCalls)
+		}
+		coord.mu.Unlock()
+
+		// Should have notified group complete callback
+		if len(cb.groupCompleteCalls) != 1 || cb.groupCompleteCalls[0] != 0 {
+			t.Errorf("OnGroupComplete calls = %v, want [0]", cb.groupCompleteCalls)
+		}
+	})
+
+	t.Run("handles partial failure", func(t *testing.T) {
+		groupTracker := newMockGroupTracker()
+		groupTracker.groupComplete[0] = true
+		groupTracker.partialFailure[0] = true // Partial failure
+
+		execSession := newMockExecutionSession()
+		execSession.currentGroup = 0
+
+		coord := newMockExecutionCoordinator()
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      &mockSession{},
+			},
+			Coordinator:      coord,
+			ExecutionSession: execSession,
+			GroupTracker:     groupTracker,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		exec.checkAndAdvanceGroup()
+
+		// Should have called HandlePartialGroupFailure
+		coord.mu.Lock()
+		if len(coord.partialFailureCalls) != 1 || coord.partialFailureCalls[0] != 0 {
+			t.Errorf("partialFailureCalls = %v, want [0]", coord.partialFailureCalls)
+		}
+		// Should NOT have called consolidation
+		if len(coord.consolidationCalls) != 0 {
+			t.Errorf("consolidationCalls = %v, want empty (partial failure)", coord.consolidationCalls)
+		}
+		coord.mu.Unlock()
+
+		// Should have set local GroupDecision state
+		state := exec.State()
+		if state.GroupDecision == nil {
+			t.Error("GroupDecision should be set after partial failure")
+		} else if !state.GroupDecision.AwaitingDecision {
+			t.Error("AwaitingDecision should be true")
+		}
+	})
+
+	t.Run("does nothing when group not complete", func(t *testing.T) {
+		groupTracker := newMockGroupTracker()
+		groupTracker.groupComplete[0] = false // Not complete
+
+		execSession := newMockExecutionSession()
+		execSession.currentGroup = 0
+
+		coord := newMockExecutionCoordinator()
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      &mockSession{},
+			},
+			Coordinator:      coord,
+			ExecutionSession: execSession,
+			GroupTracker:     groupTracker,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		exec.checkAndAdvanceGroup()
+
+		// Should not have called anything
+		coord.mu.Lock()
+		if len(coord.consolidationCalls) != 0 {
+			t.Errorf("consolidationCalls = %v, want empty", coord.consolidationCalls)
+		}
+		if len(coord.partialFailureCalls) != 0 {
+			t.Errorf("partialFailureCalls = %v, want empty", coord.partialFailureCalls)
+		}
+		coord.mu.Unlock()
+	})
+}
+
+func TestExecutionOrchestrator_FinishExecution(t *testing.T) {
+	t.Run("marks session failed when tasks failed", func(t *testing.T) {
+		session := &mockSessionWithPhase{mockSession: mockSession{}}
+		coord := newMockExecutionCoordinator()
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      session,
+			},
+			Coordinator: coord,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Set up state with failures
+		exec.mu.Lock()
+		exec.state.CompletedCount = 5
+		exec.state.FailedCount = 2
+		exec.state.TotalTasks = 7
+		exec.mu.Unlock()
+
+		exec.finishExecution()
+
+		// Session phase should be failed
+		if session.phase != PhaseFailed {
+			t.Errorf("session.phase = %v, want %v", session.phase, PhaseFailed)
+		}
+
+		// Coordinator should have been notified
+		coord.mu.Lock()
+		if coord.sessionPhase != PhaseFailed {
+			t.Errorf("coord.sessionPhase = %v, want %v", coord.sessionPhase, PhaseFailed)
+		}
+		if len(coord.completeCalls) != 1 {
+			t.Errorf("completeCalls count = %d, want 1", len(coord.completeCalls))
+		} else if coord.completeCalls[0].success {
+			t.Error("completeCalls[0].success should be false")
+		}
+		coord.mu.Unlock()
+	})
+
+	t.Run("completes without synthesis when disabled", func(t *testing.T) {
+		session := &mockSessionWithPhase{mockSession: mockSession{}}
+		coord := newMockExecutionCoordinator()
+		coord.noSynthesis = true
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      session,
+			},
+			Coordinator: coord,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// All tasks succeeded
+		exec.mu.Lock()
+		exec.state.CompletedCount = 5
+		exec.state.FailedCount = 0
+		exec.state.TotalTasks = 5
+		exec.mu.Unlock()
+
+		exec.finishExecution()
+
+		// Session phase should be complete
+		if session.phase != PhaseComplete {
+			t.Errorf("session.phase = %v, want %v", session.phase, PhaseComplete)
+		}
+
+		// Coordinator should NOT have started synthesis
+		coord.mu.Lock()
+		if coord.synthesisCalls != 0 {
+			t.Errorf("synthesisCalls = %d, want 0 (synthesis disabled)", coord.synthesisCalls)
+		}
+		if len(coord.completeCalls) != 1 || !coord.completeCalls[0].success {
+			t.Errorf("Should have called NotifyComplete with success=true")
+		}
+		coord.mu.Unlock()
+	})
+
+	t.Run("starts synthesis when enabled", func(t *testing.T) {
+		session := &mockSessionWithPhase{mockSession: mockSession{}}
+		coord := newMockExecutionCoordinator()
+		coord.noSynthesis = false
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      session,
+			},
+			Coordinator: coord,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// All tasks succeeded
+		exec.mu.Lock()
+		exec.state.CompletedCount = 5
+		exec.state.FailedCount = 0
+		exec.state.TotalTasks = 5
+		exec.mu.Unlock()
+
+		exec.finishExecution()
+
+		// Should have started synthesis
+		coord.mu.Lock()
+		if coord.synthesisCalls != 1 {
+			t.Errorf("synthesisCalls = %d, want 1", coord.synthesisCalls)
+		}
+		coord.mu.Unlock()
+	})
+}
+
+func TestGroupDecisionState(t *testing.T) {
+	t.Run("fields are accessible", func(t *testing.T) {
+		gds := GroupDecisionState{
+			GroupIndex:       2,
+			SucceededTasks:   []string{"task-1", "task-2"},
+			FailedTasks:      []string{"task-3"},
+			AwaitingDecision: true,
+		}
+
+		if gds.GroupIndex != 2 {
+			t.Errorf("GroupIndex = %d, want 2", gds.GroupIndex)
+		}
+		if len(gds.SucceededTasks) != 2 {
+			t.Errorf("SucceededTasks len = %d, want 2", len(gds.SucceededTasks))
+		}
+		if len(gds.FailedTasks) != 1 {
+			t.Errorf("FailedTasks len = %d, want 1", len(gds.FailedTasks))
+		}
+		if !gds.AwaitingDecision {
+			t.Error("AwaitingDecision should be true")
+		}
+	})
+}
+
+func TestGroupTaskInfo(t *testing.T) {
+	t.Run("fields are accessible", func(t *testing.T) {
+		gti := GroupTaskInfo{
+			ID:    "task-1",
+			Title: "Test Task",
+		}
+
+		if gti.ID != "task-1" {
+			t.Errorf("ID = %q, want %q", gti.ID, "task-1")
+		}
+		if gti.Title != "Test Task" {
+			t.Errorf("Title = %q, want %q", gti.Title, "Test Task")
+		}
+	})
+}
+
+func TestExecutionState_ProcessedTasks(t *testing.T) {
+	t.Run("ProcessedTasks map is initialized", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		state := exec.State()
+		if state.ProcessedTasks == nil {
+			t.Error("ProcessedTasks should not be nil")
+		}
+	})
+
+	t.Run("Reset clears ProcessedTasks", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Add some processed tasks
+		exec.mu.Lock()
+		exec.state.ProcessedTasks["task-1"] = true
+		exec.state.ProcessedTasks["task-2"] = true
+		exec.mu.Unlock()
+
+		exec.Reset()
+
+		state := exec.State()
+		if len(state.ProcessedTasks) != 0 {
+			t.Errorf("ProcessedTasks len = %d, want 0 after Reset", len(state.ProcessedTasks))
+		}
+	})
+}
+
+// Compile-time interface checks
+func init() {
+	// Ensure mockGroupTracker implements GroupTrackerInterface
+	var _ GroupTrackerInterface = (*mockGroupTracker)(nil)
 }

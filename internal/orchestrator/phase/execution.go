@@ -42,6 +42,15 @@ type ExecutionState struct {
 
 	// TotalTasks is the total number of tasks to execute.
 	TotalTasks int
+
+	// ProcessedTasks tracks tasks that have been processed (completed or failed).
+	// This is used for duplicate detection when both monitor goroutine and poll
+	// detect the same completion.
+	ProcessedTasks map[string]bool
+
+	// GroupDecision holds state about a partial group failure awaiting user decision.
+	// May be nil if no partial failure is pending.
+	GroupDecision *GroupDecisionState
 }
 
 // PlannedTaskData provides access to task information needed for prompt building.
@@ -160,6 +169,77 @@ type ExecutionCoordinatorInterface interface {
 
 	// AddInstanceToGroup adds an instance to the appropriate ultra-plan group.
 	AddInstanceToGroup(instanceID string, isMultiPass bool)
+
+	// StartGroupConsolidation starts the group consolidation process.
+	// Returns an error if consolidation fails.
+	StartGroupConsolidation(groupIndex int) error
+
+	// HandlePartialGroupFailure handles a group with mixed success/failure.
+	// This typically pauses execution and awaits user decision.
+	HandlePartialGroupFailure(groupIndex int)
+
+	// ClearTaskFromInstance removes the task-to-instance mapping for retry.
+	ClearTaskFromInstance(taskID string)
+
+	// SaveSession persists the current session state.
+	SaveSession() error
+
+	// RunSynthesis starts the synthesis phase.
+	RunSynthesis() error
+
+	// NotifyComplete notifies callbacks of overall completion.
+	NotifyComplete(success bool, summary string)
+
+	// SetSessionPhase sets the session phase.
+	SetSessionPhase(phase UltraPlanPhase)
+
+	// SetSessionError sets the session error message.
+	SetSessionError(err string)
+
+	// GetNoSynthesis returns true if synthesis phase should be skipped.
+	GetNoSynthesis() bool
+
+	// RecordTaskCommitCount records the commit count for a completed task.
+	RecordTaskCommitCount(taskID string, count int)
+}
+
+// GroupTrackerInterface defines the methods needed for group tracking.
+// This interface abstracts the group.Tracker to avoid direct package dependencies.
+type GroupTrackerInterface interface {
+	// GetTaskGroupIndex returns the execution group index for a task.
+	GetTaskGroupIndex(taskID string) int
+
+	// IsGroupComplete returns true if all tasks in the group are done.
+	IsGroupComplete(groupIndex int) bool
+
+	// HasPartialFailure returns true if the group has mixed success/failure.
+	HasPartialFailure(groupIndex int) bool
+
+	// AdvanceGroup computes the next group index.
+	AdvanceGroup(groupIndex int) (nextGroup int, done bool)
+
+	// GetGroupTasks returns the tasks in a group.
+	GetGroupTasks(groupIndex int) []GroupTaskInfo
+
+	// TotalGroups returns the total number of groups.
+	TotalGroups() int
+
+	// HasMoreGroups returns true if there are more groups after the index.
+	HasMoreGroups(groupIndex int) bool
+}
+
+// GroupTaskInfo provides minimal task information for group tracking.
+type GroupTaskInfo struct {
+	ID    string
+	Title string
+}
+
+// GroupDecisionState holds state about a partial group failure awaiting decision.
+type GroupDecisionState struct {
+	GroupIndex       int
+	SucceededTasks   []string
+	FailedTasks      []string
+	AwaitingDecision bool
 }
 
 // TaskVerifyOptions provides task-specific context for verification.
@@ -220,6 +300,10 @@ type ExecutionContext struct {
 	// Verifier provides task verification operations.
 	// If nil, verification will be delegated to the Coordinator.
 	Verifier TaskVerifierInterface
+
+	// GroupTracker provides group completion tracking operations.
+	// If nil, group advancement will be delegated to the Coordinator.
+	GroupTracker GroupTrackerInterface
 }
 
 // ExecutionOrchestrator manages the execution phase of ultra-plan execution.
@@ -279,7 +363,8 @@ func NewExecutionOrchestrator(phaseCtx *PhaseContext) (*ExecutionOrchestrator, e
 		phaseCtx: phaseCtx,
 		logger:   phaseCtx.GetLogger().WithPhase("execution-orchestrator"),
 		state: ExecutionState{
-			RunningTasks: make(map[string]string),
+			RunningTasks:   make(map[string]string),
+			ProcessedTasks: make(map[string]bool),
 		},
 		completionChan: make(chan TaskCompletion, 100),
 	}, nil
@@ -303,7 +388,8 @@ func NewExecutionOrchestratorWithContext(execCtx *ExecutionContext) (*ExecutionO
 		execCtx:  execCtx,
 		logger:   execCtx.PhaseContext.GetLogger().WithPhase("execution-orchestrator"),
 		state: ExecutionState{
-			RunningTasks: make(map[string]string),
+			RunningTasks:   make(map[string]string),
+			ProcessedTasks: make(map[string]bool),
 		},
 		completionChan: make(chan TaskCompletion, 100),
 	}, nil
@@ -743,10 +829,61 @@ func (e *ExecutionOrchestrator) monitorTaskInstance(taskID, instanceID string) {
 }
 
 // handleTaskCompletion processes a task completion notification.
+// This method implements duplicate detection, retry handling, and group advancement.
+//
+// Duplicate detection: Both monitorTaskInstance and pollTaskCompletions can detect
+// the same completion file and send to completionChan, causing duplicate processing.
+// We track processed tasks to skip duplicates.
+//
+// Retry handling: When a task needs retry (NeedsRetry=true), we clear its instance
+// mapping so the execution loop will pick it up again.
+//
+// Group advancement: After each successful task, we check if the current group is
+// complete and advance to the next group if so.
 func (e *ExecutionOrchestrator) handleTaskCompletion(completion TaskCompletion) {
+	// Check for duplicate processing (race between monitor goroutine and poll)
 	e.mu.Lock()
-	delete(e.state.RunningTasks, completion.TaskID)
-	e.state.RunningCount--
+	if e.state.ProcessedTasks[completion.TaskID] {
+		e.mu.Unlock()
+		e.logger.Debug("skipping duplicate task completion",
+			"task_id", completion.TaskID,
+			"instance_id", completion.InstanceID,
+		)
+		return
+	}
+
+	// Only decrement running count if task is still tracked as running
+	if _, isRunning := e.state.RunningTasks[completion.TaskID]; isRunning {
+		delete(e.state.RunningTasks, completion.TaskID)
+		e.state.RunningCount--
+	}
+	e.mu.Unlock()
+
+	// Also update coordinator state if available
+	if e.execCtx != nil && e.execCtx.Coordinator != nil {
+		e.execCtx.Coordinator.RemoveRunningTask(completion.TaskID)
+	}
+
+	// Handle retry case - task needs to be re-run
+	if completion.NeedsRetry {
+		e.logger.Debug("task needs retry",
+			"task_id", completion.TaskID,
+			"instance_id", completion.InstanceID,
+		)
+
+		// Clear task-to-instance mapping so it becomes "ready" again for the execution loop
+		if e.execCtx != nil && e.execCtx.Coordinator != nil {
+			e.execCtx.Coordinator.ClearTaskFromInstance(completion.TaskID)
+			_ = e.execCtx.Coordinator.SaveSession()
+		}
+
+		// Don't mark as processed, completed, or failed - execution loop will pick it up again
+		return
+	}
+
+	// Mark as processed AFTER we know it's not a retry
+	e.mu.Lock()
+	e.state.ProcessedTasks[completion.TaskID] = true
 	if completion.Success {
 		e.state.CompletedCount++
 	} else {
@@ -754,10 +891,11 @@ func (e *ExecutionOrchestrator) handleTaskCompletion(completion TaskCompletion) 
 	}
 	e.mu.Unlock()
 
-	// Also update coordinator state if available
-	if e.execCtx != nil && e.execCtx.Coordinator != nil {
-		e.execCtx.Coordinator.RemoveRunningTask(completion.TaskID)
-		e.execCtx.Coordinator.HandleTaskCompletion(completion)
+	// Record commit count for successful tasks
+	if completion.Success && completion.CommitCount > 0 {
+		if e.execCtx != nil && e.execCtx.Coordinator != nil {
+			e.execCtx.Coordinator.RecordTaskCommitCount(completion.TaskID, completion.CommitCount)
+		}
 	}
 
 	// Update manager state
@@ -766,25 +904,210 @@ func (e *ExecutionOrchestrator) handleTaskCompletion(completion TaskCompletion) 
 		if e.phaseCtx.Callbacks != nil {
 			e.phaseCtx.Callbacks.OnTaskComplete(completion.TaskID)
 		}
-	} else if !completion.NeedsRetry {
+	} else {
 		e.phaseCtx.Manager.MarkTaskFailed(completion.TaskID, completion.Error)
 		if e.phaseCtx.Callbacks != nil {
 			e.phaseCtx.Callbacks.OnTaskFailed(completion.TaskID, completion.Error)
 		}
 	}
+
+	// Also delegate to coordinator for any additional handling
+	if e.execCtx != nil && e.execCtx.Coordinator != nil {
+		e.execCtx.Coordinator.HandleTaskCompletion(completion)
+	}
+
+	// Check if the current group is now complete and advance if so
+	e.checkAndAdvanceGroup()
 }
 
-// finishExecution performs cleanup after execution completes.
-func (e *ExecutionOrchestrator) finishExecution() {
-	e.logger.Info("execution phase finishing",
-		"completed", e.state.CompletedCount,
-		"failed", e.state.FailedCount,
-		"total", e.state.TotalTasks,
+// checkAndAdvanceGroup checks if the current execution group is complete
+// and advances to the next group, triggering consolidation.
+//
+// When a group completes, it:
+// 1. Checks for partial failure (some tasks succeeded, some failed)
+// 2. If partial failure, pauses execution and awaits user decision
+// 3. If all succeeded, consolidates all task branches into a single branch
+// 4. Advances CurrentGroup to the next group
+//
+// IMPORTANT: Consolidation runs SYNCHRONOUSLY and blocks until it succeeds.
+// This ensures the consolidated branch is ready before tasks from the next
+// group start executing.
+func (e *ExecutionOrchestrator) checkAndAdvanceGroup() {
+	// Need GroupTracker to check completion status
+	if e.execCtx == nil || e.execCtx.GroupTracker == nil {
+		// No group tracker available - delegate to coordinator if available
+		// (Coordinator has its own groupTracker)
+		return
+	}
+
+	// Get current group from session
+	currentGroup := 0
+	if e.execCtx.ExecutionSession != nil {
+		currentGroup = e.execCtx.ExecutionSession.GetCurrentGroup()
+	}
+
+	// Check if the group is complete
+	if !e.execCtx.GroupTracker.IsGroupComplete(currentGroup) {
+		return
+	}
+
+	// Check for partial group failure BEFORE advancing
+	// This ensures CurrentGroup stays at the failed group index
+	if e.execCtx.GroupTracker.HasPartialFailure(currentGroup) {
+		e.handlePartialGroupFailure(currentGroup)
+		// Don't advance until user decides - CurrentGroup remains unchanged
+		return
+	}
+
+	e.logger.Info("group complete, starting consolidation",
+		"group_index", currentGroup,
 	)
 
-	// Delegate to coordinator if available
+	// Start the group consolidator Claude session
+	// This blocks until the consolidator completes (writes completion file)
+	if e.execCtx.Coordinator != nil {
+		if err := e.execCtx.Coordinator.StartGroupConsolidation(currentGroup); err != nil {
+			e.logger.Error("consolidation failed",
+				"group_index", currentGroup,
+				"error", err.Error(),
+			)
+
+			// Mark session as failed since we can't continue without consolidation
+			if e.execCtx.Coordinator != nil {
+				e.execCtx.Coordinator.SetSessionPhase(PhaseFailed)
+				e.execCtx.Coordinator.SetSessionError(fmt.Sprintf("consolidation of group %d failed: %v", currentGroup+1, err))
+				_ = e.execCtx.Coordinator.SaveSession()
+				e.execCtx.Coordinator.NotifyComplete(false, fmt.Sprintf("consolidation of group %d failed", currentGroup+1))
+			}
+			return
+		}
+	}
+
+	// Advance to the next group - only after consolidation succeeds
+	nextGroup, _ := e.execCtx.GroupTracker.AdvanceGroup(currentGroup)
+
+	// Log group completion
+	groupTasks := e.execCtx.GroupTracker.GetGroupTasks(currentGroup)
+	e.logger.Info("group completed",
+		"group_index", currentGroup,
+		"task_count", len(groupTasks),
+		"next_group", nextGroup,
+	)
+
+	// Call the group complete callback
+	if e.phaseCtx.Callbacks != nil {
+		e.phaseCtx.Callbacks.OnGroupComplete(currentGroup)
+	}
+
+	// Persist the group advancement
+	if e.execCtx.Coordinator != nil {
+		_ = e.execCtx.Coordinator.SaveSession()
+	}
+}
+
+// handlePartialGroupFailure handles a group with mixed success/failure.
+// It pauses execution and waits for user decision on how to proceed.
+func (e *ExecutionOrchestrator) handlePartialGroupFailure(groupIndex int) {
+	e.logger.Info("partial group failure detected",
+		"group_index", groupIndex,
+	)
+
+	// Delegate to coordinator for the full handling (setting GroupDecision state,
+	// emitting events, and persisting state)
 	if e.execCtx != nil && e.execCtx.Coordinator != nil {
-		e.execCtx.Coordinator.FinishExecution()
+		e.execCtx.Coordinator.HandlePartialGroupFailure(groupIndex)
+	}
+
+	// Also track locally
+	e.mu.Lock()
+	e.state.GroupDecision = &GroupDecisionState{
+		GroupIndex:       groupIndex,
+		AwaitingDecision: true,
+	}
+	e.mu.Unlock()
+}
+
+// finishExecution completes the execution phase.
+// It checks for task failures and either:
+// - Marks the session as failed if any tasks failed
+// - Skips to completion if synthesis is disabled
+// - Starts the synthesis phase for review
+func (e *ExecutionOrchestrator) finishExecution() {
+	e.mu.RLock()
+	completedCount := e.state.CompletedCount
+	failedCount := e.state.FailedCount
+	totalTasks := e.state.TotalTasks
+	e.mu.RUnlock()
+
+	e.logger.Info("execution phase finishing",
+		"completed", completedCount,
+		"failed", failedCount,
+		"total", totalTasks,
+	)
+
+	// Check for failures
+	if failedCount > 0 {
+		errorMsg := fmt.Sprintf("%d task(s) failed", failedCount)
+		e.logger.Error("execution phase failed with task failures",
+			"failed_count", failedCount,
+			"error", errorMsg,
+		)
+
+		// Update session phase to failed
+		e.phaseCtx.Session.SetPhase(PhaseFailed)
+		e.phaseCtx.Session.SetError(errorMsg)
+
+		// Also update via coordinator for persistence
+		if e.execCtx != nil && e.execCtx.Coordinator != nil {
+			e.execCtx.Coordinator.SetSessionPhase(PhaseFailed)
+			e.execCtx.Coordinator.SetSessionError(errorMsg)
+			_ = e.execCtx.Coordinator.SaveSession()
+			e.execCtx.Coordinator.NotifyComplete(false, errorMsg)
+		} else if e.phaseCtx.Callbacks != nil {
+			e.phaseCtx.Callbacks.OnComplete(false, errorMsg)
+		}
+		return
+	}
+
+	// Check if synthesis is disabled
+	noSynthesis := false
+	if e.execCtx != nil && e.execCtx.Coordinator != nil {
+		noSynthesis = e.execCtx.Coordinator.GetNoSynthesis()
+	}
+
+	if noSynthesis {
+		e.logger.Info("synthesis skipped per configuration")
+
+		// Mark as complete
+		e.phaseCtx.Session.SetPhase(PhaseComplete)
+
+		// Persist completion
+		if e.execCtx != nil && e.execCtx.Coordinator != nil {
+			e.execCtx.Coordinator.SetSessionPhase(PhaseComplete)
+			_ = e.execCtx.Coordinator.SaveSession()
+			e.execCtx.Coordinator.NotifyComplete(true, "All tasks completed (synthesis skipped)")
+		} else if e.phaseCtx.Callbacks != nil {
+			e.phaseCtx.Callbacks.OnComplete(true, "All tasks completed (synthesis skipped)")
+		}
+		return
+	}
+
+	// Start synthesis phase
+	e.logger.Info("starting synthesis phase")
+
+	if e.execCtx != nil && e.execCtx.Coordinator != nil {
+		if err := e.execCtx.Coordinator.RunSynthesis(); err != nil {
+			e.logger.Error("failed to start synthesis",
+				"error", err.Error(),
+			)
+			// Let the error propagate through coordinator's error handling
+		}
+	} else {
+		// No coordinator - notify phase change directly
+		e.phaseCtx.Manager.SetPhase(PhaseSynthesis)
+		if e.phaseCtx.Callbacks != nil {
+			e.phaseCtx.Callbacks.OnPhaseChange(PhaseSynthesis)
+		}
 	}
 }
 
@@ -881,6 +1204,20 @@ func (e *ExecutionOrchestrator) State() ExecutionState {
 		maps.Copy(stateCopy.RunningTasks, e.state.RunningTasks)
 	}
 
+	if e.state.ProcessedTasks != nil {
+		stateCopy.ProcessedTasks = make(map[string]bool, len(e.state.ProcessedTasks))
+		maps.Copy(stateCopy.ProcessedTasks, e.state.ProcessedTasks)
+	}
+
+	if e.state.GroupDecision != nil {
+		stateCopy.GroupDecision = &GroupDecisionState{
+			GroupIndex:       e.state.GroupDecision.GroupIndex,
+			SucceededTasks:   append([]string{}, e.state.GroupDecision.SucceededTasks...),
+			FailedTasks:      append([]string{}, e.state.GroupDecision.FailedTasks...),
+			AwaitingDecision: e.state.GroupDecision.AwaitingDecision,
+		}
+	}
+
 	return stateCopy
 }
 
@@ -934,7 +1271,8 @@ func (e *ExecutionOrchestrator) Reset() {
 	defer e.mu.Unlock()
 
 	e.state = ExecutionState{
-		RunningTasks: make(map[string]string),
+		RunningTasks:   make(map[string]string),
+		ProcessedTasks: make(map[string]bool),
 	}
 	e.cancelled = false
 	e.cancel = nil
