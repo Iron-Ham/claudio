@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
 )
 
@@ -1689,6 +1690,406 @@ func TestBuildPreviousGroupContextStrings(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildTaskContext(t *testing.T) {
+	t.Run("nil coordinator returns error", func(t *testing.T) {
+		adapter := NewPromptAdapter(nil)
+		ctx, err := adapter.BuildTaskContext("task-1")
+		if err != ErrNilCoordinator {
+			t.Errorf("BuildTaskContext() error = %v, want %v", err, ErrNilCoordinator)
+		}
+		if ctx != nil {
+			t.Errorf("BuildTaskContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("nil manager returns error", func(t *testing.T) {
+		coordinator := &Coordinator{manager: nil}
+		adapter := NewPromptAdapter(coordinator)
+		ctx, err := adapter.BuildTaskContext("task-1")
+		if err != ErrNilManager {
+			t.Errorf("BuildTaskContext() error = %v, want %v", err, ErrNilManager)
+		}
+		if ctx != nil {
+			t.Errorf("BuildTaskContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("nil session returns error", func(t *testing.T) {
+		manager := &UltraPlanManager{session: nil}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+		ctx, err := adapter.BuildTaskContext("task-1")
+		if err != ErrNilSession {
+			t.Errorf("BuildTaskContext() error = %v, want %v", err, ErrNilSession)
+		}
+		if ctx != nil {
+			t.Errorf("BuildTaskContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("nil groupTracker returns error", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "Test objective",
+			Plan: &PlanSpec{
+				ID:    "plan-1",
+				Tasks: []PlannedTask{{ID: "task-1", Title: "Task 1"}},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{
+			manager:      manager,
+			groupTracker: nil, // Explicitly nil
+		}
+		adapter := NewPromptAdapter(coordinator)
+		ctx, err := adapter.BuildTaskContext("task-1")
+		if err != ErrNilGroupTracker {
+			t.Errorf("BuildTaskContext() error = %v, want %v", err, ErrNilGroupTracker)
+		}
+		if ctx != nil {
+			t.Errorf("BuildTaskContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("task not found in plan returns error", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "Test objective",
+			Plan: &PlanSpec{
+				ID:             "plan-1",
+				Tasks:          []PlannedTask{{ID: "task-1", Title: "Task 1"}},
+				ExecutionOrder: [][]string{{"task-1"}},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		tracker := createTestGroupTracker(session)
+		coordinator := &Coordinator{
+			manager:      manager,
+			groupTracker: tracker,
+		}
+		adapter := NewPromptAdapter(coordinator)
+		ctx, err := adapter.BuildTaskContext("nonexistent-task")
+		if err != ErrTaskNotFoundInPlan {
+			t.Errorf("BuildTaskContext() error = %v, want %v", err, ErrTaskNotFoundInPlan)
+		}
+		if ctx != nil {
+			t.Errorf("BuildTaskContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("successful task context for group 0", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-123",
+			Objective: "Implement feature X",
+			Plan: &PlanSpec{
+				ID:      "plan-456",
+				Summary: "Feature implementation plan",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1", Description: "Do task 1", EstComplexity: ComplexityLow},
+					{ID: "task-2", Title: "Task 2", Description: "Do task 2", EstComplexity: ComplexityMedium, DependsOn: []string{"task-1"}},
+				},
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+			},
+			CompletedTasks: []string{},
+			FailedTasks:    []string{},
+		}
+		manager := &UltraPlanManager{session: session}
+		tracker := createTestGroupTracker(session)
+		coordinator := &Coordinator{
+			manager:      manager,
+			groupTracker: tracker,
+		}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildTaskContext("task-1")
+		if err != nil {
+			t.Fatalf("BuildTaskContext() error = %v, want nil", err)
+		}
+
+		if ctx.Phase != prompt.PhaseTask {
+			t.Errorf("ctx.Phase = %v, want %v", ctx.Phase, prompt.PhaseTask)
+		}
+		if ctx.SessionID != "session-123" {
+			t.Errorf("ctx.SessionID = %q, want %q", ctx.SessionID, "session-123")
+		}
+		if ctx.Objective != "Implement feature X" {
+			t.Errorf("ctx.Objective = %q, want %q", ctx.Objective, "Implement feature X")
+		}
+		if ctx.GroupIndex != 0 {
+			t.Errorf("ctx.GroupIndex = %d, want 0", ctx.GroupIndex)
+		}
+
+		// Check plan
+		if ctx.Plan == nil {
+			t.Fatal("ctx.Plan = nil, want non-nil")
+		}
+		if ctx.Plan.ID != "plan-456" {
+			t.Errorf("ctx.Plan.ID = %q, want %q", ctx.Plan.ID, "plan-456")
+		}
+
+		// Check task
+		if ctx.Task == nil {
+			t.Fatal("ctx.Task = nil, want non-nil")
+		}
+		if ctx.Task.ID != "task-1" {
+			t.Errorf("ctx.Task.ID = %q, want %q", ctx.Task.ID, "task-1")
+		}
+		if ctx.Task.Title != "Task 1" {
+			t.Errorf("ctx.Task.Title = %q, want %q", ctx.Task.Title, "Task 1")
+		}
+		if ctx.Task.Description != "Do task 1" {
+			t.Errorf("ctx.Task.Description = %q, want %q", ctx.Task.Description, "Do task 1")
+		}
+
+		// For group 0, PreviousGroup should be nil
+		if ctx.PreviousGroup != nil {
+			t.Errorf("ctx.PreviousGroup = %v, want nil for group 0", ctx.PreviousGroup)
+		}
+	})
+
+	t.Run("successful task context for group 1 with previous group context", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-123",
+			Objective: "Implement feature X",
+			Plan: &PlanSpec{
+				ID:      "plan-456",
+				Summary: "Feature implementation plan",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1", EstComplexity: ComplexityLow},
+					{ID: "task-2", Title: "Task 2", EstComplexity: ComplexityMedium, DependsOn: []string{"task-1"}},
+				},
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+			},
+			CompletedTasks: []string{"task-1"},
+			FailedTasks:    []string{},
+			GroupConsolidationContexts: []*GroupConsolidationCompletionFile{
+				{
+					GroupIndex:         0,
+					Notes:              "Group 0 consolidated successfully",
+					IssuesForNextGroup: []string{"Watch for API changes"},
+					Verification: VerificationResult{
+						OverallSuccess: true,
+					},
+				},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		tracker := createTestGroupTracker(session)
+		coordinator := &Coordinator{
+			manager:      manager,
+			groupTracker: tracker,
+		}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildTaskContext("task-2")
+		if err != nil {
+			t.Fatalf("BuildTaskContext() error = %v, want nil", err)
+		}
+
+		if ctx.GroupIndex != 1 {
+			t.Errorf("ctx.GroupIndex = %d, want 1", ctx.GroupIndex)
+		}
+
+		// Check task
+		if ctx.Task == nil {
+			t.Fatal("ctx.Task = nil, want non-nil")
+		}
+		if ctx.Task.ID != "task-2" {
+			t.Errorf("ctx.Task.ID = %q, want %q", ctx.Task.ID, "task-2")
+		}
+
+		// For group 1, PreviousGroup should be populated
+		if ctx.PreviousGroup == nil {
+			t.Fatal("ctx.PreviousGroup = nil, want non-nil for group 1")
+		}
+		if ctx.PreviousGroup.GroupIndex != 0 {
+			t.Errorf("ctx.PreviousGroup.GroupIndex = %d, want 0", ctx.PreviousGroup.GroupIndex)
+		}
+		if ctx.PreviousGroup.Notes != "Group 0 consolidated successfully" {
+			t.Errorf("ctx.PreviousGroup.Notes = %q, want %q", ctx.PreviousGroup.Notes, "Group 0 consolidated successfully")
+		}
+		if !ctx.PreviousGroup.VerificationPassed {
+			t.Error("ctx.PreviousGroup.VerificationPassed = false, want true")
+		}
+		if len(ctx.PreviousGroup.IssuesForNextGroup) != 1 || ctx.PreviousGroup.IssuesForNextGroup[0] != "Watch for API changes" {
+			t.Errorf("ctx.PreviousGroup.IssuesForNextGroup = %v, want [Watch for API changes]", ctx.PreviousGroup.IssuesForNextGroup)
+		}
+
+		// Check completed tasks
+		if len(ctx.CompletedTasks) != 1 || ctx.CompletedTasks[0] != "task-1" {
+			t.Errorf("ctx.CompletedTasks = %v, want [task-1]", ctx.CompletedTasks)
+		}
+	})
+
+	t.Run("task in group 1 with no consolidation context", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-123",
+			Objective: "Test objective",
+			Plan: &PlanSpec{
+				ID: "plan-1",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1"},
+					{ID: "task-2", Title: "Task 2"},
+				},
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+			},
+			CompletedTasks:             []string{"task-1"},
+			GroupConsolidationContexts: nil, // No consolidation context yet
+		}
+		manager := &UltraPlanManager{session: session}
+		tracker := createTestGroupTracker(session)
+		coordinator := &Coordinator{
+			manager:      manager,
+			groupTracker: tracker,
+		}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildTaskContext("task-2")
+		if err != nil {
+			t.Fatalf("BuildTaskContext() error = %v, want nil", err)
+		}
+
+		if ctx.GroupIndex != 1 {
+			t.Errorf("ctx.GroupIndex = %d, want 1", ctx.GroupIndex)
+		}
+		// PreviousGroup should be nil since there's no consolidation context
+		if ctx.PreviousGroup != nil {
+			t.Errorf("ctx.PreviousGroup = %v, want nil when no consolidation context", ctx.PreviousGroup)
+		}
+	})
+
+	t.Run("validation error for empty session ID", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "", // Empty session ID should fail validation
+			Objective: "Test objective",
+			Plan: &PlanSpec{
+				ID:             "plan-1",
+				Tasks:          []PlannedTask{{ID: "task-1", Title: "Task 1"}},
+				ExecutionOrder: [][]string{{"task-1"}},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		tracker := createTestGroupTracker(session)
+		coordinator := &Coordinator{
+			manager:      manager,
+			groupTracker: tracker,
+		}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildTaskContext("task-1")
+		if !errors.Is(err, prompt.ErrEmptySessionID) {
+			t.Errorf("BuildTaskContext() error = %v, want %v", err, prompt.ErrEmptySessionID)
+		}
+		if ctx != nil {
+			t.Errorf("BuildTaskContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("validation error for empty objective", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "", // Empty objective should fail validation
+			Plan: &PlanSpec{
+				ID:             "plan-1",
+				Tasks:          []PlannedTask{{ID: "task-1", Title: "Task 1"}},
+				ExecutionOrder: [][]string{{"task-1"}},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		tracker := createTestGroupTracker(session)
+		coordinator := &Coordinator{
+			manager:      manager,
+			groupTracker: tracker,
+		}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildTaskContext("task-1")
+		if !errors.Is(err, prompt.ErrEmptyObjective) {
+			t.Errorf("BuildTaskContext() error = %v, want %v", err, prompt.ErrEmptyObjective)
+		}
+		if ctx != nil {
+			t.Errorf("BuildTaskContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("completed and failed tasks are populated", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-123",
+			Objective: "Test objective",
+			Plan: &PlanSpec{
+				ID: "plan-1",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1"},
+					{ID: "task-2", Title: "Task 2"},
+					{ID: "task-3", Title: "Task 3"},
+					{ID: "task-4", Title: "Task 4"},
+				},
+				ExecutionOrder: [][]string{{"task-1", "task-2"}, {"task-3", "task-4"}},
+			},
+			CompletedTasks: []string{"task-1"},
+			FailedTasks:    []string{"task-2"},
+		}
+		manager := &UltraPlanManager{session: session}
+		tracker := createTestGroupTracker(session)
+		coordinator := &Coordinator{
+			manager:      manager,
+			groupTracker: tracker,
+		}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildTaskContext("task-3")
+		if err != nil {
+			t.Fatalf("BuildTaskContext() error = %v, want nil", err)
+		}
+
+		if len(ctx.CompletedTasks) != 1 || ctx.CompletedTasks[0] != "task-1" {
+			t.Errorf("ctx.CompletedTasks = %v, want [task-1]", ctx.CompletedTasks)
+		}
+		if len(ctx.FailedTasks) != 1 || ctx.FailedTasks[0] != "task-2" {
+			t.Errorf("ctx.FailedTasks = %v, want [task-2]", ctx.FailedTasks)
+		}
+	})
+}
+
+// createTestGroupTracker creates a group.Tracker for testing using the session adapters.
+func createTestGroupTracker(session *UltraPlanSession) *group.Tracker {
+	planAdapter := group.NewPlanAdapter(
+		func() [][]string {
+			if session.Plan == nil {
+				return nil
+			}
+			return session.Plan.ExecutionOrder
+		},
+		func(taskID string) *group.Task {
+			if session.Plan == nil {
+				return nil
+			}
+			for i := range session.Plan.Tasks {
+				if session.Plan.Tasks[i].ID == taskID {
+					return &group.Task{
+						ID:          session.Plan.Tasks[i].ID,
+						Title:       session.Plan.Tasks[i].Title,
+						Description: session.Plan.Tasks[i].Description,
+						Files:       session.Plan.Tasks[i].Files,
+						DependsOn:   session.Plan.Tasks[i].DependsOn,
+					}
+				}
+			}
+			return nil
+		},
+	)
+
+	sessionAdapter := group.NewSessionAdapter(
+		func() group.PlanData { return planAdapter },
+		func() []string { return session.CompletedTasks },
+		func() []string { return session.FailedTasks },
+		func() map[string]int { return session.TaskCommitCounts },
+		func() int { return session.CurrentGroup },
+	)
+
+	return group.NewTracker(sessionAdapter)
 }
 
 func TestBuildSynthesisContext(t *testing.T) {

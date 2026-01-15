@@ -21,6 +21,13 @@ var (
 
 	// ErrNilSession is returned when the manager's session is nil.
 	ErrNilSession = errors.New("prompt adapter: session is required")
+
+	// ErrTaskNotFoundInPlan is returned when the requested task ID does not
+	// exist in the current plan.
+	ErrTaskNotFoundInPlan = errors.New("prompt adapter: task not found in plan")
+
+	// ErrNilGroupTracker is returned when the Coordinator's groupTracker is nil.
+	ErrNilGroupTracker = errors.New("prompt adapter: group tracker is required")
 )
 
 // PromptAdapter bridges orchestrator types to prompt.Context, enabling the
@@ -422,4 +429,83 @@ func buildPreviousGroupContextStrings(contexts []*GroupConsolidationCompletionFi
 		return nil
 	}
 	return result
+}
+
+// BuildTaskContext creates a prompt.Context configured for the task execution phase.
+// It populates the context with plan info, task info (looked up by ID), group index,
+// previous group context (if applicable), and completed/failed task lists.
+//
+// Parameters:
+//   - taskID: The ID of the task to build context for
+//
+// Returns an error if:
+//   - The adapter has no coordinator (ErrNilCoordinator)
+//   - The coordinator has no manager (ErrNilManager)
+//   - The manager has no session (ErrNilSession)
+//   - The coordinator has no groupTracker (ErrNilGroupTracker)
+//   - The task is not found in the plan (ErrTaskNotFoundInPlan)
+//   - The resulting context fails validation
+func (a *PromptAdapter) BuildTaskContext(taskID string) (*prompt.Context, error) {
+	if a.coordinator == nil {
+		return nil, ErrNilCoordinator
+	}
+
+	manager := a.coordinator.manager
+	if manager == nil {
+		return nil, ErrNilManager
+	}
+
+	session := manager.Session()
+	if session == nil {
+		return nil, ErrNilSession
+	}
+
+	groupTracker := a.coordinator.groupTracker
+	if groupTracker == nil {
+		return nil, ErrNilGroupTracker
+	}
+
+	// Look up task by ID
+	plannedTask := session.GetTask(taskID)
+	if plannedTask == nil {
+		return nil, ErrTaskNotFoundInPlan
+	}
+
+	// Get group index for this task
+	groupIndex := groupTracker.GetTaskGroupIndex(taskID)
+
+	// Build the context
+	ctx := &prompt.Context{
+		Phase:      prompt.PhaseTask,
+		SessionID:  session.ID,
+		Objective:  session.Objective,
+		GroupIndex: groupIndex,
+	}
+
+	// Populate Plan using planInfoFromPlanSpec
+	ctx.Plan = planInfoFromPlanSpec(session.Plan)
+
+	// Populate Task using taskInfoFromPlannedTask
+	taskInfo := taskInfoFromPlannedTask(*plannedTask)
+	ctx.Task = &taskInfo
+
+	// Populate PreviousGroup from GroupConsolidationContexts if GroupIndex > 0
+	if groupIndex > 0 && len(session.GroupConsolidationContexts) > 0 {
+		// Get the context from the immediately preceding group
+		prevGroupIdx := groupIndex - 1
+		if prevGroupIdx < len(session.GroupConsolidationContexts) {
+			prevGroupCompletion := session.GroupConsolidationContexts[prevGroupIdx]
+			ctx.PreviousGroup = groupContextFromCompletion(prevGroupCompletion)
+		}
+	}
+
+	// Populate completed and failed tasks from session
+	ctx.CompletedTasks = session.CompletedTasks
+	ctx.FailedTasks = session.FailedTasks
+
+	if err := ctx.Validate(); err != nil {
+		return nil, err
+	}
+
+	return ctx, nil
 }
