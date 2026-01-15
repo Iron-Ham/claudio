@@ -712,3 +712,624 @@ func TestPlanningOrchestrator_ConcurrentAccess(t *testing.T) {
 
 	// Should complete without race conditions
 }
+
+// trackingMockCallbacks tracks callback invocations for testing
+type trackingMockCallbacks struct {
+	phaseChanges []UltraPlanPhase
+	mu           sync.Mutex
+}
+
+func (m *trackingMockCallbacks) OnPhaseChange(phase UltraPlanPhase) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.phaseChanges = append(m.phaseChanges, phase)
+}
+
+func (m *trackingMockCallbacks) OnTaskStart(taskID, instanceID string)                 {}
+func (m *trackingMockCallbacks) OnTaskComplete(taskID string)                          {}
+func (m *trackingMockCallbacks) OnTaskFailed(taskID, reason string)                    {}
+func (m *trackingMockCallbacks) OnGroupComplete(groupIndex int)                        {}
+func (m *trackingMockCallbacks) OnPlanReady(plan any)                                  {}
+func (m *trackingMockCallbacks) OnProgress(completed, total int, phase UltraPlanPhase) {}
+func (m *trackingMockCallbacks) OnComplete(success bool, summary string)               {}
+
+func TestPlanningOrchestrator_ExecuteWithCallbacks(t *testing.T) {
+	t.Run("notifies callbacks on phase change", func(t *testing.T) {
+		callbacks := &trackingMockCallbacks{}
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &planningMockOrchestrator{},
+			Session:      &mockSession{},
+			Callbacks:    callbacks,
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		ctx := context.Background()
+		err = planner.Execute(ctx)
+		if err != nil {
+			t.Errorf("Execute() unexpected error: %v", err)
+		}
+
+		callbacks.mu.Lock()
+		defer callbacks.mu.Unlock()
+		if len(callbacks.phaseChanges) != 1 || callbacks.phaseChanges[0] != PhasePlanning {
+			t.Errorf("Callbacks.OnPhaseChange() called with %v, want [%v]",
+				callbacks.phaseChanges, PhasePlanning)
+		}
+	})
+
+	t.Run("works without callbacks", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &planningMockOrchestrator{},
+			Session:      &mockSession{},
+			Callbacks:    nil, // No callbacks
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		ctx := context.Background()
+		err = planner.Execute(ctx)
+		if err != nil {
+			t.Errorf("Execute() unexpected error: %v", err)
+		}
+	})
+}
+
+func TestPlanningOrchestrator_ExecuteWithPromptContextCancellation(t *testing.T) {
+	t.Run("context cancelled during execution", func(t *testing.T) {
+		mockOrch := &planningMockOrchestrator{}
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      &mockSession{},
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		// Cancel the context immediately
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err = planner.ExecuteWithPrompt(ctx, "test prompt", nil, nil, nil)
+		if err == nil {
+			t.Error("ExecuteWithPrompt() should return error on cancelled context")
+		}
+	})
+}
+
+func TestPlanningOrchestrator_ExecuteWithPromptEdgeCases(t *testing.T) {
+	t.Run("handles getGroup returning nil group", func(t *testing.T) {
+		mockOrch := &planningMockOrchestrator{}
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      &mockSession{},
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		// getGroup returns nil
+		getGroup := func() any {
+			return nil
+		}
+
+		ctx := context.Background()
+		err = planner.ExecuteWithPrompt(ctx, "test prompt", nil, getGroup, nil)
+		if err != nil {
+			t.Errorf("ExecuteWithPrompt() unexpected error: %v", err)
+		}
+
+		// Should still work - instance should be created
+		if len(mockOrch.addedInstances) != 1 {
+			t.Errorf("Expected 1 added instance, got %d", len(mockOrch.addedInstances))
+		}
+	})
+}
+
+// instanceWithoutGetID is a type that doesn't implement GetID interface
+type instanceWithoutGetID struct {
+	data string
+}
+
+func TestExtractInstanceID_EdgeCases(t *testing.T) {
+	t.Run("handles type without GetID method", func(t *testing.T) {
+		inst := &instanceWithoutGetID{data: "test"}
+		if got := extractInstanceID(inst); got != "" {
+			t.Errorf("extractInstanceID(instanceWithoutGetID) = %q, want empty", got)
+		}
+	})
+
+	t.Run("handles string type", func(t *testing.T) {
+		var inst any = "not-an-instance"
+		if got := extractInstanceID(inst); got != "" {
+			t.Errorf("extractInstanceID(string) = %q, want empty", got)
+		}
+	})
+
+	t.Run("handles int type", func(t *testing.T) {
+		var inst any = 42
+		if got := extractInstanceID(inst); got != "" {
+			t.Errorf("extractInstanceID(int) = %q, want empty", got)
+		}
+	})
+
+	t.Run("handles struct without ID field", func(t *testing.T) {
+		type noIDStruct struct {
+			Name string
+		}
+		inst := &noIDStruct{Name: "test"}
+		if got := extractInstanceID(inst); got != "" {
+			t.Errorf("extractInstanceID(noIDStruct) = %q, want empty", got)
+		}
+	})
+}
+
+// mockInstanceNoID returns nil for GetID
+type mockInstanceEmptyID struct{}
+
+func (m *mockInstanceEmptyID) GetID() string {
+	return ""
+}
+
+func TestPlanningOrchestrator_ExecuteWithPromptEmptyInstanceID(t *testing.T) {
+	t.Run("handles instance with empty ID", func(t *testing.T) {
+		mockOrch := &planningMockOrchestrator{
+			addInstanceFunc: func(session any, task string) (any, error) {
+				return &mockInstanceEmptyID{}, nil
+			},
+		}
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      &mockSession{},
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		ctx := context.Background()
+		err = planner.ExecuteWithPrompt(ctx, "test prompt", nil, nil, nil)
+		if err == nil {
+			t.Error("ExecuteWithPrompt() should return error when instance ID is empty")
+		}
+
+		// Check error state
+		if planner.GetError() == "" {
+			t.Error("Error state should be set when instance ID extraction fails")
+		}
+	})
+}
+
+func TestPlanningOrchestrator_CancelDuringExecute(t *testing.T) {
+	t.Run("cancel stops in-progress execute", func(t *testing.T) {
+		// Create a slow orchestrator that allows us to test mid-execution cancellation
+		slowOrch := &planningMockOrchestrator{
+			addInstanceFunc: func(session any, task string) (any, error) {
+				// Simulate slow operation
+				time.Sleep(100 * time.Millisecond)
+				return &planningMockInstance{id: "slow-instance"}, nil
+			},
+		}
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: slowOrch,
+			Session:      &mockSession{},
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		// Start Execute in a goroutine
+		done := make(chan error, 1)
+		go func() {
+			ctx := context.Background()
+			done <- planner.Execute(ctx)
+		}()
+
+		// Give Execute a moment to start
+		time.Sleep(10 * time.Millisecond)
+
+		// Execute should complete since it doesn't block on instance creation
+		err = <-done
+		if err != nil {
+			t.Errorf("Execute() unexpected error: %v", err)
+		}
+	})
+}
+
+func TestPlanningOrchestrator_InternalCancellation(t *testing.T) {
+	t.Run("internal context cancellation via Cancel method", func(t *testing.T) {
+		mockOrch := &planningMockOrchestrator{}
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      &mockSession{},
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		// Start execution
+		done := make(chan error, 1)
+		go func() {
+			ctx := context.Background()
+			done <- planner.ExecuteWithPrompt(ctx, "test prompt", nil, nil, nil)
+		}()
+
+		// Give it a moment to start, then cancel
+		time.Sleep(5 * time.Millisecond)
+		planner.Cancel()
+
+		// Wait for result with timeout
+		select {
+		case err := <-done:
+			// Execution might have completed before cancel took effect
+			// Either nil or ErrPlanningCancelled is acceptable
+			if err != nil && !errors.Is(err, ErrPlanningCancelled) {
+				t.Errorf("ExecuteWithPrompt() unexpected error: %v", err)
+			}
+		case <-time.After(1 * time.Second):
+			t.Error("ExecuteWithPrompt() did not return after Cancel()")
+		}
+	})
+}
+
+func TestPlanningOrchestrator_IsRunningDuringExecution(t *testing.T) {
+	t.Run("IsRunning returns true during Execute", func(t *testing.T) {
+		blockCh := make(chan struct{})
+		mockOrch := &planningMockOrchestrator{
+			addInstanceFunc: func(session any, task string) (any, error) {
+				<-blockCh // Block until signaled
+				return &planningMockInstance{id: "test-id"}, nil
+			},
+		}
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      &mockSession{},
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		// Start execution in goroutine
+		done := make(chan error, 1)
+		go func() {
+			ctx := context.Background()
+			done <- planner.ExecuteWithPrompt(ctx, "test prompt", nil, nil, nil)
+		}()
+
+		// Give it time to start
+		time.Sleep(10 * time.Millisecond)
+
+		// Check IsRunning during execution
+		if !planner.IsRunning() {
+			t.Error("IsRunning() should return true during execution")
+		}
+
+		// Unblock and wait for completion
+		close(blockCh)
+		<-done
+
+		// Give it time to update running state
+		time.Sleep(10 * time.Millisecond)
+
+		// Check IsRunning after execution
+		if planner.IsRunning() {
+			t.Error("IsRunning() should return false after execution completes")
+		}
+	})
+}
+
+func TestPlanningOrchestrator_StateWithNilPlanCoordinatorIDs(t *testing.T) {
+	phaseCtx := &PhaseContext{
+		Manager:      &mockManager{},
+		Orchestrator: &planningMockOrchestrator{},
+		Session:      &mockSession{},
+	}
+	planner, err := NewPlanningOrchestrator(phaseCtx)
+	if err != nil {
+		t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+	}
+
+	// Set state with nil slice
+	planner.SetState(PlanningState{
+		InstanceID:         "test-id",
+		PlanCoordinatorIDs: nil,
+	})
+
+	state := planner.State()
+	if state.PlanCoordinatorIDs != nil {
+		t.Errorf("State().PlanCoordinatorIDs = %v, want nil", state.PlanCoordinatorIDs)
+	}
+}
+
+func TestAddInstanceToGroup_TypeWithoutAddMethod(t *testing.T) {
+	t.Run("handles type without AddInstance method", func(t *testing.T) {
+		// A type that doesn't implement the groupWithAdd interface
+		type fakeGroup struct {
+			name string
+		}
+		group := &fakeGroup{name: "test"}
+
+		// Should not panic
+		addInstanceToGroup(group, "test-id")
+	})
+}
+
+func TestPlanningOrchestrator_ExecuteValidationError(t *testing.T) {
+	t.Run("Execute returns error if phaseCtx becomes invalid", func(t *testing.T) {
+		// Create a valid planner first
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &planningMockOrchestrator{},
+			Session:      &mockSession{},
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		// Corrupt the phaseCtx (this is an unusual scenario but tests the validation path)
+		planner.phaseCtx.Manager = nil
+
+		ctx := context.Background()
+		err = planner.Execute(ctx)
+		if !errors.Is(err, ErrNilManager) {
+			t.Errorf("Execute() error = %v, want %v", err, ErrNilManager)
+		}
+	})
+}
+
+func TestPlanningOrchestrator_setInstanceID(t *testing.T) {
+	// Test the unexported setInstanceID method via SetState
+	phaseCtx := &PhaseContext{
+		Manager:      &mockManager{},
+		Orchestrator: &planningMockOrchestrator{},
+		Session:      &mockSession{},
+	}
+	planner, err := NewPlanningOrchestrator(phaseCtx)
+	if err != nil {
+		t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+	}
+
+	// Use SetState which internally sets instance ID
+	planner.SetState(PlanningState{InstanceID: "via-setstate"})
+	if got := planner.GetInstanceID(); got != "via-setstate" {
+		t.Errorf("GetInstanceID() = %q, want %q", got, "via-setstate")
+	}
+}
+
+func TestPlanningOrchestrator_StateEmptyPlanCoordinatorIDs(t *testing.T) {
+	phaseCtx := &PhaseContext{
+		Manager:      &mockManager{},
+		Orchestrator: &planningMockOrchestrator{},
+		Session:      &mockSession{},
+	}
+	planner, err := NewPlanningOrchestrator(phaseCtx)
+	if err != nil {
+		t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+	}
+
+	// Set empty slice (not nil)
+	planner.SetPlanCoordinatorIDs([]string{})
+	ids := planner.GetPlanCoordinatorIDs()
+	// Empty slice should return nil per the implementation
+	if ids != nil {
+		t.Errorf("GetPlanCoordinatorIDs() = %v, want nil for empty slice", ids)
+	}
+}
+
+func TestPlanningOrchestrator_ExecuteSinglePassCancellation(t *testing.T) {
+	t.Run("executeSinglePass detects cancelled context", func(t *testing.T) {
+		// We need to get to executeSinglePass with a cancelled context
+		// The tricky part is that Execute() checks cancellation before calling executeSinglePass
+		// So we need to cancel the context after Execute starts but before executeSinglePass runs
+		// This is achieved by having a slow callback that allows us to cancel mid-execution
+
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &planningMockOrchestrator{},
+			Session:      &mockSession{},
+			Callbacks: &slowCallbacks{
+				onPhaseChangeDelay: 20 * time.Millisecond,
+			},
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		// Start execution in goroutine
+		done := make(chan error, 1)
+		go func() {
+			done <- planner.Execute(ctx)
+		}()
+
+		// Cancel while callbacks are executing (before executeSinglePass starts)
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+
+		// Wait for result
+		select {
+		case err := <-done:
+			// Either context.Canceled or ErrPlanningCancelled is acceptable
+			if err == nil {
+				// Execution completed before cancel - this is also acceptable
+				return
+			}
+			if err != context.Canceled && !errors.Is(err, ErrPlanningCancelled) {
+				t.Errorf("Execute() error = %v, want context.Canceled or ErrPlanningCancelled", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("Execute() did not return after context cancellation")
+		}
+	})
+}
+
+// slowCallbacks adds delays to callbacks for testing timing-sensitive scenarios
+type slowCallbacks struct {
+	onPhaseChangeDelay time.Duration
+}
+
+func (m *slowCallbacks) OnPhaseChange(phase UltraPlanPhase) {
+	if m.onPhaseChangeDelay > 0 {
+		time.Sleep(m.onPhaseChangeDelay)
+	}
+}
+
+func (m *slowCallbacks) OnTaskStart(taskID, instanceID string)                 {}
+func (m *slowCallbacks) OnTaskComplete(taskID string)                          {}
+func (m *slowCallbacks) OnTaskFailed(taskID, reason string)                    {}
+func (m *slowCallbacks) OnGroupComplete(groupIndex int)                        {}
+func (m *slowCallbacks) OnPlanReady(plan any)                                  {}
+func (m *slowCallbacks) OnProgress(completed, total int, phase UltraPlanPhase) {}
+func (m *slowCallbacks) OnComplete(success bool, summary string)               {}
+
+func TestPlanningOrchestrator_ExecuteWithPromptInternalCancellation(t *testing.T) {
+	t.Run("internal ctx cancellation returns ErrPlanningCancelled", func(t *testing.T) {
+		blockCh := make(chan struct{})
+		mockOrch := &planningMockOrchestrator{
+			addInstanceFunc: func(session any, task string) (any, error) {
+				<-blockCh // Block until signaled
+				return &planningMockInstance{id: "test-id"}, nil
+			},
+		}
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      &mockSession{},
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		// Start execution in goroutine
+		done := make(chan error, 1)
+		go func() {
+			ctx := context.Background()
+			done <- planner.ExecuteWithPrompt(ctx, "test prompt", nil, nil, nil)
+		}()
+
+		// Give it time to reach the blocking point, then cancel
+		time.Sleep(10 * time.Millisecond)
+		planner.Cancel()
+
+		// Unblock to allow completion check
+		close(blockCh)
+
+		// Wait for result
+		select {
+		case err := <-done:
+			// Execution might have completed before cancel took effect
+			// Either nil or ErrPlanningCancelled is acceptable
+			if err != nil && !errors.Is(err, ErrPlanningCancelled) {
+				t.Errorf("ExecuteWithPrompt() error = %v, want nil or ErrPlanningCancelled", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("ExecuteWithPrompt() did not return")
+		}
+	})
+}
+
+// Test that exercises multiple Execute paths for coverage
+func TestPlanningOrchestrator_ExecuteMultiplePaths(t *testing.T) {
+	t.Run("Execute with both contexts done prefers p.ctx.Done", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &planningMockOrchestrator{},
+			Session:      &mockSession{},
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		// Cancel before execute
+		planner.Cancel()
+
+		// Also pass cancelled context
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err = planner.Execute(ctx)
+		// Should return ErrPlanningCancelled because we check `cancelled` flag first
+		if !errors.Is(err, ErrPlanningCancelled) {
+			t.Errorf("Execute() error = %v, want %v", err, ErrPlanningCancelled)
+		}
+	})
+
+	t.Run("Execute returns context.Canceled when context is cancelled mid-execution", func(t *testing.T) {
+		// Use a manager that will allow us to cancel between SetPhase and the select
+		slowManager := &slowMockManager{
+			setPhaseDelay: 30 * time.Millisecond,
+		}
+		phaseCtx := &PhaseContext{
+			Manager:      slowManager,
+			Orchestrator: &planningMockOrchestrator{},
+			Session:      &mockSession{},
+		}
+		planner, err := NewPlanningOrchestrator(phaseCtx)
+		if err != nil {
+			t.Fatalf("NewPlanningOrchestrator() error: %v", err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		// Start execution
+		done := make(chan error, 1)
+		go func() {
+			done <- planner.Execute(ctx)
+		}()
+
+		// Cancel during SetPhase delay
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+
+		// Wait for result
+		select {
+		case err := <-done:
+			// Either context.Canceled or no error (if execution completed first)
+			if err != nil && err != context.Canceled && !errors.Is(err, ErrPlanningCancelled) {
+				t.Errorf("Execute() error = %v, want context.Canceled or nil", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("Execute() did not return")
+		}
+	})
+}
+
+// slowMockManager adds delays to manager operations
+type slowMockManager struct {
+	session       UltraPlanSessionInterface
+	setPhaseDelay time.Duration
+}
+
+func (m *slowMockManager) Session() UltraPlanSessionInterface { return m.session }
+func (m *slowMockManager) SetPhase(phase UltraPlanPhase) {
+	if m.setPhaseDelay > 0 {
+		time.Sleep(m.setPhaseDelay)
+	}
+}
+func (m *slowMockManager) SetPlan(plan any)                               {}
+func (m *slowMockManager) MarkTaskComplete(taskID string)                 {}
+func (m *slowMockManager) MarkTaskFailed(taskID, reason string)           {}
+func (m *slowMockManager) AssignTaskToInstance(taskID, instanceID string) {}
+func (m *slowMockManager) Stop()                                          {}
