@@ -2,6 +2,7 @@ package phase
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -602,5 +603,789 @@ func TestConsolidationOrchestrator_ConcurrentSafety(t *testing.T) {
 func TestErrCancelled(t *testing.T) {
 	if ErrCancelled.Error() != "consolidation phase cancelled" {
 		t.Errorf("ErrCancelled message = %v, want %v", ErrCancelled.Error(), "consolidation phase cancelled")
+	}
+}
+
+func TestErrConsolidationFailed(t *testing.T) {
+	if ErrConsolidationFailed.Error() != "consolidation phase failed" {
+		t.Errorf("ErrConsolidationFailed message = %v, want %v", ErrConsolidationFailed.Error(), "consolidation phase failed")
+	}
+}
+
+func TestConsolidationOrchestrator_InstanceManagement(t *testing.T) {
+	t.Run("GetInstanceID returns empty initially", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		if id := orch.GetInstanceID(); id != "" {
+			t.Errorf("GetInstanceID() = %v, want empty string", id)
+		}
+	})
+
+	t.Run("setInstanceID and GetInstanceID work correctly", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.setInstanceID("test-instance-123")
+
+		if id := orch.GetInstanceID(); id != "test-instance-123" {
+			t.Errorf("GetInstanceID() = %v, want %v", id, "test-instance-123")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_CompletionTracking(t *testing.T) {
+	t.Run("IsComplete returns false initially", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		if orch.IsComplete() {
+			t.Error("IsComplete() should return false initially")
+		}
+	})
+
+	t.Run("GetStartedAt returns nil initially", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		if orch.GetStartedAt() != nil {
+			t.Error("GetStartedAt() should return nil initially")
+		}
+	})
+
+	t.Run("GetCompletedAt returns nil initially", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		if orch.GetCompletedAt() != nil {
+			t.Error("GetCompletedAt() should return nil initially")
+		}
+	})
+
+	t.Run("setStartedAt and GetStartedAt work correctly", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		now := time.Now()
+		orch.setStartedAt(now)
+
+		if got := orch.GetStartedAt(); got == nil {
+			t.Error("GetStartedAt() should not return nil after setStartedAt")
+		} else if !got.Equal(now) {
+			t.Errorf("GetStartedAt() = %v, want %v", got, now)
+		}
+	})
+
+	t.Run("setCompletedAt and GetCompletedAt work correctly", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		now := time.Now()
+		orch.setCompletedAt(now)
+
+		if got := orch.GetCompletedAt(); got == nil {
+			t.Error("GetCompletedAt() should not return nil after setCompletedAt")
+		} else if !got.Equal(now) {
+			t.Errorf("GetCompletedAt() = %v, want %v", got, now)
+		}
+	})
+
+	t.Run("setCompleted and IsComplete work correctly", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.setCompleted(true)
+
+		if !orch.IsComplete() {
+			t.Error("IsComplete() should return true after setCompleted(true)")
+		}
+
+		orch.setCompleted(false)
+		if orch.IsComplete() {
+			t.Error("IsComplete() should return false after setCompleted(false)")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_CompletionFile(t *testing.T) {
+	t.Run("GetCompletionFile returns nil initially", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		if orch.GetCompletionFile() != nil {
+			t.Error("GetCompletionFile() should return nil initially")
+		}
+	})
+
+	t.Run("setCompletionFile and GetCompletionFile work correctly", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		cf := &ConsolidationCompletionFile{
+			Status:       "complete",
+			Mode:         "stacked",
+			TotalCommits: 10,
+			PRsCreated: []PRInfo{
+				{URL: "https://github.com/owner/repo/pull/1", Title: "PR 1", GroupIndex: 0},
+			},
+			GroupResults: []GroupResult{
+				{GroupIndex: 0, BranchName: "branch-1", Success: true},
+			},
+		}
+		orch.setCompletionFile(cf)
+
+		got := orch.GetCompletionFile()
+		if got == nil {
+			t.Fatal("GetCompletionFile() should not return nil after setCompletionFile")
+		}
+		if got.Status != "complete" {
+			t.Errorf("Status = %v, want %v", got.Status, "complete")
+		}
+		if got.TotalCommits != 10 {
+			t.Errorf("TotalCommits = %v, want %v", got.TotalCommits, 10)
+		}
+		if len(got.PRsCreated) != 1 {
+			t.Errorf("len(PRsCreated) = %v, want %v", len(got.PRsCreated), 1)
+		}
+	})
+
+	t.Run("GetCompletionFile returns a copy", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		cf := &ConsolidationCompletionFile{
+			Status:       "complete",
+			TotalCommits: 10,
+		}
+		orch.setCompletionFile(cf)
+
+		got := orch.GetCompletionFile()
+		got.Status = "modified"
+
+		// Verify internal state is unchanged
+		internal := orch.GetCompletionFile()
+		if internal.Status == "modified" {
+			t.Error("GetCompletionFile() should return a copy, not the internal state")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_PRUrls(t *testing.T) {
+	t.Run("GetPRUrls returns nil initially", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		if urls := orch.GetPRUrls(); urls != nil {
+			t.Errorf("GetPRUrls() = %v, want nil", urls)
+		}
+	})
+
+	t.Run("addPRUrl and GetPRUrls work correctly", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.addPRUrl("https://github.com/owner/repo/pull/1")
+		orch.addPRUrl("https://github.com/owner/repo/pull/2")
+
+		urls := orch.GetPRUrls()
+		if len(urls) != 2 {
+			t.Errorf("len(GetPRUrls()) = %v, want %v", len(urls), 2)
+		}
+		if urls[0] != "https://github.com/owner/repo/pull/1" {
+			t.Errorf("urls[0] = %v, want %v", urls[0], "https://github.com/owner/repo/pull/1")
+		}
+	})
+
+	t.Run("GetPRUrls returns a copy", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.addPRUrl("https://github.com/owner/repo/pull/1")
+
+		urls := orch.GetPRUrls()
+		urls[0] = "modified"
+
+		// Verify internal state is unchanged
+		internal := orch.GetPRUrls()
+		if internal[0] == "modified" {
+			t.Error("GetPRUrls() should return a copy")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_Error(t *testing.T) {
+	t.Run("GetError returns empty initially", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		if err := orch.GetError(); err != "" {
+			t.Errorf("GetError() = %v, want empty string", err)
+		}
+	})
+
+	t.Run("setError and GetError work correctly", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.setError("something went wrong")
+
+		if got := orch.GetError(); got != "something went wrong" {
+			t.Errorf("GetError() = %v, want %v", got, "something went wrong")
+		}
+	})
+}
+
+// mockInstanceForMonitor implements ConsolidationInstanceInfo for testing
+type mockInstanceForMonitor struct {
+	id     string
+	status InstanceStatus
+}
+
+func (m *mockInstanceForMonitor) GetStatus() InstanceStatus { return m.status }
+func (m *mockInstanceForMonitor) GetID() string             { return m.id }
+
+func TestConsolidationOrchestrator_MonitorInstance(t *testing.T) {
+	t.Run("returns error when no instance ID set", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		err := orch.MonitorInstance(
+			func(id string) ConsolidationInstanceInfo { return nil },
+			100*time.Millisecond,
+		)
+
+		if err == nil {
+			t.Error("MonitorInstance() should return error when no instance ID set")
+		}
+	})
+
+	t.Run("returns nil when instance is nil (assumed complete)", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.setInstanceID("test-instance")
+
+		err := orch.MonitorInstance(
+			func(id string) ConsolidationInstanceInfo { return nil },
+			50*time.Millisecond,
+		)
+
+		if err != nil {
+			t.Errorf("MonitorInstance() = %v, want nil", err)
+		}
+	})
+
+	t.Run("returns nil when instance status is completed", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.setInstanceID("test-instance")
+
+		inst := &mockInstanceForMonitor{id: "test-instance", status: StatusCompleted}
+
+		err := orch.MonitorInstance(
+			func(id string) ConsolidationInstanceInfo { return inst },
+			50*time.Millisecond,
+		)
+
+		if err != nil {
+			t.Errorf("MonitorInstance() = %v, want nil", err)
+		}
+	})
+
+	t.Run("returns nil when instance status is waiting_input", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.setInstanceID("test-instance")
+
+		inst := &mockInstanceForMonitor{id: "test-instance", status: StatusWaitingInput}
+
+		err := orch.MonitorInstance(
+			func(id string) ConsolidationInstanceInfo { return inst },
+			50*time.Millisecond,
+		)
+
+		if err != nil {
+			t.Errorf("MonitorInstance() = %v, want nil", err)
+		}
+	})
+
+	t.Run("returns error when instance status is error", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.setInstanceID("test-instance")
+
+		inst := &mockInstanceForMonitor{id: "test-instance", status: StatusError}
+
+		err := orch.MonitorInstance(
+			func(id string) ConsolidationInstanceInfo { return inst },
+			50*time.Millisecond,
+		)
+
+		if err == nil {
+			t.Error("MonitorInstance() should return error for error status")
+		}
+		if !errors.Is(err, ErrConsolidationFailed) {
+			t.Errorf("MonitorInstance() error = %v, want error wrapping ErrConsolidationFailed", err)
+		}
+	})
+
+	t.Run("returns ErrCancelled when cancelled", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.setInstanceID("test-instance")
+
+		inst := &mockInstanceForMonitor{id: "test-instance", status: StatusRunning}
+
+		// Start monitoring in a goroutine
+		done := make(chan error, 1)
+		go func() {
+			done <- orch.MonitorInstance(
+				func(id string) ConsolidationInstanceInfo { return inst },
+				50*time.Millisecond,
+			)
+		}()
+
+		// Cancel after a short delay
+		time.Sleep(100 * time.Millisecond)
+		orch.Cancel()
+
+		// Wait for monitoring to finish
+		select {
+		case err := <-done:
+			if err != ErrCancelled {
+				t.Errorf("MonitorInstance() = %v, want %v", err, ErrCancelled)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("MonitorInstance did not return after cancellation")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_FinishConsolidation(t *testing.T) {
+	t.Run("updates state correctly", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		prUrls := []string{"https://pr-1", "https://pr-2"}
+
+		orch.FinishConsolidation(prUrls)
+
+		if !orch.IsComplete() {
+			t.Error("IsComplete() should return true after FinishConsolidation")
+		}
+		if orch.GetCompletedAt() == nil {
+			t.Error("GetCompletedAt() should not be nil after FinishConsolidation")
+		}
+
+		state := orch.State()
+		if state.SubPhase != "complete" {
+			t.Errorf("SubPhase = %v, want %v", state.SubPhase, "complete")
+		}
+		if len(state.PRUrls) != 2 {
+			t.Errorf("len(PRUrls) = %v, want %v", len(state.PRUrls), 2)
+		}
+	})
+
+	t.Run("handles nil prUrls", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.FinishConsolidation(nil)
+
+		if !orch.IsComplete() {
+			t.Error("IsComplete() should return true after FinishConsolidation")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_MarkFailed(t *testing.T) {
+	t.Run("updates state correctly", func(t *testing.T) {
+		callbacks := &mockCallbacksForConsolidation{}
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+			Callbacks:    callbacks,
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.MarkFailed(errors.New("test error"))
+
+		if orch.IsComplete() {
+			t.Error("IsComplete() should return false after MarkFailed")
+		}
+
+		state := orch.State()
+		if state.SubPhase != "failed" {
+			t.Errorf("SubPhase = %v, want %v", state.SubPhase, "failed")
+		}
+		if state.Error != "test error" {
+			t.Errorf("Error = %v, want %v", state.Error, "test error")
+		}
+
+		// Verify callback was invoked
+		if len(callbacks.phaseChanges) != 1 {
+			t.Errorf("OnPhaseChange called %d times, want 1", len(callbacks.phaseChanges))
+		}
+		if callbacks.phaseChanges[0] != PhaseFailed {
+			t.Errorf("Phase change = %v, want %v", callbacks.phaseChanges[0], PhaseFailed)
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_UpdateProgress(t *testing.T) {
+	t.Run("updates state correctly", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.UpdateProgress(2, 5, "merging")
+
+		state := orch.State()
+		if state.CurrentGroup != 2 {
+			t.Errorf("CurrentGroup = %v, want %v", state.CurrentGroup, 2)
+		}
+		if state.TotalGroups != 5 {
+			t.Errorf("TotalGroups = %v, want %v", state.TotalGroups, 5)
+		}
+		if state.SubPhase != "merging" {
+			t.Errorf("SubPhase = %v, want %v", state.SubPhase, "merging")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_AddGroupBranch(t *testing.T) {
+	t.Run("adds branch to state", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.AddGroupBranch("branch-1")
+		orch.AddGroupBranch("branch-2")
+
+		state := orch.State()
+		if len(state.GroupBranches) != 2 {
+			t.Errorf("len(GroupBranches) = %v, want %v", len(state.GroupBranches), 2)
+		}
+		if state.GroupBranches[0] != "branch-1" {
+			t.Errorf("GroupBranches[0] = %v, want %v", state.GroupBranches[0], "branch-1")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_Conflict(t *testing.T) {
+	t.Run("SetConflict and HasConflict work correctly", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		if orch.HasConflict() {
+			t.Error("HasConflict() should return false initially")
+		}
+
+		orch.SetConflict("task-1", []string{"file1.go", "file2.go"})
+
+		if !orch.HasConflict() {
+			t.Error("HasConflict() should return true after SetConflict")
+		}
+
+		state := orch.State()
+		if state.SubPhase != "paused" {
+			t.Errorf("SubPhase = %v, want %v", state.SubPhase, "paused")
+		}
+		if state.CurrentTask != "task-1" {
+			t.Errorf("CurrentTask = %v, want %v", state.CurrentTask, "task-1")
+		}
+		if len(state.ConflictFiles) != 2 {
+			t.Errorf("len(ConflictFiles) = %v, want %v", len(state.ConflictFiles), 2)
+		}
+	})
+
+	t.Run("ClearConflict clears conflict state", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", []string{"file1.go"})
+
+		orch.ClearConflict()
+
+		state := orch.State()
+		if state.CurrentTask != "" {
+			t.Errorf("CurrentTask = %v, want empty string", state.CurrentTask)
+		}
+		if state.ConflictFiles != nil {
+			t.Error("ConflictFiles should be nil after ClearConflict")
+		}
+	})
+
+	t.Run("SetConflict makes a copy of files slice", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		files := []string{"file1.go", "file2.go"}
+		orch.SetConflict("task-1", files)
+
+		// Modify the original slice
+		files[0] = "modified.go"
+
+		// Internal state should not be affected
+		state := orch.State()
+		if state.ConflictFiles[0] == "modified.go" {
+			t.Error("SetConflict() should make a copy of files slice")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_Reset(t *testing.T) {
+	t.Run("resets all state", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		// Set various state
+		orch.setInstanceID("test-instance")
+		orch.setCompletionFile(&ConsolidationCompletionFile{Status: "complete"})
+		orch.setStartedAt(time.Now())
+		orch.setCompletedAt(time.Now())
+		orch.setCompleted(true)
+		orch.addPRUrl("https://pr-1")
+		orch.SetState(ConsolidationState{
+			SubPhase:      "complete",
+			CurrentGroup:  3,
+			TotalGroups:   5,
+			GroupBranches: []string{"branch-1"},
+		})
+		orch.Cancel()
+
+		// Reset
+		orch.Reset()
+
+		// Verify everything is reset
+		if orch.GetInstanceID() != "" {
+			t.Error("instanceID should be empty after Reset")
+		}
+		if orch.GetCompletionFile() != nil {
+			t.Error("completionFile should be nil after Reset")
+		}
+		if orch.GetStartedAt() != nil {
+			t.Error("startedAt should be nil after Reset")
+		}
+		if orch.GetCompletedAt() != nil {
+			t.Error("completedAt should be nil after Reset")
+		}
+		if orch.IsComplete() {
+			t.Error("completed should be false after Reset")
+		}
+		if orch.IsCancelled() {
+			t.Error("cancelled should be false after Reset")
+		}
+		if orch.IsRunning() {
+			t.Error("running should be false after Reset")
+		}
+
+		state := orch.State()
+		if state.SubPhase != "" {
+			t.Errorf("SubPhase = %v, want empty string", state.SubPhase)
+		}
+		if state.CurrentGroup != 0 {
+			t.Errorf("CurrentGroup = %v, want 0", state.CurrentGroup)
+		}
+	})
+}
+
+func TestConsolidationCompletionFile(t *testing.T) {
+	t.Run("GroupResult fields are accessible", func(t *testing.T) {
+		result := GroupResult{
+			GroupIndex:    0,
+			BranchName:    "test-branch",
+			TasksIncluded: []string{"task-1", "task-2"},
+			CommitCount:   5,
+			Success:       true,
+		}
+
+		if result.GroupIndex != 0 {
+			t.Errorf("GroupIndex = %v, want 0", result.GroupIndex)
+		}
+		if result.BranchName != "test-branch" {
+			t.Errorf("BranchName = %v, want %v", result.BranchName, "test-branch")
+		}
+		if len(result.TasksIncluded) != 2 {
+			t.Errorf("len(TasksIncluded) = %v, want 2", len(result.TasksIncluded))
+		}
+		if result.CommitCount != 5 {
+			t.Errorf("CommitCount = %v, want 5", result.CommitCount)
+		}
+		if !result.Success {
+			t.Error("Success should be true")
+		}
+	})
+
+	t.Run("PRInfo fields are accessible", func(t *testing.T) {
+		info := PRInfo{
+			URL:        "https://github.com/owner/repo/pull/1",
+			Title:      "Test PR",
+			GroupIndex: 0,
+		}
+
+		if info.URL != "https://github.com/owner/repo/pull/1" {
+			t.Errorf("URL = %v, want %v", info.URL, "https://github.com/owner/repo/pull/1")
+		}
+		if info.Title != "Test PR" {
+			t.Errorf("Title = %v, want %v", info.Title, "Test PR")
+		}
+		if info.GroupIndex != 0 {
+			t.Errorf("GroupIndex = %v, want 0", info.GroupIndex)
+		}
+	})
+}
+
+func TestInstanceStatus_Constants(t *testing.T) {
+	// Verify status constants have expected values
+	tests := []struct {
+		status InstanceStatus
+		want   string
+	}{
+		{StatusRunning, "running"},
+		{StatusCompleted, "completed"},
+		{StatusWaitingInput, "waiting_input"},
+		{StatusError, "error"},
+		{StatusTimeout, "timeout"},
+		{StatusStuck, "stuck"},
+	}
+
+	for _, tt := range tests {
+		if string(tt.status) != tt.want {
+			t.Errorf("InstanceStatus %v = %v, want %v", tt.status, string(tt.status), tt.want)
+		}
 	}
 }

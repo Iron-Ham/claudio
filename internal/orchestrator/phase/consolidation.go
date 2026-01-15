@@ -4,7 +4,9 @@ package phase
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
 )
@@ -73,6 +75,21 @@ type ConsolidationOrchestrator struct {
 
 	// running indicates whether Execute() is currently running
 	running bool
+
+	// instanceID is the ID of the consolidation Claude instance
+	instanceID string
+
+	// completionFile holds the parsed completion data from the instance
+	completionFile *ConsolidationCompletionFile
+
+	// startedAt records when consolidation started
+	startedAt *time.Time
+
+	// completedAt records when consolidation completed
+	completedAt *time.Time
+
+	// completed indicates whether consolidation finished successfully
+	completed bool
 }
 
 // NewConsolidationOrchestrator creates a new ConsolidationOrchestrator with the
@@ -249,3 +266,412 @@ func (o *ConsolidationOrchestrator) IsCancelled() bool {
 
 // ErrCancelled is returned when the orchestrator is cancelled.
 var ErrCancelled = errors.New("consolidation phase cancelled")
+
+// ErrConsolidationFailed is returned when consolidation fails.
+var ErrConsolidationFailed = errors.New("consolidation phase failed")
+
+// ConsolidationCompletionFile represents the completion data written by the consolidation instance.
+// This is parsed from the JSON file written by the Claude instance performing consolidation.
+type ConsolidationCompletionFile struct {
+	// Status is "complete", "partial", or "failed"
+	Status string `json:"status"`
+
+	// Mode is the consolidation mode used ("stacked" or "single")
+	Mode string `json:"mode"`
+
+	// GroupResults contains results for each execution group
+	GroupResults []GroupResult `json:"group_results"`
+
+	// PRsCreated contains information about all created PRs
+	PRsCreated []PRInfo `json:"prs_created"`
+
+	// TotalCommits is the total number of commits consolidated
+	TotalCommits int `json:"total_commits"`
+
+	// FilesChanged lists all files modified during consolidation
+	FilesChanged []string `json:"files_changed"`
+}
+
+// GroupResult represents the consolidation result for a single execution group.
+type GroupResult struct {
+	// GroupIndex is the 0-based index of the group
+	GroupIndex int `json:"group_index"`
+
+	// BranchName is the consolidated branch name
+	BranchName string `json:"branch_name"`
+
+	// TasksIncluded lists the task IDs consolidated in this group
+	TasksIncluded []string `json:"tasks_included"`
+
+	// CommitCount is the number of commits in the consolidated branch
+	CommitCount int `json:"commit_count"`
+
+	// Success indicates whether consolidation succeeded for this group
+	Success bool `json:"success"`
+
+	// Error contains error message if consolidation failed for this group
+	Error string `json:"error,omitempty"`
+}
+
+// PRInfo represents information about a created pull request.
+type PRInfo struct {
+	// URL is the full URL of the PR
+	URL string `json:"url"`
+
+	// Title is the PR title
+	Title string `json:"title"`
+
+	// GroupIndex identifies which group this PR is for
+	GroupIndex int `json:"group_index"`
+}
+
+// InstanceStatus represents the status of a Claude instance.
+// This mirrors the status values from the orchestrator package.
+type InstanceStatus string
+
+const (
+	// StatusRunning indicates the instance is actively running
+	StatusRunning InstanceStatus = "running"
+
+	// StatusCompleted indicates the instance has completed successfully
+	StatusCompleted InstanceStatus = "completed"
+
+	// StatusWaitingInput indicates the instance is waiting for user input
+	StatusWaitingInput InstanceStatus = "waiting_input"
+
+	// StatusError indicates the instance encountered an error
+	StatusError InstanceStatus = "error"
+
+	// StatusTimeout indicates the instance timed out
+	StatusTimeout InstanceStatus = "timeout"
+
+	// StatusStuck indicates the instance is stuck and not making progress
+	StatusStuck InstanceStatus = "stuck"
+)
+
+// ConsolidationInstanceInfo provides methods to get instance status.
+// This interface is used to check on the consolidation instance without
+// depending on the orchestrator package's Instance type.
+type ConsolidationInstanceInfo interface {
+	// GetStatus returns the current instance status
+	GetStatus() InstanceStatus
+
+	// GetID returns the instance ID
+	GetID() string
+}
+
+// ConsolidationOrchestratorExtended provides extended methods needed by the
+// ConsolidationOrchestrator for full consolidation execution.
+// This interface extends OrchestratorInterface with consolidation-specific operations.
+type ConsolidationOrchestratorExtended interface {
+	OrchestratorInterface
+
+	// GetInstance retrieves an instance by ID
+	GetInstance(id string) ConsolidationInstanceInfo
+
+	// GetBaseSession returns the base session for instance creation
+	GetBaseSession() interface{}
+
+	// GetSessionType returns the session type for group management
+	GetSessionType() string
+
+	// GetGroupBySessionType returns the instance group for the session type
+	GetGroupBySessionType(sessionType string) interface {
+		AddInstance(id string)
+	}
+}
+
+// ConsolidationPromptBuilder builds prompts for consolidation.
+// This interface allows the orchestrator to delegate prompt building
+// to the coordinator which has access to the full session state.
+type ConsolidationPromptBuilder interface {
+	// BuildConsolidationPrompt builds the prompt for the consolidation phase
+	BuildConsolidationPrompt() string
+}
+
+// GetInstanceID returns the ID of the consolidation instance, or empty if not started.
+func (o *ConsolidationOrchestrator) GetInstanceID() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.instanceID
+}
+
+// setInstanceID sets the consolidation instance ID.
+func (o *ConsolidationOrchestrator) setInstanceID(id string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.instanceID = id
+}
+
+// GetCompletionFile returns the parsed completion file, or nil if not available.
+func (o *ConsolidationOrchestrator) GetCompletionFile() *ConsolidationCompletionFile {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.completionFile == nil {
+		return nil
+	}
+	// Return a copy to prevent external mutation
+	copy := *o.completionFile
+	return &copy
+}
+
+// setCompletionFile sets the consolidation completion file.
+func (o *ConsolidationOrchestrator) setCompletionFile(cf *ConsolidationCompletionFile) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.completionFile = cf
+}
+
+// GetPRUrls returns the URLs of created pull requests.
+func (o *ConsolidationOrchestrator) GetPRUrls() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.state.PRUrls == nil {
+		return nil
+	}
+	urls := make([]string, len(o.state.PRUrls))
+	copy(urls, o.state.PRUrls)
+	return urls
+}
+
+// addPRUrl adds a PR URL to the state.
+func (o *ConsolidationOrchestrator) addPRUrl(url string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.state.PRUrls = append(o.state.PRUrls, url)
+}
+
+// GetStartedAt returns when consolidation started, or nil if not started.
+func (o *ConsolidationOrchestrator) GetStartedAt() *time.Time {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.startedAt
+}
+
+// setStartedAt sets the consolidation start time.
+func (o *ConsolidationOrchestrator) setStartedAt(t time.Time) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.startedAt = &t
+}
+
+// GetCompletedAt returns when consolidation completed, or nil if not completed.
+func (o *ConsolidationOrchestrator) GetCompletedAt() *time.Time {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.completedAt
+}
+
+// setCompletedAt sets the consolidation completion time.
+func (o *ConsolidationOrchestrator) setCompletedAt(t time.Time) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.completedAt = &t
+}
+
+// IsComplete returns true if consolidation completed successfully.
+func (o *ConsolidationOrchestrator) IsComplete() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.completed
+}
+
+// setCompleted marks the consolidation as completed.
+func (o *ConsolidationOrchestrator) setCompleted(success bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.completed = success
+}
+
+// GetError returns the consolidation error message, or empty if no error.
+func (o *ConsolidationOrchestrator) GetError() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.state.Error
+}
+
+// setError sets the error message in state.
+func (o *ConsolidationOrchestrator) setError(err string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.state.Error = err
+}
+
+// MonitorInstance monitors the consolidation instance for completion.
+// This method should be called in a goroutine after the instance is started.
+// It will return when the instance completes, fails, or the orchestrator is cancelled.
+//
+// The method checks the instance status periodically and:
+//   - Returns nil when the instance completes successfully
+//   - Returns an error if the instance fails, times out, or gets stuck
+//   - Returns ErrCancelled if the orchestrator is cancelled
+//
+// The pollInterval parameter controls how often to check instance status.
+// A typical value is 1 second.
+func (o *ConsolidationOrchestrator) MonitorInstance(
+	getInstanceFn func(id string) ConsolidationInstanceInfo,
+	pollInterval time.Duration,
+) error {
+	instanceID := o.GetInstanceID()
+	if instanceID == "" {
+		return fmt.Errorf("no consolidation instance to monitor")
+	}
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-o.ctx.Done():
+			return ErrCancelled
+
+		case <-ticker.C:
+			inst := getInstanceFn(instanceID)
+			if inst == nil {
+				// Instance gone - assume complete
+				o.logger.Info("consolidation instance no longer exists, assuming complete")
+				return nil
+			}
+
+			status := inst.GetStatus()
+			switch status {
+			case StatusCompleted, StatusWaitingInput:
+				o.logger.Info("consolidation instance completed",
+					"instance_id", instanceID,
+					"status", string(status),
+				)
+				return nil
+
+			case StatusError, StatusTimeout, StatusStuck:
+				errMsg := fmt.Sprintf("consolidation failed: instance status %s", status)
+				o.setError(errMsg)
+				o.logger.Error("consolidation instance failed",
+					"instance_id", instanceID,
+					"status", string(status),
+				)
+				return fmt.Errorf("%w: %s", ErrConsolidationFailed, errMsg)
+			}
+			// StatusRunning: continue waiting
+		}
+	}
+}
+
+// FinishConsolidation completes the consolidation phase after the instance finishes.
+// This updates state to reflect successful completion and notifies callbacks.
+//
+// Parameters:
+//   - prUrls: The list of PR URLs that were created
+//
+// This method:
+//  1. Updates internal state to complete
+//  2. Records completion time
+//  3. Stores PR URLs in state
+//  4. Notifies the phase change callback
+func (o *ConsolidationOrchestrator) FinishConsolidation(prUrls []string) {
+	o.mu.Lock()
+	now := time.Now()
+	o.completedAt = &now
+	o.completed = true
+	o.state.SubPhase = "complete"
+	if prUrls != nil {
+		o.state.PRUrls = make([]string, len(prUrls))
+		copy(o.state.PRUrls, prUrls)
+	}
+	o.mu.Unlock()
+
+	o.logger.Info("consolidation phase finished",
+		"pr_count", len(prUrls),
+		"completed_at", now.Format(time.RFC3339),
+	)
+}
+
+// MarkFailed marks the consolidation as failed with the given error.
+// This updates state and logs the failure.
+func (o *ConsolidationOrchestrator) MarkFailed(err error) {
+	o.mu.Lock()
+	o.state.SubPhase = "failed"
+	o.state.Error = err.Error()
+	o.completed = false
+	now := time.Now()
+	o.completedAt = &now
+	o.mu.Unlock()
+
+	o.logger.Error("consolidation phase failed",
+		"error", err.Error(),
+	)
+
+	// Notify phase change if callbacks are configured
+	if o.phaseCtx.Callbacks != nil {
+		o.phaseCtx.Callbacks.OnPhaseChange(PhaseFailed)
+	}
+}
+
+// UpdateProgress updates the consolidation progress state.
+// This is called periodically to track which group is being consolidated.
+func (o *ConsolidationOrchestrator) UpdateProgress(currentGroup, totalGroups int, subPhase string) {
+	o.mu.Lock()
+	o.state.CurrentGroup = currentGroup
+	o.state.TotalGroups = totalGroups
+	o.state.SubPhase = subPhase
+	o.mu.Unlock()
+
+	o.logger.Debug("consolidation progress updated",
+		"current_group", currentGroup,
+		"total_groups", totalGroups,
+		"sub_phase", subPhase,
+	)
+}
+
+// AddGroupBranch records a consolidated branch for a group.
+func (o *ConsolidationOrchestrator) AddGroupBranch(branch string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.state.GroupBranches = append(o.state.GroupBranches, branch)
+}
+
+// SetConflict records that consolidation is paused due to a merge conflict.
+// This allows the orchestrator to track conflicts for potential resumption.
+func (o *ConsolidationOrchestrator) SetConflict(taskID string, files []string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.state.SubPhase = "paused"
+	o.state.CurrentTask = taskID
+	o.state.ConflictFiles = make([]string, len(files))
+	copy(o.state.ConflictFiles, files)
+}
+
+// ClearConflict clears the conflict state after resolution.
+func (o *ConsolidationOrchestrator) ClearConflict() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.state.CurrentTask = ""
+	o.state.ConflictFiles = nil
+}
+
+// HasConflict returns true if consolidation is paused due to a conflict.
+func (o *ConsolidationOrchestrator) HasConflict() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.state.SubPhase == "paused" && len(o.state.ConflictFiles) > 0
+}
+
+// Reset resets the orchestrator to its initial state for a fresh execution.
+// This is useful when restarting the consolidation phase.
+func (o *ConsolidationOrchestrator) Reset() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Reset state
+	o.state = &ConsolidationState{}
+	o.instanceID = ""
+	o.completionFile = nil
+	o.startedAt = nil
+	o.completedAt = nil
+	o.completed = false
+	o.cancelled = false
+	o.running = false
+
+	// Create a new cancellable context
+	o.cancel()
+	o.ctx, o.cancel = context.WithCancel(context.Background())
+}
