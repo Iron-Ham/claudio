@@ -132,6 +132,9 @@ const synthesisPromptTemplate = `You are reviewing the results of a parallel exe
 
 ## Completion Protocol
 
+**CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.
+If you changed directories during the task, use an absolute path or navigate back to the root first.
+
 When your review is complete, you MUST write a completion file to signal the orchestrator:
 
 1. Use Write tool to create ` + "`" + SynthesisCompletionFileName + "`" + ` in your worktree root

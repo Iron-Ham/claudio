@@ -761,3 +761,248 @@ func TestVerifyTaskWork_NoCompletionFile_FailsNormally(t *testing.T) {
 		t.Error("expected retry when no completion file")
 	}
 }
+
+// Tests for subdirectory completion file detection
+
+func TestCheckCompletionFile_InSubdirectory(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create a subdirectory structure (simulating Claude cd-ing into a project dir)
+	subdir := filepath.Join(tempDir, "mail-ios", "src")
+	if err := os.MkdirAll(subdir, 0755); err != nil {
+		t.Fatalf("failed to create subdirs: %v", err)
+	}
+
+	// Write completion file in subdirectory (simulating the bug)
+	completion := TaskCompletionFile{
+		TaskID:  "task-1",
+		Status:  "complete",
+		Summary: "Task completed",
+	}
+	data, _ := json.Marshal(completion)
+	completionPath := filepath.Join(tempDir, "mail-ios", TaskCompletionFileName)
+	if err := os.WriteFile(completionPath, data, 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	v := NewTaskVerifier(&mockWorktreeOps{}, newMockRetryTracker(), newMockEventEmitter())
+
+	// Should find the file even though it's not at the root
+	found, err := v.CheckCompletionFile(tempDir)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !found {
+		t.Error("expected to find completion file in subdirectory")
+	}
+}
+
+func TestCheckCompletionFile_RevisionInSubdirectory(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create subdirectory
+	subdir := filepath.Join(tempDir, "project")
+	if err := os.MkdirAll(subdir, 0755); err != nil {
+		t.Fatalf("failed to create subdir: %v", err)
+	}
+
+	// Write revision completion file in subdirectory
+	completion := RevisionCompletionFile{
+		TaskID:        "task-1",
+		RevisionRound: 1,
+	}
+	data, _ := json.Marshal(completion)
+	completionPath := filepath.Join(subdir, RevisionCompletionFileName)
+	if err := os.WriteFile(completionPath, data, 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	v := NewTaskVerifier(&mockWorktreeOps{}, newMockRetryTracker(), newMockEventEmitter())
+
+	found, err := v.CheckCompletionFile(tempDir)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !found {
+		t.Error("expected to find revision completion file in subdirectory")
+	}
+}
+
+func TestCheckCompletionFile_SkipsNodeModules(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create node_modules with a completion file (should be skipped)
+	nodeModules := filepath.Join(tempDir, "node_modules", "some-package")
+	if err := os.MkdirAll(nodeModules, 0755); err != nil {
+		t.Fatalf("failed to create node_modules: %v", err)
+	}
+
+	completion := TaskCompletionFile{TaskID: "task-1", Status: "complete"}
+	data, _ := json.Marshal(completion)
+	if err := os.WriteFile(filepath.Join(nodeModules, TaskCompletionFileName), data, 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	v := NewTaskVerifier(&mockWorktreeOps{}, newMockRetryTracker(), newMockEventEmitter())
+
+	// Should NOT find the file because it's in node_modules
+	found, err := v.CheckCompletionFile(tempDir)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if found {
+		t.Error("should not find completion file inside node_modules")
+	}
+}
+
+func TestCheckCompletionFile_SkipsVendor(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create vendor directory with a completion file (should be skipped)
+	vendorDir := filepath.Join(tempDir, "vendor", "github.com", "some-pkg")
+	if err := os.MkdirAll(vendorDir, 0755); err != nil {
+		t.Fatalf("failed to create vendor dir: %v", err)
+	}
+
+	completion := TaskCompletionFile{TaskID: "task-1", Status: "complete"}
+	data, _ := json.Marshal(completion)
+	if err := os.WriteFile(filepath.Join(vendorDir, TaskCompletionFileName), data, 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	v := NewTaskVerifier(&mockWorktreeOps{}, newMockRetryTracker(), newMockEventEmitter())
+
+	found, err := v.CheckCompletionFile(tempDir)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if found {
+		t.Error("should not find completion file inside vendor")
+	}
+}
+
+func TestCheckCompletionFile_SkipsPods(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create Pods directory (iOS CocoaPods) with a completion file (should be skipped)
+	podsDir := filepath.Join(tempDir, "Pods", "SomePod")
+	if err := os.MkdirAll(podsDir, 0755); err != nil {
+		t.Fatalf("failed to create Pods dir: %v", err)
+	}
+
+	completion := TaskCompletionFile{TaskID: "task-1", Status: "complete"}
+	data, _ := json.Marshal(completion)
+	if err := os.WriteFile(filepath.Join(podsDir, TaskCompletionFileName), data, 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	v := NewTaskVerifier(&mockWorktreeOps{}, newMockRetryTracker(), newMockEventEmitter())
+
+	found, err := v.CheckCompletionFile(tempDir)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if found {
+		t.Error("should not find completion file inside Pods")
+	}
+}
+
+func TestCheckCompletionFile_RootTakesPrecedence(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create subdirectory with completion file
+	subdir := filepath.Join(tempDir, "project")
+	if err := os.MkdirAll(subdir, 0755); err != nil {
+		t.Fatalf("failed to create subdir: %v", err)
+	}
+
+	// Write completion files in both root and subdirectory
+	rootCompletion := TaskCompletionFile{TaskID: "root-task", Status: "complete"}
+	subCompletion := TaskCompletionFile{TaskID: "sub-task", Status: "complete"}
+
+	rootData, _ := json.Marshal(rootCompletion)
+	subData, _ := json.Marshal(subCompletion)
+
+	if err := os.WriteFile(filepath.Join(tempDir, TaskCompletionFileName), rootData, 0644); err != nil {
+		t.Fatalf("failed to write root completion file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(subdir, TaskCompletionFileName), subData, 0644); err != nil {
+		t.Fatalf("failed to write sub completion file: %v", err)
+	}
+
+	v := NewTaskVerifier(&mockWorktreeOps{}, newMockRetryTracker(), newMockEventEmitter())
+
+	// Fast path should find root file first
+	found, err := v.CheckCompletionFile(tempDir)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !found {
+		t.Error("expected to find completion file")
+	}
+
+	// Verify it found the root one (by parsing directly)
+	completion, err := v.ParseTaskCompletionFile(tempDir)
+	if err != nil {
+		t.Fatalf("failed to parse: %v", err)
+	}
+	if completion.TaskID != "root-task" {
+		t.Errorf("expected root completion to take precedence, got TaskID=%q", completion.TaskID)
+	}
+}
+
+func TestFindCompletionFile_DepthLimit(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create deeply nested directory structure beyond maxSearchDepth (5)
+	deepDir := filepath.Join(tempDir, "a", "b", "c", "d", "e", "f", "g") // 7 levels deep
+	if err := os.MkdirAll(deepDir, 0755); err != nil {
+		t.Fatalf("failed to create deep dirs: %v", err)
+	}
+
+	// Write completion file at depth > maxSearchDepth
+	completion := TaskCompletionFile{TaskID: "deep-task", Status: "complete"}
+	data, _ := json.Marshal(completion)
+	if err := os.WriteFile(filepath.Join(deepDir, TaskCompletionFileName), data, 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	v := NewTaskVerifier(&mockWorktreeOps{}, newMockRetryTracker(), newMockEventEmitter())
+
+	// Should NOT find the file because it's too deep
+	found, err := v.CheckCompletionFile(tempDir)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if found {
+		t.Error("should not find completion file beyond depth limit")
+	}
+}
+
+func TestFindCompletionFile_WithinDepthLimit(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create directory at exactly maxSearchDepth (5)
+	atLimitDir := filepath.Join(tempDir, "a", "b", "c", "d", "e") // 5 levels deep
+	if err := os.MkdirAll(atLimitDir, 0755); err != nil {
+		t.Fatalf("failed to create dirs: %v", err)
+	}
+
+	// Write completion file at depth = maxSearchDepth
+	completion := TaskCompletionFile{TaskID: "limit-task", Status: "complete"}
+	data, _ := json.Marshal(completion)
+	if err := os.WriteFile(filepath.Join(atLimitDir, TaskCompletionFileName), data, 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	v := NewTaskVerifier(&mockWorktreeOps{}, newMockRetryTracker(), newMockEventEmitter())
+
+	// Should find the file at the depth limit
+	found, err := v.CheckCompletionFile(tempDir)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !found {
+		t.Error("expected to find completion file at depth limit")
+	}
+}

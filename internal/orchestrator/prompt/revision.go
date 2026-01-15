@@ -119,6 +119,9 @@ Focus only on addressing the identified issues. Do not refactor or make other ch
 
 ## Completion Protocol
 
+**CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.
+If you changed directories during the task, use an absolute path or navigate back to the root first.
+
 When your revision is complete, you MUST write a completion file:
 
 1. Use Write tool to create ` + "`" + RevisionCompletionFileName + "`" + ` in your worktree root

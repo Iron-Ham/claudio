@@ -187,6 +187,9 @@ const consolidationPromptTemplate = `You are consolidating work from multiple pa
 
 ## Completion Protocol
 
+**CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.
+If you changed directories during the task, use an absolute path or navigate back to the root first.
+
 When consolidation is complete, write ` + "`" + ConsolidationCompletionFileName + "`" + `:
 
 ` + "```json" + `
@@ -398,6 +401,8 @@ func (b *GroupConsolidatorBuilder) writeInstructions(sb *strings.Builder, consol
 // writeCompletionProtocol writes the completion protocol for group consolidation.
 func (b *GroupConsolidatorBuilder) writeCompletionProtocol(sb *strings.Builder, groupIndex int, consolidatedBranch string) {
 	sb.WriteString("## Completion Protocol\n\n")
+	sb.WriteString("**CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.\n")
+	sb.WriteString("If you changed directories during the task, use an absolute path or navigate back to the root first.\n\n")
 	fmt.Fprintf(sb, "When consolidation is complete, write `%s` in your worktree root:\n\n", GroupConsolidationCompletionFileName)
 	sb.WriteString("```json\n")
 	sb.WriteString("{\n")

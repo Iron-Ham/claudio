@@ -7,8 +7,10 @@ package verify
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
 )
@@ -18,6 +20,29 @@ const TaskCompletionFileName = ".claudio-task-complete.json"
 
 // RevisionCompletionFileName is the sentinel file that revision tasks write when complete.
 const RevisionCompletionFileName = ".claudio-revision-complete.json"
+
+// maxSearchDepth is the maximum directory depth to search for completion files.
+// This prevents excessive traversal in deeply nested directory structures.
+const maxSearchDepth = 5
+
+// skippedDirectories lists directories to skip during recursive search.
+// These are typically large or irrelevant directories that slow down the search.
+var skippedDirectories = map[string]bool{
+	".git":         true,
+	"node_modules": true,
+	"vendor":       true,
+	".claudio":     true,
+	"__pycache__":  true,
+	".venv":        true,
+	"venv":         true,
+	"build":        true,
+	"dist":         true,
+	".next":        true,
+	".nuxt":        true,
+	"target":       true, // Rust/Java build output
+	"Pods":         true, // iOS CocoaPods
+	".build":       true, // Swift Package Manager
+}
 
 // TaskCompletionResult represents the result of verifying a task's work.
 type TaskCompletionResult struct {
@@ -167,32 +192,85 @@ func NewTaskVerifier(wt WorktreeOperations, retryTracker RetryTracker, events Ev
 // CheckCompletionFile checks if the task has written its completion sentinel file.
 // This checks for both regular task completion (.claudio-task-complete.json) and
 // revision task completion (.claudio-revision-complete.json) since both use this monitor.
+//
+// The search first checks the worktree root (fast path), then falls back to a
+// recursive search of subdirectories to handle cases where Claude may have changed
+// directories during task execution.
 func (v *TaskVerifier) CheckCompletionFile(worktreePath string) (bool, error) {
 	if worktreePath == "" {
 		return false, nil
 	}
 
-	// First check for regular task completion file
-	taskCompletionPath := filepath.Join(worktreePath, TaskCompletionFileName)
-	if _, err := os.Stat(taskCompletionPath); err == nil {
-		// File exists - try to parse it to ensure it's valid
-		completion, err := v.ParseTaskCompletionFile(worktreePath)
+	// First check for regular task completion file (with subdirectory fallback)
+	taskCompletionPath := v.findCompletionFile(worktreePath, TaskCompletionFileName)
+	if taskCompletionPath != "" {
+		// File found - try to parse it to ensure it's valid
+		completion, err := v.parseTaskCompletionFileAtPath(taskCompletionPath)
 		if err == nil && completion.Status != "" {
 			return true, nil
 		}
 	}
 
 	// Also check for revision completion file (revision tasks write this instead)
-	revisionCompletionPath := filepath.Join(worktreePath, RevisionCompletionFileName)
-	if _, err := os.Stat(revisionCompletionPath); err == nil {
-		// File exists - try to parse it to ensure it's valid
-		completion, err := v.ParseRevisionCompletionFile(worktreePath)
+	revisionCompletionPath := v.findCompletionFile(worktreePath, RevisionCompletionFileName)
+	if revisionCompletionPath != "" {
+		// File found - try to parse it to ensure it's valid
+		completion, err := v.parseRevisionCompletionFileAtPath(revisionCompletionPath)
 		if err == nil && completion.TaskID != "" {
 			return true, nil
 		}
 	}
 
 	return false, nil
+}
+
+// findCompletionFile searches for a completion file in the worktree.
+// It first checks the root directory (fast path), then falls back to a recursive
+// search with depth limiting and directory skipping for performance.
+func (v *TaskVerifier) findCompletionFile(worktreePath, filename string) string {
+	// Fast path: check root first
+	rootPath := filepath.Join(worktreePath, filename)
+	if _, err := os.Stat(rootPath); err == nil {
+		return rootPath
+	}
+
+	// Fallback: search subdirectories with depth limit
+	var found string
+	_ = filepath.WalkDir(worktreePath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // Continue on errors (permission denied, etc.)
+		}
+
+		// Stop if we already found the file
+		if found != "" {
+			return fs.SkipAll
+		}
+
+		// Check depth relative to worktree root
+		rel, relErr := filepath.Rel(worktreePath, path)
+		if relErr != nil {
+			return nil
+		}
+		depth := strings.Count(rel, string(filepath.Separator))
+		if depth > maxSearchDepth {
+			return fs.SkipDir
+		}
+
+		// Skip known large/irrelevant directories
+		if d.IsDir() && skippedDirectories[d.Name()] {
+			return fs.SkipDir
+		}
+
+		// Check if this is the file we're looking for
+		if !d.IsDir() && d.Name() == filename {
+			found = path
+			return fs.SkipAll
+		}
+
+		return nil
+	})
+
+	return found
 }
 
 // ParseTaskCompletionFile reads and parses a task completion file.
@@ -215,6 +293,38 @@ func (v *TaskVerifier) ParseTaskCompletionFile(worktreePath string) (*TaskComple
 func (v *TaskVerifier) ParseRevisionCompletionFile(worktreePath string) (*RevisionCompletionFile, error) {
 	completionPath := filepath.Join(worktreePath, RevisionCompletionFileName)
 	data, err := os.ReadFile(completionPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var completion RevisionCompletionFile
+	if err := json.Unmarshal(data, &completion); err != nil {
+		return nil, fmt.Errorf("failed to parse revision completion JSON: %w", err)
+	}
+
+	return &completion, nil
+}
+
+// parseTaskCompletionFileAtPath reads and parses a task completion file at the given path.
+// Unlike ParseTaskCompletionFile, this takes a full file path rather than a worktree path.
+func (v *TaskVerifier) parseTaskCompletionFileAtPath(filePath string) (*TaskCompletionFile, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	var completion TaskCompletionFile
+	if err := json.Unmarshal(data, &completion); err != nil {
+		return nil, fmt.Errorf("failed to parse task completion JSON: %w", err)
+	}
+
+	return &completion, nil
+}
+
+// parseRevisionCompletionFileAtPath reads and parses a revision completion file at the given path.
+// Unlike ParseRevisionCompletionFile, this takes a full file path rather than a worktree path.
+func (v *TaskVerifier) parseRevisionCompletionFileAtPath(filePath string) (*RevisionCompletionFile, error) {
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}

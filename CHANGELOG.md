@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Completion File Detection in Subdirectories** - Fixed completion files not being detected when Claude instances change into a subdirectory during task execution. When Claude runs `cd project/` and then writes `.claudio-task-complete.json`, the file ends up in the subdirectory instead of the worktree root. The verifier now uses a recursive search with depth limiting (max 5 levels) and directory skipping (node_modules, vendor, .git, Pods, etc.) to find completion files in subdirectories. Also updated all completion protocol prompts to emphasize that the file must be written at the worktree root.
 - **Ultraplan Nested Plan JSON Parsing** - Fixed `ParsePlanFromFile` failing with "plan contains no tasks" when the plan JSON has a nested `{"plan": {...}}` wrapper structure. Claude generating plans via `PlanManagerPromptTemplate` sometimes wraps the plan in a `plan` object. The parser now supports both formats: root-level (`{"summary": "...", "tasks": [...]}`) and nested (`{"plan": {"summary": "...", "tasks": [...]}}`). Also added support for alternative field names (`depends` as alias for `depends_on`, `complexity` as alias for `est_complexity`) that Claude may generate. Additionally, updated `PlanManagerPromptTemplate` to include the explicit JSON schema with a note to NOT wrap in a "plan" object, preventing the issue from occurring in future plan generations.
 
 ### Changed
