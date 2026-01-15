@@ -1136,6 +1136,8 @@ func (c *Coordinator) buildTaskPrompt(task *PlannedTask) string {
 	// Add completion protocol instructions
 	sb.WriteString("## Completion Protocol\n\n")
 	sb.WriteString("When your task is complete, you MUST write a completion file to signal the orchestrator:\n\n")
+	sb.WriteString("**CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.\n")
+	sb.WriteString("If you changed directories during the task (e.g., `cd project/`), use an absolute path or navigate back to the root first.\n\n")
 	sb.WriteString(fmt.Sprintf("1. Use Write tool to create `%s` in your worktree root\n", TaskCompletionFileName))
 	sb.WriteString("2. Include this JSON structure:\n")
 	sb.WriteString("```json\n")
@@ -3816,6 +3818,8 @@ func (c *Coordinator) buildGroupConsolidatorPrompt(groupIndex int) string {
 
 	// Completion protocol
 	sb.WriteString("## Completion Protocol\n\n")
+	sb.WriteString("**CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.\n")
+	sb.WriteString("If you changed directories during the task, use an absolute path or navigate back to the root first.\n\n")
 	sb.WriteString(fmt.Sprintf("When consolidation is complete, write `%s` in your worktree root:\n\n", GroupConsolidationCompletionFileName))
 	sb.WriteString("```json\n")
 	sb.WriteString("{\n")
