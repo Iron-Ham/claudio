@@ -1292,18 +1292,13 @@ func (v *UltraplanView) getPhaseSectionStatus(phase orchestrator.UltraPlanPhase,
 	}
 }
 
-// findInstanceIDForTask finds the instance ID associated with a task
+// findInstanceIDForTask finds the instance ID associated with a task.
+// It uses the authoritative TaskToInstance map which tracks currently running tasks.
+// Completed or pending tasks won't have entries (and shouldn't be highlighted as selected).
 func (v *UltraplanView) findInstanceIDForTask(session *orchestrator.UltraPlanSession, taskID string) string {
 	if instID, ok := session.TaskToInstance[taskID]; ok && instID != "" {
 		return instID
 	}
-
-	for _, inst := range v.ctx.Session.Instances {
-		if strings.Contains(inst.Task, taskID) {
-			return inst.ID
-		}
-	}
-
 	return ""
 }
 

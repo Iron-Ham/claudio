@@ -737,3 +737,70 @@ func TestInlineContentCollapseIcon(t *testing.T) {
 		})
 	}
 }
+
+// TestFindInstanceIDForTask tests the instance ID lookup for tasks.
+// This test verifies that only the authoritative TaskToInstance map is used,
+// avoiding incorrect matches from substring searches in instance Task fields
+// (which could match consolidator prompts that contain task IDs).
+func TestFindInstanceIDForTask(t *testing.T) {
+	tests := []struct {
+		name           string
+		taskToInstance map[string]string
+		taskID         string
+		wantInstID     string
+	}{
+		{
+			name:           "task with running instance",
+			taskToInstance: map[string]string{"task-1": "inst-abc"},
+			taskID:         "task-1",
+			wantInstID:     "inst-abc",
+		},
+		{
+			name:           "completed task - no instance mapping",
+			taskToInstance: map[string]string{},
+			taskID:         "task-1",
+			wantInstID:     "", // Completed tasks shouldn't have instance mappings
+		},
+		{
+			name:           "task with empty instance ID",
+			taskToInstance: map[string]string{"task-1": ""},
+			taskID:         "task-1",
+			wantInstID:     "",
+		},
+		{
+			name:           "different task running",
+			taskToInstance: map[string]string{"task-2": "inst-xyz"},
+			taskID:         "task-1",
+			wantInstID:     "", // task-1 is not in the map
+		},
+		{
+			name: "multiple tasks running",
+			taskToInstance: map[string]string{
+				"task-1": "inst-aaa",
+				"task-2": "inst-bbb",
+				"task-3": "inst-ccc",
+			},
+			taskID:     "task-2",
+			wantInstID: "inst-bbb",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &orchestrator.UltraPlanSession{
+				TaskToInstance: tt.taskToInstance,
+			}
+
+			v := &UltraplanView{
+				ctx: &RenderContext{
+					Session: &orchestrator.Session{},
+				},
+			}
+
+			got := v.findInstanceIDForTask(session, tt.taskID)
+			if got != tt.wantInstID {
+				t.Errorf("findInstanceIDForTask() = %q, want %q", got, tt.wantInstID)
+			}
+		})
+	}
+}
