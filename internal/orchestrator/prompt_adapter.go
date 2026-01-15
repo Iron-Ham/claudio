@@ -579,3 +579,49 @@ func (a *PromptAdapter) BuildRevisionContext(taskID string) (*prompt.Context, er
 
 	return ctx, nil
 }
+
+// BuildConsolidationContext creates a prompt.Context configured for the consolidation phase.
+// It populates the context with plan info, consolidation info (including main branch configuration),
+// and previous group context strings from earlier consolidation outputs.
+//
+// The mainBranch parameter specifies the repository's primary branch (e.g., "main" or "master")
+// and is included in the ConsolidationInfo for branch management during consolidation.
+//
+// Returns an error if the adapter has no coordinator, no manager, no session,
+// or if the resulting context fails validation.
+func (a *PromptAdapter) BuildConsolidationContext(mainBranch string) (*prompt.Context, error) {
+	if a.coordinator == nil {
+		return nil, ErrNilCoordinator
+	}
+
+	manager := a.coordinator.manager
+	if manager == nil {
+		return nil, ErrNilManager
+	}
+
+	session := manager.Session()
+	if session == nil {
+		return nil, ErrNilSession
+	}
+
+	ctx := &prompt.Context{
+		Phase:     prompt.PhaseConsolidation,
+		SessionID: session.ID,
+		Objective: session.Objective,
+	}
+
+	// Populate Plan using planInfoFromPlanSpec
+	ctx.Plan = planInfoFromPlanSpec(session.Plan)
+
+	// Populate Consolidation using consolidationInfoFromSession with mainBranch
+	ctx.Consolidation = consolidationInfoFromSession(session, mainBranch)
+
+	// Populate PreviousGroupContext strings from GroupConsolidationContexts
+	ctx.PreviousGroupContext = buildPreviousGroupContextStrings(session.GroupConsolidationContexts)
+
+	if err := ctx.Validate(); err != nil {
+		return nil, err
+	}
+
+	return ctx, nil
+}

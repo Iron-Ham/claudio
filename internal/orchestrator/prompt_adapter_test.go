@@ -2092,6 +2092,284 @@ func createTestGroupTracker(session *UltraPlanSession) *group.Tracker {
 	return group.NewTracker(sessionAdapter)
 }
 
+func TestBuildConsolidationContext(t *testing.T) {
+	t.Run("nil coordinator returns error", func(t *testing.T) {
+		adapter := NewPromptAdapter(nil)
+		ctx, err := adapter.BuildConsolidationContext("main")
+		if err != ErrNilCoordinator {
+			t.Errorf("BuildConsolidationContext() error = %v, want %v", err, ErrNilCoordinator)
+		}
+		if ctx != nil {
+			t.Errorf("BuildConsolidationContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("nil manager returns error", func(t *testing.T) {
+		coordinator := &Coordinator{manager: nil}
+		adapter := NewPromptAdapter(coordinator)
+		ctx, err := adapter.BuildConsolidationContext("main")
+		if err != ErrNilManager {
+			t.Errorf("BuildConsolidationContext() error = %v, want %v", err, ErrNilManager)
+		}
+		if ctx != nil {
+			t.Errorf("BuildConsolidationContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("nil session returns error", func(t *testing.T) {
+		manager := &UltraPlanManager{session: nil}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+		ctx, err := adapter.BuildConsolidationContext("main")
+		if err != ErrNilSession {
+			t.Errorf("BuildConsolidationContext() error = %v, want %v", err, ErrNilSession)
+		}
+		if ctx != nil {
+			t.Errorf("BuildConsolidationContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("validation error for empty objective", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "", // Empty objective should fail validation
+			Plan: &PlanSpec{
+				ID: "plan-1",
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildConsolidationContext("main")
+		if err == nil {
+			t.Error("BuildConsolidationContext() error = nil, want validation error")
+		}
+		if ctx != nil {
+			t.Errorf("BuildConsolidationContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("validation error for nil plan", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "Test objective",
+			Plan:      nil, // Consolidation phase requires a plan
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildConsolidationContext("main")
+		if err == nil {
+			t.Error("BuildConsolidationContext() error = nil, want validation error for missing plan")
+		}
+		if ctx != nil {
+			t.Errorf("BuildConsolidationContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("successful consolidation context creation", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-123",
+			Objective: "Implement feature X",
+			Plan: &PlanSpec{
+				ID:      "plan-456",
+				Summary: "Feature implementation plan",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1", EstComplexity: ComplexityLow},
+					{ID: "task-2", Title: "Task 2", EstComplexity: ComplexityMedium},
+				},
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+			},
+			Config: UltraPlanConfig{
+				ConsolidationMode: ModeSinglePR,
+				BranchPrefix:      "feature",
+			},
+			TaskWorktrees: []TaskWorktreeInfo{
+				{TaskID: "task-1", TaskTitle: "Task 1", Branch: "feature/task-1", WorktreePath: "/wt/1"},
+				{TaskID: "task-2", TaskTitle: "Task 2", Branch: "feature/task-2", WorktreePath: "/wt/2"},
+			},
+			TaskCommitCounts: map[string]int{
+				"task-1": 3,
+				"task-2": 1,
+			},
+			GroupConsolidationContexts: []*GroupConsolidationCompletionFile{
+				{
+					GroupIndex: 0,
+					Notes:      "Group 0 completed successfully",
+				},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildConsolidationContext("develop")
+		if err != nil {
+			t.Fatalf("BuildConsolidationContext() error = %v, want nil", err)
+		}
+
+		// Verify phase
+		if ctx.Phase != prompt.PhaseConsolidation {
+			t.Errorf("ctx.Phase = %v, want %v", ctx.Phase, prompt.PhaseConsolidation)
+		}
+
+		// Verify session info
+		if ctx.SessionID != "session-123" {
+			t.Errorf("ctx.SessionID = %q, want %q", ctx.SessionID, "session-123")
+		}
+		if ctx.Objective != "Implement feature X" {
+			t.Errorf("ctx.Objective = %q, want %q", ctx.Objective, "Implement feature X")
+		}
+
+		// Verify Plan was populated
+		if ctx.Plan == nil {
+			t.Fatal("ctx.Plan = nil, want non-nil")
+		}
+		if ctx.Plan.ID != "plan-456" {
+			t.Errorf("ctx.Plan.ID = %q, want %q", ctx.Plan.ID, "plan-456")
+		}
+		if len(ctx.Plan.Tasks) != 2 {
+			t.Errorf("ctx.Plan.Tasks length = %d, want 2", len(ctx.Plan.Tasks))
+		}
+
+		// Verify Consolidation was populated with mainBranch
+		if ctx.Consolidation == nil {
+			t.Fatal("ctx.Consolidation = nil, want non-nil")
+		}
+		if ctx.Consolidation.MainBranch != "develop" {
+			t.Errorf("ctx.Consolidation.MainBranch = %q, want %q", ctx.Consolidation.MainBranch, "develop")
+		}
+		if ctx.Consolidation.Mode != "single" {
+			t.Errorf("ctx.Consolidation.Mode = %q, want %q", ctx.Consolidation.Mode, "single")
+		}
+		if ctx.Consolidation.BranchPrefix != "feature" {
+			t.Errorf("ctx.Consolidation.BranchPrefix = %q, want %q", ctx.Consolidation.BranchPrefix, "feature")
+		}
+		if len(ctx.Consolidation.TaskWorktrees) != 2 {
+			t.Errorf("ctx.Consolidation.TaskWorktrees length = %d, want 2", len(ctx.Consolidation.TaskWorktrees))
+		}
+
+		// Verify commit counts were applied
+		if ctx.Consolidation.TaskWorktrees[0].CommitCount != 3 {
+			t.Errorf("ctx.Consolidation.TaskWorktrees[0].CommitCount = %d, want 3", ctx.Consolidation.TaskWorktrees[0].CommitCount)
+		}
+		if ctx.Consolidation.TaskWorktrees[1].CommitCount != 1 {
+			t.Errorf("ctx.Consolidation.TaskWorktrees[1].CommitCount = %d, want 1", ctx.Consolidation.TaskWorktrees[1].CommitCount)
+		}
+
+		// Verify PreviousGroupContext was populated
+		if len(ctx.PreviousGroupContext) != 1 {
+			t.Fatalf("ctx.PreviousGroupContext length = %d, want 1", len(ctx.PreviousGroupContext))
+		}
+		if ctx.PreviousGroupContext[0] != "Group 0 completed successfully" {
+			t.Errorf("ctx.PreviousGroupContext[0] = %q, want %q", ctx.PreviousGroupContext[0], "Group 0 completed successfully")
+		}
+	})
+
+	t.Run("consolidation context with empty mainBranch defaults correctly", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "Test objective",
+			Plan: &PlanSpec{
+				ID: "plan-1",
+			},
+			Config: UltraPlanConfig{},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildConsolidationContext("")
+		if err != nil {
+			t.Fatalf("BuildConsolidationContext() error = %v, want nil", err)
+		}
+
+		// consolidationInfoFromSession defaults empty mainBranch to "main"
+		if ctx.Consolidation.MainBranch != "main" {
+			t.Errorf("ctx.Consolidation.MainBranch = %q, want %q", ctx.Consolidation.MainBranch, "main")
+		}
+	})
+
+	t.Run("consolidation context with group branches and pre-consolidated branch", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "Test objective",
+			Plan: &PlanSpec{
+				ID:             "plan-1",
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2"}, {"task-3"}},
+			},
+			Config: UltraPlanConfig{
+				ConsolidationMode: ModeStackedPRs,
+				BranchPrefix:      "Iron-Ham",
+			},
+			GroupConsolidatedBranches: []string{
+				"Iron-Ham/ultraplan-abc-group-1",
+				"Iron-Ham/ultraplan-abc-group-2",
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildConsolidationContext("main")
+		if err != nil {
+			t.Fatalf("BuildConsolidationContext() error = %v, want nil", err)
+		}
+
+		// Verify group branches
+		if len(ctx.Consolidation.GroupBranches) != 2 {
+			t.Errorf("ctx.Consolidation.GroupBranches length = %d, want 2", len(ctx.Consolidation.GroupBranches))
+		}
+
+		// Verify pre-consolidated branch is the last group branch
+		if ctx.Consolidation.PreConsolidatedBranch != "Iron-Ham/ultraplan-abc-group-2" {
+			t.Errorf("ctx.Consolidation.PreConsolidatedBranch = %q, want %q", ctx.Consolidation.PreConsolidatedBranch, "Iron-Ham/ultraplan-abc-group-2")
+		}
+	})
+
+	t.Run("consolidation context with multiple group contexts", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "Test objective",
+			Plan: &PlanSpec{
+				ID: "plan-1",
+			},
+			GroupConsolidationContexts: []*GroupConsolidationCompletionFile{
+				{
+					GroupIndex: 0,
+					Notes:      "Group 0 notes",
+				},
+				{
+					GroupIndex:         1,
+					Notes:              "Group 1 notes",
+					IssuesForNextGroup: []string{"Issue A", "Issue B"},
+				},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildConsolidationContext("main")
+		if err != nil {
+			t.Fatalf("BuildConsolidationContext() error = %v, want nil", err)
+		}
+
+		if len(ctx.PreviousGroupContext) != 2 {
+			t.Fatalf("ctx.PreviousGroupContext length = %d, want 2", len(ctx.PreviousGroupContext))
+		}
+
+		if ctx.PreviousGroupContext[0] != "Group 0 notes" {
+			t.Errorf("ctx.PreviousGroupContext[0] = %q, want %q", ctx.PreviousGroupContext[0], "Group 0 notes")
+		}
+		if ctx.PreviousGroupContext[1] != "Group 1 notes | Issues: Issue A; Issue B" {
+			t.Errorf("ctx.PreviousGroupContext[1] = %q, want %q", ctx.PreviousGroupContext[1], "Group 1 notes | Issues: Issue A; Issue B")
+		}
+	})
+}
+
 func TestBuildSynthesisContext(t *testing.T) {
 	t.Run("nil coordinator returns error", func(t *testing.T) {
 		adapter := NewPromptAdapter(nil)
