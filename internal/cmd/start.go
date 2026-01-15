@@ -441,9 +441,7 @@ func resumeUltraplanSession(orch *orchestrator.Orchestrator, sess *orchestrator.
 		}
 
 	case orchestrator.PhaseSynthesis:
-		if ultraSession.SynthesisAwaitingApproval {
-			fmt.Println("Synthesis complete, awaiting approval...")
-		} else if ultraSession.SynthesisID != "" && orch.GetInstance(ultraSession.SynthesisID) != nil {
+		if ultraSession.SynthesisID != "" && orch.GetInstance(ultraSession.SynthesisID) != nil {
 			fmt.Println("Synthesis in progress...")
 		} else {
 			fmt.Println("Restarting synthesis...")

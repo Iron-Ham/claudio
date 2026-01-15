@@ -430,7 +430,7 @@ func (v *UltraplanView) RenderSidebar(width int, height int) string {
 			b.WriteString("\n")
 			lineCount++
 
-			if session.SynthesisAwaitingApproval && session.SynthesisCompletion != nil && lineCount < availableLines {
+			if session.SynthesisCompletion != nil && lineCount < availableLines {
 				issueCount := len(session.SynthesisCompletion.IssuesFound)
 				if issueCount > 0 {
 					issueText := fmt.Sprintf("  ⚠ %d issue(s) found", issueCount)
@@ -438,10 +438,6 @@ func (v *UltraplanView) RenderSidebar(width int, height int) string {
 				} else {
 					b.WriteString(styles.SuccessMsg.Render("  ✓ No issues found"))
 				}
-				b.WriteString("\n")
-				lineCount++
-
-				b.WriteString(styles.Warning.Render("  Press [s] to approve"))
 				b.WriteString("\n")
 				lineCount++
 			}
@@ -1577,11 +1573,7 @@ func (v *UltraplanView) RenderHelp() string {
 		keys = append(keys, "[v] toggle plan view")
 		keys = append(keys, "[g] group nav")
 		keys = append(keys, "[:restart] restart synthesis")
-		if session.SynthesisAwaitingApproval {
-			keys = append(keys, "[s] approve → proceed")
-		} else {
-			keys = append(keys, "[s] skip → consolidate")
-		}
+		keys = append(keys, "[s] skip → consolidate")
 
 	case orchestrator.PhaseRevision:
 		keys = append(keys, "[tab] next instance")

@@ -713,8 +713,8 @@ func (s *SynthesisOrchestrator) monitorSynthesisInstance(instanceID string) {
 			// Check for sentinel file first - this is the most reliable completion signal
 			// The synthesis agent writes .claudio-synthesis-complete.json when done
 			if s.checkForSynthesisCompletionFile(inst) {
-				// Don't auto-advance - set flag and wait for user approval
-				s.onSynthesisReady()
+				// Auto-advance to consolidation or revision
+				s.onSynthesisComplete()
 				return
 			}
 
@@ -780,34 +780,8 @@ func (s *SynthesisOrchestrator) parseSynthesisCompletionFile(worktreePath string
 	return &completion, nil
 }
 
-// onSynthesisReady is called when synthesis writes its completion file.
-// Instead of auto-advancing, it sets a flag and waits for user approval.
-func (s *SynthesisOrchestrator) onSynthesisReady() {
-	// Parse and store synthesis completion data
-	synthesisCompletion, issues := s.parseRevisionIssues()
-
-	s.mu.Lock()
-	if synthesisCompletion != nil {
-		s.setCompletionFile(synthesisCompletion)
-		s.phaseCtx.Session.SetSynthesisCompletion(synthesisCompletion)
-	}
-	if issues != nil {
-		s.state.IssuesFound = issues
-	}
-	s.state.AwaitingApproval = true
-	s.phaseCtx.Session.SetSynthesisAwaitingApproval(true)
-	s.mu.Unlock()
-
-	// Save session state
-	_ = s.phaseCtx.Orchestrator.SaveSession()
-
-	// Notify that user input is needed (but don't advance)
-	s.notifyPhaseChange(PhaseSynthesis)
-}
-
 // onSynthesisComplete handles synthesis completion and triggers revision or consolidation.
-// This is called when the synthesis instance completes without awaiting approval
-// (e.g., when the instance finishes and disappears).
+// This is called when the synthesis instance writes its completion file or finishes.
 func (s *SynthesisOrchestrator) onSynthesisComplete() {
 	// Try to parse synthesis completion from sentinel file (preferred) or stdout (fallback)
 	synthesisCompletion, issues := s.parseRevisionIssues()

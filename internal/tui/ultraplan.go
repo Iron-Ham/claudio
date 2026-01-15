@@ -676,15 +676,14 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 		return true, m, nil
 
 	case "s":
-		// Signal synthesis is done, proceed to consolidation
+		// Skip synthesis and proceed directly to consolidation
 		if session.Phase == orchestrator.PhaseSynthesis {
 			if err := m.ultraPlan.Coordinator.TriggerConsolidation(); err != nil {
 				m.errorMessage = fmt.Sprintf("Failed to proceed: %v", err)
 			} else {
-				m.infoMessage = "Proceeding to consolidation..."
-				// Log synthesis approval
+				m.infoMessage = "Skipping synthesis, proceeding to consolidation..."
 				if m.logger != nil {
-					m.logger.Info("user approved synthesis")
+					m.logger.Info("user skipped synthesis")
 				}
 			}
 		}

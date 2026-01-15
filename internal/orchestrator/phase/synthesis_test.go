@@ -2442,39 +2442,6 @@ func TestSynthesisOrchestrator_SendRevisionCompletion(t *testing.T) {
 	})
 }
 
-// Tests for onSynthesisReady
-
-func TestSynthesisOrchestrator_OnSynthesisReady(t *testing.T) {
-	t.Run("sets awaiting approval flag", func(t *testing.T) {
-		mockSession := &mockSession{
-			synthesisID: "synth-1",
-		}
-		mockInst := &mockInstanceForSynthesis{
-			id:           "synth-1",
-			worktreePath: "/tmp/test",
-		}
-		mockOrch := &mockOrchestratorForSynthesis{
-			addedInstance: mockInst,
-		}
-
-		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
-			Manager:      &mockManager{},
-			Orchestrator: mockOrch,
-			Session:      mockSession,
-		})
-
-		synth.onSynthesisReady()
-
-		if !synth.IsAwaitingApproval() {
-			t.Error("onSynthesisReady() should set awaiting approval flag")
-		}
-
-		if !mockSession.awaitingApproval {
-			t.Error("onSynthesisReady() should update session's awaiting approval flag")
-		}
-	})
-}
-
 // Tests for onRevisionComplete
 
 func TestSynthesisOrchestrator_OnRevisionComplete(t *testing.T) {
