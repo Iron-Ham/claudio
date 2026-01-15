@@ -2248,3 +2248,400 @@ func TestBuildSynthesisContext(t *testing.T) {
 		}
 	})
 }
+
+func TestFindTaskByID(t *testing.T) {
+	tests := []struct {
+		name   string
+		plan   *PlanSpec
+		taskID string
+		want   *PlannedTask
+	}{
+		{
+			name:   "nil plan returns nil",
+			plan:   nil,
+			taskID: "task-1",
+			want:   nil,
+		},
+		{
+			name: "empty task ID returns nil",
+			plan: &PlanSpec{
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1"},
+				},
+			},
+			taskID: "",
+			want:   nil,
+		},
+		{
+			name: "task not found returns nil",
+			plan: &PlanSpec{
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1"},
+					{ID: "task-2", Title: "Task 2"},
+				},
+			},
+			taskID: "task-3",
+			want:   nil,
+		},
+		{
+			name: "find first task",
+			plan: &PlanSpec{
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1", Description: "First task"},
+					{ID: "task-2", Title: "Task 2", Description: "Second task"},
+				},
+			},
+			taskID: "task-1",
+			want:   &PlannedTask{ID: "task-1", Title: "Task 1", Description: "First task"},
+		},
+		{
+			name: "find last task",
+			plan: &PlanSpec{
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1"},
+					{ID: "task-2", Title: "Task 2"},
+					{ID: "task-3", Title: "Task 3", EstComplexity: ComplexityHigh},
+				},
+			},
+			taskID: "task-3",
+			want:   &PlannedTask{ID: "task-3", Title: "Task 3", EstComplexity: ComplexityHigh},
+		},
+		{
+			name: "empty tasks slice returns nil",
+			plan: &PlanSpec{
+				Tasks: []PlannedTask{},
+			},
+			taskID: "task-1",
+			want:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := findTaskByID(tt.plan, tt.taskID)
+
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("findTaskByID() = %v, want nil", got)
+				}
+				return
+			}
+
+			if got == nil {
+				t.Fatal("findTaskByID() = nil, want non-nil")
+			}
+
+			if got.ID != tt.want.ID {
+				t.Errorf("findTaskByID().ID = %q, want %q", got.ID, tt.want.ID)
+			}
+			if got.Title != tt.want.Title {
+				t.Errorf("findTaskByID().Title = %q, want %q", got.Title, tt.want.Title)
+			}
+		})
+	}
+}
+
+func TestBuildRevisionContext(t *testing.T) {
+	t.Run("nil coordinator returns error", func(t *testing.T) {
+		adapter := NewPromptAdapter(nil)
+		ctx, err := adapter.BuildRevisionContext("task-1")
+		if err != ErrNilCoordinator {
+			t.Errorf("BuildRevisionContext() error = %v, want %v", err, ErrNilCoordinator)
+		}
+		if ctx != nil {
+			t.Errorf("BuildRevisionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("nil manager returns error", func(t *testing.T) {
+		coordinator := &Coordinator{manager: nil}
+		adapter := NewPromptAdapter(coordinator)
+		ctx, err := adapter.BuildRevisionContext("task-1")
+		if err != ErrNilManager {
+			t.Errorf("BuildRevisionContext() error = %v, want %v", err, ErrNilManager)
+		}
+		if ctx != nil {
+			t.Errorf("BuildRevisionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("nil session returns error", func(t *testing.T) {
+		manager := &UltraPlanManager{session: nil}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+		ctx, err := adapter.BuildRevisionContext("task-1")
+		if err != ErrNilSession {
+			t.Errorf("BuildRevisionContext() error = %v, want %v", err, ErrNilSession)
+		}
+		if ctx != nil {
+			t.Errorf("BuildRevisionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("task not found returns error", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "Test objective",
+			Plan: &PlanSpec{
+				ID: "plan-1",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1"},
+				},
+			},
+			Revision: &RevisionState{
+				RevisionRound: 1,
+				MaxRevisions:  3,
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildRevisionContext("nonexistent-task")
+		if _, ok := err.(ErrTaskNotFound); !ok {
+			t.Errorf("BuildRevisionContext() error = %T, want ErrTaskNotFound", err)
+		}
+		if ctx != nil {
+			t.Errorf("BuildRevisionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("validation error for empty objective", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "", // Empty objective should fail validation
+			Plan: &PlanSpec{
+				ID: "plan-1",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1"},
+				},
+			},
+			Revision: &RevisionState{
+				RevisionRound: 1,
+				MaxRevisions:  3,
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildRevisionContext("task-1")
+		if err == nil {
+			t.Error("BuildRevisionContext() error = nil, want validation error")
+		}
+		if ctx != nil {
+			t.Errorf("BuildRevisionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("validation error for missing revision state", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "Test objective",
+			Plan: &PlanSpec{
+				ID: "plan-1",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1"},
+				},
+			},
+			Revision: nil, // Missing revision state
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildRevisionContext("task-1")
+		if err == nil {
+			t.Error("BuildRevisionContext() error = nil, want validation error for missing revision")
+		}
+		if ctx != nil {
+			t.Errorf("BuildRevisionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("successful revision context creation", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-123",
+			Objective: "Implement feature X",
+			Plan: &PlanSpec{
+				ID:      "plan-456",
+				Summary: "Feature implementation plan",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1", Description: "First task", EstComplexity: ComplexityLow},
+					{ID: "task-2", Title: "Task 2", Description: "Second task", EstComplexity: ComplexityMedium},
+				},
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+			},
+			Revision: &RevisionState{
+				RevisionRound: 2,
+				MaxRevisions:  5,
+				Issues: []RevisionIssue{
+					{
+						TaskID:      "task-1",
+						Description: "Tests failing",
+						Files:       []string{"task1.go"},
+						Severity:    "critical",
+						Suggestion:  "Fix the assertions",
+					},
+				},
+				TasksToRevise: []string{"task-1"},
+				RevisedTasks:  []string{},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildRevisionContext("task-1")
+		if err != nil {
+			t.Fatalf("BuildRevisionContext() error = %v, want nil", err)
+		}
+
+		// Check phase
+		if ctx.Phase != prompt.PhaseRevision {
+			t.Errorf("ctx.Phase = %v, want %v", ctx.Phase, prompt.PhaseRevision)
+		}
+
+		// Check session info
+		if ctx.SessionID != "session-123" {
+			t.Errorf("ctx.SessionID = %q, want %q", ctx.SessionID, "session-123")
+		}
+		if ctx.Objective != "Implement feature X" {
+			t.Errorf("ctx.Objective = %q, want %q", ctx.Objective, "Implement feature X")
+		}
+
+		// Check plan
+		if ctx.Plan == nil {
+			t.Fatal("ctx.Plan = nil, want non-nil")
+		}
+		if ctx.Plan.ID != "plan-456" {
+			t.Errorf("ctx.Plan.ID = %q, want %q", ctx.Plan.ID, "plan-456")
+		}
+
+		// Check task
+		if ctx.Task == nil {
+			t.Fatal("ctx.Task = nil, want non-nil")
+		}
+		if ctx.Task.ID != "task-1" {
+			t.Errorf("ctx.Task.ID = %q, want %q", ctx.Task.ID, "task-1")
+		}
+		if ctx.Task.Title != "Task 1" {
+			t.Errorf("ctx.Task.Title = %q, want %q", ctx.Task.Title, "Task 1")
+		}
+
+		// Check revision info
+		if ctx.Revision == nil {
+			t.Fatal("ctx.Revision = nil, want non-nil")
+		}
+		if ctx.Revision.Round != 2 {
+			t.Errorf("ctx.Revision.Round = %d, want 2", ctx.Revision.Round)
+		}
+		if ctx.Revision.MaxRounds != 5 {
+			t.Errorf("ctx.Revision.MaxRounds = %d, want 5", ctx.Revision.MaxRounds)
+		}
+		if len(ctx.Revision.Issues) != 1 {
+			t.Fatalf("ctx.Revision.Issues length = %d, want 1", len(ctx.Revision.Issues))
+		}
+		if ctx.Revision.Issues[0].Description != "Tests failing" {
+			t.Errorf("ctx.Revision.Issues[0].Description = %q, want %q", ctx.Revision.Issues[0].Description, "Tests failing")
+		}
+
+		// Check synthesis is nil when not set
+		if ctx.Synthesis != nil {
+			t.Errorf("ctx.Synthesis = %v, want nil", ctx.Synthesis)
+		}
+	})
+
+	t.Run("revision context with synthesis completion", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-123",
+			Objective: "Implement feature X",
+			Plan: &PlanSpec{
+				ID: "plan-456",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1"},
+				},
+			},
+			Revision: &RevisionState{
+				RevisionRound: 1,
+				MaxRevisions:  3,
+			},
+			SynthesisCompletion: &SynthesisCompletionFile{
+				Status:           "needs_revision",
+				IntegrationNotes: "Tasks need fixes",
+				Recommendations:  []string{"Fix tests first"},
+				IssuesFound: []RevisionIssue{
+					{Description: "Build failing"},
+				},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildRevisionContext("task-1")
+		if err != nil {
+			t.Fatalf("BuildRevisionContext() error = %v, want nil", err)
+		}
+
+		// Check synthesis info is populated
+		if ctx.Synthesis == nil {
+			t.Fatal("ctx.Synthesis = nil, want non-nil")
+		}
+		if len(ctx.Synthesis.Notes) != 1 || ctx.Synthesis.Notes[0] != "Tasks need fixes" {
+			t.Errorf("ctx.Synthesis.Notes = %v, want [Tasks need fixes]", ctx.Synthesis.Notes)
+		}
+		if len(ctx.Synthesis.Recommendations) != 1 || ctx.Synthesis.Recommendations[0] != "Fix tests first" {
+			t.Errorf("ctx.Synthesis.Recommendations = %v, want [Fix tests first]", ctx.Synthesis.Recommendations)
+		}
+		if len(ctx.Synthesis.Issues) != 1 || ctx.Synthesis.Issues[0] != "Build failing" {
+			t.Errorf("ctx.Synthesis.Issues = %v, want [Build failing]", ctx.Synthesis.Issues)
+		}
+	})
+
+	t.Run("finding different tasks", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-123",
+			Objective: "Test multiple tasks",
+			Plan: &PlanSpec{
+				ID: "plan-456",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Task 1", Description: "First"},
+					{ID: "task-2", Title: "Task 2", Description: "Second"},
+					{ID: "task-3", Title: "Task 3", Description: "Third"},
+				},
+			},
+			Revision: &RevisionState{
+				RevisionRound: 1,
+				MaxRevisions:  3,
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		// Test finding task-2
+		ctx, err := adapter.BuildRevisionContext("task-2")
+		if err != nil {
+			t.Fatalf("BuildRevisionContext(task-2) error = %v, want nil", err)
+		}
+		if ctx.Task.ID != "task-2" {
+			t.Errorf("ctx.Task.ID = %q, want %q", ctx.Task.ID, "task-2")
+		}
+		if ctx.Task.Description != "Second" {
+			t.Errorf("ctx.Task.Description = %q, want %q", ctx.Task.Description, "Second")
+		}
+
+		// Test finding task-3
+		ctx, err = adapter.BuildRevisionContext("task-3")
+		if err != nil {
+			t.Fatalf("BuildRevisionContext(task-3) error = %v, want nil", err)
+		}
+		if ctx.Task.ID != "task-3" {
+			t.Errorf("ctx.Task.ID = %q, want %q", ctx.Task.ID, "task-3")
+		}
+		if ctx.Task.Description != "Third" {
+			t.Errorf("ctx.Task.Description = %q, want %q", ctx.Task.Description, "Third")
+		}
+	})
+}

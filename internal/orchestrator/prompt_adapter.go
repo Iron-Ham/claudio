@@ -509,3 +509,73 @@ func (a *PromptAdapter) BuildTaskContext(taskID string) (*prompt.Context, error)
 
 	return ctx, nil
 }
+
+// findTaskByID searches for a PlannedTask by its ID in the given plan.
+// Returns nil if the plan is nil or the task is not found.
+func findTaskByID(plan *PlanSpec, taskID string) *PlannedTask {
+	if plan == nil || taskID == "" {
+		return nil
+	}
+
+	for i := range plan.Tasks {
+		if plan.Tasks[i].ID == taskID {
+			return &plan.Tasks[i]
+		}
+	}
+	return nil
+}
+
+// BuildRevisionContext creates a prompt.Context configured for the revision phase.
+// It populates the context with plan info, task info for the specific task being revised,
+// revision state, and optionally synthesis info if available from a prior synthesis.
+//
+// Parameters:
+//   - taskID: The ID of the task being revised
+//
+// Returns an error if the adapter has no coordinator, no manager, no session,
+// the task is not found in the plan, or if the resulting context fails validation.
+func (a *PromptAdapter) BuildRevisionContext(taskID string) (*prompt.Context, error) {
+	if a.coordinator == nil {
+		return nil, ErrNilCoordinator
+	}
+
+	manager := a.coordinator.manager
+	if manager == nil {
+		return nil, ErrNilManager
+	}
+
+	session := manager.Session()
+	if session == nil {
+		return nil, ErrNilSession
+	}
+
+	// Build the base context with common fields
+	ctx := &prompt.Context{
+		Phase:     prompt.PhaseRevision,
+		SessionID: session.ID,
+		Objective: session.Objective,
+	}
+
+	// Populate Plan using planInfoFromPlanSpec
+	ctx.Plan = planInfoFromPlanSpec(session.Plan)
+
+	// Find and populate Task for the specific task being revised
+	task := findTaskByID(session.Plan, taskID)
+	if task == nil {
+		return nil, ErrTaskNotFound{TaskID: taskID}
+	}
+	taskInfo := taskInfoFromPlannedTask(*task)
+	ctx.Task = &taskInfo
+
+	// Populate Revision using revisionInfoFromState
+	ctx.Revision = revisionInfoFromState(session.Revision)
+
+	// Populate Synthesis from SynthesisCompletion if available
+	ctx.Synthesis = synthesisInfoFromCompletion(session.SynthesisCompletion)
+
+	if err := ctx.Validate(); err != nil {
+		return nil, err
+	}
+
+	return ctx, nil
+}
