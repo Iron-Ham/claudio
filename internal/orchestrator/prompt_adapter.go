@@ -226,3 +226,28 @@ func taskWorktreeInfoFromOrchestrator(tw TaskWorktreeInfo, commitCounts map[stri
 		CommitCount:  commitCount,
 	}
 }
+
+// candidatePlanInfoFromPlanSpec converts a PlanSpec to a prompt.CandidatePlanInfo for
+// multi-pass planning. The strategyIndex parameter identifies which planning strategy
+// produced this plan (0=maximize-parallelism, 1=minimize-complexity, 2=balanced-approach).
+// This enables the plan selection phase to compare plans from different strategic perspectives.
+func candidatePlanInfoFromPlanSpec(spec *PlanSpec, strategyIndex int) prompt.CandidatePlanInfo {
+	if spec == nil {
+		return prompt.CandidatePlanInfo{}
+	}
+
+	// Map strategy index to strategy name from MultiPassPlanningPrompts
+	var strategy string
+	if strategyIndex >= 0 && strategyIndex < len(MultiPassPlanningPrompts) {
+		strategy = MultiPassPlanningPrompts[strategyIndex].Strategy
+	}
+
+	return prompt.CandidatePlanInfo{
+		Strategy:       strategy,
+		Summary:        spec.Summary,
+		Tasks:          tasksFromPlanSpec(spec.Tasks),
+		ExecutionOrder: spec.ExecutionOrder,
+		Insights:       spec.Insights,
+		Constraints:    spec.Constraints,
+	}
+}

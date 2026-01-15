@@ -1127,3 +1127,215 @@ func TestTaskWorktreeInfoFromOrchestrator(t *testing.T) {
 		})
 	}
 }
+
+func TestCandidatePlanInfoFromPlanSpec(t *testing.T) {
+	tests := []struct {
+		name          string
+		spec          *PlanSpec
+		strategyIndex int
+		want          prompt.CandidatePlanInfo
+	}{
+		{
+			name:          "nil spec returns empty CandidatePlanInfo",
+			spec:          nil,
+			strategyIndex: 0,
+			want:          prompt.CandidatePlanInfo{},
+		},
+		{
+			name:          "empty spec returns CandidatePlanInfo with strategy only",
+			spec:          &PlanSpec{},
+			strategyIndex: 0,
+			want: prompt.CandidatePlanInfo{
+				Strategy: "maximize-parallelism",
+			},
+		},
+		{
+			name: "full spec with maximize-parallelism strategy (index 0)",
+			spec: &PlanSpec{
+				Summary: "Parallel-focused plan",
+				Tasks: []PlannedTask{
+					{
+						ID:            "task-1",
+						Title:         "Independent task A",
+						Description:   "Do A",
+						EstComplexity: ComplexityLow,
+					},
+					{
+						ID:            "task-2",
+						Title:         "Independent task B",
+						Description:   "Do B",
+						EstComplexity: ComplexityLow,
+					},
+				},
+				ExecutionOrder: [][]string{{"task-1", "task-2"}},
+				Insights:       []string{"Maximized parallelism"},
+				Constraints:    []string{"No shared files"},
+			},
+			strategyIndex: 0,
+			want: prompt.CandidatePlanInfo{
+				Strategy: "maximize-parallelism",
+				Summary:  "Parallel-focused plan",
+				Tasks: []prompt.TaskInfo{
+					{
+						ID:            "task-1",
+						Title:         "Independent task A",
+						Description:   "Do A",
+						EstComplexity: "low",
+					},
+					{
+						ID:            "task-2",
+						Title:         "Independent task B",
+						Description:   "Do B",
+						EstComplexity: "low",
+					},
+				},
+				ExecutionOrder: [][]string{{"task-1", "task-2"}},
+				Insights:       []string{"Maximized parallelism"},
+				Constraints:    []string{"No shared files"},
+			},
+		},
+		{
+			name: "spec with minimize-complexity strategy (index 1)",
+			spec: &PlanSpec{
+				Summary: "Simple sequential plan",
+				Tasks: []PlannedTask{
+					{
+						ID:            "task-1",
+						Title:         "First step",
+						DependsOn:     []string{},
+						EstComplexity: ComplexityLow,
+					},
+					{
+						ID:            "task-2",
+						Title:         "Second step",
+						DependsOn:     []string{"task-1"},
+						EstComplexity: ComplexityLow,
+					},
+				},
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+				Insights:       []string{"Clear linear flow"},
+				Constraints:    []string{},
+			},
+			strategyIndex: 1,
+			want: prompt.CandidatePlanInfo{
+				Strategy: "minimize-complexity",
+				Summary:  "Simple sequential plan",
+				Tasks: []prompt.TaskInfo{
+					{
+						ID:            "task-1",
+						Title:         "First step",
+						DependsOn:     []string{},
+						EstComplexity: "low",
+					},
+					{
+						ID:            "task-2",
+						Title:         "Second step",
+						DependsOn:     []string{"task-1"},
+						EstComplexity: "low",
+					},
+				},
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+				Insights:       []string{"Clear linear flow"},
+				Constraints:    []string{},
+			},
+		},
+		{
+			name: "spec with balanced-approach strategy (index 2)",
+			spec: &PlanSpec{
+				Summary: "Balanced plan",
+				Tasks: []PlannedTask{
+					{
+						ID:            "task-1",
+						Title:         "Setup",
+						EstComplexity: ComplexityMedium,
+					},
+				},
+				ExecutionOrder: [][]string{{"task-1"}},
+				Insights:       []string{"Pragmatic approach"},
+				Constraints:    []string{"Resource limits"},
+			},
+			strategyIndex: 2,
+			want: prompt.CandidatePlanInfo{
+				Strategy: "balanced-approach",
+				Summary:  "Balanced plan",
+				Tasks: []prompt.TaskInfo{
+					{
+						ID:            "task-1",
+						Title:         "Setup",
+						EstComplexity: "medium",
+					},
+				},
+				ExecutionOrder: [][]string{{"task-1"}},
+				Insights:       []string{"Pragmatic approach"},
+				Constraints:    []string{"Resource limits"},
+			},
+		},
+		{
+			name: "negative strategy index results in empty strategy",
+			spec: &PlanSpec{
+				Summary: "Test plan",
+			},
+			strategyIndex: -1,
+			want: prompt.CandidatePlanInfo{
+				Strategy: "",
+				Summary:  "Test plan",
+			},
+		},
+		{
+			name: "out of bounds strategy index results in empty strategy",
+			spec: &PlanSpec{
+				Summary: "Test plan",
+			},
+			strategyIndex: 100,
+			want: prompt.CandidatePlanInfo{
+				Strategy: "",
+				Summary:  "Test plan",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := candidatePlanInfoFromPlanSpec(tt.spec, tt.strategyIndex)
+
+			if got.Strategy != tt.want.Strategy {
+				t.Errorf("candidatePlanInfoFromPlanSpec().Strategy = %q, want %q", got.Strategy, tt.want.Strategy)
+			}
+			if got.Summary != tt.want.Summary {
+				t.Errorf("candidatePlanInfoFromPlanSpec().Summary = %q, want %q", got.Summary, tt.want.Summary)
+			}
+
+			// Check tasks length
+			if len(got.Tasks) != len(tt.want.Tasks) {
+				t.Errorf("candidatePlanInfoFromPlanSpec().Tasks length = %d, want %d", len(got.Tasks), len(tt.want.Tasks))
+			} else {
+				for i := range got.Tasks {
+					if got.Tasks[i].ID != tt.want.Tasks[i].ID {
+						t.Errorf("candidatePlanInfoFromPlanSpec().Tasks[%d].ID = %q, want %q", i, got.Tasks[i].ID, tt.want.Tasks[i].ID)
+					}
+					if got.Tasks[i].Title != tt.want.Tasks[i].Title {
+						t.Errorf("candidatePlanInfoFromPlanSpec().Tasks[%d].Title = %q, want %q", i, got.Tasks[i].Title, tt.want.Tasks[i].Title)
+					}
+					if got.Tasks[i].EstComplexity != tt.want.Tasks[i].EstComplexity {
+						t.Errorf("candidatePlanInfoFromPlanSpec().Tasks[%d].EstComplexity = %q, want %q", i, got.Tasks[i].EstComplexity, tt.want.Tasks[i].EstComplexity)
+					}
+				}
+			}
+
+			// Check execution order
+			if len(got.ExecutionOrder) != len(tt.want.ExecutionOrder) {
+				t.Errorf("candidatePlanInfoFromPlanSpec().ExecutionOrder length = %d, want %d", len(got.ExecutionOrder), len(tt.want.ExecutionOrder))
+			}
+
+			// Check insights
+			if len(got.Insights) != len(tt.want.Insights) {
+				t.Errorf("candidatePlanInfoFromPlanSpec().Insights length = %d, want %d", len(got.Insights), len(tt.want.Insights))
+			}
+
+			// Check constraints
+			if len(got.Constraints) != len(tt.want.Constraints) {
+				t.Errorf("candidatePlanInfoFromPlanSpec().Constraints length = %d, want %d", len(got.Constraints), len(tt.want.Constraints))
+			}
+		})
+	}
+}
