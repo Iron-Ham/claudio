@@ -7,12 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+## [0.7.0] - 2026-01-14
 
-- **Mandatory Changelog Entries** - AGENTS.md now requires a changelog entry for every pull request with no exceptions. Previously allowed skipping changelog for internal refactors, test-only changes, documentation-only changes, and dependency updates.
-- **Instance Header Simplified** - Removed redundant status badge from instance detail header since task state is already displayed in the sidebar with 4-character abbreviations (WAIT, WORK, DONE, etc.)
-- **TUI Architecture Refactored** - Major restructuring of the TUI codebase: extracted `app.go` into focused packages (`msg/`, `filter/`, `update/`, `search/`, `view/`, `input/`), reducing it from ~3700 to 1369 lines (63% reduction). Added 14 new test files with comprehensive coverage. This creates a cleaner foundation for future TUI enhancements. (#443)
-- **Ultraplan Initialization Consolidated** - Extracted duplicate ultraplan initialization code from CLI (`cmd/ultraplan.go`) and TUI (`inlineplan.go`) into a shared `internal/ultraplan` package. New `Init()` and `InitWithPlan()` factory functions provide a single cohesive initialization path for all ultraplan entry points. Also consolidated `truncateString` implementations into `internal/util/strings.go` with proper Unicode and ANSI escape code handling.
+This release focuses on **Stability & Architecture** - a comprehensive effort to stabilize UltraPlan, graduate Plan Mode from experimental, and restructure the TUI codebase for maintainability.
 
 ### Added
 
@@ -24,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Plan Mode Graduated from Experimental** - The `:plan` command is now always available without any configuration. The `experimental.inline_plan` setting now only controls the `:multiplan` command, which remains experimental.
+- **Mandatory Changelog Entries** - AGENTS.md now requires a changelog entry for every pull request with no exceptions. Previously allowed skipping changelog for internal refactors, test-only changes, documentation-only changes, and dependency updates.
+- **Instance Header Simplified** - Removed redundant status badge from instance detail header since task state is already displayed in the sidebar with 4-character abbreviations (WAIT, WORK, DONE, etc.)
+- **TUI Architecture Refactored** - Major restructuring of the TUI codebase: extracted `app.go` into focused packages (`msg/`, `filter/`, `update/`, `search/`, `view/`, `input/`), reducing it from ~3700 to 1369 lines (63% reduction). Added 14 new test files with comprehensive coverage. This creates a cleaner foundation for future TUI enhancements. (#443)
+- **Ultraplan Initialization Consolidated** - Extracted duplicate ultraplan initialization code from CLI (`cmd/ultraplan.go`) and TUI (`inlineplan.go`) into a shared `internal/ultraplan` package. New `Init()` and `InitWithPlan()` factory functions provide a single cohesive initialization path for all ultraplan entry points. Also consolidated `truncateString` implementations into `internal/util/strings.go` with proper Unicode and ANSI escape code handling.
 
 ### Fixed
 
@@ -367,6 +368,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.7.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.7.0
 [0.6.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.6.0
 [0.5.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.5.1
