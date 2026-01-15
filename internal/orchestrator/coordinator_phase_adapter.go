@@ -1,6 +1,8 @@
 package orchestrator
 
 import (
+	"fmt"
+
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/phase"
 )
@@ -142,6 +144,68 @@ func (a *coordinatorOrchestratorAdapter) BranchPrefix() string {
 	return a.c.orch.BranchPrefix()
 }
 
+// GetInstance returns an instance by ID wrapped in the InstanceInterface.
+func (a *coordinatorOrchestratorAdapter) GetInstance(id string) phase.InstanceInterface {
+	if a.c == nil || a.c.orch == nil {
+		return nil
+	}
+	inst := a.c.orch.GetInstance(id)
+	if inst == nil {
+		return nil
+	}
+	return newInstanceInterfaceAdapter(inst)
+}
+
+// instanceInterfaceAdapter adapts *Instance to phase.InstanceInterface.
+type instanceInterfaceAdapter struct {
+	inst *Instance
+}
+
+// newInstanceInterfaceAdapter creates a new instance interface adapter.
+func newInstanceInterfaceAdapter(inst *Instance) *instanceInterfaceAdapter {
+	return &instanceInterfaceAdapter{inst: inst}
+}
+
+// GetID returns the instance ID.
+func (a *instanceInterfaceAdapter) GetID() string {
+	if a.inst == nil {
+		return ""
+	}
+	return a.inst.ID
+}
+
+// GetWorktreePath returns the path to the instance's worktree.
+func (a *instanceInterfaceAdapter) GetWorktreePath() string {
+	if a.inst == nil {
+		return ""
+	}
+	return a.inst.WorktreePath
+}
+
+// GetBranch returns the branch name for the instance.
+func (a *instanceInterfaceAdapter) GetBranch() string {
+	if a.inst == nil {
+		return ""
+	}
+	return a.inst.Branch
+}
+
+// GetStatus returns the current status of the instance.
+func (a *instanceInterfaceAdapter) GetStatus() phase.InstanceStatus {
+	if a.inst == nil {
+		return phase.StatusPending
+	}
+	return phase.InstanceStatus(a.inst.Status)
+}
+
+// GetFilesModified returns the list of files modified by this instance.
+func (a *instanceInterfaceAdapter) GetFilesModified() []string {
+	if a.inst == nil {
+		return nil
+	}
+	return a.inst.FilesModified
+}
+
 // coordinatorSessionAdapter adapts UltraPlanSession to phase.UltraPlanSessionInterface.
 // This provides phase executors with access to session state like task lists and group progress.
 type coordinatorSessionAdapter struct {
@@ -203,6 +267,149 @@ func (a *coordinatorSessionAdapter) Progress() float64 {
 		return 0.0
 	}
 	return a.session.Progress()
+}
+
+// GetObjective returns the original user objective for the ultra-plan.
+func (a *coordinatorSessionAdapter) GetObjective() string {
+	if a.session == nil {
+		return ""
+	}
+	return a.session.Objective
+}
+
+// GetCompletedTasks returns the list of completed task IDs.
+func (a *coordinatorSessionAdapter) GetCompletedTasks() []string {
+	if a.session == nil {
+		return nil
+	}
+	return a.session.CompletedTasks
+}
+
+// GetTaskToInstance returns the mapping of task IDs to instance IDs.
+func (a *coordinatorSessionAdapter) GetTaskToInstance() map[string]string {
+	if a.session == nil {
+		return nil
+	}
+	return a.session.TaskToInstance
+}
+
+// GetTaskCommitCounts returns the commit counts for each task.
+func (a *coordinatorSessionAdapter) GetTaskCommitCounts() map[string]int {
+	if a.session == nil {
+		return nil
+	}
+	return a.session.TaskCommitCounts
+}
+
+// GetSynthesisID returns the ID of the synthesis instance, or empty if not set.
+func (a *coordinatorSessionAdapter) GetSynthesisID() string {
+	if a.session == nil {
+		return ""
+	}
+	return a.session.SynthesisID
+}
+
+// SetSynthesisID sets the ID of the synthesis instance.
+func (a *coordinatorSessionAdapter) SetSynthesisID(id string) {
+	if a.session == nil {
+		return
+	}
+	a.session.SynthesisID = id
+}
+
+// GetRevisionRound returns the current revision round (0 for first synthesis).
+func (a *coordinatorSessionAdapter) GetRevisionRound() int {
+	if a.session == nil || a.session.Revision == nil {
+		return 0
+	}
+	return a.session.Revision.RevisionRound
+}
+
+// SetSynthesisAwaitingApproval sets whether synthesis is waiting for approval.
+func (a *coordinatorSessionAdapter) SetSynthesisAwaitingApproval(awaiting bool) {
+	if a.session == nil {
+		return
+	}
+	a.session.SynthesisAwaitingApproval = awaiting
+}
+
+// IsSynthesisAwaitingApproval returns true if synthesis is waiting for approval.
+func (a *coordinatorSessionAdapter) IsSynthesisAwaitingApproval() bool {
+	if a.session == nil {
+		return false
+	}
+	return a.session.SynthesisAwaitingApproval
+}
+
+// SetSynthesisCompletion sets the synthesis completion data.
+func (a *coordinatorSessionAdapter) SetSynthesisCompletion(completion *phase.SynthesisCompletionFile) {
+	if a.session == nil || completion == nil {
+		return
+	}
+	// Convert phase.SynthesisCompletionFile to orchestrator.SynthesisCompletionFile
+	orchCompletion := &SynthesisCompletionFile{
+		Status:           completion.Status,
+		RevisionRound:    completion.RevisionRound,
+		TasksAffected:    completion.TasksAffected,
+		IntegrationNotes: completion.IntegrationNotes,
+		Recommendations:  completion.Recommendations,
+	}
+	// Convert issues
+	for _, issue := range completion.IssuesFound {
+		orchCompletion.IssuesFound = append(orchCompletion.IssuesFound, RevisionIssue{
+			TaskID:      issue.TaskID,
+			Description: issue.Description,
+			Files:       issue.Files,
+			Severity:    issue.Severity,
+			Suggestion:  issue.Suggestion,
+		})
+	}
+	a.session.SynthesisCompletion = orchCompletion
+}
+
+// GetPhase returns the current phase of the ultra-plan.
+func (a *coordinatorSessionAdapter) GetPhase() phase.UltraPlanPhase {
+	if a.session == nil {
+		return phase.PhasePlanning
+	}
+	return phase.UltraPlanPhase(a.session.Phase)
+}
+
+// SetPhase sets the current phase of the ultra-plan.
+func (a *coordinatorSessionAdapter) SetPhase(p phase.UltraPlanPhase) {
+	if a.session == nil {
+		return
+	}
+	a.session.Phase = UltraPlanPhase(p)
+}
+
+// SetError sets an error message on the session.
+func (a *coordinatorSessionAdapter) SetError(err string) {
+	if a.session == nil {
+		return
+	}
+	a.session.Error = err
+}
+
+// GetConfig returns the ultra-plan configuration.
+func (a *coordinatorSessionAdapter) GetConfig() phase.UltraPlanConfigInterface {
+	if a.session == nil {
+		return nil
+	}
+	return &configAdapter{config: &a.session.Config}
+}
+
+// configAdapter adapts UltraPlanConfig to phase.UltraPlanConfigInterface.
+type configAdapter struct {
+	config *UltraPlanConfig
+}
+
+// IsMultiPass returns true if multi-pass planning is enabled.
+func (a *configAdapter) IsMultiPass() bool {
+	if a.config == nil {
+		return false
+	}
+	return a.config.MultiPass
 }
 
 // coordinatorCallbacksAdapter adapts CoordinatorCallbacks to phase.CoordinatorCallbacksInterface.
@@ -517,4 +724,146 @@ func (c *Coordinator) SyncRetryState() {
 		return
 	}
 	c.syncRetryState()
+}
+
+// initializeOrchestrators creates the phase orchestrators if they haven't been created yet.
+// This uses lazy initialization because BuildPhaseContext depends on the coordinator
+// being fully constructed, which isn't the case during NewCoordinator.
+// This method is thread-safe and idempotent.
+func (c *Coordinator) initializeOrchestrators() error {
+	if c == nil {
+		return ErrNilCoordinator
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Check if already initialized (any one being non-nil means they're all initialized)
+	if c.planningOrchestrator != nil {
+		return nil
+	}
+
+	// Build the shared PhaseContext
+	phaseCtx, err := c.buildPhaseContextLocked()
+	if err != nil {
+		return err
+	}
+
+	// Create the planning orchestrator
+	c.planningOrchestrator, err = phase.NewPlanningOrchestrator(phaseCtx)
+	if err != nil {
+		return fmt.Errorf("failed to create planning orchestrator: %w", err)
+	}
+
+	// Create the execution orchestrator
+	c.executionOrchestrator, err = phase.NewExecutionOrchestrator(phaseCtx)
+	if err != nil {
+		return fmt.Errorf("failed to create execution orchestrator: %w", err)
+	}
+
+	// Create the synthesis orchestrator
+	c.synthesisOrchestrator, err = phase.NewSynthesisOrchestrator(phaseCtx)
+	if err != nil {
+		return fmt.Errorf("failed to create synthesis orchestrator: %w", err)
+	}
+
+	// Create the consolidation orchestrator (doesn't return error)
+	c.consolidationOrchestrator = phase.NewConsolidationOrchestrator(phaseCtx)
+
+	return nil
+}
+
+// buildPhaseContextLocked creates a PhaseContext without acquiring the mutex.
+// The caller must hold the mutex. This is used by initializeOrchestrators.
+func (c *Coordinator) buildPhaseContextLocked() (*phase.PhaseContext, error) {
+	if c.manager == nil {
+		return nil, ErrNilManager
+	}
+	session := c.manager.Session()
+	if session == nil {
+		return nil, ErrNilSession
+	}
+
+	logger := c.logger
+	if logger == nil {
+		logger = logging.NopLogger()
+	}
+
+	ctx := &phase.PhaseContext{
+		Manager:      newCoordinatorManagerAdapter(c),
+		Orchestrator: newCoordinatorOrchestratorAdapter(c),
+		Session:      newCoordinatorSessionAdapter(c, session),
+		Logger:       logger,
+		Callbacks:    newCoordinatorCallbacksAdapter(c),
+	}
+
+	if err := ctx.Validate(); err != nil {
+		return nil, err
+	}
+
+	return ctx, nil
+}
+
+// PlanningOrchestrator returns the planning phase orchestrator.
+// The orchestrator is created lazily on first access.
+// Returns nil and logs an error if initialization fails.
+func (c *Coordinator) PlanningOrchestrator() *phase.PlanningOrchestrator {
+	if c == nil {
+		return nil
+	}
+	if err := c.initializeOrchestrators(); err != nil {
+		c.logger.Error("failed to initialize orchestrators", "error", err)
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.planningOrchestrator
+}
+
+// ExecutionOrchestrator returns the execution phase orchestrator.
+// The orchestrator is created lazily on first access.
+// Returns nil and logs an error if initialization fails.
+func (c *Coordinator) ExecutionOrchestrator() *phase.ExecutionOrchestrator {
+	if c == nil {
+		return nil
+	}
+	if err := c.initializeOrchestrators(); err != nil {
+		c.logger.Error("failed to initialize orchestrators", "error", err)
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.executionOrchestrator
+}
+
+// SynthesisOrchestrator returns the synthesis phase orchestrator.
+// The orchestrator is created lazily on first access.
+// Returns nil and logs an error if initialization fails.
+func (c *Coordinator) SynthesisOrchestrator() *phase.SynthesisOrchestrator {
+	if c == nil {
+		return nil
+	}
+	if err := c.initializeOrchestrators(); err != nil {
+		c.logger.Error("failed to initialize orchestrators", "error", err)
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.synthesisOrchestrator
+}
+
+// ConsolidationOrchestrator returns the consolidation phase orchestrator.
+// The orchestrator is created lazily on first access.
+// Returns nil and logs an error if initialization fails.
+func (c *Coordinator) ConsolidationOrchestrator() *phase.ConsolidationOrchestrator {
+	if c == nil {
+		return nil
+	}
+	if err := c.initializeOrchestrators(); err != nil {
+		c.logger.Error("failed to initialize orchestrators", "error", err)
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.consolidationOrchestrator
 }

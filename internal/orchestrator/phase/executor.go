@@ -81,6 +81,10 @@ type PhaseContext struct {
 	// Session must not be nil.
 	Session UltraPlanSessionInterface
 
+	// BaseSession provides access to the parent session for instance grouping.
+	// May be nil if instance grouping is not needed.
+	BaseSession BaseSessionInterface
+
 	// Logger is used for structured logging throughout phase execution.
 	// If nil, a NopLogger will be used (no logging).
 	Logger *logging.Logger
@@ -131,8 +135,51 @@ type OrchestratorInterface interface {
 	// GetInstanceManager returns the manager for an instance
 	GetInstanceManager(id string) any
 
+	// GetInstance returns an instance by ID
+	GetInstance(id string) InstanceInterface
+
 	// BranchPrefix returns the configured branch prefix
 	BranchPrefix() string
+}
+
+// InstanceInterface defines the subset of Instance methods needed by phase executors.
+// This allows testing with mocks and avoids circular imports.
+type InstanceInterface interface {
+	// GetID returns the instance ID
+	GetID() string
+
+	// GetWorktreePath returns the path to the instance's worktree
+	GetWorktreePath() string
+
+	// GetBranch returns the branch name for the instance
+	GetBranch() string
+
+	// GetStatus returns the current status of the instance
+	GetStatus() InstanceStatus
+
+	// GetFilesModified returns the list of files modified by this instance
+	GetFilesModified() []string
+}
+
+// InstanceStatus represents the status of a Claude instance.
+// These values match the InstanceStatus constants in the orchestrator package.
+type InstanceStatus string
+
+// Instance status constants.
+const (
+	StatusPending      InstanceStatus = "pending"
+	StatusRunning      InstanceStatus = "running"
+	StatusWaitingInput InstanceStatus = "waiting_input"
+	StatusCompleted    InstanceStatus = "completed"
+	StatusError        InstanceStatus = "error"
+	StatusTimeout      InstanceStatus = "timeout"
+	StatusStuck        InstanceStatus = "stuck"
+)
+
+// InstanceManagerInterface provides access to instance output for parsing completion data.
+type InstanceManagerInterface interface {
+	// GetOutput returns the captured output from the instance
+	GetOutput() []byte
 }
 
 // UltraPlanSessionInterface defines the session state methods needed by executors.
@@ -154,6 +201,75 @@ type UltraPlanSessionInterface interface {
 
 	// Progress returns the completion progress as a percentage
 	Progress() float64
+
+	// GetObjective returns the original user objective for the ultra-plan
+	GetObjective() string
+
+	// GetCompletedTasks returns the list of completed task IDs
+	GetCompletedTasks() []string
+
+	// GetTaskToInstance returns the mapping of task IDs to instance IDs
+	GetTaskToInstance() map[string]string
+
+	// GetTaskCommitCounts returns the commit counts for each task
+	GetTaskCommitCounts() map[string]int
+
+	// GetSynthesisID returns the ID of the synthesis instance, or empty if not set
+	GetSynthesisID() string
+
+	// SetSynthesisID sets the ID of the synthesis instance
+	SetSynthesisID(id string)
+
+	// GetRevisionRound returns the current revision round (0 for first synthesis)
+	GetRevisionRound() int
+
+	// SetSynthesisAwaitingApproval sets whether synthesis is waiting for approval
+	SetSynthesisAwaitingApproval(awaiting bool)
+
+	// IsSynthesisAwaitingApproval returns true if synthesis is waiting for approval
+	IsSynthesisAwaitingApproval() bool
+
+	// SetSynthesisCompletion sets the synthesis completion data
+	SetSynthesisCompletion(completion *SynthesisCompletionFile)
+
+	// GetPhase returns the current phase of the ultra-plan
+	GetPhase() UltraPlanPhase
+
+	// SetPhase sets the current phase of the ultra-plan
+	SetPhase(phase UltraPlanPhase)
+
+	// SetError sets an error message on the session
+	SetError(err string)
+
+	// GetConfig returns the ultra-plan configuration
+	GetConfig() UltraPlanConfigInterface
+}
+
+// UltraPlanConfigInterface provides access to configuration settings.
+type UltraPlanConfigInterface interface {
+	// IsMultiPass returns true if multi-pass planning is enabled
+	IsMultiPass() bool
+}
+
+// SessionTypeInterface represents a session type for instance grouping.
+type SessionTypeInterface interface {
+	// String returns the string representation of the session type
+	String() string
+}
+
+// BaseSessionInterface provides access to the parent session for instance grouping.
+type BaseSessionInterface interface {
+	// GetGroupBySessionType returns the instance group for a session type
+	GetGroupBySessionType(sessionType string) InstanceGroupInterface
+
+	// GetInstances returns all instances in the session
+	GetInstances() []InstanceInterface
+}
+
+// InstanceGroupInterface provides methods for managing instance groups.
+type InstanceGroupInterface interface {
+	// AddInstance adds an instance to the group
+	AddInstance(instanceID string)
 }
 
 // CoordinatorCallbacksInterface defines the callback methods for phase events.
