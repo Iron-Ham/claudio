@@ -527,6 +527,10 @@ func (c *Coordinator) RunPlanning() error {
 			"error", err.Error(),
 			"stage", "create_instance",
 		)
+		// Update PlanningOrchestrator state on error
+		if po := c.PlanningOrchestrator(); po != nil {
+			po.SetError(err.Error())
+		}
 		return fmt.Errorf("failed to create planning instance: %w", err)
 	}
 
@@ -545,12 +549,27 @@ func (c *Coordinator) RunPlanning() error {
 
 	session.CoordinatorID = inst.ID
 
+	// Update PlanningOrchestrator state
+	if po := c.PlanningOrchestrator(); po != nil {
+		po.SetState(phase.PlanningState{
+			InstanceID:         inst.ID,
+			Prompt:             prompt,
+			MultiPass:          false,
+			AwaitingCompletion: true,
+		})
+	}
+
 	// Start the instance
 	if err := c.orch.StartInstance(inst); err != nil {
 		c.logger.Error("planning failed",
 			"error", err.Error(),
 			"stage", "start_instance",
 		)
+		// Update PlanningOrchestrator state on error
+		if po := c.PlanningOrchestrator(); po != nil {
+			po.SetError(err.Error())
+			po.SetAwaitingCompletion(false)
+		}
 		return fmt.Errorf("failed to start planning instance: %w", err)
 	}
 
@@ -574,11 +593,16 @@ func (c *Coordinator) RunMultiPassPlanning() error {
 			"error", "no multi-pass planning strategies available",
 			"stage", "get_strategies",
 		)
+		// Update PlanningOrchestrator state on error
+		if po := c.PlanningOrchestrator(); po != nil {
+			po.SetError("no multi-pass planning strategies available")
+		}
 		return fmt.Errorf("no multi-pass planning strategies available")
 	}
 
 	// Initialize the PlanCoordinatorIDs slice
 	session.PlanCoordinatorIDs = make([]string, 0, len(strategies))
+	planCoordinatorIDs := make([]string, 0, len(strategies))
 
 	// Create and start an instance for each strategy in parallel
 	for i, strategy := range strategies {
@@ -593,6 +617,10 @@ func (c *Coordinator) RunMultiPassPlanning() error {
 				"strategy", strategy,
 				"stage", "create_instance",
 			)
+			// Update PlanningOrchestrator state on error
+			if po := c.PlanningOrchestrator(); po != nil {
+				po.SetError(err.Error())
+			}
 			return fmt.Errorf("failed to create planning instance for strategy %s: %w", strategy, err)
 		}
 
@@ -611,6 +639,7 @@ func (c *Coordinator) RunMultiPassPlanning() error {
 
 		// Store the instance ID
 		session.PlanCoordinatorIDs = append(session.PlanCoordinatorIDs, inst.ID)
+		planCoordinatorIDs = append(planCoordinatorIDs, inst.ID)
 
 		// Start the instance
 		if err := c.orch.StartInstance(inst); err != nil {
@@ -619,6 +648,10 @@ func (c *Coordinator) RunMultiPassPlanning() error {
 				"strategy", strategy,
 				"stage", "start_instance",
 			)
+			// Update PlanningOrchestrator state on error
+			if po := c.PlanningOrchestrator(); po != nil {
+				po.SetError(err.Error())
+			}
 			return fmt.Errorf("failed to start planning instance for strategy %s: %w", strategy, err)
 		}
 
@@ -628,6 +661,15 @@ func (c *Coordinator) RunMultiPassPlanning() error {
 			Message:   fmt.Sprintf("Started planning with strategy: %s", strategy),
 			PlanIndex: i,
 			Strategy:  strategy,
+		})
+	}
+
+	// Update PlanningOrchestrator state with multi-pass configuration
+	if po := c.PlanningOrchestrator(); po != nil {
+		po.SetState(phase.PlanningState{
+			MultiPass:          true,
+			PlanCoordinatorIDs: planCoordinatorIDs,
+			AwaitingCompletion: true,
 		})
 	}
 
@@ -664,12 +706,21 @@ func (c *Coordinator) RunPlanManager() error {
 	// Transition to plan selection phase
 	c.notifyPhaseChange(PhasePlanSelection)
 
+	// Update PlanningOrchestrator state - planning coordinators are done, starting plan manager
+	if po := c.PlanningOrchestrator(); po != nil {
+		po.SetAwaitingCompletion(false)
+	}
+
 	// Build the plan manager prompt with all candidate plans
 	prompt := c.buildPlanManagerPrompt()
 
 	// Create the plan manager instance
 	inst, err := c.orch.AddInstance(c.baseSession, prompt)
 	if err != nil {
+		// Update PlanningOrchestrator state on error
+		if po := c.PlanningOrchestrator(); po != nil {
+			po.SetError(err.Error())
+		}
 		return fmt.Errorf("failed to create plan manager instance: %w", err)
 	}
 
@@ -693,6 +744,10 @@ func (c *Coordinator) RunPlanManager() error {
 
 	// Start the instance
 	if err := c.orch.StartInstance(inst); err != nil {
+		// Update PlanningOrchestrator state on error
+		if po := c.PlanningOrchestrator(); po != nil {
+			po.SetError(err.Error())
+		}
 		return fmt.Errorf("failed to start plan manager instance: %w", err)
 	}
 
@@ -863,6 +918,11 @@ func (c *Coordinator) StartExecution() error {
 	c.mu.Lock()
 	session.StartedAt = &now
 	c.mu.Unlock()
+
+	// Reset ExecutionOrchestrator state for fresh execution
+	if eo := c.ExecutionOrchestrator(); eo != nil {
+		eo.Reset()
+	}
 
 	// Start the execution loop in a goroutine
 	c.wg.Add(1)
@@ -1488,6 +1548,11 @@ func (c *Coordinator) finishExecution() {
 func (c *Coordinator) RunSynthesis() error {
 	c.notifyPhaseChange(PhaseSynthesis)
 
+	// Reset SynthesisOrchestrator state for fresh synthesis
+	if so := c.SynthesisOrchestrator(); so != nil {
+		so.Reset()
+	}
+
 	// Build the synthesis prompt
 	prompt := c.buildSynthesisPrompt()
 
@@ -1797,7 +1862,13 @@ func (c *Coordinator) StartRevision(issues []RevisionIssue) error {
 		session.Revision.TasksToRevise = extractTasksToRevise(issues)
 		session.Revision.RevisedTasks = make([]string, 0)
 	}
+	revisionRound := session.Revision.RevisionRound
 	c.mu.Unlock()
+
+	// Update SynthesisOrchestrator with revision round
+	if so := c.SynthesisOrchestrator(); so != nil {
+		so.SetRevisionRound(revisionRound)
+	}
 
 	// Start revision tasks for each affected task
 	completionChan := make(chan taskCompletion, 100)
@@ -2017,6 +2088,11 @@ func (c *Coordinator) TriggerConsolidation() error {
 	session.SynthesisAwaitingApproval = false
 	c.mu.Unlock()
 
+	// Update SynthesisOrchestrator state
+	if so := c.SynthesisOrchestrator(); so != nil {
+		so.SetAwaitingApproval(false)
+	}
+
 	// Stop the synthesis instance if it's still running
 	if session.SynthesisID != "" {
 		inst := c.orch.GetInstance(session.SynthesisID)
@@ -2043,6 +2119,11 @@ func (c *Coordinator) StartConsolidation() error {
 		TotalGroups: len(session.Plan.ExecutionOrder),
 	}
 	c.mu.Unlock()
+
+	// Reset ConsolidationOrchestrator state for fresh consolidation
+	if co := c.ConsolidationOrchestrator(); co != nil {
+		co.Reset()
+	}
 
 	// Build the consolidation prompt
 	prompt := c.buildConsolidationPrompt()
@@ -2342,6 +2423,11 @@ func (c *Coordinator) ResumeConsolidation() error {
 	session.ConsolidationID = ""
 	c.mu.Unlock()
 
+	// Clear ConsolidationOrchestrator conflict state
+	if co := c.ConsolidationOrchestrator(); co != nil {
+		co.ClearConflict()
+	}
+
 	// Save session state before restarting
 	if err := c.orch.SaveSession(); err != nil {
 		return fmt.Errorf("failed to save session state: %w", err)
@@ -2584,6 +2670,11 @@ func (c *Coordinator) ResumeWithPartialWork() error {
 	session.GroupDecision = nil
 	c.mu.Unlock()
 
+	// Reset ExecutionOrchestrator state after resuming
+	if eo := c.ExecutionOrchestrator(); eo != nil {
+		eo.Reset()
+	}
+
 	// Continue execution
 	_ = c.orch.SaveSession()
 	return nil
@@ -2631,6 +2722,11 @@ func (c *Coordinator) RetryFailedTasks() error {
 	session.CurrentGroup = groupIdx
 	session.GroupDecision = nil
 	c.mu.Unlock()
+
+	// Reset ExecutionOrchestrator state for retry
+	if eo := c.ExecutionOrchestrator(); eo != nil {
+		eo.Reset()
+	}
 
 	c.manager.emitEvent(CoordinatorEvent{
 		Type:    EventGroupComplete,
@@ -2756,6 +2852,17 @@ func (c *Coordinator) RetriggerGroup(targetGroup int) error {
 	session.Consolidation = nil
 	session.ConsolidationID = ""
 	session.PRUrls = nil
+
+	// Reset all phase orchestrators for fresh execution
+	if eo := c.ExecutionOrchestrator(); eo != nil {
+		eo.Reset()
+	}
+	if so := c.SynthesisOrchestrator(); so != nil {
+		so.Reset()
+	}
+	if co := c.ConsolidationOrchestrator(); co != nil {
+		co.Reset()
+	}
 
 	// Log the retrigger
 	c.logger.Info("group retriggered",
