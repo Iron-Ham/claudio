@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-01-15
+
+This release focuses on **Phase Orchestration** - extracting the monolithic Coordinator into four phase-specific orchestrators and implementing comprehensive synthesis/revision orchestration logic.
+
 ### Fixed
 
 - **Completion File Detection in Subdirectories** - Fixed completion files not being detected when Claude instances change into a subdirectory during task execution. When Claude runs `cd project/` and then writes `.claudio-task-complete.json`, the file ends up in the subdirectory instead of the worktree root. The verifier now uses a recursive search with depth limiting (max 5 levels) and directory skipping (node_modules, vendor, .git, Pods, etc.) to find completion files in subdirectories. Also updated all completion protocol prompts to emphasize that the file must be written at the worktree root.
@@ -388,6 +392,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.7.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.7.0
 [0.6.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.6.0
