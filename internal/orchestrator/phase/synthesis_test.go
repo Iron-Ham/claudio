@@ -1610,7 +1610,6 @@ func TestSynthesisOrchestrator_BuildRevisionPrompt(t *testing.T) {
 	// But "Different task issue" belongs to task-2, so should be excluded
 }
 
-
 // mockRevisionOrchestrator implements RevisionOrchestratorInterface for tests
 type mockRevisionOrchestrator struct {
 	mockOrchestratorForSynthesis
@@ -1655,8 +1654,8 @@ func (m *mockRevisionSession) GetRevisionState() *RevisionState { return m.revis
 func (m *mockRevisionSession) SetRevisionState(state *RevisionState) {
 	m.revisionState = state
 }
-func (m *mockRevisionSession) GetRevisionID() string      { return m.revisionID }
-func (m *mockRevisionSession) SetRevisionID(id string)    { m.revisionID = id }
+func (m *mockRevisionSession) GetRevisionID() string   { return m.revisionID }
+func (m *mockRevisionSession) SetRevisionID(id string) { m.revisionID = id }
 
 func TestSynthesisOrchestrator_StartRevision(t *testing.T) {
 	t.Run("initializes revision state for first round", func(t *testing.T) {

@@ -1811,7 +1811,7 @@ func (o *ConsolidationOrchestrator) writeGroupConsolidatorInstructions(
 ) {
 	sb.WriteString("## Your Tasks\n\n")
 	sb.WriteString("1. **Create the consolidated branch** from the base branch:\n")
-	sb.WriteString(fmt.Sprintf("   ```bash\n   git checkout -b %s %s\n   ```\n\n", consolidatedBranch, baseBranch))
+	fmt.Fprintf(sb, "   ```bash\n   git checkout -b %s %s\n   ```\n\n", consolidatedBranch, baseBranch)
 
 	sb.WriteString("2. **Cherry-pick commits** from each task branch in order. For each branch:\n")
 	sb.WriteString("   - Review the commits on the branch\n")
@@ -1845,12 +1845,12 @@ func (o *ConsolidationOrchestrator) writeGroupCompletionProtocol(
 	consolidatedBranch string,
 ) {
 	sb.WriteString("## Completion Protocol\n\n")
-	sb.WriteString(fmt.Sprintf("When consolidation is complete, write `%s` in your worktree root:\n\n", GroupConsolidationCompletionFileName))
+	fmt.Fprintf(sb, "When consolidation is complete, write `%s` in your worktree root:\n\n", GroupConsolidationCompletionFileName)
 	sb.WriteString("```json\n")
 	sb.WriteString("{\n")
-	sb.WriteString(fmt.Sprintf("  \"group_index\": %d,\n", groupIndex))
+	fmt.Fprintf(sb, "  \"group_index\": %d,\n", groupIndex)
 	sb.WriteString("  \"status\": \"complete\",\n")
-	sb.WriteString(fmt.Sprintf("  \"branch_name\": \"%s\",\n", consolidatedBranch))
+	fmt.Fprintf(sb, "  \"branch_name\": \"%s\",\n", consolidatedBranch)
 	sb.WriteString("  \"tasks_consolidated\": [\"task-id-1\", \"task-id-2\"],\n")
 	sb.WriteString("  \"conflicts_resolved\": [\n")
 	sb.WriteString("    {\"file\": \"path/to/file.go\", \"resolution\": \"Kept both changes, merged logic\"}\n")
