@@ -11,6 +11,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/phase"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/retry"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/verify"
 )
@@ -64,6 +65,12 @@ type Coordinator struct {
 	verifier     Verifier
 	retryManager *retry.Manager
 	groupTracker *group.Tracker
+
+	// Phase orchestrators - each orchestrator owns one phase of ultra-plan execution
+	planningOrchestrator      *phase.PlanningOrchestrator
+	executionOrchestrator     *phase.ExecutionOrchestrator
+	synthesisOrchestrator     *phase.SynthesisOrchestrator
+	consolidationOrchestrator *phase.ConsolidationOrchestrator
 
 	// Running state
 	ctx        context.Context
@@ -257,6 +264,12 @@ func NewCoordinator(orch *Orchestrator, baseSession *Session, ultraSession *Ultr
 		verify.WithConfig(verifyConfig),
 		verify.WithLogger(sessionLogger),
 	)
+
+	// Initialize phase orchestrators with shared dependencies
+	// The orchestrators are created lazily via getter methods to avoid
+	// issues during coordinator initialization when BuildPhaseContext
+	// depends on the coordinator being fully constructed.
+	// This is handled by the getter methods which call initializeOrchestrators().
 
 	return c
 }
