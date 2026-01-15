@@ -162,6 +162,46 @@ type ExecutionCoordinatorInterface interface {
 	AddInstanceToGroup(instanceID string, isMultiPass bool)
 }
 
+// TaskVerifyOptions provides task-specific context for verification.
+// This mirrors the verify.TaskVerifyOptions struct.
+type TaskVerifyOptions struct {
+	// NoCode indicates the task doesn't require code changes.
+	// When true, the task succeeds even without commits.
+	NoCode bool
+}
+
+// TaskVerifyResult represents the result of verifying a task's work.
+// This mirrors the verify.TaskCompletionResult struct.
+type TaskVerifyResult struct {
+	TaskID      string
+	InstanceID  string
+	Success     bool
+	Error       string
+	NeedsRetry  bool
+	CommitCount int
+}
+
+// TaskVerifierInterface defines the verification operations needed by ExecutionOrchestrator.
+// This interface abstracts the verify.TaskVerifier to avoid direct package dependencies
+// and enable testing with mocks.
+type TaskVerifierInterface interface {
+	// CheckCompletionFile checks if the task has written its completion sentinel file.
+	// This checks for both regular task completion (.claudio-task-complete.json) and
+	// revision task completion (.claudio-revision-complete.json).
+	CheckCompletionFile(worktreePath string) (bool, error)
+
+	// VerifyTaskWork checks if a task produced actual commits and determines success/retry.
+	// The opts parameter provides task-specific context (e.g., NoCode flag for verification tasks).
+	VerifyTaskWork(taskID, instanceID, worktreePath, baseBranch string, opts *TaskVerifyOptions) TaskVerifyResult
+}
+
+// InstanceManagerCheckerInterface provides methods for checking instance manager state.
+// This allows the ExecutionOrchestrator to perform status-based fallback detection.
+type InstanceManagerCheckerInterface interface {
+	// TmuxSessionExists returns true if the tmux session for the instance is still running.
+	TmuxSessionExists() bool
+}
+
 // ExecutionContext holds the extended dependencies required by the ExecutionOrchestrator.
 // It embeds PhaseContext and adds execution-specific dependencies.
 type ExecutionContext struct {
@@ -176,6 +216,10 @@ type ExecutionContext struct {
 
 	// Orchestrator provides execution-specific orchestrator access (extended interface).
 	ExecutionOrchestrator ExecutionOrchestratorInterface
+
+	// Verifier provides task verification operations.
+	// If nil, verification will be delegated to the Coordinator.
+	Verifier TaskVerifierInterface
 }
 
 // ExecutionOrchestrator manages the execution phase of ultra-plan execution.
@@ -337,9 +381,8 @@ func (e *ExecutionOrchestrator) executionLoop() {
 
 		default:
 			// Poll for task completions that monitoring goroutines may have missed
-			if e.execCtx != nil && e.execCtx.Coordinator != nil {
-				e.execCtx.Coordinator.PollTaskCompletions(e.completionChan)
-			}
+			// This uses the local implementation which can work with or without a Coordinator
+			e.pollTaskCompletions(e.completionChan)
 
 			// Check if we're done
 			e.mu.RLock()
@@ -588,6 +631,18 @@ func (e *ExecutionOrchestrator) buildTaskPrompt(taskID string, task any) string 
 }
 
 // monitorTaskInstance monitors an instance and reports when it completes.
+// It uses a two-tier detection approach:
+//
+//  1. Primary detection: Sentinel file (.claudio-task-complete.json)
+//     This is the preferred method as it's unambiguous - the task explicitly
+//     signals completion by writing this file.
+//
+//  2. Fallback detection: Status-based checks
+//     For tasks that don't write completion files, this handles legacy behavior
+//     and edge cases based on the instance's status (Completed, Error, Timeout, Stuck).
+//
+// The method polls at 1-second intervals until completion is detected or
+// the context is cancelled.
 func (e *ExecutionOrchestrator) monitorTaskInstance(taskID, instanceID string) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -598,39 +653,90 @@ func (e *ExecutionOrchestrator) monitorTaskInstance(taskID, instanceID string) {
 			return
 
 		case <-ticker.C:
-			// Check for completion using coordinator if available
-			if e.execCtx != nil && e.execCtx.Coordinator != nil && e.execCtx.ExecutionOrchestrator != nil {
-				inst := e.execCtx.ExecutionOrchestrator.GetInstanceByID(instanceID)
-				if inst == nil {
-					e.logger.Debug("instance status check",
-						"task_id", taskID,
-						"instance_id", instanceID,
-						"status", "not_found",
-					)
-					e.completionChan <- TaskCompletion{
-						TaskID:     taskID,
-						InstanceID: instanceID,
-						Success:    false,
-						Error:      "instance not found",
-					}
-					return
+			// Get the instance - try multiple methods
+			var inst any
+			if e.execCtx != nil && e.execCtx.ExecutionOrchestrator != nil {
+				inst = e.execCtx.ExecutionOrchestrator.GetInstanceByID(instanceID)
+			}
+			if inst == nil && e.phaseCtx.Orchestrator != nil {
+				// Try the base orchestrator interface
+				instIface := e.phaseCtx.Orchestrator.GetInstance(instanceID)
+				if instIface != nil {
+					inst = instIface
+				}
+			}
+
+			if inst == nil {
+				e.logger.Debug("instance status check",
+					"task_id", taskID,
+					"instance_id", instanceID,
+					"status", "not_found",
+				)
+				e.completionChan <- TaskCompletion{
+					TaskID:     taskID,
+					InstanceID: instanceID,
+					Success:    false,
+					Error:      "instance not found",
+				}
+				return
+			}
+
+			// Log instance status check at DEBUG level
+			status := e.getInstanceStatus(inst)
+			e.logger.Debug("instance status check",
+				"task_id", taskID,
+				"instance_id", instanceID,
+				"status", string(status),
+			)
+
+			// Primary completion detection: check for sentinel file
+			// This is the preferred method as it's unambiguous - the task explicitly
+			// signals completion by writing this file
+			if e.checkForTaskCompletionFile(inst) {
+				// Sentinel file exists - task has signaled completion
+				// Stop the instance to free up resources
+				if e.execCtx != nil && e.execCtx.ExecutionOrchestrator != nil {
+					_ = e.execCtx.ExecutionOrchestrator.StopInstance(inst)
 				}
 
-				// Check for sentinel file
-				if e.execCtx.Coordinator.CheckForTaskCompletionFile(inst) {
-					// Stop the instance
-					if e.execCtx.ExecutionOrchestrator != nil {
-						_ = e.execCtx.ExecutionOrchestrator.StopInstance(inst)
-					}
+				// Verify work was done before marking as success
+				result := e.verifyTaskWork(taskID, instanceID, inst)
+				e.completionChan <- result
+				return
+			}
 
-					// Verify work was done
-					result := e.execCtx.Coordinator.VerifyTaskWork(taskID, inst)
-					e.completionChan <- result
-					return
+			// Fallback: status-based detection for tasks that don't write completion file
+			// This handles legacy behavior and edge cases
+			switch status {
+			case StatusCompleted:
+				// StatusCompleted can be triggered by false positive pattern detection
+				// while the instance is still actively working. Only treat as actual
+				// completion if the tmux session has truly exited.
+				mgr := e.getInstanceManager(instanceID)
+				if mgr != nil && mgr.TmuxSessionExists() {
+					// Tmux session still running - this was a false positive completion detection
+					// Reset status to working and continue monitoring for sentinel file
+					e.setInstanceStatus(inst, StatusRunning)
+					continue
 				}
+				// Tmux session has exited - verify work was done
+				result := e.verifyTaskWork(taskID, instanceID, inst)
+				e.completionChan <- result
+				return
 
-				// Check instance status for other completion conditions
-				// This is handled by the coordinator's monitoring logic
+			// Note: StatusWaitingInput is intentionally NOT treated as completion.
+			// The sentinel file (.claudio-task-complete.json) is the primary completion signal.
+			// StatusWaitingInput can trigger too early from Claude Code's UI elements,
+			// causing tasks to be marked failed before they complete their work.
+
+			case StatusError, StatusTimeout, StatusStuck:
+				e.completionChan <- TaskCompletion{
+					TaskID:     taskID,
+					InstanceID: instanceID,
+					Success:    false,
+					Error:      string(status),
+				}
+				return
 			}
 		}
 	}
@@ -842,3 +948,242 @@ func (e *ExecutionOrchestrator) Reset() {
 
 // ErrExecutionCancelled is returned when the orchestrator is cancelled.
 var ErrExecutionCancelled = fmt.Errorf("execution phase cancelled")
+
+// checkForTaskCompletionFile checks if the task has written its completion sentinel file.
+// This checks for both regular task completion (.claudio-task-complete.json) and
+// revision task completion (.claudio-revision-complete.json) since both use this monitor.
+//
+// The method first tries to use the local Verifier if available, then falls back
+// to the Coordinator's CheckForTaskCompletionFile method for backwards compatibility.
+func (e *ExecutionOrchestrator) checkForTaskCompletionFile(inst any) bool {
+	// Get worktree path from the instance
+	worktreePath := e.getInstanceWorktreePath(inst)
+	if worktreePath == "" {
+		return false
+	}
+
+	// Try using local verifier first
+	if e.execCtx != nil && e.execCtx.Verifier != nil {
+		found, err := e.execCtx.Verifier.CheckCompletionFile(worktreePath)
+		if err != nil {
+			e.logger.Debug("error checking completion file",
+				"worktree", worktreePath,
+				"error", err)
+		}
+		return found
+	}
+
+	// Fallback to coordinator if available
+	if e.execCtx != nil && e.execCtx.Coordinator != nil {
+		return e.execCtx.Coordinator.CheckForTaskCompletionFile(inst)
+	}
+
+	return false
+}
+
+// verifyTaskWork checks if a task produced actual commits and determines success/retry.
+// This method abstracts verification logic to work with either the local Verifier
+// or the Coordinator's verification implementation.
+//
+// Parameters:
+//   - taskID: The ID of the task being verified
+//   - instanceID: The ID of the instance that ran the task
+//   - inst: The instance object (for accessing worktree path and other metadata)
+//
+// Returns a TaskCompletion with success status, commit count, and retry information.
+func (e *ExecutionOrchestrator) verifyTaskWork(taskID, instanceID string, inst any) TaskCompletion {
+	worktreePath := e.getInstanceWorktreePath(inst)
+
+	// Determine the base branch for this task
+	baseBranch := ""
+	currentGroup := 0
+	if e.execCtx != nil && e.execCtx.ExecutionSession != nil {
+		currentGroup = e.execCtx.ExecutionSession.GetCurrentGroup()
+	}
+	if e.execCtx != nil && e.execCtx.Coordinator != nil {
+		baseBranch = e.execCtx.Coordinator.GetBaseBranchForGroup(currentGroup)
+	}
+
+	// Build verification options from task metadata
+	var opts *TaskVerifyOptions
+	session := e.phaseCtx.Session
+	if task := session.GetTask(taskID); task != nil {
+		taskData, ok := task.(PlannedTaskData)
+		if ok && taskData.IsNoCode() {
+			opts = &TaskVerifyOptions{NoCode: true}
+		}
+	}
+
+	// Try using local verifier first
+	if e.execCtx != nil && e.execCtx.Verifier != nil {
+		result := e.execCtx.Verifier.VerifyTaskWork(taskID, instanceID, worktreePath, baseBranch, opts)
+		// Convert directly since TaskVerifyResult and TaskCompletion have identical field layout
+		return TaskCompletion(result)
+	}
+
+	// Fallback to coordinator if available
+	if e.execCtx != nil && e.execCtx.Coordinator != nil {
+		return e.execCtx.Coordinator.VerifyTaskWork(taskID, inst)
+	}
+
+	// If no verifier is available, assume success (lenient mode)
+	return TaskCompletion{
+		TaskID:     taskID,
+		InstanceID: instanceID,
+		Success:    true,
+	}
+}
+
+// pollTaskCompletions scans all started tasks for completion files.
+// This is a fallback mechanism to detect completions when monitoring goroutines
+// exit early (e.g., due to context cancellation) or fail to send to the channel.
+//
+// The method iterates through all tasks that have been assigned to instances
+// but haven't been marked as completed or failed yet. For each such task, it
+// checks for the presence of a completion file and, if found, stops the instance
+// and verifies the work.
+//
+// Non-blocking sends are used to avoid deadlocks if the completion channel is full.
+func (e *ExecutionOrchestrator) pollTaskCompletions(completionChan chan<- TaskCompletion) {
+	session := e.phaseCtx.Session
+	if session == nil {
+		return
+	}
+
+	// Get task-to-instance mapping
+	taskToInstance := session.GetTaskToInstance()
+	completedTasks := session.GetCompletedTasks()
+
+	// Build set of already-finished tasks
+	// Note: Failed tasks are tracked in the local state, not the session directly
+	finished := make(map[string]bool)
+	for _, t := range completedTasks {
+		finished[t] = true
+	}
+
+	// Also include tasks tracked as completed/failed in local state
+	e.mu.RLock()
+	localRunning := make(map[string]string)
+	maps.Copy(localRunning, e.state.RunningTasks)
+	e.mu.RUnlock()
+
+	// Check each started task for completion
+	for taskID, instanceID := range taskToInstance {
+		if finished[taskID] {
+			continue
+		}
+
+		// Skip if not currently tracked as running (already processed)
+		if _, isRunning := localRunning[taskID]; !isRunning {
+			continue
+		}
+
+		// Get the instance
+		var inst any
+		if e.execCtx != nil && e.execCtx.ExecutionOrchestrator != nil {
+			inst = e.execCtx.ExecutionOrchestrator.GetInstanceByID(instanceID)
+		}
+		if inst == nil {
+			continue
+		}
+
+		// Check for completion file
+		if e.checkForTaskCompletionFile(inst) {
+			// Stop instance to free resources
+			if e.execCtx != nil && e.execCtx.ExecutionOrchestrator != nil {
+				_ = e.execCtx.ExecutionOrchestrator.StopInstance(inst)
+			}
+
+			// Verify and report
+			result := e.verifyTaskWork(taskID, instanceID, inst)
+
+			// Non-blocking send (skip if channel full, will retry next iteration)
+			select {
+			case completionChan <- result:
+			default:
+			}
+		}
+	}
+}
+
+// getInstanceWorktreePath extracts the worktree path from an instance.
+// The instance may implement various interfaces depending on its source.
+func (e *ExecutionOrchestrator) getInstanceWorktreePath(inst any) string {
+	if inst == nil {
+		return ""
+	}
+
+	// Try the InstanceInterface
+	if iface, ok := inst.(InstanceInterface); ok {
+		return iface.GetWorktreePath()
+	}
+
+	// Try common interface patterns
+	if getter, ok := inst.(interface{ GetWorktreePath() string }); ok {
+		return getter.GetWorktreePath()
+	}
+	if getter, ok := inst.(interface{ WorktreePath() string }); ok {
+		return getter.WorktreePath()
+	}
+
+	return ""
+}
+
+// getInstanceStatus extracts the status from an instance.
+// The instance may implement various interfaces depending on its source.
+func (e *ExecutionOrchestrator) getInstanceStatus(inst any) InstanceStatus {
+	if inst == nil {
+		return ""
+	}
+
+	// Try the InstanceInterface
+	if iface, ok := inst.(InstanceInterface); ok {
+		return iface.GetStatus()
+	}
+
+	// Try common interface patterns
+	if getter, ok := inst.(interface{ GetStatus() InstanceStatus }); ok {
+		return getter.GetStatus()
+	}
+	if getter, ok := inst.(interface{ Status() InstanceStatus }); ok {
+		return getter.Status()
+	}
+
+	return ""
+}
+
+// setInstanceStatus sets the status on an instance if it supports mutation.
+// Returns true if the status was successfully set.
+func (e *ExecutionOrchestrator) setInstanceStatus(inst any, status InstanceStatus) bool {
+	if inst == nil {
+		return false
+	}
+
+	// Try common setter patterns
+	if setter, ok := inst.(interface{ SetStatus(InstanceStatus) }); ok {
+		setter.SetStatus(status)
+		return true
+	}
+
+	return false
+}
+
+// getInstanceManager returns the instance manager for an instance ID.
+// The manager provides access to tmux session checking for status-based fallback.
+func (e *ExecutionOrchestrator) getInstanceManager(instanceID string) InstanceManagerCheckerInterface {
+	if e.phaseCtx.Orchestrator == nil {
+		return nil
+	}
+
+	mgr := e.phaseCtx.Orchestrator.GetInstanceManager(instanceID)
+	if mgr == nil {
+		return nil
+	}
+
+	// Try to cast to InstanceManagerCheckerInterface
+	if checker, ok := mgr.(InstanceManagerCheckerInterface); ok {
+		return checker
+	}
+
+	return nil
+}

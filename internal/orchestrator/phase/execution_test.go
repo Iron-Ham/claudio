@@ -957,3 +957,515 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+// mockTaskVerifier implements TaskVerifierInterface for testing.
+type mockTaskVerifier struct {
+	completionFileResults map[string]bool
+	completionFileErrors  map[string]error
+	verifyResults         map[string]TaskVerifyResult
+	mu                    sync.Mutex
+}
+
+func newMockTaskVerifier() *mockTaskVerifier {
+	return &mockTaskVerifier{
+		completionFileResults: make(map[string]bool),
+		completionFileErrors:  make(map[string]error),
+		verifyResults:         make(map[string]TaskVerifyResult),
+	}
+}
+
+func (m *mockTaskVerifier) CheckCompletionFile(worktreePath string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	err := m.completionFileErrors[worktreePath]
+	return m.completionFileResults[worktreePath], err
+}
+
+func (m *mockTaskVerifier) VerifyTaskWork(taskID, instanceID, worktreePath, baseBranch string, opts *TaskVerifyOptions) TaskVerifyResult {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if result, ok := m.verifyResults[taskID]; ok {
+		return result
+	}
+	return TaskVerifyResult{TaskID: taskID, InstanceID: instanceID, Success: true}
+}
+
+// mockInstanceWithStatus extends mockInstance with status support.
+type mockInstanceWithStatus struct {
+	mockInstance
+	status InstanceStatus
+}
+
+func (m *mockInstanceWithStatus) GetStatus() InstanceStatus  { return m.status }
+func (m *mockInstanceWithStatus) SetStatus(s InstanceStatus) { m.status = s }
+
+// mockInstanceManagerChecker implements InstanceManagerCheckerInterface.
+type mockInstanceManagerChecker struct {
+	tmuxExists bool
+}
+
+func (m *mockInstanceManagerChecker) TmuxSessionExists() bool { return m.tmuxExists }
+
+// mockOrchestratorWithManager extends mockOrchestrator to return managers.
+type mockOrchestratorWithManager struct {
+	mockOrchestrator
+	managers map[string]any
+}
+
+func newMockOrchestratorWithManager() *mockOrchestratorWithManager {
+	return &mockOrchestratorWithManager{
+		managers: make(map[string]any),
+	}
+}
+
+func (m *mockOrchestratorWithManager) GetInstanceManager(id string) any {
+	return m.managers[id]
+}
+
+func TestExecutionOrchestrator_CheckForTaskCompletionFile(t *testing.T) {
+	t.Run("returns false for nil instance", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		result := exec.checkForTaskCompletionFile(nil)
+		if result {
+			t.Error("checkForTaskCompletionFile should return false for nil instance")
+		}
+	})
+
+	t.Run("returns false for empty worktree path", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		inst := &mockInstance{id: "inst-1", worktreePath: ""}
+		result := exec.checkForTaskCompletionFile(inst)
+		if result {
+			t.Error("checkForTaskCompletionFile should return false for empty worktree path")
+		}
+	})
+
+	t.Run("uses local verifier when available", func(t *testing.T) {
+		verifier := newMockTaskVerifier()
+		verifier.completionFileResults["/tmp/worktree"] = true
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      &mockSession{},
+			},
+			Verifier: verifier,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		inst := &mockInstance{id: "inst-1", worktreePath: "/tmp/worktree"}
+		result := exec.checkForTaskCompletionFile(inst)
+		if !result {
+			t.Error("checkForTaskCompletionFile should return true when verifier finds file")
+		}
+	})
+
+	t.Run("falls back to coordinator when no verifier", func(t *testing.T) {
+		coord := newMockExecutionCoordinator()
+		coord.completionFiles["inst-1"] = true
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      &mockSession{},
+			},
+			Coordinator: coord,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		inst := &mockInstance{id: "inst-1", worktreePath: "/tmp/worktree"}
+		result := exec.checkForTaskCompletionFile(inst)
+		if !result {
+			t.Error("checkForTaskCompletionFile should return true via coordinator fallback")
+		}
+	})
+}
+
+func TestExecutionOrchestrator_VerifyTaskWork(t *testing.T) {
+	t.Run("uses local verifier when available", func(t *testing.T) {
+		verifier := newMockTaskVerifier()
+		verifier.verifyResults["task-1"] = TaskVerifyResult{
+			TaskID:      "task-1",
+			InstanceID:  "inst-1",
+			Success:     true,
+			CommitCount: 3,
+		}
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      &mockSession{},
+			},
+			Verifier: verifier,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		inst := &mockInstance{id: "inst-1", worktreePath: "/tmp/worktree"}
+		result := exec.verifyTaskWork("task-1", "inst-1", inst)
+
+		if !result.Success {
+			t.Error("verifyTaskWork should return success")
+		}
+		if result.CommitCount != 3 {
+			t.Errorf("CommitCount = %d, want 3", result.CommitCount)
+		}
+	})
+
+	t.Run("falls back to coordinator when no verifier", func(t *testing.T) {
+		coord := newMockExecutionCoordinator()
+		coord.verifyResults["task-1"] = TaskCompletion{
+			TaskID:      "task-1",
+			InstanceID:  "inst-1",
+			Success:     true,
+			CommitCount: 5,
+		}
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      &mockSession{},
+			},
+			Coordinator: coord,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		inst := &mockInstance{id: "inst-1", worktreePath: "/tmp/worktree"}
+		result := exec.verifyTaskWork("task-1", "inst-1", inst)
+
+		if !result.Success {
+			t.Error("verifyTaskWork should return success via coordinator fallback")
+		}
+		if result.CommitCount != 5 {
+			t.Errorf("CommitCount = %d, want 5", result.CommitCount)
+		}
+	})
+
+	t.Run("returns success when no verifier or coordinator available", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		inst := &mockInstance{id: "inst-1", worktreePath: "/tmp/worktree"}
+		result := exec.verifyTaskWork("task-1", "inst-1", inst)
+
+		if !result.Success {
+			t.Error("verifyTaskWork should return success in lenient mode")
+		}
+	})
+}
+
+func TestExecutionOrchestrator_PollTaskCompletions(t *testing.T) {
+	t.Run("skips tasks with no instance", func(t *testing.T) {
+		session := &mockSession{
+			taskToInstance: map[string]string{"task-1": "inst-1"},
+		}
+
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      session,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Mark task as running locally
+		exec.mu.Lock()
+		exec.state.RunningTasks["task-1"] = "inst-1"
+		exec.mu.Unlock()
+
+		completionChan := make(chan TaskCompletion, 10)
+		exec.pollTaskCompletions(completionChan)
+
+		// Should not send any completions since instance is nil
+		select {
+		case <-completionChan:
+			t.Error("pollTaskCompletions should not send completion when instance is nil")
+		default:
+			// Expected - no completion sent
+		}
+	})
+
+	t.Run("detects completion file and sends result", func(t *testing.T) {
+		session := &mockSession{
+			taskToInstance: map[string]string{"task-1": "inst-1"},
+		}
+
+		execOrch := newMockExecutionOrchestrator()
+		inst := &mockInstance{id: "inst-1", worktreePath: "/tmp/worktree"}
+		execOrch.instances["inst-1"] = inst
+
+		verifier := newMockTaskVerifier()
+		verifier.completionFileResults["/tmp/worktree"] = true
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      session,
+			},
+			ExecutionOrchestrator: execOrch,
+			Verifier:              verifier,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Mark task as running locally
+		exec.mu.Lock()
+		exec.state.RunningTasks["task-1"] = "inst-1"
+		exec.mu.Unlock()
+
+		completionChan := make(chan TaskCompletion, 10)
+		exec.pollTaskCompletions(completionChan)
+
+		// Should send a completion
+		select {
+		case completion := <-completionChan:
+			if completion.TaskID != "task-1" {
+				t.Errorf("TaskID = %q, want %q", completion.TaskID, "task-1")
+			}
+		default:
+			t.Error("pollTaskCompletions should send completion when file is detected")
+		}
+	})
+
+	t.Run("skips already completed tasks", func(t *testing.T) {
+		session := &mockSession{
+			taskToInstance: map[string]string{"task-1": "inst-1"},
+			completedTasks: []string{"task-1"},
+		}
+
+		execOrch := newMockExecutionOrchestrator()
+		inst := &mockInstance{id: "inst-1", worktreePath: "/tmp/worktree"}
+		execOrch.instances["inst-1"] = inst
+
+		verifier := newMockTaskVerifier()
+		verifier.completionFileResults["/tmp/worktree"] = true
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      session,
+			},
+			ExecutionOrchestrator: execOrch,
+			Verifier:              verifier,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		completionChan := make(chan TaskCompletion, 10)
+		exec.pollTaskCompletions(completionChan)
+
+		// Should not send completion for already completed task
+		select {
+		case <-completionChan:
+			t.Error("pollTaskCompletions should skip already completed tasks")
+		default:
+			// Expected
+		}
+	})
+}
+
+func TestExecutionOrchestrator_GetInstanceWorktreePath(t *testing.T) {
+	exec, err := NewExecutionOrchestrator(&PhaseContext{
+		Manager:      &mockManager{},
+		Orchestrator: &mockOrchestrator{},
+		Session:      &mockSession{},
+	})
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("returns empty for nil instance", func(t *testing.T) {
+		result := exec.getInstanceWorktreePath(nil)
+		if result != "" {
+			t.Errorf("getInstanceWorktreePath(nil) = %q, want empty string", result)
+		}
+	})
+
+	t.Run("extracts path from InstanceInterface", func(t *testing.T) {
+		inst := &mockInstance{id: "inst-1", worktreePath: "/tmp/worktree"}
+		result := exec.getInstanceWorktreePath(inst)
+		if result != "/tmp/worktree" {
+			t.Errorf("getInstanceWorktreePath() = %q, want %q", result, "/tmp/worktree")
+		}
+	})
+}
+
+func TestExecutionOrchestrator_GetInstanceStatus(t *testing.T) {
+	exec, err := NewExecutionOrchestrator(&PhaseContext{
+		Manager:      &mockManager{},
+		Orchestrator: &mockOrchestrator{},
+		Session:      &mockSession{},
+	})
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("returns empty for nil instance", func(t *testing.T) {
+		result := exec.getInstanceStatus(nil)
+		if result != "" {
+			t.Errorf("getInstanceStatus(nil) = %q, want empty string", result)
+		}
+	})
+
+	t.Run("extracts status from instance with GetStatus", func(t *testing.T) {
+		inst := &mockInstanceWithStatus{
+			mockInstance: mockInstance{id: "inst-1", worktreePath: "/tmp/worktree"},
+			status:       StatusCompleted,
+		}
+		result := exec.getInstanceStatus(inst)
+		if result != StatusCompleted {
+			t.Errorf("getInstanceStatus() = %q, want %q", result, StatusCompleted)
+		}
+	})
+}
+
+func TestExecutionOrchestrator_SetInstanceStatus(t *testing.T) {
+	exec, err := NewExecutionOrchestrator(&PhaseContext{
+		Manager:      &mockManager{},
+		Orchestrator: &mockOrchestrator{},
+		Session:      &mockSession{},
+	})
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("returns false for nil instance", func(t *testing.T) {
+		result := exec.setInstanceStatus(nil, StatusRunning)
+		if result {
+			t.Error("setInstanceStatus(nil) should return false")
+		}
+	})
+
+	t.Run("sets status on instance with SetStatus", func(t *testing.T) {
+		inst := &mockInstanceWithStatus{
+			mockInstance: mockInstance{id: "inst-1", worktreePath: "/tmp/worktree"},
+			status:       StatusPending,
+		}
+		result := exec.setInstanceStatus(inst, StatusRunning)
+		if !result {
+			t.Error("setInstanceStatus should return true")
+		}
+		if inst.status != StatusRunning {
+			t.Errorf("status = %q, want %q", inst.status, StatusRunning)
+		}
+	})
+}
+
+func TestExecutionOrchestrator_GetInstanceManager(t *testing.T) {
+	t.Run("returns nil when orchestrator is nil", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{}, // Returns nil for GetInstanceManager
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		result := exec.getInstanceManager("inst-1")
+		if result != nil {
+			t.Error("getInstanceManager should return nil when orchestrator returns nil")
+		}
+	})
+
+	t.Run("returns checker when manager implements interface", func(t *testing.T) {
+		orch := newMockOrchestratorWithManager()
+		orch.managers["inst-1"] = &mockInstanceManagerChecker{tmuxExists: true}
+
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: orch,
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		result := exec.getInstanceManager("inst-1")
+		if result == nil {
+			t.Error("getInstanceManager should return the manager")
+		}
+		if !result.TmuxSessionExists() {
+			t.Error("TmuxSessionExists should return true")
+		}
+	})
+}
+
+func TestTaskVerifyOptions(t *testing.T) {
+	t.Run("NoCode field is accessible", func(t *testing.T) {
+		opts := TaskVerifyOptions{NoCode: true}
+		if !opts.NoCode {
+			t.Error("NoCode should be true")
+		}
+	})
+}
+
+func TestTaskVerifyResult(t *testing.T) {
+	t.Run("all fields are accessible", func(t *testing.T) {
+		result := TaskVerifyResult{
+			TaskID:      "task-1",
+			InstanceID:  "inst-1",
+			Success:     true,
+			Error:       "some error",
+			NeedsRetry:  true,
+			CommitCount: 5,
+		}
+
+		if result.TaskID != "task-1" {
+			t.Errorf("TaskID = %q, want %q", result.TaskID, "task-1")
+		}
+		if result.InstanceID != "inst-1" {
+			t.Errorf("InstanceID = %q, want %q", result.InstanceID, "inst-1")
+		}
+		if !result.Success {
+			t.Error("Success should be true")
+		}
+		if result.Error != "some error" {
+			t.Errorf("Error = %q, want %q", result.Error, "some error")
+		}
+		if !result.NeedsRetry {
+			t.Error("NeedsRetry should be true")
+		}
+		if result.CommitCount != 5 {
+			t.Errorf("CommitCount = %d, want 5", result.CommitCount)
+		}
+	})
+}
