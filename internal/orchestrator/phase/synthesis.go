@@ -669,7 +669,9 @@ func (s *SynthesisOrchestrator) onSynthesisReady() {
 	s.notifyPhaseChange(PhaseSynthesis)
 }
 
-// onSynthesisComplete handles synthesis completion.
+// onSynthesisComplete handles synthesis completion and triggers revision or consolidation.
+// This is called when the synthesis instance completes without awaiting approval
+// (e.g., when the instance finishes and disappears).
 func (s *SynthesisOrchestrator) onSynthesisComplete() {
 	// Try to parse synthesis completion from sentinel file (preferred) or stdout (fallback)
 	synthesisCompletion, issues := s.parseRevisionIssues()
@@ -690,8 +692,43 @@ func (s *SynthesisOrchestrator) onSynthesisComplete() {
 	// Save session state
 	_ = s.phaseCtx.Orchestrator.SaveSession()
 
-	// Notify completion
-	s.notifyComplete(true, "Synthesis review complete")
+	// Filter to only critical/major issues that need revision
+	issuesNeedingRevision := s.GetIssuesNeedingRevision()
+
+	// If there are issues that need revision, start the revision phase
+	if len(issuesNeedingRevision) > 0 {
+		// Check if we've already had too many revision rounds
+		if s.shouldSkipRevision() {
+			// Max revisions reached, proceed to consolidation anyway
+			s.logger.Info("max revisions reached during onSynthesisComplete, proceeding to consolidation")
+			s.CaptureTaskWorktreeInfo()
+			_ = s.ProceedToConsolidationOrComplete()
+			return
+		}
+
+		// Try to start revision if orchestrator supports it
+		extOrch, ok := s.phaseCtx.Orchestrator.(SynthesisOrchestratorExtended)
+		if !ok {
+			s.logger.Warn("orchestrator does not support StartRevision, proceeding to consolidation")
+			s.CaptureTaskWorktreeInfo()
+			_ = s.ProceedToConsolidationOrComplete()
+			return
+		}
+
+		if err := extOrch.StartRevision(issuesNeedingRevision); err != nil {
+			s.mu.Lock()
+			s.phaseCtx.Session.SetPhase(PhaseFailed)
+			s.phaseCtx.Session.SetError(fmt.Sprintf("revision failed: %v", err))
+			s.mu.Unlock()
+			_ = s.phaseCtx.Orchestrator.SaveSession()
+			s.notifyComplete(false, fmt.Sprintf("revision failed: %v", err))
+		}
+		return
+	}
+
+	// No issues - capture worktree info and proceed to consolidation or complete
+	s.CaptureTaskWorktreeInfo()
+	_ = s.ProceedToConsolidationOrComplete()
 }
 
 // parseRevisionIssues extracts revision issues from the synthesis completion file (preferred)
@@ -794,4 +831,336 @@ func (s *SynthesisOrchestrator) notifyComplete(success bool, summary string) {
 	if s.phaseCtx.Callbacks != nil {
 		s.phaseCtx.Callbacks.OnComplete(success, summary)
 	}
+}
+
+// TaskWorktreeInfo holds information about a task's worktree for consolidation.
+// This mirrors the type from the orchestrator package for use within phase executors.
+type TaskWorktreeInfo struct {
+	TaskID       string // Task ID
+	TaskTitle    string // Human-readable task title
+	WorktreePath string // Path to the git worktree
+	Branch       string // Branch name for this task
+}
+
+// SynthesisOrchestratorExtended provides extended methods needed by the
+// SynthesisOrchestrator for full synthesis-to-consolidation transition.
+// This interface extends OrchestratorInterface with synthesis-specific operations.
+type SynthesisOrchestratorExtended interface {
+	OrchestratorInterface
+
+	// StopInstance stops a running Claude instance
+	StopInstance(inst any) error
+
+	// StartRevision begins the revision phase to address identified issues
+	StartRevision(issues []RevisionIssue) error
+
+	// StartConsolidation begins the consolidation phase
+	StartConsolidation() error
+}
+
+// SynthesisSessionExtended provides extended session methods needed for
+// synthesis completion and approval handling.
+type SynthesisSessionExtended interface {
+	UltraPlanSessionInterface
+
+	// GetPlan returns the execution plan
+	GetPlan() PlanInterface
+
+	// GetRevision returns the current revision state, or nil if none
+	GetRevision() RevisionInterface
+
+	// GetConsolidationMode returns the configured consolidation mode
+	GetConsolidationMode() string
+
+	// SetTaskWorktrees sets the task worktree info for consolidation
+	SetTaskWorktrees(info []TaskWorktreeInfo)
+
+	// SetCompletedAt marks the session as completed at the given time
+	SetCompletedAt(t *time.Time)
+}
+
+// PlanInterface provides access to planned tasks.
+type PlanInterface interface {
+	// GetTasks returns all planned tasks
+	GetTasks() []any
+}
+
+// RevisionInterface provides access to revision state.
+type RevisionInterface interface {
+	// GetRevisionRound returns the current revision round
+	GetRevisionRound() int
+
+	// GetMaxRevisions returns the maximum allowed revision rounds
+	GetMaxRevisions() int
+}
+
+// BaseSessionExtended provides extended methods for accessing instances.
+type BaseSessionExtended interface {
+	BaseSessionInterface
+
+	// GetInstancesExtended returns instances with extended info for worktree lookup
+	GetInstancesExtended() []InstanceExtendedInterface
+}
+
+// InstanceExtendedInterface provides additional instance methods for worktree capture.
+type InstanceExtendedInterface interface {
+	InstanceInterface
+
+	// GetTask returns the task associated with this instance
+	GetTask() string
+}
+
+// CaptureTaskWorktreeInfo captures worktree information for all completed tasks.
+// This is used to build context for the consolidation phase.
+// The method collects task ID, title, worktree path, and branch name for each
+// completed task by matching tasks to their corresponding instances.
+//
+// The captured information is stored on the session via SetTaskWorktrees
+// if the session implements SynthesisSessionExtended.
+func (s *SynthesisOrchestrator) CaptureTaskWorktreeInfo() []TaskWorktreeInfo {
+	session := s.phaseCtx.Session
+	completedTasks := session.GetCompletedTasks()
+
+	var worktreeInfo []TaskWorktreeInfo
+
+	// Get base session for instance lookup
+	baseSession, ok := s.phaseCtx.BaseSession.(BaseSessionExtended)
+	if !ok {
+		s.logger.Warn("base session does not support extended interface, cannot capture worktree info")
+		return worktreeInfo
+	}
+
+	instances := baseSession.GetInstancesExtended()
+
+	for _, taskID := range completedTasks {
+		task := session.GetTask(taskID)
+		if task == nil {
+			continue
+		}
+
+		taskInfo := extractTaskInfo(task)
+
+		// Find the instance for this task
+		for _, inst := range instances {
+			instTask := inst.GetTask()
+			instBranch := inst.GetBranch()
+
+			// Match by task ID in the task field or by slugified title in branch
+			if strings.Contains(instTask, taskID) || strings.Contains(instBranch, slugify(taskInfo.Title)) {
+				worktreeInfo = append(worktreeInfo, TaskWorktreeInfo{
+					TaskID:       taskID,
+					TaskTitle:    taskInfo.Title,
+					WorktreePath: inst.GetWorktreePath(),
+					Branch:       instBranch,
+				})
+				break
+			}
+		}
+	}
+
+	// Store on session if it supports the extended interface
+	if extSession, ok := session.(SynthesisSessionExtended); ok {
+		extSession.SetTaskWorktrees(worktreeInfo)
+	}
+
+	return worktreeInfo
+}
+
+// slugify creates a URL-friendly slug from text.
+// This is a local implementation to avoid circular imports.
+func slugify(text string) string {
+	slug := strings.ToLower(text)
+	slug = strings.ReplaceAll(slug, " ", "-")
+
+	// Remove non-alphanumeric characters except dashes
+	var result strings.Builder
+	for _, r := range slug {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			result.WriteRune(r)
+		}
+	}
+	slug = result.String()
+
+	// Limit length
+	if len(slug) > 30 {
+		slug = slug[:30]
+	}
+
+	return slug
+}
+
+// ProceedToConsolidationOrComplete moves to consolidation if configured, otherwise completes.
+// This is called after synthesis (and any revisions) are done.
+//
+// If the session has a consolidation mode configured, this will trigger StartConsolidation
+// on the extended orchestrator. Otherwise, it marks the session as complete.
+//
+// Returns an error if consolidation was configured but failed to start.
+func (s *SynthesisOrchestrator) ProceedToConsolidationOrComplete() error {
+	// Check if session supports extended interface for consolidation mode
+	extSession, ok := s.phaseCtx.Session.(SynthesisSessionExtended)
+	if !ok {
+		// No extended session - just complete
+		s.markComplete()
+		return nil
+	}
+
+	// Check if consolidation is configured
+	consolidationMode := extSession.GetConsolidationMode()
+	if consolidationMode != "" {
+		// Try to get extended orchestrator for consolidation
+		extOrch, ok := s.phaseCtx.Orchestrator.(SynthesisOrchestratorExtended)
+		if !ok {
+			// Orchestrator doesn't support consolidation - just complete
+			s.logger.Warn("consolidation configured but orchestrator does not support StartConsolidation")
+			s.markComplete()
+			return nil
+		}
+
+		if err := extOrch.StartConsolidation(); err != nil {
+			s.mu.Lock()
+			s.phaseCtx.Session.SetPhase(PhaseFailed)
+			s.phaseCtx.Session.SetError(fmt.Sprintf("consolidation failed: %v", err))
+			s.mu.Unlock()
+			_ = s.phaseCtx.Orchestrator.SaveSession()
+			s.notifyComplete(false, fmt.Sprintf("consolidation failed: %v", err))
+			return err
+		}
+		return nil
+	}
+
+	// No consolidation - mark complete
+	s.markComplete()
+	return nil
+}
+
+// markComplete marks the synthesis phase as complete.
+func (s *SynthesisOrchestrator) markComplete() {
+	s.mu.Lock()
+	s.phaseCtx.Session.SetPhase(PhaseComplete)
+	// Set completion time if session supports it
+	if extSession, ok := s.phaseCtx.Session.(SynthesisSessionExtended); ok {
+		now := time.Now()
+		extSession.SetCompletedAt(&now)
+	}
+	s.mu.Unlock()
+	_ = s.phaseCtx.Orchestrator.SaveSession()
+	s.notifyComplete(true, "All tasks completed and synthesized")
+}
+
+// TriggerConsolidation manually signals that synthesis is done and consolidation should proceed.
+// This is called from the TUI when the user indicates they're done with synthesis review.
+//
+// The method:
+//  1. Validates that we're in the synthesis phase
+//  2. Clears the awaiting approval flag
+//  3. Stops the synthesis instance if still running
+//  4. Calls OnSynthesisApproved() to proceed with the flow
+//
+// Returns an error if not in synthesis phase or if transition fails.
+func (s *SynthesisOrchestrator) TriggerConsolidation() error {
+	// Only allow triggering from synthesis phase
+	phase := s.phaseCtx.Session.GetPhase()
+	if phase != PhaseSynthesis {
+		return fmt.Errorf("can only trigger consolidation during synthesis phase (current: %s)", phase)
+	}
+
+	// Clear the awaiting approval flag
+	s.SetAwaitingApproval(false)
+	s.phaseCtx.Session.SetSynthesisAwaitingApproval(false)
+
+	// Stop the synthesis instance if it's still running
+	synthesisID := s.phaseCtx.Session.GetSynthesisID()
+	if synthesisID != "" {
+		inst := s.phaseCtx.Orchestrator.GetInstance(synthesisID)
+		if inst != nil {
+			// Try to stop the instance if orchestrator supports it
+			if extOrch, ok := s.phaseCtx.Orchestrator.(SynthesisOrchestratorExtended); ok {
+				_ = extOrch.StopInstance(inst)
+			}
+		}
+	}
+
+	// Proceed with approval flow
+	s.OnSynthesisApproved()
+	return nil
+}
+
+// OnSynthesisApproved handles the approval of synthesis results by the user.
+// This is called when the user reviews synthesis and decides to proceed.
+//
+// The method:
+//  1. Parses the synthesis completion file to extract any issues
+//  2. Determines if revision is needed based on critical/major issues
+//  3. Triggers revision if needed and revision limit not exceeded
+//  4. Otherwise, captures worktree info and proceeds to consolidation/completion
+func (s *SynthesisOrchestrator) OnSynthesisApproved() {
+	// Parse completion and issues if not already done
+	synthesisCompletion, issues := s.parseRevisionIssues()
+
+	// Store synthesis completion for later use
+	if synthesisCompletion != nil {
+		s.mu.Lock()
+		s.setCompletionFile(synthesisCompletion)
+		s.phaseCtx.Session.SetSynthesisCompletion(synthesisCompletion)
+		s.mu.Unlock()
+	}
+
+	// Store issues found
+	if issues != nil {
+		s.setIssuesFound(issues)
+	}
+
+	// Filter to only critical/major issues that need revision
+	issuesNeedingRevision := s.GetIssuesNeedingRevision()
+
+	// If there are issues that need revision, start the revision phase
+	if len(issuesNeedingRevision) > 0 {
+		// Check if we've already had too many revision rounds
+		if s.shouldSkipRevision() {
+			// Max revisions reached, proceed to consolidation anyway
+			s.logger.Info("max revisions reached, proceeding to consolidation")
+			s.CaptureTaskWorktreeInfo()
+			_ = s.ProceedToConsolidationOrComplete()
+			return
+		}
+
+		// Try to start revision if orchestrator supports it
+		extOrch, ok := s.phaseCtx.Orchestrator.(SynthesisOrchestratorExtended)
+		if !ok {
+			s.logger.Warn("orchestrator does not support StartRevision, proceeding to consolidation")
+			s.CaptureTaskWorktreeInfo()
+			_ = s.ProceedToConsolidationOrComplete()
+			return
+		}
+
+		if err := extOrch.StartRevision(issuesNeedingRevision); err != nil {
+			s.mu.Lock()
+			s.phaseCtx.Session.SetPhase(PhaseFailed)
+			s.phaseCtx.Session.SetError(fmt.Sprintf("revision failed: %v", err))
+			s.mu.Unlock()
+			_ = s.phaseCtx.Orchestrator.SaveSession()
+			s.notifyComplete(false, fmt.Sprintf("revision failed: %v", err))
+		}
+		return
+	}
+
+	// No issues - capture worktree info and proceed to consolidation or complete
+	s.CaptureTaskWorktreeInfo()
+	_ = s.ProceedToConsolidationOrComplete()
+}
+
+// shouldSkipRevision returns true if we've exceeded the max revision rounds.
+func (s *SynthesisOrchestrator) shouldSkipRevision() bool {
+	extSession, ok := s.phaseCtx.Session.(SynthesisSessionExtended)
+	if !ok {
+		return false
+	}
+
+	revision := extSession.GetRevision()
+	if revision == nil {
+		return false
+	}
+
+	return revision.GetRevisionRound() >= revision.GetMaxRevisions()
 }

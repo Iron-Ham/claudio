@@ -46,9 +46,15 @@ type mockSession struct {
 	errorMsg          string
 	config            UltraPlanConfigInterface
 	synthesisComplete *SynthesisCompletionFile
+	tasks             map[string]any // task ID -> task object
 }
 
-func (m *mockSession) GetTask(taskID string) any                  { return nil }
+func (m *mockSession) GetTask(taskID string) any {
+	if m.tasks == nil {
+		return nil
+	}
+	return m.tasks[taskID]
+}
 func (m *mockSession) GetReadyTasks() []string                    { return nil }
 func (m *mockSession) IsCurrentGroupComplete() bool               { return false }
 func (m *mockSession) AdvanceGroupIfComplete() (bool, int)        { return false, 0 }

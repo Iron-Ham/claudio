@@ -736,3 +736,530 @@ func TestSynthesisOrchestrator_ConcurrentAccess(t *testing.T) {
 		}
 	}
 }
+
+// Test slugify function
+func TestSlugify(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "simple text",
+			input:    "hello world",
+			expected: "hello-world",
+		},
+		{
+			name:     "uppercase",
+			input:    "Hello World",
+			expected: "hello-world",
+		},
+		{
+			name:     "special characters removed",
+			input:    "Hello! World@2024",
+			expected: "hello-world2024",
+		},
+		{
+			name:     "multiple spaces",
+			input:    "hello   world",
+			expected: "hello---world",
+		},
+		{
+			name:     "long text truncated",
+			input:    "this is a very long title that exceeds thirty characters limit",
+			expected: "this-is-a-very-long-title-that",
+		},
+		{
+			name:     "numbers preserved",
+			input:    "task-123 implementation",
+			expected: "task-123-implementation",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := slugify(tt.input)
+			if result != tt.expected {
+				t.Errorf("slugify(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// mockInstanceExtended implements InstanceExtendedInterface for tests
+type mockInstanceExtended struct {
+	id           string
+	worktreePath string
+	branch       string
+	status       InstanceStatus
+	task         string
+}
+
+func (m *mockInstanceExtended) GetID() string              { return m.id }
+func (m *mockInstanceExtended) GetWorktreePath() string    { return m.worktreePath }
+func (m *mockInstanceExtended) GetBranch() string          { return m.branch }
+func (m *mockInstanceExtended) GetStatus() InstanceStatus  { return m.status }
+func (m *mockInstanceExtended) GetFilesModified() []string { return nil }
+func (m *mockInstanceExtended) GetTask() string            { return m.task }
+
+// mockBaseSessionExtended implements BaseSessionExtended for tests
+type mockBaseSessionExtended struct {
+	instances []InstanceExtendedInterface
+}
+
+func (m *mockBaseSessionExtended) GetGroupBySessionType(sessionType string) InstanceGroupInterface {
+	return nil
+}
+
+func (m *mockBaseSessionExtended) GetInstances() []InstanceInterface {
+	result := make([]InstanceInterface, len(m.instances))
+	for i, inst := range m.instances {
+		result[i] = inst
+	}
+	return result
+}
+
+func (m *mockBaseSessionExtended) GetInstancesExtended() []InstanceExtendedInterface {
+	return m.instances
+}
+
+// mockSessionExtended implements SynthesisSessionExtended for tests
+type mockSessionExtended struct {
+	mockSession
+	plan              PlanInterface
+	revision          RevisionInterface
+	consolidationMode string
+	taskWorktrees     []TaskWorktreeInfo
+	completedAt       *time.Time
+}
+
+func (m *mockSessionExtended) GetPlan() PlanInterface                   { return m.plan }
+func (m *mockSessionExtended) GetRevision() RevisionInterface           { return m.revision }
+func (m *mockSessionExtended) GetConsolidationMode() string             { return m.consolidationMode }
+func (m *mockSessionExtended) SetTaskWorktrees(info []TaskWorktreeInfo) { m.taskWorktrees = info }
+func (m *mockSessionExtended) SetCompletedAt(t *time.Time)              { m.completedAt = t }
+
+// mockRevision implements RevisionInterface for tests
+type mockRevision struct {
+	revisionRound int
+	maxRevisions  int
+}
+
+func (m *mockRevision) GetRevisionRound() int { return m.revisionRound }
+func (m *mockRevision) GetMaxRevisions() int  { return m.maxRevisions }
+
+// mockOrchestratorExtended implements SynthesisOrchestratorExtended for tests
+type mockOrchestratorExtended struct {
+	mockOrchestratorForSynthesis
+	stopInstanceCalled    bool
+	startRevisionCalled   bool
+	startRevisionIssues   []RevisionIssue
+	startConsolidationErr error
+	startRevisionErr      error
+}
+
+func (m *mockOrchestratorExtended) StopInstance(inst any) error {
+	m.stopInstanceCalled = true
+	return nil
+}
+
+func (m *mockOrchestratorExtended) StartRevision(issues []RevisionIssue) error {
+	m.startRevisionCalled = true
+	m.startRevisionIssues = issues
+	return m.startRevisionErr
+}
+
+func (m *mockOrchestratorExtended) StartConsolidation() error {
+	return m.startConsolidationErr
+}
+
+func TestSynthesisOrchestrator_CaptureTaskWorktreeInfo(t *testing.T) {
+	t.Run("captures worktree info for completed tasks", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession: mockSession{
+				completedTasks: []string{"task-1", "task-2"},
+				tasks: map[string]any{
+					"task-1": &mockTask{id: "task-1", title: "First Task"},
+					"task-2": &mockTask{id: "task-2", title: "Second Task"},
+				},
+			},
+		}
+
+		mockBaseSession := &mockBaseSessionExtended{
+			instances: []InstanceExtendedInterface{
+				&mockInstanceExtended{
+					id:           "inst-1",
+					worktreePath: "/tmp/wt1",
+					branch:       "claudio/first-task",
+					task:         "task-1",
+				},
+				&mockInstanceExtended{
+					id:           "inst-2",
+					worktreePath: "/tmp/wt2",
+					branch:       "claudio/second-task",
+					task:         "task-2",
+				},
+			},
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+			BaseSession:  mockBaseSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		info := synth.CaptureTaskWorktreeInfo()
+
+		if len(info) != 2 {
+			t.Errorf("CaptureTaskWorktreeInfo() len = %d, want 2", len(info))
+		}
+
+		// Verify task worktrees were stored on session
+		if len(mockSession.taskWorktrees) != 2 {
+			t.Errorf("Session task worktrees len = %d, want 2", len(mockSession.taskWorktrees))
+		}
+	})
+
+	t.Run("returns empty when base session doesn't support extended interface", func(t *testing.T) {
+		mockSession := &mockSession{
+			completedTasks: []string{"task-1"},
+			tasks: map[string]any{
+				"task-1": &mockTask{id: "task-1", title: "Test Task"},
+			},
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+			BaseSession:  nil, // No base session
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		info := synth.CaptureTaskWorktreeInfo()
+
+		if len(info) != 0 {
+			t.Errorf("CaptureTaskWorktreeInfo() len = %d, want 0 when no base session", len(info))
+		}
+	})
+}
+
+// mockTask implements the task interface for extractTaskInfo
+type mockTask struct {
+	id          string
+	title       string
+	description string
+}
+
+func (m *mockTask) GetID() string          { return m.id }
+func (m *mockTask) GetTitle() string       { return m.title }
+func (m *mockTask) GetDescription() string { return m.description }
+
+func TestSynthesisOrchestrator_TriggerConsolidation(t *testing.T) {
+	t.Run("returns error when not in synthesis phase", func(t *testing.T) {
+		mockSession := &mockSession{
+			phase: PhaseExecuting, // Wrong phase
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		err = synth.TriggerConsolidation()
+		if err == nil {
+			t.Error("TriggerConsolidation() should return error when not in synthesis phase")
+		}
+	})
+
+	t.Run("clears awaiting approval and stops instance", func(t *testing.T) {
+		mockOrch := &mockOrchestratorExtended{
+			mockOrchestratorForSynthesis: mockOrchestratorForSynthesis{
+				addedInstance: &mockInstanceForSynthesis{
+					id:     "synth-inst",
+					status: StatusRunning,
+				},
+			},
+		}
+
+		mockSession := &mockSession{
+			phase:       PhaseSynthesis,
+			synthesisID: "synth-inst",
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		synth.SetAwaitingApproval(true)
+
+		err = synth.TriggerConsolidation()
+		if err != nil {
+			t.Errorf("TriggerConsolidation() unexpected error: %v", err)
+		}
+
+		if synth.IsAwaitingApproval() {
+			t.Error("TriggerConsolidation() should clear awaiting approval")
+		}
+
+		if !mockOrch.stopInstanceCalled {
+			t.Error("TriggerConsolidation() should stop the synthesis instance")
+		}
+	})
+}
+
+func TestSynthesisOrchestrator_ProceedToConsolidationOrComplete(t *testing.T) {
+	t.Run("marks complete when no consolidation configured", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession:       mockSession{},
+			consolidationMode: "", // No consolidation
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		err = synth.ProceedToConsolidationOrComplete()
+		if err != nil {
+			t.Errorf("ProceedToConsolidationOrComplete() unexpected error: %v", err)
+		}
+
+		if mockSession.completedAt == nil {
+			t.Error("Session should have completedAt set when completing")
+		}
+	})
+
+	t.Run("starts consolidation when configured", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession:       mockSession{},
+			consolidationMode: "stacked", // Consolidation enabled
+		}
+
+		mockOrch := &mockOrchestratorExtended{}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		err = synth.ProceedToConsolidationOrComplete()
+		if err != nil {
+			t.Errorf("ProceedToConsolidationOrComplete() unexpected error: %v", err)
+		}
+	})
+
+	t.Run("handles consolidation start error", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession:       mockSession{},
+			consolidationMode: "stacked",
+		}
+
+		mockOrch := &mockOrchestratorExtended{
+			startConsolidationErr: context.DeadlineExceeded, // Simulate error
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		err = synth.ProceedToConsolidationOrComplete()
+		if err == nil {
+			t.Error("ProceedToConsolidationOrComplete() should return error on consolidation failure")
+		}
+	})
+}
+
+func TestSynthesisOrchestrator_OnSynthesisApproved(t *testing.T) {
+	t.Run("starts revision when issues found", func(t *testing.T) {
+		mockSession := &mockSession{
+			phase: PhaseSynthesis,
+		}
+
+		mockOrch := &mockOrchestratorExtended{}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Set up critical issues
+		synth.setIssuesFound([]RevisionIssue{
+			{TaskID: "task-1", Severity: "critical", Description: "Bug"},
+		})
+
+		synth.OnSynthesisApproved()
+
+		if !mockOrch.startRevisionCalled {
+			t.Error("OnSynthesisApproved() should call StartRevision when issues found")
+		}
+	})
+
+	t.Run("proceeds to consolidation when no issues", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession:       mockSession{phase: PhaseSynthesis},
+			consolidationMode: "", // No consolidation configured
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// No issues set
+
+		synth.OnSynthesisApproved()
+
+		// Should have completed
+		if mockSession.completedAt == nil {
+			t.Error("OnSynthesisApproved() should complete when no issues")
+		}
+	})
+
+	t.Run("skips revision when max rounds reached", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession: mockSession{phase: PhaseSynthesis},
+			revision: &mockRevision{
+				revisionRound: 3,
+				maxRevisions:  3, // Already at max
+			},
+			consolidationMode: "",
+		}
+
+		mockOrch := &mockOrchestratorExtended{}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Set up critical issues - but should be skipped due to max revisions
+		synth.setIssuesFound([]RevisionIssue{
+			{TaskID: "task-1", Severity: "critical", Description: "Bug"},
+		})
+
+		synth.OnSynthesisApproved()
+
+		if mockOrch.startRevisionCalled {
+			t.Error("OnSynthesisApproved() should NOT call StartRevision when max revisions reached")
+		}
+
+		// Should have completed despite issues
+		if mockSession.completedAt == nil {
+			t.Error("OnSynthesisApproved() should complete when max revisions reached")
+		}
+	})
+}
+
+func TestSynthesisOrchestrator_ShouldSkipRevision(t *testing.T) {
+	t.Run("returns false when no revision state", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession: mockSession{},
+			revision:    nil,
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		if synth.shouldSkipRevision() {
+			t.Error("shouldSkipRevision() should return false when no revision state")
+		}
+	})
+
+	t.Run("returns true when at max revisions", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession: mockSession{},
+			revision: &mockRevision{
+				revisionRound: 3,
+				maxRevisions:  3,
+			},
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		if !synth.shouldSkipRevision() {
+			t.Error("shouldSkipRevision() should return true at max revisions")
+		}
+	})
+
+	t.Run("returns false when under max revisions", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession: mockSession{},
+			revision: &mockRevision{
+				revisionRound: 1,
+				maxRevisions:  3,
+			},
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		if synth.shouldSkipRevision() {
+			t.Error("shouldSkipRevision() should return false when under max revisions")
+		}
+	})
+}
