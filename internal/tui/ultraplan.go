@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
@@ -179,25 +178,12 @@ func (m *Model) getNavigableInstances() []string {
 			}
 
 			for _, taskID := range group {
-				// Check if task has an instance (either still in TaskToInstance or was completed)
+				// Only include tasks that currently have a running instance
+				// Completed tasks are removed from TaskToInstance, so they won't be navigable
+				// (their instances may have been cleaned up or repurposed)
 				if instID, ok := session.TaskToInstance[taskID]; ok && instID != "" {
 					instances = append(instances, instID)
 					ultraPlanInstanceIDs[instID] = true
-				} else {
-					// Task might be completed - find instance by checking completed tasks
-					for _, completedTaskID := range session.CompletedTasks {
-						if completedTaskID == taskID {
-							// Find instance for this completed task
-							for _, inst := range m.session.Instances {
-								if strings.Contains(inst.Task, taskID) {
-									instances = append(instances, inst.ID)
-									ultraPlanInstanceIDs[inst.ID] = true
-									break
-								}
-							}
-							break
-						}
-					}
 				}
 			}
 
