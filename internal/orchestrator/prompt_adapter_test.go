@@ -758,3 +758,372 @@ func TestSynthesisInfoFromCompletion(t *testing.T) {
 		})
 	}
 }
+
+func TestGroupContextFromCompletion(t *testing.T) {
+	tests := []struct {
+		name       string
+		completion *GroupConsolidationCompletionFile
+		want       *prompt.GroupContext
+	}{
+		{
+			name:       "nil completion returns nil",
+			completion: nil,
+			want:       nil,
+		},
+		{
+			name:       "empty completion",
+			completion: &GroupConsolidationCompletionFile{},
+			want: &prompt.GroupContext{
+				GroupIndex:         0,
+				Notes:              "",
+				IssuesForNextGroup: nil,
+				VerificationPassed: false,
+			},
+		},
+		{
+			name: "full completion with passing verification",
+			completion: &GroupConsolidationCompletionFile{
+				GroupIndex:         1,
+				Status:             "complete",
+				BranchName:         "Iron-Ham/ultraplan-abc123-group-2",
+				TasksConsolidated:  []string{"task-1", "task-2"},
+				Notes:              "Consolidated successfully with minor conflict resolution",
+				IssuesForNextGroup: []string{"Watch for API changes in auth module", "Database schema pending migration"},
+				Verification: VerificationResult{
+					ProjectType:    "go",
+					OverallSuccess: true,
+					Summary:        "All checks passed",
+				},
+			},
+			want: &prompt.GroupContext{
+				GroupIndex:         1,
+				Notes:              "Consolidated successfully with minor conflict resolution",
+				IssuesForNextGroup: []string{"Watch for API changes in auth module", "Database schema pending migration"},
+				VerificationPassed: true,
+			},
+		},
+		{
+			name: "completion with failing verification",
+			completion: &GroupConsolidationCompletionFile{
+				GroupIndex:        2,
+				Status:            "complete",
+				BranchName:        "Iron-Ham/ultraplan-xyz789-group-3",
+				TasksConsolidated: []string{"task-5"},
+				Notes:             "Merged but tests are failing",
+				Verification: VerificationResult{
+					ProjectType:    "go",
+					OverallSuccess: false,
+					Summary:        "Tests failed: 3 failures",
+				},
+			},
+			want: &prompt.GroupContext{
+				GroupIndex:         2,
+				Notes:              "Merged but tests are failing",
+				IssuesForNextGroup: nil,
+				VerificationPassed: false,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := groupContextFromCompletion(tt.completion)
+
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("groupContextFromCompletion() = %v, want nil", got)
+				}
+				return
+			}
+
+			if got == nil {
+				t.Fatal("groupContextFromCompletion() = nil, want non-nil")
+			}
+
+			if got.GroupIndex != tt.want.GroupIndex {
+				t.Errorf("GroupIndex = %d, want %d", got.GroupIndex, tt.want.GroupIndex)
+			}
+			if got.Notes != tt.want.Notes {
+				t.Errorf("Notes = %q, want %q", got.Notes, tt.want.Notes)
+			}
+			if got.VerificationPassed != tt.want.VerificationPassed {
+				t.Errorf("VerificationPassed = %v, want %v", got.VerificationPassed, tt.want.VerificationPassed)
+			}
+			if len(got.IssuesForNextGroup) != len(tt.want.IssuesForNextGroup) {
+				t.Errorf("IssuesForNextGroup length = %d, want %d", len(got.IssuesForNextGroup), len(tt.want.IssuesForNextGroup))
+			} else {
+				for i, issue := range got.IssuesForNextGroup {
+					if issue != tt.want.IssuesForNextGroup[i] {
+						t.Errorf("IssuesForNextGroup[%d] = %q, want %q", i, issue, tt.want.IssuesForNextGroup[i])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestConsolidationInfoFromSession(t *testing.T) {
+	tests := []struct {
+		name       string
+		session    *UltraPlanSession
+		mainBranch string
+		want       *prompt.ConsolidationInfo
+	}{
+		{
+			name:       "nil session returns nil",
+			session:    nil,
+			mainBranch: "main",
+			want:       nil,
+		},
+		{
+			name: "empty session with defaults",
+			session: &UltraPlanSession{
+				Config: UltraPlanConfig{},
+			},
+			mainBranch: "",
+			want: &prompt.ConsolidationInfo{
+				Mode:          "single",
+				BranchPrefix:  "Iron-Ham",
+				MainBranch:    "main",
+				TaskWorktrees: []prompt.TaskWorktreeInfo{},
+			},
+		},
+		{
+			name: "session with custom config",
+			session: &UltraPlanSession{
+				Config: UltraPlanConfig{
+					ConsolidationMode: ModeStackedPRs,
+					BranchPrefix:      "feature",
+				},
+				TaskWorktrees: []TaskWorktreeInfo{
+					{
+						TaskID:       "task-1",
+						TaskTitle:    "First task",
+						WorktreePath: "/tmp/worktree-1",
+						Branch:       "feature/task-1",
+					},
+				},
+				TaskCommitCounts: map[string]int{
+					"task-1": 3,
+				},
+				GroupConsolidatedBranches: []string{"feature/ultraplan-abc-group-1"},
+			},
+			mainBranch: "develop",
+			want: &prompt.ConsolidationInfo{
+				Mode:         "stacked",
+				BranchPrefix: "feature",
+				MainBranch:   "develop",
+				TaskWorktrees: []prompt.TaskWorktreeInfo{
+					{
+						TaskID:       "task-1",
+						TaskTitle:    "First task",
+						WorktreePath: "/tmp/worktree-1",
+						Branch:       "feature/task-1",
+						CommitCount:  3,
+					},
+				},
+				GroupBranches:         []string{"feature/ultraplan-abc-group-1"},
+				PreConsolidatedBranch: "feature/ultraplan-abc-group-1",
+			},
+		},
+		{
+			name: "session with multiple task worktrees",
+			session: &UltraPlanSession{
+				Config: UltraPlanConfig{
+					ConsolidationMode: ModeSinglePR,
+					BranchPrefix:      "team",
+				},
+				TaskWorktrees: []TaskWorktreeInfo{
+					{TaskID: "task-a", TaskTitle: "Task A", WorktreePath: "/wt/a", Branch: "team/task-a"},
+					{TaskID: "task-b", TaskTitle: "Task B", WorktreePath: "/wt/b", Branch: "team/task-b"},
+					{TaskID: "task-c", TaskTitle: "Task C", WorktreePath: "/wt/c", Branch: "team/task-c"},
+				},
+				TaskCommitCounts: map[string]int{
+					"task-a": 1,
+					"task-b": 5,
+					// task-c has no commits recorded
+				},
+			},
+			mainBranch: "main",
+			want: &prompt.ConsolidationInfo{
+				Mode:         "single",
+				BranchPrefix: "team",
+				MainBranch:   "main",
+				TaskWorktrees: []prompt.TaskWorktreeInfo{
+					{TaskID: "task-a", TaskTitle: "Task A", WorktreePath: "/wt/a", Branch: "team/task-a", CommitCount: 1},
+					{TaskID: "task-b", TaskTitle: "Task B", WorktreePath: "/wt/b", Branch: "team/task-b", CommitCount: 5},
+					{TaskID: "task-c", TaskTitle: "Task C", WorktreePath: "/wt/c", Branch: "team/task-c", CommitCount: 0},
+				},
+			},
+		},
+		{
+			name: "session with multiple group branches",
+			session: &UltraPlanSession{
+				Config: UltraPlanConfig{
+					ConsolidationMode: ModeStackedPRs,
+				},
+				GroupConsolidatedBranches: []string{
+					"Iron-Ham/ultraplan-abc-group-1",
+					"Iron-Ham/ultraplan-abc-group-2",
+					"Iron-Ham/ultraplan-abc-group-3",
+				},
+			},
+			mainBranch: "main",
+			want: &prompt.ConsolidationInfo{
+				Mode:                  "stacked",
+				BranchPrefix:          "Iron-Ham",
+				MainBranch:            "main",
+				TaskWorktrees:         []prompt.TaskWorktreeInfo{},
+				GroupBranches:         []string{"Iron-Ham/ultraplan-abc-group-1", "Iron-Ham/ultraplan-abc-group-2", "Iron-Ham/ultraplan-abc-group-3"},
+				PreConsolidatedBranch: "Iron-Ham/ultraplan-abc-group-3",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := consolidationInfoFromSession(tt.session, tt.mainBranch)
+
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("consolidationInfoFromSession() = %v, want nil", got)
+				}
+				return
+			}
+
+			if got == nil {
+				t.Fatal("consolidationInfoFromSession() = nil, want non-nil")
+			}
+
+			if got.Mode != tt.want.Mode {
+				t.Errorf("Mode = %q, want %q", got.Mode, tt.want.Mode)
+			}
+			if got.BranchPrefix != tt.want.BranchPrefix {
+				t.Errorf("BranchPrefix = %q, want %q", got.BranchPrefix, tt.want.BranchPrefix)
+			}
+			if got.MainBranch != tt.want.MainBranch {
+				t.Errorf("MainBranch = %q, want %q", got.MainBranch, tt.want.MainBranch)
+			}
+			if got.PreConsolidatedBranch != tt.want.PreConsolidatedBranch {
+				t.Errorf("PreConsolidatedBranch = %q, want %q", got.PreConsolidatedBranch, tt.want.PreConsolidatedBranch)
+			}
+
+			if len(got.TaskWorktrees) != len(tt.want.TaskWorktrees) {
+				t.Errorf("TaskWorktrees length = %d, want %d", len(got.TaskWorktrees), len(tt.want.TaskWorktrees))
+			} else {
+				for i, tw := range got.TaskWorktrees {
+					wantTW := tt.want.TaskWorktrees[i]
+					if tw.TaskID != wantTW.TaskID {
+						t.Errorf("TaskWorktrees[%d].TaskID = %q, want %q", i, tw.TaskID, wantTW.TaskID)
+					}
+					if tw.CommitCount != wantTW.CommitCount {
+						t.Errorf("TaskWorktrees[%d].CommitCount = %d, want %d", i, tw.CommitCount, wantTW.CommitCount)
+					}
+				}
+			}
+
+			if len(got.GroupBranches) != len(tt.want.GroupBranches) {
+				t.Errorf("GroupBranches length = %d, want %d", len(got.GroupBranches), len(tt.want.GroupBranches))
+			}
+		})
+	}
+}
+
+func TestTaskWorktreeInfoFromOrchestrator(t *testing.T) {
+	tests := []struct {
+		name         string
+		tw           TaskWorktreeInfo
+		commitCounts map[string]int
+		want         prompt.TaskWorktreeInfo
+	}{
+		{
+			name:         "empty worktree info with nil commit counts",
+			tw:           TaskWorktreeInfo{},
+			commitCounts: nil,
+			want: prompt.TaskWorktreeInfo{
+				CommitCount: 0,
+			},
+		},
+		{
+			name: "full worktree info with commit count",
+			tw: TaskWorktreeInfo{
+				TaskID:       "task-123",
+				TaskTitle:    "Implement feature X",
+				WorktreePath: "/Users/dev/.claudio/worktrees/abc123",
+				Branch:       "Iron-Ham/task-123-feature-x",
+			},
+			commitCounts: map[string]int{
+				"task-123": 7,
+				"task-456": 3,
+			},
+			want: prompt.TaskWorktreeInfo{
+				TaskID:       "task-123",
+				TaskTitle:    "Implement feature X",
+				WorktreePath: "/Users/dev/.claudio/worktrees/abc123",
+				Branch:       "Iron-Ham/task-123-feature-x",
+				CommitCount:  7,
+			},
+		},
+		{
+			name: "worktree info with missing commit count",
+			tw: TaskWorktreeInfo{
+				TaskID:       "task-999",
+				TaskTitle:    "New task",
+				WorktreePath: "/tmp/wt-999",
+				Branch:       "Iron-Ham/task-999",
+			},
+			commitCounts: map[string]int{
+				"task-123": 5,
+				// task-999 is not in the map
+			},
+			want: prompt.TaskWorktreeInfo{
+				TaskID:       "task-999",
+				TaskTitle:    "New task",
+				WorktreePath: "/tmp/wt-999",
+				Branch:       "Iron-Ham/task-999",
+				CommitCount:  0, // Defaults to 0 when not found
+			},
+		},
+		{
+			name: "worktree info with zero commits in map",
+			tw: TaskWorktreeInfo{
+				TaskID:       "task-zero",
+				TaskTitle:    "Zero commit task",
+				WorktreePath: "/tmp/wt-zero",
+				Branch:       "Iron-Ham/task-zero",
+			},
+			commitCounts: map[string]int{
+				"task-zero": 0,
+			},
+			want: prompt.TaskWorktreeInfo{
+				TaskID:       "task-zero",
+				TaskTitle:    "Zero commit task",
+				WorktreePath: "/tmp/wt-zero",
+				Branch:       "Iron-Ham/task-zero",
+				CommitCount:  0,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := taskWorktreeInfoFromOrchestrator(tt.tw, tt.commitCounts)
+
+			if got.TaskID != tt.want.TaskID {
+				t.Errorf("TaskID = %q, want %q", got.TaskID, tt.want.TaskID)
+			}
+			if got.TaskTitle != tt.want.TaskTitle {
+				t.Errorf("TaskTitle = %q, want %q", got.TaskTitle, tt.want.TaskTitle)
+			}
+			if got.WorktreePath != tt.want.WorktreePath {
+				t.Errorf("WorktreePath = %q, want %q", got.WorktreePath, tt.want.WorktreePath)
+			}
+			if got.Branch != tt.want.Branch {
+				t.Errorf("Branch = %q, want %q", got.Branch, tt.want.Branch)
+			}
+			if got.CommitCount != tt.want.CommitCount {
+				t.Errorf("CommitCount = %d, want %d", got.CommitCount, tt.want.CommitCount)
+			}
+		})
+	}
+}

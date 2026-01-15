@@ -143,3 +143,86 @@ func synthesisInfoFromCompletion(completion *SynthesisCompletionFile) *prompt.Sy
 		Issues:          issueDescriptions,
 	}
 }
+
+// groupContextFromCompletion converts a GroupConsolidationCompletionFile to prompt.GroupContext.
+// This enables passing context from one group's consolidation to inform subsequent groups.
+// The completion file is written by the per-group consolidator session after merging
+// all task branches for that group.
+func groupContextFromCompletion(completion *GroupConsolidationCompletionFile) *prompt.GroupContext {
+	if completion == nil {
+		return nil
+	}
+
+	return &prompt.GroupContext{
+		GroupIndex:         completion.GroupIndex,
+		Notes:              completion.Notes,
+		IssuesForNextGroup: completion.IssuesForNextGroup,
+		VerificationPassed: completion.Verification.OverallSuccess,
+	}
+}
+
+// consolidationInfoFromSession builds prompt.ConsolidationInfo from UltraPlanSession state.
+// This extracts the consolidation-relevant fields (mode, branch config, worktrees, group branches)
+// needed by the prompt builder to generate consolidation prompts.
+func consolidationInfoFromSession(session *UltraPlanSession, mainBranch string) *prompt.ConsolidationInfo {
+	if session == nil {
+		return nil
+	}
+
+	// Convert orchestrator TaskWorktreeInfo to prompt TaskWorktreeInfo
+	taskWorktrees := make([]prompt.TaskWorktreeInfo, len(session.TaskWorktrees))
+	for i, tw := range session.TaskWorktrees {
+		taskWorktrees[i] = taskWorktreeInfoFromOrchestrator(tw, session.TaskCommitCounts)
+	}
+
+	// Determine mode string from config
+	mode := string(session.Config.ConsolidationMode)
+	if mode == "" {
+		mode = string(ModeSinglePR) // Default to single PR mode
+	}
+
+	// Determine branch prefix
+	branchPrefix := session.Config.BranchPrefix
+	if branchPrefix == "" {
+		branchPrefix = "Iron-Ham" // Default branch prefix
+	}
+
+	// Determine main branch
+	if mainBranch == "" {
+		mainBranch = "main"
+	}
+
+	// Determine pre-consolidated branch (if any groups have been consolidated)
+	var preConsolidatedBranch string
+	if len(session.GroupConsolidatedBranches) > 0 {
+		// Use the most recent consolidated branch as the base
+		preConsolidatedBranch = session.GroupConsolidatedBranches[len(session.GroupConsolidatedBranches)-1]
+	}
+
+	return &prompt.ConsolidationInfo{
+		Mode:                  mode,
+		BranchPrefix:          branchPrefix,
+		MainBranch:            mainBranch,
+		TaskWorktrees:         taskWorktrees,
+		GroupBranches:         session.GroupConsolidatedBranches,
+		PreConsolidatedBranch: preConsolidatedBranch,
+	}
+}
+
+// taskWorktreeInfoFromOrchestrator converts orchestrator.TaskWorktreeInfo to prompt.TaskWorktreeInfo.
+// The CommitCount is looked up from the TaskCommitCounts map since it's stored separately
+// from the basic worktree info and is populated after task completion verification.
+func taskWorktreeInfoFromOrchestrator(tw TaskWorktreeInfo, commitCounts map[string]int) prompt.TaskWorktreeInfo {
+	commitCount := 0
+	if commitCounts != nil {
+		commitCount = commitCounts[tw.TaskID]
+	}
+
+	return prompt.TaskWorktreeInfo{
+		TaskID:       tw.TaskID,
+		TaskTitle:    tw.TaskTitle,
+		WorktreePath: tw.WorktreePath,
+		Branch:       tw.Branch,
+		CommitCount:  commitCount,
+	}
+}
