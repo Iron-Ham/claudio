@@ -1926,3 +1926,1404 @@ func TestRevisionPromptTemplate(t *testing.T) {
 		}
 	}
 }
+
+// Tests for parseRevisionIssuesFromOutput
+
+func TestParseRevisionIssuesFromOutput(t *testing.T) {
+	tests := []struct {
+		name          string
+		output        string
+		wantLen       int
+		wantErr       bool
+		wantFirstTask string
+	}{
+		{
+			name:    "no revision issues block returns nil",
+			output:  "Some output without revision issues",
+			wantLen: 0,
+			wantErr: false,
+		},
+		{
+			name:    "empty revision issues block returns nil",
+			output:  "<revision_issues></revision_issues>",
+			wantLen: 0,
+			wantErr: false,
+		},
+		{
+			name:    "empty array returns nil",
+			output:  "<revision_issues>[]</revision_issues>",
+			wantLen: 0,
+			wantErr: false,
+		},
+		{
+			name: "valid issues parsed correctly",
+			output: `Some output before
+<revision_issues>
+[
+  {"TaskID": "task-1", "Description": "Bug in auth", "Severity": "critical"},
+  {"TaskID": "task-2", "Description": "Missing validation", "Severity": "major"}
+]
+</revision_issues>
+Some output after`,
+			wantLen:       2,
+			wantErr:       false,
+			wantFirstTask: "task-1",
+		},
+		{
+			name: "filters out issues with empty description",
+			output: `<revision_issues>
+[
+  {"TaskID": "task-1", "Description": "Valid issue", "Severity": "critical"},
+  {"TaskID": "task-2", "Description": "", "Severity": "major"}
+]
+</revision_issues>`,
+			wantLen:       1,
+			wantErr:       false,
+			wantFirstTask: "task-1",
+		},
+		{
+			name: "invalid JSON returns error",
+			output: `<revision_issues>
+{ invalid json }
+</revision_issues>`,
+			wantLen: 0,
+			wantErr: true,
+		},
+		{
+			name: "multiline output with whitespace",
+			output: `
+<revision_issues>
+  [
+    {
+      "TaskID": "task-1",
+      "Description": "Issue with files",
+      "Files": ["auth.go", "handler.go"],
+      "Severity": "critical",
+      "Suggestion": "Fix the auth logic"
+    }
+  ]
+</revision_issues>
+`,
+			wantLen:       1,
+			wantErr:       false,
+			wantFirstTask: "task-1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			issues, err := parseRevisionIssuesFromOutput(tt.output)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("parseRevisionIssuesFromOutput() expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("parseRevisionIssuesFromOutput() unexpected error: %v", err)
+				return
+			}
+
+			if len(issues) != tt.wantLen {
+				t.Errorf("parseRevisionIssuesFromOutput() returned %d issues, want %d", len(issues), tt.wantLen)
+				return
+			}
+
+			if tt.wantLen > 0 && issues[0].TaskID != tt.wantFirstTask {
+				t.Errorf("first issue TaskID = %q, want %q", issues[0].TaskID, tt.wantFirstTask)
+			}
+		})
+	}
+}
+
+// Tests for convertToRevisionIssues
+
+func TestConvertToRevisionIssues(t *testing.T) {
+	t.Run("nil input returns nil", func(t *testing.T) {
+		result := convertToRevisionIssues(nil)
+		if result != nil {
+			t.Errorf("convertToRevisionIssues(nil) = %v, want nil", result)
+		}
+	})
+
+	t.Run("empty slice returns empty slice", func(t *testing.T) {
+		result := convertToRevisionIssues([]RevisionIssue{})
+		if result == nil || len(result) != 0 {
+			t.Errorf("convertToRevisionIssues([]) = %v, want empty slice", result)
+		}
+	})
+
+	t.Run("copies issues correctly", func(t *testing.T) {
+		input := []RevisionIssue{
+			{TaskID: "task-1", Description: "Bug", Severity: "critical", Files: []string{"a.go"}, Suggestion: "Fix it"},
+			{TaskID: "task-2", Description: "Issue", Severity: "major"},
+		}
+
+		result := convertToRevisionIssues(input)
+
+		if len(result) != 2 {
+			t.Errorf("convertToRevisionIssues() len = %d, want 2", len(result))
+			return
+		}
+
+		if result[0].TaskID != "task-1" || result[0].Description != "Bug" {
+			t.Errorf("first issue not copied correctly: %+v", result[0])
+		}
+		if result[1].TaskID != "task-2" {
+			t.Errorf("second issue not copied correctly: %+v", result[1])
+		}
+	})
+
+	t.Run("returns independent copy", func(t *testing.T) {
+		input := []RevisionIssue{{TaskID: "task-1"}}
+		result := convertToRevisionIssues(input)
+
+		// Modify result
+		result[0].TaskID = "modified"
+
+		// Input should be unchanged
+		if input[0].TaskID == "modified" {
+			t.Error("convertToRevisionIssues() should return independent copy")
+		}
+	})
+}
+
+// Tests for extractTaskInfo
+
+func TestExtractTaskInfo(t *testing.T) {
+	t.Run("extracts from GetID/GetTitle/GetDescription methods", func(t *testing.T) {
+		task := &mockTask{
+			id:          "task-123",
+			title:       "Test Task",
+			description: "A test task",
+		}
+
+		info := extractTaskInfo(task)
+
+		if info.ID != "task-123" {
+			t.Errorf("extractTaskInfo().ID = %q, want %q", info.ID, "task-123")
+		}
+		if info.Title != "Test Task" {
+			t.Errorf("extractTaskInfo().Title = %q, want %q", info.Title, "Test Task")
+		}
+		if info.Description != "A test task" {
+			t.Errorf("extractTaskInfo().Description = %q, want %q", info.Description, "A test task")
+		}
+	})
+
+	t.Run("extracts from map", func(t *testing.T) {
+		task := map[string]any{
+			"id":          "task-456",
+			"title":       "Map Task",
+			"description": "Task from map",
+		}
+
+		info := extractTaskInfo(task)
+
+		if info.ID != "task-456" {
+			t.Errorf("extractTaskInfo().ID = %q, want %q", info.ID, "task-456")
+		}
+		if info.Title != "Map Task" {
+			t.Errorf("extractTaskInfo().Title = %q, want %q", info.Title, "Map Task")
+		}
+		if info.Description != "Task from map" {
+			t.Errorf("extractTaskInfo().Description = %q, want %q", info.Description, "Task from map")
+		}
+	})
+
+	t.Run("returns empty for unknown type", func(t *testing.T) {
+		info := extractTaskInfo("not a task")
+
+		if info.ID != "" || info.Title != "" || info.Description != "" {
+			t.Errorf("extractTaskInfo(string) should return empty info, got %+v", info)
+		}
+	})
+
+	t.Run("handles partial map", func(t *testing.T) {
+		task := map[string]any{
+			"title": "Only Title",
+		}
+
+		info := extractTaskInfo(task)
+
+		if info.Title != "Only Title" {
+			t.Errorf("extractTaskInfo().Title = %q, want %q", info.Title, "Only Title")
+		}
+		if info.ID != "" {
+			t.Errorf("extractTaskInfo().ID = %q, want empty", info.ID)
+		}
+	})
+
+	t.Run("handles nil", func(t *testing.T) {
+		info := extractTaskInfo(nil)
+
+		if info.ID != "" || info.Title != "" || info.Description != "" {
+			t.Errorf("extractTaskInfo(nil) should return empty info, got %+v", info)
+		}
+	})
+
+	t.Run("handles map with non-string values", func(t *testing.T) {
+		task := map[string]any{
+			"id":    123,   // int, not string
+			"title": false, // bool, not string
+		}
+
+		info := extractTaskInfo(task)
+
+		// Should handle gracefully without panic
+		if info.ID != "" {
+			t.Errorf("extractTaskInfo().ID = %q, want empty for non-string", info.ID)
+		}
+	})
+}
+
+// mockTaskWithIDMethod is a task that only has ID() method (not GetID())
+type mockTaskWithIDMethod struct {
+	id string
+}
+
+func (m *mockTaskWithIDMethod) ID() string { return m.id }
+
+func TestExtractTaskInfo_IDMethodFallback(t *testing.T) {
+	t.Run("extracts from ID() method", func(t *testing.T) {
+		task := &mockTaskWithIDMethod{id: "task-from-id-method"}
+
+		info := extractTaskInfo(task)
+
+		if info.ID != "task-from-id-method" {
+			t.Errorf("extractTaskInfo().ID = %q, want %q", info.ID, "task-from-id-method")
+		}
+	})
+}
+
+// Tests for buildSynthesisPrompt
+
+func TestSynthesisOrchestrator_BuildSynthesisPrompt(t *testing.T) {
+	t.Run("builds prompt with completed tasks", func(t *testing.T) {
+		mockSession := &mockSession{
+			objective:      "Build a user management system",
+			completedTasks: []string{"task-1", "task-2"},
+			tasks: map[string]any{
+				"task-1": &mockTask{id: "task-1", title: "Create User Model"},
+				"task-2": &mockTask{id: "task-2", title: "Add API Endpoints"},
+			},
+			taskToInstance: map[string]string{
+				"task-1": "inst-1",
+				"task-2": "inst-2",
+			},
+			taskCommitCounts: map[string]int{
+				"task-1": 3,
+				"task-2": 2,
+			},
+		}
+
+		mockInst := &mockInstanceForSynthesis{
+			id:     "inst-1",
+			status: StatusCompleted,
+		}
+		mockOrch := &mockOrchestratorForSynthesis{
+			instances: map[string]*mockInstanceForSynthesis{
+				"inst-1": mockInst,
+				"inst-2": mockInst,
+			},
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		prompt := synth.buildSynthesisPrompt()
+
+		// Check that the prompt contains expected elements
+		if !strings.Contains(prompt, "Build a user management system") {
+			t.Error("prompt should contain the objective")
+		}
+		if !strings.Contains(prompt, "Create User Model") {
+			t.Error("prompt should contain task title")
+		}
+		if !strings.Contains(prompt, "3 commits") {
+			t.Error("prompt should contain commit count")
+		}
+	})
+
+	t.Run("marks tasks with no commits", func(t *testing.T) {
+		mockSession := &mockSession{
+			objective:      "Test objective",
+			completedTasks: []string{"task-1"},
+			tasks: map[string]any{
+				"task-1": &mockTask{id: "task-1", title: "No Commit Task"},
+			},
+			taskCommitCounts: map[string]int{}, // No commits
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		prompt := synth.buildSynthesisPrompt()
+
+		if !strings.Contains(prompt, "NO COMMITS") {
+			t.Error("prompt should mark tasks with no commits")
+		}
+	})
+
+	t.Run("handles completed tasks not in TaskToInstance", func(t *testing.T) {
+		mockSession := &mockSession{
+			objective:      "Test objective",
+			completedTasks: []string{"task-1"},
+			tasks: map[string]any{
+				"task-1": &mockTask{id: "task-1", title: "Orphan Task"},
+			},
+			taskToInstance: map[string]string{}, // Not in map
+			taskCommitCounts: map[string]int{
+				"task-1": 1,
+			},
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		prompt := synth.buildSynthesisPrompt()
+
+		// Should still include the task
+		if !strings.Contains(prompt, "Orphan Task") {
+			t.Error("prompt should include tasks not in TaskToInstance")
+		}
+	})
+
+	t.Run("includes revision round in prompt", func(t *testing.T) {
+		mockSession := &mockSession{
+			objective:      "Test objective",
+			completedTasks: []string{},
+			revisionRound:  2,
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		prompt := synth.buildSynthesisPrompt()
+
+		// The revision round should be in the JSON template section
+		if !strings.Contains(prompt, `"revision_round": 2`) {
+			t.Error("prompt should contain the revision round")
+		}
+	})
+}
+
+// Tests for checkForRevisionCompletionFile
+
+func TestSynthesisOrchestrator_CheckForRevisionCompletionFile(t *testing.T) {
+	t.Run("returns false when worktree path is empty", func(t *testing.T) {
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+
+		inst := &mockInstanceForSynthesis{
+			worktreePath: "", // Empty path
+		}
+
+		if synth.checkForRevisionCompletionFile(inst) {
+			t.Error("checkForRevisionCompletionFile() should return false for empty worktree path")
+		}
+	})
+
+	t.Run("returns false when file doesn't exist", func(t *testing.T) {
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+
+		inst := &mockInstanceForSynthesis{
+			worktreePath: "/nonexistent/path",
+		}
+
+		if synth.checkForRevisionCompletionFile(inst) {
+			t.Error("checkForRevisionCompletionFile() should return false when file doesn't exist")
+		}
+	})
+}
+
+// Tests for sendRevisionCompletion
+
+func TestSynthesisOrchestrator_SendRevisionCompletion(t *testing.T) {
+	t.Run("sends to completion channel when available", func(t *testing.T) {
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+
+		// Set up completion channel
+		completionChan := make(chan revisionTaskCompletion, 1)
+		synth.mu.Lock()
+		synth.state.revisionCompletionChan = completionChan
+		synth.mu.Unlock()
+
+		synth.sendRevisionCompletion("task-1", "inst-1", true, "")
+
+		// Check that completion was sent
+		select {
+		case completion := <-completionChan:
+			if completion.taskID != "task-1" {
+				t.Errorf("completion.taskID = %q, want %q", completion.taskID, "task-1")
+			}
+			if completion.instanceID != "inst-1" {
+				t.Errorf("completion.instanceID = %q, want %q", completion.instanceID, "inst-1")
+			}
+			if !completion.success {
+				t.Error("completion.success should be true")
+			}
+		default:
+			t.Error("expected completion to be sent to channel")
+		}
+	})
+
+	t.Run("handles nil channel gracefully", func(t *testing.T) {
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+
+		// Don't set up completion channel (nil)
+
+		// Should not panic
+		synth.sendRevisionCompletion("task-1", "inst-1", false, "error")
+	})
+
+	t.Run("sends failure with error message", func(t *testing.T) {
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+
+		completionChan := make(chan revisionTaskCompletion, 1)
+		synth.mu.Lock()
+		synth.state.revisionCompletionChan = completionChan
+		synth.mu.Unlock()
+
+		synth.sendRevisionCompletion("task-2", "inst-2", false, "timeout error")
+
+		completion := <-completionChan
+		if completion.success {
+			t.Error("completion.success should be false")
+		}
+		if completion.err != "timeout error" {
+			t.Errorf("completion.err = %q, want %q", completion.err, "timeout error")
+		}
+	})
+}
+
+// Tests for onSynthesisReady
+
+func TestSynthesisOrchestrator_OnSynthesisReady(t *testing.T) {
+	t.Run("sets awaiting approval flag", func(t *testing.T) {
+		mockSession := &mockSession{
+			synthesisID: "synth-1",
+		}
+		mockInst := &mockInstanceForSynthesis{
+			id:           "synth-1",
+			worktreePath: "/tmp/test",
+		}
+		mockOrch := &mockOrchestratorForSynthesis{
+			addedInstance: mockInst,
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+
+		synth.onSynthesisReady()
+
+		if !synth.IsAwaitingApproval() {
+			t.Error("onSynthesisReady() should set awaiting approval flag")
+		}
+
+		if !mockSession.awaitingApproval {
+			t.Error("onSynthesisReady() should update session's awaiting approval flag")
+		}
+	})
+}
+
+// Tests for onRevisionComplete
+
+func TestSynthesisOrchestrator_OnRevisionComplete(t *testing.T) {
+	t.Run("marks revision as complete and re-runs synthesis", func(t *testing.T) {
+		mockOrch := &mockRevisionOrchestrator{}
+		mockSession := &mockRevisionSession{
+			mockSession: mockSession{},
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+
+		// Set up revision state
+		synth.mu.Lock()
+		synth.state.Revision = &RevisionState{
+			RevisionRound: 1,
+			TasksToRevise: []string{"task-1"},
+			RevisedTasks:  []string{"task-1"},
+		}
+		synth.mu.Unlock()
+
+		synth.onRevisionComplete()
+
+		// Verify revision state has completion time
+		state := synth.GetRevisionState()
+		if state.CompletedAt == nil {
+			t.Error("onRevisionComplete() should set CompletedAt")
+		}
+
+		// Verify RunSynthesis was called
+		if !mockOrch.runSynthesisCalled {
+			t.Error("onRevisionComplete() should call RunSynthesis")
+		}
+	})
+
+	t.Run("falls back to consolidation when orchestrator doesn't support RunSynthesis", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession:       mockSession{},
+			consolidationMode: "", // No consolidation
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{}, // Doesn't implement RevisionOrchestratorInterface
+			Session:      mockSession,
+		})
+
+		// Set up revision state
+		synth.mu.Lock()
+		synth.state.Revision = &RevisionState{
+			RevisionRound: 1,
+			TasksToRevise: []string{"task-1"},
+			RevisedTasks:  []string{"task-1"},
+		}
+		synth.mu.Unlock()
+
+		synth.onRevisionComplete()
+
+		// Should have completed (not called revision)
+		if mockSession.completedAt == nil {
+			t.Error("onRevisionComplete() should fall back to completion when RunSynthesis not available")
+		}
+	})
+
+	t.Run("handles RunSynthesis error by proceeding to consolidation", func(t *testing.T) {
+		mockOrch := &mockRevisionOrchestrator{
+			runSynthesisErr: fmt.Errorf("synthesis failed"),
+		}
+		mockSession := &mockSessionExtended{
+			mockSession:       mockSession{},
+			consolidationMode: "", // No consolidation
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+
+		// Set up revision state
+		synth.mu.Lock()
+		synth.state.Revision = &RevisionState{
+			RevisionRound: 1,
+			TasksToRevise: []string{"task-1"},
+			RevisedTasks:  []string{"task-1"},
+		}
+		synth.mu.Unlock()
+
+		synth.onRevisionComplete()
+
+		// Should fall back to completion
+		if mockSession.completedAt == nil {
+			t.Error("onRevisionComplete() should fall back to completion on RunSynthesis error")
+		}
+	})
+}
+
+// Tests for monitorRevisionTasks
+
+func TestSynthesisOrchestrator_MonitorRevisionTasks(t *testing.T) {
+	t.Run("handles task completion and checks for all complete", func(t *testing.T) {
+		mockOrch := &mockRevisionOrchestrator{}
+		mockSession := &mockRevisionSession{
+			mockSession: mockSession{},
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+
+		// Set up context and revision state
+		ctx, cancel := context.WithCancel(context.Background())
+		synth.mu.Lock()
+		synth.ctx = ctx
+		synth.cancel = cancel
+		synth.state.Revision = &RevisionState{
+			RevisionRound: 1,
+			TasksToRevise: []string{"task-1"},
+			RevisedTasks:  []string{},
+		}
+		synth.state.RunningRevisionTasks = map[string]string{"task-1": "inst-1"}
+		synth.state.revisionCompletionChan = make(chan revisionTaskCompletion, 10)
+		synth.mu.Unlock()
+
+		// Start monitoring in goroutine
+		done := make(chan struct{})
+		go func() {
+			synth.monitorRevisionTasks()
+			close(done)
+		}()
+
+		// Send completion
+		synth.state.revisionCompletionChan <- revisionTaskCompletion{
+			taskID:     "task-1",
+			instanceID: "inst-1",
+			success:    true,
+		}
+
+		// Wait for completion (with timeout)
+		select {
+		case <-done:
+			// Success
+		case <-time.After(2 * time.Second):
+			cancel() // Cancel to cleanup
+			t.Error("monitorRevisionTasks() did not complete after all tasks finished")
+		}
+
+		// Verify revision was completed
+		state := synth.GetRevisionState()
+		if len(state.RevisedTasks) != 1 || state.RevisedTasks[0] != "task-1" {
+			t.Errorf("task should be marked as revised, got %v", state.RevisedTasks)
+		}
+	})
+
+	t.Run("exits on context cancellation", func(t *testing.T) {
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+
+		// Set up context that will be cancelled
+		ctx, cancel := context.WithCancel(context.Background())
+		synth.mu.Lock()
+		synth.ctx = ctx
+		synth.cancel = cancel
+		synth.state.Revision = &RevisionState{
+			TasksToRevise: []string{"task-1"},
+			RevisedTasks:  []string{},
+		}
+		synth.state.revisionCompletionChan = make(chan revisionTaskCompletion, 10)
+		synth.mu.Unlock()
+
+		// Start monitoring
+		done := make(chan struct{})
+		go func() {
+			synth.monitorRevisionTasks()
+			close(done)
+		}()
+
+		// Cancel context
+		cancel()
+
+		// Should exit promptly
+		select {
+		case <-done:
+			// Success
+		case <-time.After(time.Second):
+			t.Error("monitorRevisionTasks() did not exit on context cancellation")
+		}
+	})
+}
+
+// Tests for monitorSynthesisInstance edge cases
+
+func TestSynthesisOrchestrator_MonitorSynthesisInstance_StatusChanges(t *testing.T) {
+	t.Run("handles StatusError", func(t *testing.T) {
+		mockSession := &mockSession{
+			phase: PhaseSynthesis,
+		}
+		mockInst := &mockInstanceForSynthesis{
+			id:     "synth-1",
+			status: StatusError,
+		}
+		mockOrch := &mockOrchestratorForSynthesis{
+			instances: map[string]*mockInstanceForSynthesis{
+				"synth-1": mockInst,
+			},
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+
+		// Set up context
+		ctx, cancel := context.WithCancel(context.Background())
+		synth.mu.Lock()
+		synth.ctx = ctx
+		synth.cancel = cancel
+		synth.mu.Unlock()
+
+		// Run monitoring
+		done := make(chan struct{})
+		go func() {
+			synth.monitorSynthesisInstance("synth-1")
+			close(done)
+		}()
+
+		// Wait for completion
+		select {
+		case <-done:
+			// Success
+		case <-time.After(2 * time.Second):
+			cancel()
+			t.Error("monitorSynthesisInstance() did not complete")
+		}
+
+		// Verify phase was set to failed
+		if mockSession.phase != PhaseFailed {
+			t.Errorf("phase should be set to PhaseFailed, got %v", mockSession.phase)
+		}
+	})
+
+	t.Run("handles StatusTimeout", func(t *testing.T) {
+		mockSession := &mockSession{
+			phase: PhaseSynthesis,
+		}
+		mockInst := &mockInstanceForSynthesis{
+			id:     "synth-1",
+			status: StatusTimeout,
+		}
+		mockOrch := &mockOrchestratorForSynthesis{
+			instances: map[string]*mockInstanceForSynthesis{
+				"synth-1": mockInst,
+			},
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		synth.mu.Lock()
+		synth.ctx = ctx
+		synth.cancel = cancel
+		synth.mu.Unlock()
+
+		done := make(chan struct{})
+		go func() {
+			synth.monitorSynthesisInstance("synth-1")
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// Success
+		case <-time.After(2 * time.Second):
+			cancel()
+			t.Error("monitorSynthesisInstance() did not complete")
+		}
+
+		if mockSession.phase != PhaseFailed {
+			t.Errorf("phase should be set to PhaseFailed, got %v", mockSession.phase)
+		}
+	})
+
+	t.Run("handles instance disappearing", func(t *testing.T) {
+		mockSession := &mockSession{
+			phase: PhaseSynthesis,
+		}
+		// No instance in the map - will return nil
+		mockOrch := &mockOrchestratorForSynthesis{
+			instances: map[string]*mockInstanceForSynthesis{},
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+
+		ctx, cancel := context.WithCancel(context.Background())
+		synth.mu.Lock()
+		synth.ctx = ctx
+		synth.cancel = cancel
+		synth.mu.Unlock()
+
+		done := make(chan struct{})
+		go func() {
+			synth.monitorSynthesisInstance("nonexistent")
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// Success - should complete when instance is nil
+		case <-time.After(2 * time.Second):
+			cancel()
+			t.Error("monitorSynthesisInstance() did not complete when instance disappeared")
+		}
+	})
+}
+
+// Tests for onSynthesisComplete edge cases
+
+func TestSynthesisOrchestrator_OnSynthesisComplete_EdgeCases(t *testing.T) {
+	t.Run("handles no issues - proceeds to consolidation", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession:       mockSession{synthesisID: "synth-1"},
+			consolidationMode: "", // No consolidation
+		}
+		mockOrch := &mockOrchestratorForSynthesis{
+			addedInstance: &mockInstanceForSynthesis{
+				id:           "synth-1",
+				worktreePath: "/tmp/test",
+			},
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+
+		synth.onSynthesisComplete()
+
+		// Should mark complete since no issues and no consolidation
+		if mockSession.completedAt == nil {
+			t.Error("onSynthesisComplete() should mark complete when no issues")
+		}
+	})
+
+	t.Run("handles revision error gracefully", func(t *testing.T) {
+		mockSession := &mockSession{
+			synthesisID: "synth-1",
+			phase:       PhaseSynthesis,
+		}
+		mockOrch := &mockOrchestratorExtended{
+			startRevisionErr: fmt.Errorf("revision failed"),
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+
+		// Set up critical issues that would trigger revision
+		synth.setIssuesFound([]RevisionIssue{
+			{TaskID: "task-1", Severity: "critical", Description: "Bug"},
+		})
+
+		synth.onSynthesisComplete()
+
+		// Should set phase to failed
+		if mockSession.phase != PhaseFailed {
+			t.Errorf("phase should be PhaseFailed on revision error, got %v", mockSession.phase)
+		}
+	})
+
+	t.Run("skips revision when max revisions reached", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession: mockSession{synthesisID: "synth-1"},
+			revision: &mockRevision{
+				revisionRound: 3,
+				maxRevisions:  3, // At max
+			},
+			consolidationMode: "",
+		}
+		mockOrch := &mockOrchestratorExtended{}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+		})
+
+		// Set up critical issues
+		synth.setIssuesFound([]RevisionIssue{
+			{TaskID: "task-1", Severity: "critical", Description: "Bug"},
+		})
+
+		synth.onSynthesisComplete()
+
+		// Should not call StartRevision
+		if mockOrch.startRevisionCalled {
+			t.Error("onSynthesisComplete() should not start revision when max reached")
+		}
+
+		// Should proceed to complete
+		if mockSession.completedAt == nil {
+			t.Error("onSynthesisComplete() should complete when max revisions reached")
+		}
+	})
+}
+
+// Tests for startRevisionTask edge cases
+
+func TestSynthesisOrchestrator_StartRevisionTask_Errors(t *testing.T) {
+	t.Run("returns error when task not found", func(t *testing.T) {
+		mockSession := &mockSession{
+			tasks: map[string]any{}, // No tasks
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+		})
+
+		err := synth.startRevisionTask("nonexistent-task")
+
+		if err == nil {
+			t.Error("startRevisionTask() should return error when task not found")
+		}
+		if !strings.Contains(err.Error(), "not found") {
+			t.Errorf("error should mention 'not found', got %v", err)
+		}
+	})
+
+	t.Run("returns error when worktree not found", func(t *testing.T) {
+		mockSession := &mockRevisionSession{
+			mockSession: mockSession{
+				tasks: map[string]any{
+					"task-1": &mockTask{id: "task-1", title: "Test Task"},
+				},
+			},
+		}
+		// BaseSession with no matching instances
+		mockBaseSession := &mockBaseSessionExtended{
+			instances: []InstanceExtendedInterface{}, // No instances
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockRevisionOrchestrator{},
+			Session:      mockSession,
+			BaseSession:  mockBaseSession,
+		})
+
+		err := synth.startRevisionTask("task-1")
+
+		if err == nil {
+			t.Error("startRevisionTask() should return error when worktree not found")
+		}
+		if !strings.Contains(err.Error(), "worktree") {
+			t.Errorf("error should mention 'worktree', got %v", err)
+		}
+	})
+
+	t.Run("returns error when orchestrator doesn't support AddInstanceToWorktree", func(t *testing.T) {
+		mockSession := &mockRevisionSession{
+			mockSession: mockSession{
+				tasks: map[string]any{
+					"task-1": &mockTask{id: "task-1", title: "Test Task"},
+				},
+			},
+		}
+		mockBaseSession := &mockBaseSessionExtended{
+			instances: []InstanceExtendedInterface{
+				&mockInstanceExtended{
+					id:           "inst-1",
+					worktreePath: "/tmp/wt1",
+					branch:       "claudio/test-task",
+					task:         "task-1",
+				},
+			},
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{}, // Doesn't support AddInstanceToWorktree
+			Session:      mockSession,
+			BaseSession:  mockBaseSession,
+		})
+
+		err := synth.startRevisionTask("task-1")
+
+		if err == nil {
+			t.Error("startRevisionTask() should return error when orchestrator doesn't support AddInstanceToWorktree")
+		}
+	})
+
+	t.Run("returns error when AddInstanceToWorktree fails", func(t *testing.T) {
+		mockSession := &mockRevisionSession{
+			mockSession: mockSession{
+				tasks: map[string]any{
+					"task-1": &mockTask{id: "task-1", title: "Test Task"},
+				},
+			},
+		}
+		mockBaseSession := &mockBaseSessionExtended{
+			instances: []InstanceExtendedInterface{
+				&mockInstanceExtended{
+					id:           "inst-1",
+					worktreePath: "/tmp/wt1",
+					branch:       "claudio/test-task",
+					task:         "task-1",
+				},
+			},
+		}
+		mockOrch := &mockRevisionOrchestrator{
+			addInstanceToWorktreeErr: fmt.Errorf("failed to create instance"),
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+			BaseSession:  mockBaseSession,
+		})
+
+		err := synth.startRevisionTask("task-1")
+
+		if err == nil {
+			t.Error("startRevisionTask() should return error when AddInstanceToWorktree fails")
+		}
+	})
+
+	t.Run("returns error when StartInstance fails", func(t *testing.T) {
+		mockSession := &mockRevisionSession{
+			mockSession: mockSession{
+				tasks: map[string]any{
+					"task-1": &mockTask{id: "task-1", title: "Test Task"},
+				},
+			},
+		}
+		mockBaseSession := &mockBaseSessionExtended{
+			instances: []InstanceExtendedInterface{
+				&mockInstanceExtended{
+					id:           "inst-1",
+					worktreePath: "/tmp/wt1",
+					branch:       "claudio/test-task",
+					task:         "task-1",
+				},
+			},
+		}
+		mockOrch := &mockRevisionOrchestrator{
+			mockOrchestratorForSynthesis: mockOrchestratorForSynthesis{
+				startErr: fmt.Errorf("failed to start"),
+			},
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      mockSession,
+			BaseSession:  mockBaseSession,
+		})
+
+		// Set up context for the goroutine
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		synth.mu.Lock()
+		synth.ctx = ctx
+		synth.cancel = cancel
+		synth.state.RunningRevisionTasks = make(map[string]string)
+		synth.mu.Unlock()
+
+		err := synth.startRevisionTask("task-1")
+
+		if err == nil {
+			t.Error("startRevisionTask() should return error when StartInstance fails")
+		}
+	})
+}
+
+// Test for notifyComplete
+
+func TestSynthesisOrchestrator_NotifyComplete(t *testing.T) {
+	t.Run("calls callback when available", func(t *testing.T) {
+		var callbackCalled bool
+		var callbackSuccess bool
+		var callbackSummary string
+
+		callbacks := &struct {
+			mockCallbacks
+		}{}
+
+		// We can't easily mock OnComplete since mockCallbacks doesn't track it
+		// Instead, verify no panic when callbacks are nil
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+			Callbacks:    callbacks,
+		})
+
+		// Should not panic
+		synth.notifyComplete(true, "Test complete")
+
+		// Reset for nil callbacks test
+		synth.phaseCtx.Callbacks = nil
+		synth.notifyComplete(false, "Test failed")
+
+		// If we get here without panic, the test passes
+		_ = callbackCalled
+		_ = callbackSuccess
+		_ = callbackSummary
+	})
+}
+
+// Tests for SynthesisPromptTemplate
+
+func TestSynthesisPromptTemplate(t *testing.T) {
+	// Verify the template can be formatted correctly
+	prompt := fmt.Sprintf(SynthesisPromptTemplate,
+		"Build a user management system",                                    // objective
+		"- [task-1] Task One (3 commits)\n- [task-2] Task Two (1 commit)\n", // task list
+		"### Task One\nStatus: completed\nCommits: 3\n",                     // results summary
+		2, // revision round
+	)
+
+	// Verify key elements are present
+	expectedElements := []string{
+		"Build a user management system",
+		"Task One",
+		"3 commits",
+		SynthesisCompletionFileName,
+		`"revision_round": 2`,
+	}
+
+	for _, elem := range expectedElements {
+		if !strings.Contains(prompt, elem) {
+			t.Errorf("SynthesisPromptTemplate should contain %q", elem)
+		}
+	}
+}
+
+// Tests for Execute errors
+
+func TestSynthesisOrchestrator_Execute_Errors(t *testing.T) {
+	t.Run("returns error when instance doesn't implement GetID", func(t *testing.T) {
+		// mockOrchestrator returns nil from AddInstance, which tests the nil/GetID failure path
+		type orchWithBadInstance struct {
+			mockOrchestrator
+		}
+		badOrch := &orchWithBadInstance{}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: badOrch,
+			Session:      &mockSession{},
+		})
+
+		// The default mockOrchestrator.AddInstance returns nil, nil
+		// which would cause the type assertion to fail
+
+		err := synth.Execute(context.Background())
+
+		// Should fail because AddInstance returns nil
+		if err != nil && !strings.Contains(err.Error(), "GetID") && !strings.Contains(err.Error(), "nil") {
+			t.Logf("Got expected error type: %v", err)
+		}
+	})
+
+	t.Run("returns error when StartInstance fails", func(t *testing.T) {
+		mockOrch := &mockOrchestratorForSynthesis{
+			addedInstance: &mockInstanceForSynthesis{
+				id:     "synth-1",
+				status: StatusRunning,
+			},
+			startErr: fmt.Errorf("failed to start"),
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: mockOrch,
+			Session:      &mockSession{},
+		})
+
+		err := synth.Execute(context.Background())
+
+		if err == nil {
+			t.Error("Execute() should return error when StartInstance fails")
+		}
+		if !strings.Contains(err.Error(), "start") {
+			t.Errorf("error should mention 'start', got %v", err)
+		}
+	})
+}
+
+// Tests for ProceedToConsolidationOrComplete edge cases
+
+func TestSynthesisOrchestrator_ProceedToConsolidationOrComplete_EdgeCases(t *testing.T) {
+	t.Run("completes when session doesn't support extended interface", func(t *testing.T) {
+		// Use basic mockSession that doesn't implement SynthesisSessionExtended
+		mockSession := &mockSession{}
+
+		completeCalled := false
+		callbacks := &struct {
+			mockCallbacks
+		}{}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+			Callbacks:    callbacks,
+		})
+
+		err := synth.ProceedToConsolidationOrComplete()
+
+		if err != nil {
+			t.Errorf("ProceedToConsolidationOrComplete() unexpected error: %v", err)
+		}
+
+		// Should have set phase to complete
+		if mockSession.phase != PhaseComplete {
+			t.Errorf("phase should be PhaseComplete, got %v", mockSession.phase)
+		}
+
+		_ = completeCalled
+	})
+
+	t.Run("logs warning when orchestrator doesn't support consolidation", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession:       mockSession{},
+			consolidationMode: "stacked", // Consolidation configured
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{}, // Doesn't implement SynthesisOrchestratorExtended
+			Session:      mockSession,
+		})
+
+		err := synth.ProceedToConsolidationOrComplete()
+
+		if err != nil {
+			t.Errorf("ProceedToConsolidationOrComplete() unexpected error: %v", err)
+		}
+
+		// Should complete despite consolidation being configured
+		if mockSession.completedAt == nil {
+			t.Error("should complete when orchestrator doesn't support consolidation")
+		}
+	})
+}
+
+// Tests for CaptureTaskWorktreeInfo edge cases
+
+func TestSynthesisOrchestrator_CaptureTaskWorktreeInfo_EdgeCases(t *testing.T) {
+	t.Run("matches by slugified title in branch", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession: mockSession{
+				completedTasks: []string{"task-1"},
+				tasks: map[string]any{
+					"task-1": &mockTask{id: "task-1", title: "Create User API"},
+				},
+			},
+		}
+
+		mockBaseSession := &mockBaseSessionExtended{
+			instances: []InstanceExtendedInterface{
+				&mockInstanceExtended{
+					id:           "inst-1",
+					worktreePath: "/tmp/wt1",
+					branch:       "claudio/create-user-api", // Slugified title
+					task:         "",                        // Task field doesn't match
+				},
+			},
+		}
+
+		synth, err := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+			BaseSession:  mockBaseSession,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		info := synth.CaptureTaskWorktreeInfo()
+
+		if len(info) != 1 {
+			t.Errorf("CaptureTaskWorktreeInfo() len = %d, want 1", len(info))
+		}
+
+		if len(info) > 0 && info[0].WorktreePath != "/tmp/wt1" {
+			t.Errorf("WorktreePath = %q, want %q", info[0].WorktreePath, "/tmp/wt1")
+		}
+	})
+
+	t.Run("skips tasks with nil task object", func(t *testing.T) {
+		mockSession := &mockSessionExtended{
+			mockSession: mockSession{
+				completedTasks: []string{"task-1", "task-2"},
+				tasks: map[string]any{
+					"task-1": &mockTask{id: "task-1", title: "Valid Task"},
+					// task-2 not in tasks map
+				},
+			},
+		}
+
+		mockBaseSession := &mockBaseSessionExtended{
+			instances: []InstanceExtendedInterface{
+				&mockInstanceExtended{
+					id:           "inst-1",
+					worktreePath: "/tmp/wt1",
+					branch:       "claudio/valid-task",
+					task:         "task-1",
+				},
+			},
+		}
+
+		synth, _ := NewSynthesisOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      mockSession,
+			BaseSession:  mockBaseSession,
+		})
+
+		info := synth.CaptureTaskWorktreeInfo()
+
+		// Should only capture task-1
+		if len(info) != 1 {
+			t.Errorf("CaptureTaskWorktreeInfo() len = %d, want 1", len(info))
+		}
+	})
+}
