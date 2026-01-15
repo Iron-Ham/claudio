@@ -1256,8 +1256,11 @@ func (c *Coordinator) verifyTaskWork(taskID string, inst *Instance) taskCompleti
 	// Delegate to the verifier for the core verification logic
 	verifyResult := c.verifier.VerifyTaskWork(taskID, inst.ID, inst.WorktreePath, baseBranch, opts)
 
-	// Store commit count for later reference (Coordinator maintains this state)
-	if verifyResult.CommitCount > 0 {
+	// Store commit count for all successful tasks (Coordinator maintains this state)
+	// This includes tasks with 0 commits that succeeded via NoCode flag or completion file status.
+	// The presence of an entry (even with count=0) indicates verified success,
+	// which is used by group tracking to distinguish successful tasks from unverified ones.
+	if verifyResult.Success {
 		c.mu.Lock()
 		if session.TaskCommitCounts == nil {
 			session.TaskCommitCounts = make(map[string]int)
@@ -2500,7 +2503,11 @@ func (c *Coordinator) handlePartialGroupFailure(groupIndex int) {
 		}
 
 		if isCompleted {
-			if count, ok := session.TaskCommitCounts[taskID]; ok && count > 0 {
+			// Task is successful if it has a verified commit count entry.
+			// The presence of an entry (even with count=0) indicates the verifier
+			// determined the task succeeded (e.g., NoCode tasks, or tasks whose
+			// work was already present from a previous group).
+			if _, ok := session.TaskCommitCounts[taskID]; ok {
 				succeeded = append(succeeded, taskID)
 			} else {
 				failed = append(failed, taskID)

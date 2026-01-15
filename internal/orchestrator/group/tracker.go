@@ -150,12 +150,14 @@ func (t *Tracker) AdvanceGroup(groupIndex int) (nextGroup int, done bool) {
 // requires user decision on how to proceed.
 //
 // A task is considered successful if it:
-// - Is in the completed tasks list AND
-// - Has at least one verified commit (commit count > 0)
+//   - Is in the completed tasks list AND
+//   - Has a verified commit count entry (presence in commitCounts map, even if count == 0)
+//     This handles tasks that legitimately succeed without commits (NoCode tasks,
+//     or tasks whose work was already present from a previous group).
 //
 // A task is considered failed if it:
 // - Is in the failed tasks list OR
-// - Is in the completed tasks list but has no verified commits (commit count == 0)
+// - Is in the completed tasks list but has no entry in commitCounts (unverified)
 func (t *Tracker) HasPartialFailure(groupIndex int) bool {
 	plan := t.session.GetPlan()
 	if plan == nil {
@@ -178,8 +180,10 @@ func (t *Tracker) HasPartialFailure(groupIndex int) bool {
 	for _, taskID := range taskIDs {
 		// Check if in completed tasks
 		if slices.Contains(completedTasks, taskID) {
-			// Verify it has commits
-			if count, ok := commitCounts[taskID]; ok && count > 0 {
+			// Task is successful if it has a verified commit count entry.
+			// The presence of an entry (even with count=0) indicates the verifier
+			// determined the task succeeded.
+			if _, ok := commitCounts[taskID]; ok {
 				successCount++
 			} else {
 				failureCount++
@@ -204,8 +208,8 @@ type GroupStatus struct {
 	CompletedTasks int
 	FailedTasks    int
 	PendingTasks   int
-	SuccessfulIDs  []string // Tasks completed with verified commits
-	FailedIDs      []string // Tasks that failed or completed without commits
+	SuccessfulIDs  []string // Tasks completed with verified success (entry in commitCounts)
+	FailedIDs      []string // Tasks that failed or completed without verification
 	PendingIDs     []string // Tasks not yet done
 }
 
@@ -246,8 +250,10 @@ func (t *Tracker) GetGroupStatus(groupIndex int) *GroupStatus {
 
 	for _, taskID := range taskIDs {
 		if completedSet[taskID] {
-			// Check if it has verified commits
-			if count, ok := commitCounts[taskID]; ok && count > 0 {
+			// Task is successful if it has a verified commit count entry.
+			// The presence of an entry (even with count=0) indicates the verifier
+			// determined the task succeeded.
+			if _, ok := commitCounts[taskID]; ok {
 				status.SuccessfulIDs = append(status.SuccessfulIDs, taskID)
 				status.CompletedTasks++
 			} else {
