@@ -163,8 +163,10 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 		// Auto-enable grouped sidebar mode
 		m.autoEnableGroupedMode()
 
-		// Start planning phase - create the planning instance
+		// Start planning phase - instances will be added to the group we just created
 		if err := coordinator.RunPlanning(); err != nil {
+			// Remove the group on failure to avoid orphaned empty groups
+			m.session.RemoveGroup(ultraGroup.ID)
 			m.errorMessage = fmt.Sprintf("Failed to start planning: %v", err)
 			return
 		}
@@ -667,20 +669,8 @@ func (m *Model) handleUltraPlanObjectiveSubmit(objective string) {
 	// Initialize coordinator
 	coordinator := orchestrator.NewCoordinator(m.orchestrator, m.session, ultraSession, m.logger)
 
-	// Start planning phase FIRST - before creating UI resources
-	// This prevents orphaned groups if planning fails
-	if err := coordinator.RunPlanning(); err != nil {
-		if m.logger != nil {
-			m.logger.Error("failed to start ultraplan planning",
-				"objective", objective,
-				"multiPass", cfg.MultiPass,
-				"error", err)
-		}
-		m.errorMessage = fmt.Sprintf("Failed to start planning: %v", err)
-		return
-	}
-
-	// Create UI resources only after planning starts successfully
+	// Create the group BEFORE starting planning so that instances created
+	// during RunPlanning() get added to the group for proper sidebar display
 	sessionType := orchestrator.SessionTypeUltraPlan
 	if cfg.MultiPass {
 		sessionType = orchestrator.SessionTypePlanMulti
@@ -695,6 +685,20 @@ func (m *Model) handleUltraPlanObjectiveSubmit(objective string) {
 
 	// Auto-enable grouped sidebar mode
 	m.autoEnableGroupedMode()
+
+	// Start planning phase - instances will be added to the group we just created
+	if err := coordinator.RunPlanning(); err != nil {
+		// Remove the group on failure to avoid orphaned empty groups
+		m.session.RemoveGroup(ultraGroup.ID)
+		if m.logger != nil {
+			m.logger.Error("failed to start ultraplan planning",
+				"objective", objective,
+				"multiPass", cfg.MultiPass,
+				"error", err)
+		}
+		m.errorMessage = fmt.Sprintf("Failed to start planning: %v", err)
+		return
+	}
 
 	m.ultraPlan = &view.UltraPlanState{
 		Coordinator:  coordinator,
