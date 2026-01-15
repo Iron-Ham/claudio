@@ -384,11 +384,11 @@ func TestHasPartialFailure(t *testing.T) {
 		want             bool
 	}{
 		{
-			name:             "partial failure - one success one failure",
+			name:             "partial failure - verified success and unverified completion",
 			executionOrder:   [][]string{{"task-1", "task-2"}, {"task-3"}},
 			completedTasks:   []string{"task-1", "task-2"},
 			failedTasks:      []string{},
-			taskCommitCounts: map[string]int{"task-1": 2, "task-2": 0}, // task-2 completed but no commits
+			taskCommitCounts: map[string]int{"task-1": 2}, // task-2 completed but not verified (no entry)
 			groupIndex:       0,
 			want:             true,
 		},
@@ -402,13 +402,40 @@ func TestHasPartialFailure(t *testing.T) {
 			want:             true,
 		},
 		{
-			name:             "all success",
+			name:             "all success with commits",
 			executionOrder:   [][]string{{"task-1", "task-2"}, {"task-3"}},
 			completedTasks:   []string{"task-1", "task-2"},
 			failedTasks:      []string{},
 			taskCommitCounts: map[string]int{"task-1": 1, "task-2": 2},
 			groupIndex:       0,
 			want:             false,
+		},
+		{
+			name:             "all success with zero commits - NoCode tasks",
+			executionOrder:   [][]string{{"task-1", "task-2"}},
+			completedTasks:   []string{"task-1", "task-2"},
+			failedTasks:      []string{},
+			taskCommitCounts: map[string]int{"task-1": 0, "task-2": 0}, // verified with 0 commits
+			groupIndex:       0,
+			want:             false, // All verified successes, even with 0 commits
+		},
+		{
+			name:             "mixed verified - some with commits some without",
+			executionOrder:   [][]string{{"task-1", "task-2", "task-3"}},
+			completedTasks:   []string{"task-1", "task-2", "task-3"},
+			failedTasks:      []string{},
+			taskCommitCounts: map[string]int{"task-1": 3, "task-2": 0, "task-3": 1}, // task-2 is NoCode
+			groupIndex:       0,
+			want:             false, // All verified successes (mix of commit counts)
+		},
+		{
+			name:             "nil commit counts map - all unverified",
+			executionOrder:   [][]string{{"task-1", "task-2"}},
+			completedTasks:   []string{"task-1", "task-2"},
+			failedTasks:      []string{},
+			taskCommitCounts: nil, // nil map, not empty
+			groupIndex:       0,
+			want:             false, // All treated as failures (no successes, so no partial failure)
 		},
 		{
 			name:             "all failed",
@@ -418,15 +445,6 @@ func TestHasPartialFailure(t *testing.T) {
 			taskCommitCounts: map[string]int{},
 			groupIndex:       0,
 			want:             false,
-		},
-		{
-			name:             "all completed but no commits",
-			executionOrder:   [][]string{{"task-1", "task-2"}},
-			completedTasks:   []string{"task-1", "task-2"},
-			failedTasks:      []string{},
-			taskCommitCounts: map[string]int{"task-1": 0, "task-2": 0},
-			groupIndex:       0,
-			want:             false, // All failures, no successes
 		},
 		{
 			name:             "invalid group index",
@@ -479,11 +497,11 @@ func TestGetGroupStatus(t *testing.T) {
 		wantStatus       *GroupStatus
 	}{
 		{
-			name:             "mixed status group",
+			name:             "mixed status group - verified and unverified",
 			executionOrder:   [][]string{{"task-1", "task-2", "task-3"}, {"task-4"}},
 			completedTasks:   []string{"task-1", "task-2"},
 			failedTasks:      []string{},
-			taskCommitCounts: map[string]int{"task-1": 2, "task-2": 0}, // task-2 no commits
+			taskCommitCounts: map[string]int{"task-1": 2}, // task-2 completed but not verified (no entry)
 			groupIndex:       0,
 			wantStatus: &GroupStatus{
 				GroupIndex:     0,
@@ -511,6 +529,60 @@ func TestGetGroupStatus(t *testing.T) {
 				PendingTasks:   0,
 				SuccessfulIDs:  []string{"task-1", "task-2"},
 				FailedIDs:      []string{},
+				PendingIDs:     []string{},
+			},
+		},
+		{
+			name:             "all completed with zero commits - NoCode tasks",
+			executionOrder:   [][]string{{"task-1", "task-2"}},
+			completedTasks:   []string{"task-1", "task-2"},
+			failedTasks:      []string{},
+			taskCommitCounts: map[string]int{"task-1": 0, "task-2": 0}, // verified with 0 commits
+			groupIndex:       0,
+			wantStatus: &GroupStatus{
+				GroupIndex:     0,
+				TotalTasks:     2,
+				CompletedTasks: 2,
+				FailedTasks:    0,
+				PendingTasks:   0,
+				SuccessfulIDs:  []string{"task-1", "task-2"},
+				FailedIDs:      []string{},
+				PendingIDs:     []string{},
+			},
+		},
+		{
+			name:             "mixed verified - some with commits some without",
+			executionOrder:   [][]string{{"task-1", "task-2", "task-3"}},
+			completedTasks:   []string{"task-1", "task-2", "task-3"},
+			failedTasks:      []string{},
+			taskCommitCounts: map[string]int{"task-1": 3, "task-2": 0, "task-3": 1}, // task-2 is NoCode
+			groupIndex:       0,
+			wantStatus: &GroupStatus{
+				GroupIndex:     0,
+				TotalTasks:     3,
+				CompletedTasks: 3,
+				FailedTasks:    0,
+				PendingTasks:   0,
+				SuccessfulIDs:  []string{"task-1", "task-2", "task-3"},
+				FailedIDs:      []string{},
+				PendingIDs:     []string{},
+			},
+		},
+		{
+			name:             "nil commit counts map - all unverified",
+			executionOrder:   [][]string{{"task-1", "task-2"}},
+			completedTasks:   []string{"task-1", "task-2"},
+			failedTasks:      []string{},
+			taskCommitCounts: nil, // nil map, not empty
+			groupIndex:       0,
+			wantStatus: &GroupStatus{
+				GroupIndex:     0,
+				TotalTasks:     2,
+				CompletedTasks: 0,
+				FailedTasks:    2,
+				PendingTasks:   0,
+				SuccessfulIDs:  []string{},
+				FailedIDs:      []string{"task-1", "task-2"},
 				PendingIDs:     []string{},
 			},
 		},
@@ -708,29 +780,30 @@ func TestGetTaskGroupIndex_DuplicateTask(t *testing.T) {
 	}
 }
 
-// Test complex scenario: multiple groups with mixed states
+// Test complex scenario: multiple groups with mixed states including NoCode tasks
 func TestComplexGroupScenario(t *testing.T) {
 	executionOrder := [][]string{
-		{"task-1", "task-2", "task-3"}, // Group 0
-		{"task-4", "task-5"},           // Group 1
-		{"task-6"},                     // Group 2
+		{"task-1", "task-2", "task-3"}, // Group 0: task-2 is NoCode (0 commits but verified)
+		{"task-4", "task-5"},           // Group 1: partial failure (task-5 failed)
+		{"task-6"},                     // Group 2: not started
 	}
 
 	session := &mockSessionData{
-		plan:             &mockPlanData{executionOrder: executionOrder},
-		completedTasks:   []string{"task-1", "task-2", "task-3", "task-4"},
-		failedTasks:      []string{"task-5"},
-		taskCommitCounts: map[string]int{"task-1": 2, "task-2": 1, "task-3": 3, "task-4": 1},
+		plan:           &mockPlanData{executionOrder: executionOrder},
+		completedTasks: []string{"task-1", "task-2", "task-3", "task-4"},
+		failedTasks:    []string{"task-5"},
+		// task-2 has 0 commits (NoCode task) but is still verified successful
+		taskCommitCounts: map[string]int{"task-1": 2, "task-2": 0, "task-3": 3, "task-4": 1},
 	}
 
 	tracker := NewTracker(session)
 
-	// Group 0 should be complete with all success
+	// Group 0 should be complete with all success (including NoCode task-2 with 0 commits)
 	if !tracker.IsGroupComplete(0) {
 		t.Error("Group 0 should be complete")
 	}
 	if tracker.HasPartialFailure(0) {
-		t.Error("Group 0 should not have partial failure")
+		t.Error("Group 0 should not have partial failure (task-2 with 0 commits is still verified success)")
 	}
 
 	// Group 1 should be complete with partial failure
