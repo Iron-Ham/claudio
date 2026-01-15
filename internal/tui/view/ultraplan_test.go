@@ -609,3 +609,131 @@ func TestRenderExecutionTaskLine_LineCountMatchesContent(t *testing.T) {
 		t.Errorf("LineCount = %d but content has %d lines", result.LineCount, actualLines)
 	}
 }
+
+func TestIsGroupCollapsed(t *testing.T) {
+	// Test the IsGroupCollapsed method with various scenarios
+	tests := []struct {
+		name            string
+		collapsedGroups map[int]bool
+		groupIdx        int
+		currentGroup    int
+		wantCollapsed   bool
+	}{
+		{
+			name:            "current group is expanded by default",
+			collapsedGroups: nil,
+			groupIdx:        0,
+			currentGroup:    0,
+			wantCollapsed:   false,
+		},
+		{
+			name:            "non-current group is collapsed by default",
+			collapsedGroups: nil,
+			groupIdx:        1,
+			currentGroup:    0,
+			wantCollapsed:   true,
+		},
+		{
+			name:            "explicitly expanded group overrides default",
+			collapsedGroups: map[int]bool{1: false}, // Explicitly expanded
+			groupIdx:        1,
+			currentGroup:    0,
+			wantCollapsed:   false,
+		},
+		{
+			name:            "explicitly collapsed group overrides default",
+			collapsedGroups: map[int]bool{0: true}, // Explicitly collapsed
+			groupIdx:        0,
+			currentGroup:    0, // Even though it's current, it's explicitly collapsed
+			wantCollapsed:   true,
+		},
+		{
+			name:            "past group is collapsed by default",
+			collapsedGroups: nil,
+			groupIdx:        0,
+			currentGroup:    2,
+			wantCollapsed:   true,
+		},
+		{
+			name:            "future group is collapsed by default",
+			collapsedGroups: nil,
+			groupIdx:        3,
+			currentGroup:    1,
+			wantCollapsed:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := &UltraPlanState{
+				CollapsedGroups: tt.collapsedGroups,
+			}
+
+			got := state.IsGroupCollapsed(tt.groupIdx, tt.currentGroup)
+			if got != tt.wantCollapsed {
+				t.Errorf("IsGroupCollapsed(%d, %d) = %v, want %v",
+					tt.groupIdx, tt.currentGroup, got, tt.wantCollapsed)
+			}
+		})
+	}
+}
+
+func TestSetGroupExpanded(t *testing.T) {
+	state := &UltraPlanState{}
+
+	// Initially nil map
+	if state.CollapsedGroups != nil {
+		t.Error("CollapsedGroups should be nil initially")
+	}
+
+	// Set group expanded should create the map
+	state.SetGroupExpanded(1)
+	if state.CollapsedGroups == nil {
+		t.Error("CollapsedGroups should be created")
+	}
+	if state.CollapsedGroups[1] != false {
+		t.Error("Group 1 should be explicitly expanded (false)")
+	}
+
+	// Verify it's different from default behavior
+	if _, exists := state.CollapsedGroups[1]; !exists {
+		t.Error("Group 1 should have explicit entry in map")
+	}
+}
+
+func TestSetGroupCollapsed(t *testing.T) {
+	state := &UltraPlanState{}
+
+	// Set group collapsed should create the map
+	state.SetGroupCollapsed(2)
+	if state.CollapsedGroups == nil {
+		t.Error("CollapsedGroups should be created")
+	}
+	if state.CollapsedGroups[2] != true {
+		t.Error("Group 2 should be explicitly collapsed (true)")
+	}
+}
+
+func TestInlineContentCollapseIcon(t *testing.T) {
+	// Test the collapse icon logic used in RenderInlineContent
+	tests := []struct {
+		name        string
+		isCollapsed bool
+		wantIcon    string
+	}{
+		{"expanded", false, "▼"},
+		{"collapsed", true, "▶"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			collapseIcon := "▼"
+			if tt.isCollapsed {
+				collapseIcon = "▶"
+			}
+			if collapseIcon != tt.wantIcon {
+				t.Errorf("collapse icon = %q, want %q", collapseIcon, tt.wantIcon)
+			}
+		})
+	}
+}

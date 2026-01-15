@@ -160,9 +160,24 @@ func (m *Model) getNavigableInstances() []string {
 	}
 
 	// Execution - navigable for tasks with instances (started or completed)
+	// Only include tasks from expanded groups
 	if session.Plan != nil {
 		// Add in execution order
 		for groupIdx, group := range session.Plan.ExecutionOrder {
+			// Skip collapsed groups - their tasks are not navigable
+			if m.ultraPlan.IsGroupCollapsed(groupIdx, session.CurrentGroup) {
+				// Still track instance IDs so they don't appear as "non-ultraplan"
+				for _, taskID := range group {
+					if instID, ok := session.TaskToInstance[taskID]; ok && instID != "" {
+						ultraPlanInstanceIDs[instID] = true
+					}
+				}
+				if groupIdx < len(session.GroupConsolidatorIDs) && session.GroupConsolidatorIDs[groupIdx] != "" {
+					ultraPlanInstanceIDs[session.GroupConsolidatorIDs[groupIdx]] = true
+				}
+				continue
+			}
+
 			for _, taskID := range group {
 				// Check if task has an instance (either still in TaskToInstance or was completed)
 				if instID, ok := session.TaskToInstance[taskID]; ok && instID != "" {
@@ -231,6 +246,70 @@ func (m *Model) updateNavigableInstances() {
 		return
 	}
 	m.ultraPlan.NavigableInstances = m.getNavigableInstances()
+}
+
+// updateGroupCollapseState handles automatic group expansion/collapse when the current group changes.
+// - When moving to a new group, the new group is auto-expanded
+// - When leaving a group, it's auto-collapsed UNLESS the user is viewing a task from that group
+// NOTE: This function assumes the session state is not being modified concurrently.
+// The caller (tick handler) should ensure this is called from the main event loop only.
+func (m *Model) updateGroupCollapseState() {
+	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil || m.session == nil {
+		return
+	}
+
+	session := m.ultraPlan.Coordinator.Session()
+	if session == nil || session.Plan == nil {
+		return
+	}
+
+	currentGroup := session.CurrentGroup
+	lastGroup := m.ultraPlan.LastAutoExpandedGroup
+
+	// Check if the current group has changed
+	if currentGroup == lastGroup {
+		return
+	}
+
+	// Auto-expand the new current group
+	m.ultraPlan.SetGroupExpanded(currentGroup)
+
+	// Check if we should collapse the old group
+	// Only collapse if the user is NOT viewing an instance from that group
+	if lastGroup >= 0 && lastGroup < len(session.Plan.ExecutionOrder) {
+		shouldCollapse := true
+
+		// Get the currently selected instance ID
+		var selectedInstID string
+		if m.activeTab >= 0 && m.activeTab < len(m.session.Instances) {
+			selectedInstID = m.session.Instances[m.activeTab].ID
+		}
+
+		if selectedInstID != "" {
+			// Check if the selected instance belongs to the old group
+			oldGroupTasks := session.Plan.ExecutionOrder[lastGroup]
+			for _, taskID := range oldGroupTasks {
+				if instID, ok := session.TaskToInstance[taskID]; ok && instID == selectedInstID {
+					shouldCollapse = false
+					break
+				}
+			}
+
+			// Also check group consolidator
+			if shouldCollapse && lastGroup < len(session.GroupConsolidatorIDs) {
+				if session.GroupConsolidatorIDs[lastGroup] == selectedInstID {
+					shouldCollapse = false
+				}
+			}
+		}
+
+		if shouldCollapse {
+			m.ultraPlan.SetGroupCollapsed(lastGroup)
+		}
+	}
+
+	// Update the tracking
+	m.ultraPlan.LastAutoExpandedGroup = currentGroup
 }
 
 // navigateToNextInstance navigates to the next navigable instance
@@ -449,45 +528,38 @@ func (m Model) handleUltraPlanKeypress(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 			return true, m, nil
 
 		case "enter", " ":
-			// Toggle collapse for selected group
-			if m.ultraPlan.CollapsedGroups == nil {
-				m.ultraPlan.CollapsedGroups = make(map[int]bool)
+			// Toggle collapse for selected group (considering default-collapsed state)
+			groupIdx := m.ultraPlan.SelectedGroupIdx
+			isCurrentlyCollapsed := m.ultraPlan.IsGroupCollapsed(groupIdx, session.CurrentGroup)
+			if isCurrentlyCollapsed {
+				m.ultraPlan.SetGroupExpanded(groupIdx)
+			} else {
+				m.ultraPlan.SetGroupCollapsed(groupIdx)
 			}
-			m.ultraPlan.CollapsedGroups[m.ultraPlan.SelectedGroupIdx] = !m.ultraPlan.CollapsedGroups[m.ultraPlan.SelectedGroupIdx]
 			return true, m, nil
 
 		case "right", "l":
-			// Expand selected group and optionally enter task navigation
-			if m.ultraPlan.CollapsedGroups != nil {
-				m.ultraPlan.CollapsedGroups[m.ultraPlan.SelectedGroupIdx] = false
-			}
+			// Expand selected group
+			m.ultraPlan.SetGroupExpanded(m.ultraPlan.SelectedGroupIdx)
 			return true, m, nil
 
 		case "left", "h":
 			// Collapse selected group
-			if m.ultraPlan.CollapsedGroups == nil {
-				m.ultraPlan.CollapsedGroups = make(map[int]bool)
-			}
-			m.ultraPlan.CollapsedGroups[m.ultraPlan.SelectedGroupIdx] = true
+			m.ultraPlan.SetGroupCollapsed(m.ultraPlan.SelectedGroupIdx)
 			return true, m, nil
 
 		case "e":
 			// Expand all groups
-			if m.ultraPlan.CollapsedGroups != nil {
-				for i := 0; i < numGroups; i++ {
-					m.ultraPlan.CollapsedGroups[i] = false
-				}
+			for i := range numGroups {
+				m.ultraPlan.SetGroupExpanded(i)
 			}
 			m.infoMessage = "All groups expanded"
 			return true, m, nil
 
 		case "c":
 			// Collapse all groups (only in group nav mode, not awaiting decision)
-			if m.ultraPlan.CollapsedGroups == nil {
-				m.ultraPlan.CollapsedGroups = make(map[int]bool)
-			}
-			for i := 0; i < numGroups; i++ {
-				m.ultraPlan.CollapsedGroups[i] = true
+			for i := range numGroups {
+				m.ultraPlan.SetGroupCollapsed(i)
 			}
 			m.infoMessage = "All groups collapsed"
 			return true, m, nil

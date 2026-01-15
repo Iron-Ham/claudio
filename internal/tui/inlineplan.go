@@ -127,8 +127,9 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 		m.autoEnableGroupedMode()
 
 		m.ultraPlan = &view.UltraPlanState{
-			Coordinator:  coordinator,
-			ShowPlanView: false,
+			Coordinator:           coordinator,
+			ShowPlanView:          false,
+			LastAutoExpandedGroup: -1,
 		}
 
 		// Enter plan editor for review
@@ -172,8 +173,9 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 		}
 
 		m.ultraPlan = &view.UltraPlanState{
-			Coordinator:  coordinator,
-			ShowPlanView: false,
+			Coordinator:           coordinator,
+			ShowPlanView:          false,
+			LastAutoExpandedGroup: -1,
 		}
 		m.infoMessage = "Planning started..."
 		return
@@ -701,8 +703,9 @@ func (m *Model) handleUltraPlanObjectiveSubmit(objective string) {
 	}
 
 	m.ultraPlan = &view.UltraPlanState{
-		Coordinator:  coordinator,
-		ShowPlanView: false,
+		Coordinator:           coordinator,
+		ShowPlanView:          false,
+		LastAutoExpandedGroup: -1,
 	}
 	m.infoMessage = "Planning started..."
 }
