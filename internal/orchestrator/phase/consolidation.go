@@ -325,30 +325,6 @@ type PRInfo struct {
 	GroupIndex int `json:"group_index"`
 }
 
-// InstanceStatus represents the status of a Claude instance.
-// This mirrors the status values from the orchestrator package.
-type InstanceStatus string
-
-const (
-	// StatusRunning indicates the instance is actively running
-	StatusRunning InstanceStatus = "running"
-
-	// StatusCompleted indicates the instance has completed successfully
-	StatusCompleted InstanceStatus = "completed"
-
-	// StatusWaitingInput indicates the instance is waiting for user input
-	StatusWaitingInput InstanceStatus = "waiting_input"
-
-	// StatusError indicates the instance encountered an error
-	StatusError InstanceStatus = "error"
-
-	// StatusTimeout indicates the instance timed out
-	StatusTimeout InstanceStatus = "timeout"
-
-	// StatusStuck indicates the instance is stuck and not making progress
-	StatusStuck InstanceStatus = "stuck"
-)
-
 // ConsolidationInstanceInfo provides methods to get instance status.
 // This interface is used to check on the consolidation instance without
 // depending on the orchestrator package's Instance type.
@@ -366,8 +342,10 @@ type ConsolidationInstanceInfo interface {
 type ConsolidationOrchestratorExtended interface {
 	OrchestratorInterface
 
-	// GetInstance retrieves an instance by ID
-	GetInstance(id string) ConsolidationInstanceInfo
+	// GetConsolidationInstance retrieves an instance by ID with consolidation-specific type.
+	// This is separate from OrchestratorInterface.GetInstance to allow returning
+	// the consolidation-specific ConsolidationInstanceInfo interface.
+	GetConsolidationInstance(id string) ConsolidationInstanceInfo
 
 	// GetBaseSession returns the base session for instance creation
 	GetBaseSession() interface{}

@@ -100,8 +100,9 @@ type ExecutionOrchestratorInterface interface {
 	// StopInstance stops a running instance.
 	StopInstance(inst any) error
 
-	// GetInstance returns an instance by ID.
-	GetInstance(id string) any
+	// GetInstanceByID returns an instance by ID with any return type.
+	// This is separate from OrchestratorInterface.GetInstance which returns InstanceInterface.
+	GetInstanceByID(id string) any
 }
 
 // ExecutionCallbacksInterface extends CoordinatorCallbacksInterface with execution-specific callbacks.
@@ -599,7 +600,7 @@ func (e *ExecutionOrchestrator) monitorTaskInstance(taskID, instanceID string) {
 		case <-ticker.C:
 			// Check for completion using coordinator if available
 			if e.execCtx != nil && e.execCtx.Coordinator != nil && e.execCtx.ExecutionOrchestrator != nil {
-				inst := e.execCtx.ExecutionOrchestrator.GetInstance(instanceID)
+				inst := e.execCtx.ExecutionOrchestrator.GetInstanceByID(instanceID)
 				if inst == nil {
 					e.logger.Debug("instance status check",
 						"task_id", taskID,

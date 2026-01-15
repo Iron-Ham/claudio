@@ -29,13 +29,13 @@ func newMockExecutionSession() *mockExecutionSession {
 	}
 }
 
-func (m *mockExecutionSession) GetCurrentGroup() int          { return m.currentGroup }
-func (m *mockExecutionSession) GetCompletedTaskCount() int    { return m.completedCount }
-func (m *mockExecutionSession) GetFailedTaskCount() int       { return m.failedCount }
-func (m *mockExecutionSession) GetTotalTaskCount() int        { return m.totalCount }
-func (m *mockExecutionSession) GetMaxParallel() int           { return m.maxParallel }
-func (m *mockExecutionSession) IsMultiPass() bool             { return m.multiPass }
-func (m *mockExecutionSession) GetPlanSummary() string        { return m.planSummary }
+func (m *mockExecutionSession) GetCurrentGroup() int       { return m.currentGroup }
+func (m *mockExecutionSession) GetCompletedTaskCount() int { return m.completedCount }
+func (m *mockExecutionSession) GetFailedTaskCount() int    { return m.failedCount }
+func (m *mockExecutionSession) GetTotalTaskCount() int     { return m.totalCount }
+func (m *mockExecutionSession) GetMaxParallel() int        { return m.maxParallel }
+func (m *mockExecutionSession) IsMultiPass() bool          { return m.multiPass }
+func (m *mockExecutionSession) GetPlanSummary() string     { return m.planSummary }
 func (m *mockExecutionSession) GetGroupConsolidationContext(groupIndex int) GroupConsolidationContextData {
 	return m.contexts[groupIndex]
 }
@@ -43,10 +43,10 @@ func (m *mockExecutionSession) GetGroupConsolidationContext(groupIndex int) Grou
 // mockExecutionOrchestrator implements ExecutionOrchestratorInterface for testing.
 type mockExecutionOrchestrator struct {
 	mockOrchestrator
-	instances         map[string]any
+	instances          map[string]any
 	instanceFromBranch bool
-	stopCalls         []string
-	mu                sync.Mutex
+	stopCalls          []string
+	mu                 sync.Mutex
 }
 
 func newMockExecutionOrchestrator() *mockExecutionOrchestrator {
@@ -73,7 +73,7 @@ func (m *mockExecutionOrchestrator) StopInstance(inst any) error {
 	return nil
 }
 
-func (m *mockExecutionOrchestrator) GetInstance(id string) any {
+func (m *mockExecutionOrchestrator) GetInstanceByID(id string) any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.instances[id]
@@ -90,18 +90,18 @@ func (m *mockInstance) GetWorktreePath() string { return m.worktreePath }
 
 // mockExecutionCoordinator implements ExecutionCoordinatorInterface for testing.
 type mockExecutionCoordinator struct {
-	baseBranches     map[int]string
-	runningTasks     map[string]string
-	taskGroups       map[string]int
-	completionCalls  []TaskCompletion
-	verifyResults    map[string]TaskCompletion
-	completionFiles  map[string]bool
-	taskStartCalls   []struct{ taskID, instanceID string }
-	taskFailedCalls  []struct{ taskID, reason string }
-	progressCalls    int
-	finishCalls      int
-	groupAddCalls    []string
-	mu               sync.Mutex
+	baseBranches    map[int]string
+	runningTasks    map[string]string
+	taskGroups      map[string]int
+	completionCalls []TaskCompletion
+	verifyResults   map[string]TaskCompletion
+	completionFiles map[string]bool
+	taskStartCalls  []struct{ taskID, instanceID string }
+	taskFailedCalls []struct{ taskID, reason string }
+	progressCalls   int
+	finishCalls     int
+	groupAddCalls   []string
+	mu              sync.Mutex
 }
 
 func newMockExecutionCoordinator() *mockExecutionCoordinator {
@@ -234,14 +234,14 @@ func (m *mockPlannedTask) IsNoCode() bool         { return m.noCode }
 
 // mockGroupConsolidationContext implements GroupConsolidationContextData for testing.
 type mockGroupConsolidationContext struct {
-	notes              string
-	issuesForNextGroup []string
+	notes               string
+	issuesForNextGroup  []string
 	verificationSuccess bool
 }
 
-func (m *mockGroupConsolidationContext) GetNotes() string               { return m.notes }
+func (m *mockGroupConsolidationContext) GetNotes() string                { return m.notes }
 func (m *mockGroupConsolidationContext) GetIssuesForNextGroup() []string { return m.issuesForNextGroup }
-func (m *mockGroupConsolidationContext) IsVerificationSuccess() bool    { return m.verificationSuccess }
+func (m *mockGroupConsolidationContext) IsVerificationSuccess() bool     { return m.verificationSuccess }
 
 func TestNewExecutionOrchestrator(t *testing.T) {
 	tests := []struct {
@@ -694,8 +694,8 @@ func TestExecutionOrchestrator_BuildTaskPromptWithContext(t *testing.T) {
 	execSession := newMockExecutionSession()
 	execSession.planSummary = "Major Refactoring Project"
 	execSession.contexts[0] = &mockGroupConsolidationContext{
-		notes:              "Group 1 completed with minor issues",
-		issuesForNextGroup: []string{"Check API compatibility", "Update tests"},
+		notes:               "Group 1 completed with minor issues",
+		issuesForNextGroup:  []string{"Check API compatibility", "Update tests"},
 		verificationSuccess: true,
 	}
 

@@ -13,17 +13,17 @@ type planningMockOrchestrator struct {
 	addInstanceFunc   func(session any, task string) (any, error)
 	startInstanceFunc func(inst any) error
 	saveSessionFunc   func() error
-	addedInstances    []mockInstance
+	addedInstances    []planningMockInstance
 	startedInstances  []any
 	mu                sync.Mutex
 }
 
-type mockInstance struct {
+type planningMockInstance struct {
 	id   string
 	task string
 }
 
-func (m *mockInstance) GetID() string {
+func (m *planningMockInstance) GetID() string {
 	return m.id
 }
 
@@ -35,7 +35,7 @@ func (m *planningMockOrchestrator) AddInstance(session any, task string) (any, e
 		return m.addInstanceFunc(session, task)
 	}
 
-	inst := &mockInstance{
+	inst := &planningMockInstance{
 		id:   "inst-" + time.Now().Format("150405"),
 		task: task,
 	}
@@ -63,6 +63,10 @@ func (m *planningMockOrchestrator) SaveSession() error {
 }
 
 func (m *planningMockOrchestrator) GetInstanceManager(id string) any {
+	return nil
+}
+
+func (m *planningMockOrchestrator) GetInstance(id string) InstanceInterface {
 	return nil
 }
 
@@ -635,7 +639,7 @@ func TestExtractInstanceID(t *testing.T) {
 	})
 
 	t.Run("instance with GetID returns ID", func(t *testing.T) {
-		inst := &mockInstance{id: "test-id"}
+		inst := &planningMockInstance{id: "test-id"}
 		if got := extractInstanceID(inst); got != "test-id" {
 			t.Errorf("extractInstanceID() = %q, want %q", got, "test-id")
 		}
