@@ -2893,13 +2893,14 @@ func (c *Coordinator) RetriggerGroup(targetGroup int) error {
 
 // GetStepInfo returns information about a step given its instance ID.
 // This is used by the TUI to determine what kind of step is selected for restart/input operations.
+// It queries both session state and phase orchestrators to ensure consistency.
 func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
 	session := c.Session()
 	if session == nil || instanceID == "" {
 		return nil
 	}
 
-	// Check if it's the planning coordinator
+	// Check if it's the planning coordinator (session state)
 	if session.CoordinatorID == instanceID {
 		return &StepInfo{
 			Type:       StepTypePlanning,
@@ -2909,7 +2910,35 @@ func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
 		}
 	}
 
-	// Check multi-pass plan coordinators
+	// Check planning orchestrator state as fallback
+	if planOrch := c.PlanningOrchestrator(); planOrch != nil {
+		if planOrch.GetInstanceID() == instanceID {
+			return &StepInfo{
+				Type:       StepTypePlanning,
+				InstanceID: instanceID,
+				GroupIndex: -1,
+				Label:      "Planning Coordinator",
+			}
+		}
+		// Check multi-pass coordinators from orchestrator state
+		for i, coordID := range planOrch.GetPlanCoordinatorIDs() {
+			if coordID == instanceID {
+				strategies := GetMultiPassStrategyNames()
+				label := fmt.Sprintf("Plan Coordinator %d", i+1)
+				if i < len(strategies) {
+					label = fmt.Sprintf("Plan Coordinator (%s)", strategies[i])
+				}
+				return &StepInfo{
+					Type:       StepTypePlanning,
+					InstanceID: instanceID,
+					GroupIndex: i,
+					Label:      label,
+				}
+			}
+		}
+	}
+
+	// Check multi-pass plan coordinators (session state)
 	for i, coordID := range session.PlanCoordinatorIDs {
 		if coordID == instanceID {
 			strategies := GetMultiPassStrategyNames()
@@ -2936,7 +2965,7 @@ func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
 		}
 	}
 
-	// Check if it's a task instance
+	// Check if it's a task instance (session state)
 	for taskID, instID := range session.TaskToInstance {
 		if instID == instanceID {
 			task := session.GetTask(taskID)
@@ -2955,7 +2984,29 @@ func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
 		}
 	}
 
-	// Check group consolidators
+	// Check execution orchestrator for running tasks as fallback
+	if execOrch := c.ExecutionOrchestrator(); execOrch != nil {
+		state := execOrch.State()
+		for taskID, instID := range state.RunningTasks {
+			if instID == instanceID {
+				task := session.GetTask(taskID)
+				label := taskID
+				if task != nil {
+					label = task.Title
+				}
+				groupIdx := c.getTaskGroupIndex(taskID)
+				return &StepInfo{
+					Type:       StepTypeTask,
+					InstanceID: instanceID,
+					TaskID:     taskID,
+					GroupIndex: groupIdx,
+					Label:      label,
+				}
+			}
+		}
+	}
+
+	// Check group consolidators (session state)
 	for i, consolidatorID := range session.GroupConsolidatorIDs {
 		if consolidatorID == instanceID {
 			return &StepInfo{
@@ -2967,7 +3018,7 @@ func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
 		}
 	}
 
-	// Check if it's the synthesis instance
+	// Check if it's the synthesis instance (session state)
 	if session.SynthesisID == instanceID {
 		return &StepInfo{
 			Type:       StepTypeSynthesis,
@@ -2977,7 +3028,19 @@ func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
 		}
 	}
 
-	// Check if it's the revision instance
+	// Check synthesis orchestrator as fallback
+	if synthOrch := c.SynthesisOrchestrator(); synthOrch != nil {
+		if synthOrch.GetInstanceID() == instanceID {
+			return &StepInfo{
+				Type:       StepTypeSynthesis,
+				InstanceID: instanceID,
+				GroupIndex: -1,
+				Label:      "Synthesis",
+			}
+		}
+	}
+
+	// Check if it's the revision instance (session state)
 	if session.RevisionID == instanceID {
 		return &StepInfo{
 			Type:       StepTypeRevision,
@@ -2987,13 +3050,40 @@ func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
 		}
 	}
 
-	// Check if it's the consolidation instance
+	// Check synthesis orchestrator for revision running tasks as fallback
+	if synthOrch := c.SynthesisOrchestrator(); synthOrch != nil {
+		synthState := synthOrch.State()
+		for _, instID := range synthState.RunningRevisionTasks {
+			if instID == instanceID {
+				return &StepInfo{
+					Type:       StepTypeRevision,
+					InstanceID: instanceID,
+					GroupIndex: -1,
+					Label:      "Revision",
+				}
+			}
+		}
+	}
+
+	// Check if it's the consolidation instance (session state)
 	if session.ConsolidationID == instanceID {
 		return &StepInfo{
 			Type:       StepTypeConsolidation,
 			InstanceID: instanceID,
 			GroupIndex: -1,
 			Label:      "Consolidation",
+		}
+	}
+
+	// Check consolidation orchestrator as fallback
+	if consolOrch := c.ConsolidationOrchestrator(); consolOrch != nil {
+		if consolOrch.GetInstanceID() == instanceID {
+			return &StepInfo{
+				Type:       StepTypeConsolidation,
+				InstanceID: instanceID,
+				GroupIndex: -1,
+				Label:      "Consolidation",
+			}
 		}
 	}
 
@@ -3057,7 +3147,12 @@ func (c *Coordinator) RestartStep(stepInfo *StepInfo) (string, error) {
 func (c *Coordinator) restartPlanning() (string, error) {
 	session := c.Session()
 
-	// Reset planning-related state
+	// Reset planning orchestrator state first
+	if planOrch := c.PlanningOrchestrator(); planOrch != nil {
+		planOrch.Reset()
+	}
+
+	// Reset planning-related state in session
 	c.mu.Lock()
 	session.CoordinatorID = ""
 	session.Plan = nil
@@ -3079,7 +3174,12 @@ func (c *Coordinator) restartPlanManager() (string, error) {
 		return "", fmt.Errorf("plan manager only exists in multi-pass mode")
 	}
 
-	// Reset plan manager state
+	// Reset planning orchestrator state (includes multi-pass coordinator IDs)
+	if planOrch := c.PlanningOrchestrator(); planOrch != nil {
+		planOrch.Reset()
+	}
+
+	// Reset plan manager state in session
 	c.mu.Lock()
 	session.PlanManagerID = ""
 	session.Plan = nil
@@ -3095,6 +3195,8 @@ func (c *Coordinator) restartPlanManager() (string, error) {
 }
 
 // restartTask restarts a specific task
+// Note: This method bypasses the ExecutionOrchestrator's execute loop and starts
+// the task directly. The session state is the source of truth for task tracking.
 func (c *Coordinator) restartTask(taskID string) (string, error) {
 	session := c.Session()
 	if taskID == "" {
@@ -3115,7 +3217,13 @@ func (c *Coordinator) restartTask(taskID string) (string, error) {
 		return "", fmt.Errorf("cannot restart task while %d tasks are running", runningCount)
 	}
 
-	// Reset task state
+	// Reset execution orchestrator state to clear ProcessedTasks and allow re-execution
+	// Since no tasks are running (verified above), clearing all state is safe
+	if execOrch := c.ExecutionOrchestrator(); execOrch != nil {
+		execOrch.Reset()
+	}
+
+	// Reset task state in session
 	c.mu.Lock()
 	// Remove from completed tasks
 	newCompleted := make([]string, 0, len(session.CompletedTasks))
@@ -3186,7 +3294,12 @@ func (c *Coordinator) restartTask(taskID string) (string, error) {
 func (c *Coordinator) restartSynthesis() (string, error) {
 	session := c.Session()
 
-	// Reset synthesis state
+	// Reset synthesis orchestrator state
+	if synthOrch := c.SynthesisOrchestrator(); synthOrch != nil {
+		synthOrch.Reset()
+	}
+
+	// Reset synthesis state in session
 	c.mu.Lock()
 	session.SynthesisID = ""
 	session.SynthesisCompletion = nil
@@ -3203,6 +3316,8 @@ func (c *Coordinator) restartSynthesis() (string, error) {
 }
 
 // restartRevision restarts the revision phase
+// Revision is a sub-phase of synthesis, so we reset the synthesis orchestrator's
+// revision-related state while preserving the identified issues.
 func (c *Coordinator) restartRevision() (string, error) {
 	session := c.Session()
 
@@ -3210,11 +3325,17 @@ func (c *Coordinator) restartRevision() (string, error) {
 		return "", fmt.Errorf("no revision issues to address")
 	}
 
-	// Reset revision state
+	// Reset synthesis orchestrator state (which handles revision as a sub-phase)
+	// Note: Reset() clears all state including revision state, but the session's
+	// Revision.Issues are preserved below
+	if synthOrch := c.SynthesisOrchestrator(); synthOrch != nil {
+		synthOrch.Reset()
+	}
+
+	// Reset revision state in session (keep issues but reset progress)
 	c.mu.Lock()
 	session.RevisionID = ""
 	session.Phase = PhaseRevision
-	// Keep the issues but reset progress
 	session.Revision.RevisedTasks = make([]string, 0)
 	session.Revision.TasksToRevise = extractTasksToRevise(session.Revision.Issues)
 	c.mu.Unlock()
@@ -3231,7 +3352,12 @@ func (c *Coordinator) restartRevision() (string, error) {
 func (c *Coordinator) restartConsolidation() (string, error) {
 	session := c.Session()
 
-	// Reset consolidation state
+	// Reset consolidation orchestrator state
+	if consolOrch := c.ConsolidationOrchestrator(); consolOrch != nil {
+		consolOrch.Reset()
+	}
+
+	// Reset consolidation state in session
 	c.mu.Lock()
 	session.ConsolidationID = ""
 	session.Consolidation = nil
@@ -3255,7 +3381,13 @@ func (c *Coordinator) restartGroupConsolidator(groupIndex int) (string, error) {
 		return "", fmt.Errorf("invalid group index: %d", groupIndex)
 	}
 
-	// Reset group consolidator state
+	// Reset consolidation orchestrator state for restart
+	// This clears conflict-related state and instance tracking
+	if consolOrch := c.ConsolidationOrchestrator(); consolOrch != nil {
+		consolOrch.ClearStateForRestart()
+	}
+
+	// Reset group consolidator state in session
 	c.mu.Lock()
 	if groupIndex < len(session.GroupConsolidatorIDs) {
 		session.GroupConsolidatorIDs[groupIndex] = ""
