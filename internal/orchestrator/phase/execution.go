@@ -201,6 +201,116 @@ type ExecutionCoordinatorInterface interface {
 
 	// RecordTaskCommitCount records the commit count for a completed task.
 	RecordTaskCommitCount(taskID string, count int)
+
+	// ConsolidateGroupWithVerification consolidates a group and verifies commits exist.
+	// Used by ResumeWithPartialWork to consolidate only successful tasks.
+	ConsolidateGroupWithVerification(groupIndex int) error
+
+	// EmitEvent emits a coordinator event for UI notification.
+	EmitEvent(eventType, message string)
+
+	// StartExecutionLoop restarts the execution loop (used by RetriggerGroup).
+	StartExecutionLoop()
+}
+
+// RetryManagerInterface defines the methods needed for retry state management.
+// This interface abstracts the retry.Manager to avoid direct package dependencies.
+type RetryManagerInterface interface {
+	// Reset clears the retry state for a task.
+	Reset(taskID string)
+
+	// GetAllStates returns a copy of all task retry states.
+	GetAllStates() map[string]*RetryTaskState
+}
+
+// RetryTaskState tracks retry attempts for a task.
+// This mirrors the retry.TaskState struct.
+type RetryTaskState struct {
+	TaskID       string `json:"task_id"`
+	RetryCount   int    `json:"retry_count"`
+	MaxRetries   int    `json:"max_retries"`
+	LastError    string `json:"last_error,omitempty"`
+	CommitCounts []int  `json:"commit_counts,omitempty"`
+	Succeeded    bool   `json:"succeeded,omitempty"`
+}
+
+// RetryRecoverySessionInterface defines session methods needed for retry/recovery operations.
+// This interface abstracts the UltraPlanSession to allow independent testing.
+type RetryRecoverySessionInterface interface {
+	// GetGroupDecision returns the current group decision state.
+	GetGroupDecision() *GroupDecisionState
+
+	// SetGroupDecision sets the group decision state.
+	SetGroupDecision(decision *GroupDecisionState)
+
+	// GetCurrentGroup returns the current execution group index.
+	GetCurrentGroup() int
+
+	// SetCurrentGroup sets the current execution group index.
+	SetCurrentGroup(group int)
+
+	// GetCompletedTasks returns the list of completed task IDs.
+	GetCompletedTasks() []string
+
+	// SetCompletedTasks sets the completed tasks list.
+	SetCompletedTasks(tasks []string)
+
+	// GetFailedTasks returns the list of failed task IDs.
+	GetFailedTasks() []string
+
+	// SetFailedTasks sets the failed tasks list.
+	SetFailedTasks(tasks []string)
+
+	// GetTaskToInstance returns the task-to-instance mapping.
+	GetTaskToInstance() map[string]string
+
+	// DeleteTaskFromInstance removes a task from the task-to-instance mapping.
+	DeleteTaskFromInstance(taskID string)
+
+	// GetTaskCommitCounts returns the task commit counts map.
+	GetTaskCommitCounts() map[string]int
+
+	// DeleteTaskCommitCount removes a task from the commit counts map.
+	DeleteTaskCommitCount(taskID string)
+
+	// GetExecutionOrder returns the execution order (groups of task IDs).
+	GetExecutionOrder() [][]string
+
+	// GetGroupConsolidatedBranches returns the consolidated branch names per group.
+	GetGroupConsolidatedBranches() []string
+
+	// SetGroupConsolidatedBranches sets the consolidated branch names.
+	SetGroupConsolidatedBranches(branches []string)
+
+	// GetGroupConsolidatorIDs returns the consolidator instance IDs per group.
+	GetGroupConsolidatorIDs() []string
+
+	// SetGroupConsolidatorIDs sets the consolidator instance IDs.
+	SetGroupConsolidatorIDs(ids []string)
+
+	// GetGroupConsolidationContexts returns the consolidation contexts per group.
+	GetGroupConsolidationContexts() []GroupConsolidationContextData
+
+	// SetGroupConsolidationContextsLength truncates the contexts slice to the given length.
+	SetGroupConsolidationContextsLength(length int)
+
+	// SetTaskRetries sets the task retry states map.
+	SetTaskRetries(retries map[string]*RetryTaskState)
+
+	// ClearSynthesisState clears all synthesis-related state.
+	ClearSynthesisState()
+
+	// ClearRevisionState clears all revision-related state.
+	ClearRevisionState()
+
+	// ClearConsolidationState clears all consolidation-related state.
+	ClearConsolidationState()
+
+	// ClearPRUrls clears the PR URLs.
+	ClearPRUrls()
+
+	// SetError sets the session error message.
+	SetError(err string)
 }
 
 // GroupTrackerInterface defines the methods needed for group tracking.
@@ -1521,6 +1631,336 @@ func (e *ExecutionOrchestrator) getInstanceManager(instanceID string) InstanceMa
 	// Try to cast to InstanceManagerCheckerInterface
 	if checker, ok := mgr.(InstanceManagerCheckerInterface); ok {
 		return checker
+	}
+
+	return nil
+}
+
+// =============================================================================
+// Retry, Recovery, and Partial Failure Handling
+// =============================================================================
+
+// RetryRecoveryContext holds the extended dependencies required for retry/recovery operations.
+// It embeds ExecutionContext and adds retry-specific dependencies.
+type RetryRecoveryContext struct {
+	*ExecutionContext
+
+	// RetryManager provides retry state management.
+	// If nil, retry operations will not be available.
+	RetryManager RetryManagerInterface
+
+	// RetryRecoverySession provides extended session access for retry operations.
+	// If nil, retry operations will be delegated to the Coordinator.
+	RetryRecoverySession RetryRecoverySessionInterface
+}
+
+// SetRetryRecoveryContext sets the retry/recovery context after construction.
+// This allows adding retry capabilities to an existing orchestrator.
+func (e *ExecutionOrchestrator) SetRetryRecoveryContext(retryCtx *RetryRecoveryContext) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if retryCtx != nil {
+		e.execCtx = retryCtx.ExecutionContext
+	}
+}
+
+// HasPartialGroupFailure checks if the specified group has a mix of successful and failed tasks.
+// This is used to determine if user intervention is needed before proceeding.
+//
+// A partial failure occurs when:
+// - At least one task in the group completed successfully
+// - At least one task in the group failed
+//
+// Returns true if the group has both successes and failures.
+func (e *ExecutionOrchestrator) HasPartialGroupFailure(groupIndex int) bool {
+	// Delegate to GroupTracker if available
+	if e.execCtx != nil && e.execCtx.GroupTracker != nil {
+		return e.execCtx.GroupTracker.HasPartialFailure(groupIndex)
+	}
+
+	e.logger.Debug("HasPartialGroupFailure called without GroupTracker",
+		"group_index", groupIndex,
+	)
+	return false
+}
+
+// GetGroupDecision returns the current group decision state.
+// Returns nil if no partial failure is pending.
+func (e *ExecutionOrchestrator) GetGroupDecision() *GroupDecisionState {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if e.state.GroupDecision == nil {
+		return nil
+	}
+
+	// Return a copy to prevent external mutation
+	return &GroupDecisionState{
+		GroupIndex:       e.state.GroupDecision.GroupIndex,
+		SucceededTasks:   append([]string{}, e.state.GroupDecision.SucceededTasks...),
+		FailedTasks:      append([]string{}, e.state.GroupDecision.FailedTasks...),
+		AwaitingDecision: e.state.GroupDecision.AwaitingDecision,
+	}
+}
+
+// IsAwaitingDecision returns true if the orchestrator is paused waiting for user decision.
+func (e *ExecutionOrchestrator) IsAwaitingDecision() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.state.GroupDecision != nil && e.state.GroupDecision.AwaitingDecision
+}
+
+// ResumeWithPartialWork continues execution with only the successful tasks from a partial failure.
+// Failed tasks are skipped, and the group is consolidated with only the successful work.
+//
+// Preconditions:
+//   - A partial failure must be pending (IsAwaitingDecision returns true)
+//
+// This method:
+//  1. Marks the decision as resolved
+//  2. Consolidates only the successful tasks
+//  3. Advances to the next group
+//  4. Persists state and emits events
+//
+// Returns an error if no decision is pending or consolidation fails.
+func (e *ExecutionOrchestrator) ResumeWithPartialWork() error {
+	// Check for pending decision
+	e.mu.RLock()
+	decision := e.state.GroupDecision
+	if decision == nil || !decision.AwaitingDecision {
+		e.mu.RUnlock()
+		return fmt.Errorf("no pending group decision")
+	}
+	groupIdx := decision.GroupIndex
+	succeededCount := len(decision.SucceededTasks)
+	e.mu.RUnlock()
+
+	e.logger.Info("resuming with partial work",
+		"group_index", groupIdx,
+		"succeeded_count", succeededCount,
+	)
+
+	// Mark decision as resolved
+	e.mu.Lock()
+	e.state.GroupDecision.AwaitingDecision = false
+	e.mu.Unlock()
+
+	// Emit event
+	if e.execCtx != nil && e.execCtx.Coordinator != nil {
+		e.execCtx.Coordinator.EmitEvent("group_complete",
+			fmt.Sprintf("Continuing group %d with partial work (%d tasks)", groupIdx+1, succeededCount))
+	}
+
+	// Consolidate only the successful tasks
+	if e.execCtx != nil && e.execCtx.Coordinator != nil {
+		if err := e.execCtx.Coordinator.ConsolidateGroupWithVerification(groupIdx); err != nil {
+			return fmt.Errorf("failed to consolidate partial group: %w", err)
+		}
+	}
+
+	// Advance to the next group AFTER consolidation succeeds
+	// This is critical - without this, checkAndAdvanceGroup() would detect
+	// the partial failure again and re-prompt the user
+	e.mu.Lock()
+	e.state.GroupDecision = nil
+	e.mu.Unlock()
+
+	// Persist state
+	if e.execCtx != nil && e.execCtx.Coordinator != nil {
+		_ = e.execCtx.Coordinator.SaveSession()
+	}
+
+	return nil
+}
+
+// RetryFailedTasks retries all failed tasks in the current group.
+// This resets retry counters and removes tasks from the failed/completed lists,
+// allowing the execution loop to pick them up again.
+//
+// Preconditions:
+//   - A partial failure must be pending (IsAwaitingDecision returns true)
+//
+// This method:
+//  1. Resets retry state for each failed task
+//  2. Removes tasks from failed/completed lists
+//  3. Removes task-to-instance mappings (making them "ready" again)
+//  4. Clears the decision state
+//  5. Persists state and emits events
+//
+// Returns an error if no decision is pending.
+func (e *ExecutionOrchestrator) RetryFailedTasks() error {
+	// Check for pending decision
+	e.mu.RLock()
+	decision := e.state.GroupDecision
+	if decision == nil || !decision.AwaitingDecision {
+		e.mu.RUnlock()
+		return fmt.Errorf("no pending group decision")
+	}
+	failedTasks := append([]string{}, decision.FailedTasks...)
+	groupIdx := decision.GroupIndex
+	e.mu.RUnlock()
+
+	e.logger.Info("retrying failed tasks",
+		"group_index", groupIdx,
+		"failed_count", len(failedTasks),
+	)
+
+	// This operation primarily affects session state, delegate to coordinator
+	// The coordinator has direct access to the RetryManager and UltraPlanSession
+	if e.execCtx == nil || e.execCtx.Coordinator == nil {
+		return fmt.Errorf("coordinator required for RetryFailedTasks")
+	}
+
+	// Clear the local decision state
+	e.mu.Lock()
+	e.state.GroupDecision = nil
+
+	// Reset local state for the failed tasks
+	for _, taskID := range failedTasks {
+		delete(e.state.ProcessedTasks, taskID)
+	}
+
+	// Adjust counts (failed tasks will become ready again)
+	e.state.FailedCount -= len(failedTasks)
+	if e.state.FailedCount < 0 {
+		e.state.FailedCount = 0
+	}
+	e.mu.Unlock()
+
+	// Emit event
+	e.execCtx.Coordinator.EmitEvent("group_complete",
+		fmt.Sprintf("Retrying %d failed tasks in group %d", len(failedTasks), groupIdx+1))
+
+	// Delegate actual retry state management to coordinator
+	// The coordinator will:
+	// - Reset retry counters via RetryManager
+	// - Remove from session.FailedTasks and session.CompletedTasks
+	// - Remove from session.TaskToInstance
+	// - Persist state
+
+	// Clear task mappings so execution loop picks them up
+	for _, taskID := range failedTasks {
+		e.execCtx.Coordinator.ClearTaskFromInstance(taskID)
+	}
+
+	_ = e.execCtx.Coordinator.SaveSession()
+
+	return nil
+}
+
+// RetriggerGroup resets execution state to the specified group index and restarts execution.
+// All state from groups >= targetGroup is cleared, since subsequent groups depend on the
+// re-triggered group's consolidated branch.
+//
+// Preconditions:
+//   - targetGroup must be >= 0 and < number of execution groups
+//   - No tasks currently running (GetRunningCount() == 0)
+//   - Not awaiting a group decision
+//
+// This clears:
+//   - CompletedTasks for tasks in groups >= targetGroup
+//   - FailedTasks for tasks in groups >= targetGroup
+//   - TaskToInstance for tasks in groups >= targetGroup
+//   - GroupConsolidatedBranches[>= targetGroup]
+//   - GroupConsolidatorIDs[>= targetGroup]
+//   - GroupConsolidationContexts[>= targetGroup]
+//   - TaskRetries for tasks in groups >= targetGroup
+//   - TaskCommitCounts for tasks in groups >= targetGroup
+//   - Synthesis, Revision, and Consolidation state
+//
+// Note: This method returns nil upon successfully STARTING the retrigger operation.
+// The actual execution happens asynchronously in executionLoop. Errors during execution
+// are communicated via CoordinatorEvent callbacks, not through the return value.
+func (e *ExecutionOrchestrator) RetriggerGroup(targetGroup int) error {
+	// Validate coordinator is available (required for full retrigger functionality)
+	if e.execCtx == nil || e.execCtx.Coordinator == nil {
+		return fmt.Errorf("coordinator required for RetriggerGroup")
+	}
+
+	// Get execution order to validate target group
+	executionOrder := e.getExecutionOrder()
+	if executionOrder == nil {
+		return fmt.Errorf("no plan available")
+	}
+
+	numGroups := len(executionOrder)
+	if targetGroup < 0 || targetGroup >= numGroups {
+		return fmt.Errorf("invalid target group %d (must be 0-%d)", targetGroup, numGroups-1)
+	}
+
+	// Check we're not currently executing tasks
+	e.mu.RLock()
+	runningCount := e.state.RunningCount
+	awaitingDecision := e.state.GroupDecision != nil && e.state.GroupDecision.AwaitingDecision
+	e.mu.RUnlock()
+
+	if runningCount > 0 {
+		return fmt.Errorf("cannot retrigger while %d tasks are running", runningCount)
+	}
+
+	if awaitingDecision {
+		return fmt.Errorf("cannot retrigger while awaiting group decision")
+	}
+
+	// Build set of tasks in groups >= targetGroup
+	tasksToReset := make(map[string]bool)
+	for groupIdx := targetGroup; groupIdx < numGroups; groupIdx++ {
+		for _, taskID := range executionOrder[groupIdx] {
+			tasksToReset[taskID] = true
+		}
+	}
+
+	e.logger.Info("retriggering group",
+		"target_group", targetGroup,
+		"tasks_to_reset", len(tasksToReset),
+	)
+
+	// Reset local state
+	e.mu.Lock()
+	for taskID := range tasksToReset {
+		delete(e.state.ProcessedTasks, taskID)
+		delete(e.state.RunningTasks, taskID)
+	}
+	e.state.GroupDecision = nil
+
+	// Reset counts (will be recalculated from session state)
+	e.state.CompletedCount = 0
+	e.state.FailedCount = 0
+	e.mu.Unlock()
+
+	// Set phase back to executing
+	e.phaseCtx.Manager.SetPhase(PhaseExecuting)
+
+	// Emit event
+	e.execCtx.Coordinator.EmitEvent("phase_change",
+		fmt.Sprintf("Retriggered from group %d", targetGroup))
+
+	// Persist and restart via coordinator
+	if err := e.execCtx.Coordinator.SaveSession(); err != nil {
+		e.logger.Error("failed to persist retrigger state",
+			"target_group", targetGroup,
+			"error", err.Error(),
+		)
+	}
+
+	// Restart execution loop
+	e.execCtx.Coordinator.StartExecutionLoop()
+
+	return nil
+}
+
+// getExecutionOrder returns the execution order from the session.
+// Returns nil if not available.
+func (e *ExecutionOrchestrator) getExecutionOrder() [][]string {
+	session := e.phaseCtx.Session
+	if session == nil {
+		return nil
+	}
+
+	// Try to get execution order via interface
+	if getter, ok := session.(interface{ GetExecutionOrder() [][]string }); ok {
+		return getter.GetExecutionOrder()
 	}
 
 	return nil

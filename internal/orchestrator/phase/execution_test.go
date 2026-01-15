@@ -299,6 +299,21 @@ func (m *mockExecutionCoordinator) RecordTaskCommitCount(taskID string, count in
 	m.taskCommitCounts[taskID] = count
 }
 
+func (m *mockExecutionCoordinator) ConsolidateGroupWithVerification(groupIndex int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.consolidationCalls = append(m.consolidationCalls, groupIndex)
+	return m.consolidationErr
+}
+
+func (m *mockExecutionCoordinator) EmitEvent(eventType, message string) {
+	// No-op for testing - could track calls if needed
+}
+
+func (m *mockExecutionCoordinator) StartExecutionLoop() {
+	// No-op for testing - could track calls if needed
+}
+
 // mockPlannedTask implements PlannedTaskData for testing.
 type mockPlannedTask struct {
 	id          string
@@ -2111,6 +2126,574 @@ func TestExecutionState_ProcessedTasks(t *testing.T) {
 		if len(state.ProcessedTasks) != 0 {
 			t.Errorf("ProcessedTasks len = %d, want 0 after Reset", len(state.ProcessedTasks))
 		}
+	})
+}
+
+// =============================================================================
+// Retry, Recovery, and Partial Failure Handling Tests
+// =============================================================================
+
+func TestExecutionOrchestrator_HasPartialGroupFailure(t *testing.T) {
+	tests := []struct {
+		name       string
+		groupIndex int
+		hasPartial bool
+	}{
+		{
+			name:       "no partial failure",
+			groupIndex: 0,
+			hasPartial: false,
+		},
+		{
+			name:       "has partial failure",
+			groupIndex: 1,
+			hasPartial: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			groupTracker := &mockGroupTracker{
+				partialFailure: map[int]bool{tt.groupIndex: tt.hasPartial},
+			}
+
+			exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+				PhaseContext: &PhaseContext{
+					Manager:      &mockManager{},
+					Orchestrator: &mockOrchestrator{},
+					Session:      &mockSession{},
+				},
+				GroupTracker: groupTracker,
+			})
+			if err != nil {
+				t.Fatalf("failed to create orchestrator: %v", err)
+			}
+
+			got := exec.HasPartialGroupFailure(tt.groupIndex)
+			if got != tt.hasPartial {
+				t.Errorf("HasPartialGroupFailure(%d) = %v, want %v", tt.groupIndex, got, tt.hasPartial)
+			}
+		})
+	}
+
+	t.Run("returns false without GroupTracker", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		if exec.HasPartialGroupFailure(0) {
+			t.Error("HasPartialGroupFailure should return false without GroupTracker")
+		}
+	})
+}
+
+func TestExecutionOrchestrator_GetGroupDecision(t *testing.T) {
+	t.Run("returns nil when no decision pending", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		if exec.GetGroupDecision() != nil {
+			t.Error("GetGroupDecision should return nil when no decision is pending")
+		}
+	})
+
+	t.Run("returns copy of decision state", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Set up a decision state
+		exec.mu.Lock()
+		exec.state.GroupDecision = &GroupDecisionState{
+			GroupIndex:       2,
+			SucceededTasks:   []string{"task-1", "task-2"},
+			FailedTasks:      []string{"task-3"},
+			AwaitingDecision: true,
+		}
+		exec.mu.Unlock()
+
+		decision := exec.GetGroupDecision()
+		if decision == nil {
+			t.Fatal("GetGroupDecision returned nil, expected decision state")
+		}
+
+		if decision.GroupIndex != 2 {
+			t.Errorf("GroupIndex = %d, want 2", decision.GroupIndex)
+		}
+		if len(decision.SucceededTasks) != 2 {
+			t.Errorf("SucceededTasks len = %d, want 2", len(decision.SucceededTasks))
+		}
+		if len(decision.FailedTasks) != 1 {
+			t.Errorf("FailedTasks len = %d, want 1", len(decision.FailedTasks))
+		}
+		if !decision.AwaitingDecision {
+			t.Error("AwaitingDecision should be true")
+		}
+
+		// Verify it's a copy (modifying returned slice doesn't affect internal state)
+		decision.SucceededTasks[0] = "modified"
+		exec.mu.RLock()
+		if exec.state.GroupDecision.SucceededTasks[0] == "modified" {
+			t.Error("GetGroupDecision should return a copy, not the original slice")
+		}
+		exec.mu.RUnlock()
+	})
+}
+
+func TestExecutionOrchestrator_IsAwaitingDecision(t *testing.T) {
+	t.Run("returns false when no decision", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		if exec.IsAwaitingDecision() {
+			t.Error("IsAwaitingDecision should return false when no decision state")
+		}
+	})
+
+	t.Run("returns true when awaiting", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		exec.mu.Lock()
+		exec.state.GroupDecision = &GroupDecisionState{
+			GroupIndex:       0,
+			AwaitingDecision: true,
+		}
+		exec.mu.Unlock()
+
+		if !exec.IsAwaitingDecision() {
+			t.Error("IsAwaitingDecision should return true when awaiting decision")
+		}
+	})
+
+	t.Run("returns false when decision resolved", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		exec.mu.Lock()
+		exec.state.GroupDecision = &GroupDecisionState{
+			GroupIndex:       0,
+			AwaitingDecision: false, // Already resolved
+		}
+		exec.mu.Unlock()
+
+		if exec.IsAwaitingDecision() {
+			t.Error("IsAwaitingDecision should return false when decision already resolved")
+		}
+	})
+}
+
+func TestExecutionOrchestrator_ResumeWithPartialWork(t *testing.T) {
+	t.Run("returns error when no decision pending", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		if err := exec.ResumeWithPartialWork(); err == nil {
+			t.Error("ResumeWithPartialWork should return error when no decision pending")
+		}
+	})
+
+	t.Run("resumes successfully with coordinator", func(t *testing.T) {
+		coord := newMockExecutionCoordinator()
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      &mockSession{},
+			},
+			Coordinator: coord,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Set up decision state
+		exec.mu.Lock()
+		exec.state.GroupDecision = &GroupDecisionState{
+			GroupIndex:       1,
+			SucceededTasks:   []string{"task-1", "task-2"},
+			FailedTasks:      []string{"task-3"},
+			AwaitingDecision: true,
+		}
+		exec.mu.Unlock()
+
+		if err := exec.ResumeWithPartialWork(); err != nil {
+			t.Errorf("ResumeWithPartialWork() error = %v", err)
+		}
+
+		// Verify decision state cleared
+		if exec.IsAwaitingDecision() {
+			t.Error("Decision should be cleared after resume")
+		}
+
+		// Verify coordinator was called
+		coord.mu.Lock()
+		if len(coord.consolidationCalls) == 0 {
+			t.Error("ConsolidateGroupWithVerification should have been called")
+		}
+		if coord.saveCalls == 0 {
+			t.Error("SaveSession should have been called")
+		}
+		coord.mu.Unlock()
+	})
+
+	t.Run("returns error on consolidation failure", func(t *testing.T) {
+		coord := newMockExecutionCoordinator()
+		coord.consolidationErr = context.DeadlineExceeded
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      &mockSession{},
+			},
+			Coordinator: coord,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		exec.mu.Lock()
+		exec.state.GroupDecision = &GroupDecisionState{
+			GroupIndex:       0,
+			SucceededTasks:   []string{"task-1"},
+			FailedTasks:      []string{"task-2"},
+			AwaitingDecision: true,
+		}
+		exec.mu.Unlock()
+
+		if err := exec.ResumeWithPartialWork(); err == nil {
+			t.Error("ResumeWithPartialWork should return error on consolidation failure")
+		}
+	})
+}
+
+func TestExecutionOrchestrator_RetryFailedTasks(t *testing.T) {
+	t.Run("returns error when no decision pending", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		if err := exec.RetryFailedTasks(); err == nil {
+			t.Error("RetryFailedTasks should return error when no decision pending")
+		}
+	})
+
+	t.Run("returns error without coordinator", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		exec.mu.Lock()
+		exec.state.GroupDecision = &GroupDecisionState{
+			GroupIndex:       0,
+			FailedTasks:      []string{"task-1"},
+			AwaitingDecision: true,
+		}
+		exec.mu.Unlock()
+
+		if err := exec.RetryFailedTasks(); err == nil {
+			t.Error("RetryFailedTasks should return error without coordinator")
+		}
+	})
+
+	t.Run("retries successfully with coordinator", func(t *testing.T) {
+		coord := newMockExecutionCoordinator()
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      &mockSession{},
+			},
+			Coordinator: coord,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Set up decision state with processed tasks
+		exec.mu.Lock()
+		exec.state.GroupDecision = &GroupDecisionState{
+			GroupIndex:       0,
+			SucceededTasks:   []string{"task-1"},
+			FailedTasks:      []string{"task-2", "task-3"},
+			AwaitingDecision: true,
+		}
+		exec.state.ProcessedTasks["task-2"] = true
+		exec.state.ProcessedTasks["task-3"] = true
+		exec.state.FailedCount = 2
+		exec.mu.Unlock()
+
+		if err := exec.RetryFailedTasks(); err != nil {
+			t.Errorf("RetryFailedTasks() error = %v", err)
+		}
+
+		// Verify decision state cleared
+		if exec.IsAwaitingDecision() {
+			t.Error("Decision should be cleared after retry")
+		}
+
+		// Verify local state updated
+		exec.mu.RLock()
+		if exec.state.ProcessedTasks["task-2"] {
+			t.Error("task-2 should be removed from ProcessedTasks")
+		}
+		if exec.state.ProcessedTasks["task-3"] {
+			t.Error("task-3 should be removed from ProcessedTasks")
+		}
+		if exec.state.FailedCount != 0 {
+			t.Errorf("FailedCount = %d, want 0", exec.state.FailedCount)
+		}
+		exec.mu.RUnlock()
+
+		// Verify coordinator was called
+		coord.mu.Lock()
+		if len(coord.clearTaskCalls) != 2 {
+			t.Errorf("ClearTaskFromInstance called %d times, want 2", len(coord.clearTaskCalls))
+		}
+		if coord.saveCalls == 0 {
+			t.Error("SaveSession should have been called")
+		}
+		coord.mu.Unlock()
+	})
+}
+
+// mockSessionWithExecutionOrder extends mockSession with execution order support.
+type mockSessionWithExecutionOrder struct {
+	mockSession
+	executionOrder [][]string
+}
+
+func (m *mockSessionWithExecutionOrder) GetExecutionOrder() [][]string {
+	return m.executionOrder
+}
+
+// mockManagerWithPhaseTracking extends mockManager to track SetPhase calls.
+type mockManagerWithPhaseTracking struct {
+	mockManager
+	currentPhase UltraPlanPhase
+}
+
+func (m *mockManagerWithPhaseTracking) SetPhase(phase UltraPlanPhase) {
+	m.currentPhase = phase
+}
+
+func TestExecutionOrchestrator_RetriggerGroup(t *testing.T) {
+	t.Run("returns error without coordinator", func(t *testing.T) {
+		exec, err := NewExecutionOrchestrator(&PhaseContext{
+			Manager:      &mockManager{},
+			Orchestrator: &mockOrchestrator{},
+			Session:      &mockSession{},
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		if err := exec.RetriggerGroup(0); err == nil {
+			t.Error("RetriggerGroup should return error without coordinator")
+		}
+	})
+
+	t.Run("returns error with invalid group index", func(t *testing.T) {
+		session := &mockSessionWithExecutionOrder{
+			executionOrder: [][]string{
+				{"task-1"},
+				{"task-2"},
+			},
+		}
+		coord := newMockExecutionCoordinator()
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      session,
+			},
+			Coordinator: coord,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Test negative index
+		if err := exec.RetriggerGroup(-1); err == nil {
+			t.Error("RetriggerGroup should return error for negative group index")
+		}
+
+		// Test index too high
+		if err := exec.RetriggerGroup(5); err == nil {
+			t.Error("RetriggerGroup should return error for group index >= numGroups")
+		}
+	})
+
+	t.Run("returns error when tasks are running", func(t *testing.T) {
+		session := &mockSessionWithExecutionOrder{
+			executionOrder: [][]string{{"task-1"}, {"task-2"}},
+		}
+		coord := newMockExecutionCoordinator()
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      session,
+			},
+			Coordinator: coord,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Set running tasks
+		exec.mu.Lock()
+		exec.state.RunningCount = 2
+		exec.mu.Unlock()
+
+		if err := exec.RetriggerGroup(0); err == nil {
+			t.Error("RetriggerGroup should return error when tasks are running")
+		}
+	})
+
+	t.Run("returns error when awaiting decision", func(t *testing.T) {
+		session := &mockSessionWithExecutionOrder{
+			executionOrder: [][]string{{"task-1"}, {"task-2"}},
+		}
+		coord := newMockExecutionCoordinator()
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      &mockManager{},
+				Orchestrator: &mockOrchestrator{},
+				Session:      session,
+			},
+			Coordinator: coord,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		exec.mu.Lock()
+		exec.state.GroupDecision = &GroupDecisionState{
+			GroupIndex:       0,
+			AwaitingDecision: true,
+		}
+		exec.mu.Unlock()
+
+		if err := exec.RetriggerGroup(0); err == nil {
+			t.Error("RetriggerGroup should return error when awaiting decision")
+		}
+	})
+
+	t.Run("retriggers successfully", func(t *testing.T) {
+		session := &mockSessionWithExecutionOrder{
+			executionOrder: [][]string{
+				{"task-1", "task-2"},
+				{"task-3"},
+				{"task-4"},
+			},
+		}
+		coord := newMockExecutionCoordinator()
+		mgr := &mockManagerWithPhaseTracking{}
+
+		exec, err := NewExecutionOrchestratorWithContext(&ExecutionContext{
+			PhaseContext: &PhaseContext{
+				Manager:      mgr,
+				Orchestrator: &mockOrchestrator{},
+				Session:      session,
+			},
+			Coordinator: coord,
+		})
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Set up some state that should be cleared
+		exec.mu.Lock()
+		exec.state.ProcessedTasks["task-3"] = true
+		exec.state.ProcessedTasks["task-4"] = true
+		exec.state.CompletedCount = 2
+		exec.state.FailedCount = 1
+		exec.mu.Unlock()
+
+		// Retrigger from group 1 (should clear groups 1 and 2)
+		if err := exec.RetriggerGroup(1); err != nil {
+			t.Errorf("RetriggerGroup(1) error = %v", err)
+		}
+
+		// Verify local state cleared
+		exec.mu.RLock()
+		if exec.state.ProcessedTasks["task-3"] {
+			t.Error("task-3 should be removed from ProcessedTasks")
+		}
+		if exec.state.ProcessedTasks["task-4"] {
+			t.Error("task-4 should be removed from ProcessedTasks")
+		}
+		if exec.state.GroupDecision != nil {
+			t.Error("GroupDecision should be nil after retrigger")
+		}
+		exec.mu.RUnlock()
+
+		// Verify phase set to executing
+		if mgr.currentPhase != PhaseExecuting {
+			t.Errorf("Phase = %v, want %v", mgr.currentPhase, PhaseExecuting)
+		}
+
+		// Verify coordinator calls
+		coord.mu.Lock()
+		if coord.saveCalls == 0 {
+			t.Error("SaveSession should have been called")
+		}
+		coord.mu.Unlock()
 	})
 }
 
