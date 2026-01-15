@@ -356,3 +356,405 @@ func TestTasksFromPlanSpec(t *testing.T) {
 		})
 	}
 }
+
+func TestRevisionInfoFromState(t *testing.T) {
+	tests := []struct {
+		name  string
+		state *RevisionState
+		want  *prompt.RevisionInfo
+	}{
+		{
+			name:  "nil state returns nil",
+			state: nil,
+			want:  nil,
+		},
+		{
+			name: "empty state",
+			state: &RevisionState{
+				Issues:          nil,
+				RevisionRound:   0,
+				MaxRevisions:    0,
+				TasksToRevise:   nil,
+				RevisedTasks:    nil,
+				RevisionPrompts: nil,
+			},
+			want: &prompt.RevisionInfo{
+				Round:         0,
+				MaxRounds:     0,
+				Issues:        nil,
+				TasksToRevise: nil,
+				RevisedTasks:  nil,
+			},
+		},
+		{
+			name: "full state conversion",
+			state: &RevisionState{
+				Issues: []RevisionIssue{
+					{
+						TaskID:      "task-1",
+						Description: "Tests are failing",
+						Files:       []string{"src/feature.go"},
+						Severity:    "critical",
+						Suggestion:  "Fix the test assertions",
+					},
+					{
+						TaskID:      "task-2",
+						Description: "Missing error handling",
+						Files:       []string{"api/handler.go", "api/handler_test.go"},
+						Severity:    "major",
+						Suggestion:  "Add proper error returns",
+					},
+				},
+				RevisionRound: 2,
+				MaxRevisions:  5,
+				TasksToRevise: []string{"task-1", "task-2"},
+				RevisedTasks:  []string{"task-3"},
+			},
+			want: &prompt.RevisionInfo{
+				Round:     2,
+				MaxRounds: 5,
+				Issues: []prompt.RevisionIssue{
+					{
+						TaskID:      "task-1",
+						Description: "Tests are failing",
+						Files:       []string{"src/feature.go"},
+						Severity:    "critical",
+						Suggestion:  "Fix the test assertions",
+					},
+					{
+						TaskID:      "task-2",
+						Description: "Missing error handling",
+						Files:       []string{"api/handler.go", "api/handler_test.go"},
+						Severity:    "major",
+						Suggestion:  "Add proper error returns",
+					},
+				},
+				TasksToRevise: []string{"task-1", "task-2"},
+				RevisedTasks:  []string{"task-3"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := revisionInfoFromState(tt.state)
+
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("revisionInfoFromState() = %v, want nil", got)
+				}
+				return
+			}
+
+			if got == nil {
+				t.Error("revisionInfoFromState() = nil, want non-nil")
+				return
+			}
+
+			if got.Round != tt.want.Round {
+				t.Errorf("revisionInfoFromState().Round = %d, want %d", got.Round, tt.want.Round)
+			}
+			if got.MaxRounds != tt.want.MaxRounds {
+				t.Errorf("revisionInfoFromState().MaxRounds = %d, want %d", got.MaxRounds, tt.want.MaxRounds)
+			}
+			if len(got.Issues) != len(tt.want.Issues) {
+				t.Errorf("revisionInfoFromState().Issues length = %d, want %d", len(got.Issues), len(tt.want.Issues))
+			}
+			if len(got.TasksToRevise) != len(tt.want.TasksToRevise) {
+				t.Errorf("revisionInfoFromState().TasksToRevise length = %d, want %d", len(got.TasksToRevise), len(tt.want.TasksToRevise))
+			}
+			if len(got.RevisedTasks) != len(tt.want.RevisedTasks) {
+				t.Errorf("revisionInfoFromState().RevisedTasks length = %d, want %d", len(got.RevisedTasks), len(tt.want.RevisedTasks))
+			}
+		})
+	}
+}
+
+func TestRevisionIssueFromOrchestratorIssue(t *testing.T) {
+	tests := []struct {
+		name  string
+		issue RevisionIssue
+		want  prompt.RevisionIssue
+	}{
+		{
+			name:  "empty issue",
+			issue: RevisionIssue{},
+			want:  prompt.RevisionIssue{},
+		},
+		{
+			name: "full issue conversion",
+			issue: RevisionIssue{
+				TaskID:      "task-123",
+				Description: "Integration tests are broken",
+				Files:       []string{"tests/integration_test.go", "pkg/client.go"},
+				Severity:    "critical",
+				Suggestion:  "Update mock expectations to match new API response format",
+			},
+			want: prompt.RevisionIssue{
+				TaskID:      "task-123",
+				Description: "Integration tests are broken",
+				Files:       []string{"tests/integration_test.go", "pkg/client.go"},
+				Severity:    "critical",
+				Suggestion:  "Update mock expectations to match new API response format",
+			},
+		},
+		{
+			name: "cross-cutting issue with empty task ID",
+			issue: RevisionIssue{
+				TaskID:      "",
+				Description: "Inconsistent error handling across modules",
+				Severity:    "major",
+			},
+			want: prompt.RevisionIssue{
+				TaskID:      "",
+				Description: "Inconsistent error handling across modules",
+				Severity:    "major",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := revisionIssueFromOrchestratorIssue(tt.issue)
+
+			if got.TaskID != tt.want.TaskID {
+				t.Errorf("revisionIssueFromOrchestratorIssue().TaskID = %q, want %q", got.TaskID, tt.want.TaskID)
+			}
+			if got.Description != tt.want.Description {
+				t.Errorf("revisionIssueFromOrchestratorIssue().Description = %q, want %q", got.Description, tt.want.Description)
+			}
+			if got.Severity != tt.want.Severity {
+				t.Errorf("revisionIssueFromOrchestratorIssue().Severity = %q, want %q", got.Severity, tt.want.Severity)
+			}
+			if got.Suggestion != tt.want.Suggestion {
+				t.Errorf("revisionIssueFromOrchestratorIssue().Suggestion = %q, want %q", got.Suggestion, tt.want.Suggestion)
+			}
+			if len(got.Files) != len(tt.want.Files) {
+				t.Errorf("revisionIssueFromOrchestratorIssue().Files length = %d, want %d", len(got.Files), len(tt.want.Files))
+			}
+		})
+	}
+}
+
+func TestRevisionIssuesFromOrchestrator(t *testing.T) {
+	tests := []struct {
+		name   string
+		issues []RevisionIssue
+		want   []prompt.RevisionIssue
+	}{
+		{
+			name:   "nil issues returns nil",
+			issues: nil,
+			want:   nil,
+		},
+		{
+			name:   "empty issues returns empty slice",
+			issues: []RevisionIssue{},
+			want:   []prompt.RevisionIssue{},
+		},
+		{
+			name: "multiple issues converted",
+			issues: []RevisionIssue{
+				{TaskID: "task-1", Description: "Issue 1", Severity: "minor"},
+				{TaskID: "task-2", Description: "Issue 2", Severity: "major"},
+				{TaskID: "", Description: "Cross-cutting issue", Severity: "critical"},
+			},
+			want: []prompt.RevisionIssue{
+				{TaskID: "task-1", Description: "Issue 1", Severity: "minor"},
+				{TaskID: "task-2", Description: "Issue 2", Severity: "major"},
+				{TaskID: "", Description: "Cross-cutting issue", Severity: "critical"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := revisionIssuesFromOrchestrator(tt.issues)
+
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("revisionIssuesFromOrchestrator() = %v, want nil", got)
+				}
+				return
+			}
+
+			if got == nil {
+				t.Errorf("revisionIssuesFromOrchestrator() = nil, want %v", tt.want)
+				return
+			}
+
+			if len(got) != len(tt.want) {
+				t.Errorf("revisionIssuesFromOrchestrator() length = %d, want %d", len(got), len(tt.want))
+				return
+			}
+
+			for i := range got {
+				if got[i].TaskID != tt.want[i].TaskID {
+					t.Errorf("revisionIssuesFromOrchestrator()[%d].TaskID = %q, want %q", i, got[i].TaskID, tt.want[i].TaskID)
+				}
+				if got[i].Description != tt.want[i].Description {
+					t.Errorf("revisionIssuesFromOrchestrator()[%d].Description = %q, want %q", i, got[i].Description, tt.want[i].Description)
+				}
+			}
+		})
+	}
+}
+
+func TestSynthesisInfoFromCompletion(t *testing.T) {
+	tests := []struct {
+		name       string
+		completion *SynthesisCompletionFile
+		want       *prompt.SynthesisInfo
+	}{
+		{
+			name:       "nil completion returns nil",
+			completion: nil,
+			want:       nil,
+		},
+		{
+			name:       "empty completion",
+			completion: &SynthesisCompletionFile{},
+			want: &prompt.SynthesisInfo{
+				Notes:           nil,
+				Recommendations: nil,
+				Issues:          []string{},
+			},
+		},
+		{
+			name: "completion with integration notes",
+			completion: &SynthesisCompletionFile{
+				IntegrationNotes: "All components integrate well, no conflicts detected",
+			},
+			want: &prompt.SynthesisInfo{
+				Notes:           []string{"All components integrate well, no conflicts detected"},
+				Recommendations: nil,
+				Issues:          []string{},
+			},
+		},
+		{
+			name: "completion with recommendations",
+			completion: &SynthesisCompletionFile{
+				Recommendations: []string{
+					"Merge task-1 before task-2",
+					"Run integration tests after consolidation",
+				},
+			},
+			want: &prompt.SynthesisInfo{
+				Notes: nil,
+				Recommendations: []string{
+					"Merge task-1 before task-2",
+					"Run integration tests after consolidation",
+				},
+				Issues: []string{},
+			},
+		},
+		{
+			name: "completion with issues",
+			completion: &SynthesisCompletionFile{
+				IssuesFound: []RevisionIssue{
+					{Description: "Duplicate function definitions", Severity: "major"},
+					{Description: "Missing test coverage", Severity: "minor"},
+				},
+			},
+			want: &prompt.SynthesisInfo{
+				Notes:           nil,
+				Recommendations: nil,
+				Issues: []string{
+					"Duplicate function definitions",
+					"Missing test coverage",
+				},
+			},
+		},
+		{
+			name: "full completion conversion",
+			completion: &SynthesisCompletionFile{
+				Status:        "needs_revision",
+				RevisionRound: 1,
+				IssuesFound: []RevisionIssue{
+					{
+						TaskID:      "task-auth",
+						Description: "Authentication middleware has race condition",
+						Files:       []string{"middleware/auth.go"},
+						Severity:    "critical",
+						Suggestion:  "Use mutex to protect shared state",
+					},
+					{
+						TaskID:      "task-api",
+						Description: "API response format inconsistent",
+						Files:       []string{"api/response.go"},
+						Severity:    "major",
+						Suggestion:  "Standardize on JSON envelope format",
+					},
+				},
+				TasksAffected:    []string{"task-auth", "task-api"},
+				IntegrationNotes: "Tasks compiled successfully but have runtime issues",
+				Recommendations: []string{
+					"Fix critical auth issue first",
+					"Consider adding integration tests for auth flow",
+				},
+			},
+			want: &prompt.SynthesisInfo{
+				Notes: []string{"Tasks compiled successfully but have runtime issues"},
+				Recommendations: []string{
+					"Fix critical auth issue first",
+					"Consider adding integration tests for auth flow",
+				},
+				Issues: []string{
+					"Authentication middleware has race condition",
+					"API response format inconsistent",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := synthesisInfoFromCompletion(tt.completion)
+
+			if tt.want == nil {
+				if got != nil {
+					t.Errorf("synthesisInfoFromCompletion() = %v, want nil", got)
+				}
+				return
+			}
+
+			if got == nil {
+				t.Error("synthesisInfoFromCompletion() = nil, want non-nil")
+				return
+			}
+
+			// Check Notes
+			if len(got.Notes) != len(tt.want.Notes) {
+				t.Errorf("synthesisInfoFromCompletion().Notes length = %d, want %d", len(got.Notes), len(tt.want.Notes))
+			} else {
+				for i := range got.Notes {
+					if got.Notes[i] != tt.want.Notes[i] {
+						t.Errorf("synthesisInfoFromCompletion().Notes[%d] = %q, want %q", i, got.Notes[i], tt.want.Notes[i])
+					}
+				}
+			}
+
+			// Check Recommendations
+			if len(got.Recommendations) != len(tt.want.Recommendations) {
+				t.Errorf("synthesisInfoFromCompletion().Recommendations length = %d, want %d", len(got.Recommendations), len(tt.want.Recommendations))
+			} else {
+				for i := range got.Recommendations {
+					if got.Recommendations[i] != tt.want.Recommendations[i] {
+						t.Errorf("synthesisInfoFromCompletion().Recommendations[%d] = %q, want %q", i, got.Recommendations[i], tt.want.Recommendations[i])
+					}
+				}
+			}
+
+			// Check Issues
+			if len(got.Issues) != len(tt.want.Issues) {
+				t.Errorf("synthesisInfoFromCompletion().Issues length = %d, want %d", len(got.Issues), len(tt.want.Issues))
+			} else {
+				for i := range got.Issues {
+					if got.Issues[i] != tt.want.Issues[i] {
+						t.Errorf("synthesisInfoFromCompletion().Issues[%d] = %q, want %q", i, got.Issues[i], tt.want.Issues[i])
+					}
+				}
+			}
+		})
+	}
+}

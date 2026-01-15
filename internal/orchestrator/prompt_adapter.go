@@ -70,3 +70,76 @@ func tasksFromPlanSpec(tasks []PlannedTask) []prompt.TaskInfo {
 	}
 	return result
 }
+
+// revisionInfoFromState converts a RevisionState to a prompt.RevisionInfo.
+// RevisionState tracks the revision process during ultra-plan execution, while
+// RevisionInfo provides the subset of data needed for prompt generation.
+func revisionInfoFromState(state *RevisionState) *prompt.RevisionInfo {
+	if state == nil {
+		return nil
+	}
+
+	return &prompt.RevisionInfo{
+		Round:         state.RevisionRound,
+		MaxRounds:     state.MaxRevisions,
+		Issues:        revisionIssuesFromOrchestrator(state.Issues),
+		TasksToRevise: state.TasksToRevise,
+		RevisedTasks:  state.RevisedTasks,
+	}
+}
+
+// revisionIssueFromOrchestratorIssue converts an orchestrator.RevisionIssue to
+// a prompt.RevisionIssue. The two types have the same fields but exist in
+// different packages to maintain separation between orchestration logic and
+// prompt building.
+func revisionIssueFromOrchestratorIssue(issue RevisionIssue) prompt.RevisionIssue {
+	return prompt.RevisionIssue{
+		TaskID:      issue.TaskID,
+		Description: issue.Description,
+		Files:       issue.Files,
+		Severity:    issue.Severity,
+		Suggestion:  issue.Suggestion,
+	}
+}
+
+// revisionIssuesFromOrchestrator converts a slice of orchestrator.RevisionIssue
+// to a slice of prompt.RevisionIssue. This is a helper used by revisionInfoFromState.
+func revisionIssuesFromOrchestrator(issues []RevisionIssue) []prompt.RevisionIssue {
+	if issues == nil {
+		return nil
+	}
+
+	result := make([]prompt.RevisionIssue, len(issues))
+	for i, issue := range issues {
+		result[i] = revisionIssueFromOrchestratorIssue(issue)
+	}
+	return result
+}
+
+// synthesisInfoFromCompletion converts a SynthesisCompletionFile to a prompt.SynthesisInfo.
+// The SynthesisCompletionFile contains the full synthesis output including structured
+// issues, while SynthesisInfo provides a simpler representation for prompt generation
+// with issues converted to string descriptions.
+func synthesisInfoFromCompletion(completion *SynthesisCompletionFile) *prompt.SynthesisInfo {
+	if completion == nil {
+		return nil
+	}
+
+	// Convert structured issues to simple string descriptions
+	issueDescriptions := make([]string, len(completion.IssuesFound))
+	for i, issue := range completion.IssuesFound {
+		issueDescriptions[i] = issue.Description
+	}
+
+	// IntegrationNotes becomes a single-element Notes slice if non-empty
+	var notes []string
+	if completion.IntegrationNotes != "" {
+		notes = []string{completion.IntegrationNotes}
+	}
+
+	return &prompt.SynthesisInfo{
+		Notes:           notes,
+		Recommendations: completion.Recommendations,
+		Issues:          issueDescriptions,
+	}
+}
