@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Phase Orchestrator Extraction** - Extracted the monolithic Coordinator (~3,800 lines) into four phase-specific orchestrators: `PlanningOrchestrator`, `ExecutionOrchestrator`, `SynthesisOrchestrator`, and `ConsolidationOrchestrator`. Each orchestrator owns one phase of ultra-plan execution with its own state management, monitoring, and restart capability. The main Coordinator is now a thin dispatcher (~500 lines) that instantiates orchestrators and delegates phase operations. This eliminates the god-object anti-pattern and enables independent testing of each phase.
+
 ## [0.7.0] - 2026-01-14
 
 This release focuses on **Stability & Architecture** - a comprehensive effort to stabilize UltraPlan, graduate Plan Mode from experimental, and restructure the TUI codebase for maintainability.
