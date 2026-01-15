@@ -1,6 +1,8 @@
 package orchestrator
 
 import (
+	"fmt"
+
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/phase"
 )
@@ -722,4 +724,146 @@ func (c *Coordinator) SyncRetryState() {
 		return
 	}
 	c.syncRetryState()
+}
+
+// initializeOrchestrators creates the phase orchestrators if they haven't been created yet.
+// This uses lazy initialization because BuildPhaseContext depends on the coordinator
+// being fully constructed, which isn't the case during NewCoordinator.
+// This method is thread-safe and idempotent.
+func (c *Coordinator) initializeOrchestrators() error {
+	if c == nil {
+		return ErrNilCoordinator
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Check if already initialized (any one being non-nil means they're all initialized)
+	if c.planningOrchestrator != nil {
+		return nil
+	}
+
+	// Build the shared PhaseContext
+	phaseCtx, err := c.buildPhaseContextLocked()
+	if err != nil {
+		return err
+	}
+
+	// Create the planning orchestrator
+	c.planningOrchestrator, err = phase.NewPlanningOrchestrator(phaseCtx)
+	if err != nil {
+		return fmt.Errorf("failed to create planning orchestrator: %w", err)
+	}
+
+	// Create the execution orchestrator
+	c.executionOrchestrator, err = phase.NewExecutionOrchestrator(phaseCtx)
+	if err != nil {
+		return fmt.Errorf("failed to create execution orchestrator: %w", err)
+	}
+
+	// Create the synthesis orchestrator
+	c.synthesisOrchestrator, err = phase.NewSynthesisOrchestrator(phaseCtx)
+	if err != nil {
+		return fmt.Errorf("failed to create synthesis orchestrator: %w", err)
+	}
+
+	// Create the consolidation orchestrator (doesn't return error)
+	c.consolidationOrchestrator = phase.NewConsolidationOrchestrator(phaseCtx)
+
+	return nil
+}
+
+// buildPhaseContextLocked creates a PhaseContext without acquiring the mutex.
+// The caller must hold the mutex. This is used by initializeOrchestrators.
+func (c *Coordinator) buildPhaseContextLocked() (*phase.PhaseContext, error) {
+	if c.manager == nil {
+		return nil, ErrNilManager
+	}
+	session := c.manager.Session()
+	if session == nil {
+		return nil, ErrNilSession
+	}
+
+	logger := c.logger
+	if logger == nil {
+		logger = logging.NopLogger()
+	}
+
+	ctx := &phase.PhaseContext{
+		Manager:      newCoordinatorManagerAdapter(c),
+		Orchestrator: newCoordinatorOrchestratorAdapter(c),
+		Session:      newCoordinatorSessionAdapter(c, session),
+		Logger:       logger,
+		Callbacks:    newCoordinatorCallbacksAdapter(c),
+	}
+
+	if err := ctx.Validate(); err != nil {
+		return nil, err
+	}
+
+	return ctx, nil
+}
+
+// PlanningOrchestrator returns the planning phase orchestrator.
+// The orchestrator is created lazily on first access.
+// Returns nil and logs an error if initialization fails.
+func (c *Coordinator) PlanningOrchestrator() *phase.PlanningOrchestrator {
+	if c == nil {
+		return nil
+	}
+	if err := c.initializeOrchestrators(); err != nil {
+		c.logger.Error("failed to initialize orchestrators", "error", err)
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.planningOrchestrator
+}
+
+// ExecutionOrchestrator returns the execution phase orchestrator.
+// The orchestrator is created lazily on first access.
+// Returns nil and logs an error if initialization fails.
+func (c *Coordinator) ExecutionOrchestrator() *phase.ExecutionOrchestrator {
+	if c == nil {
+		return nil
+	}
+	if err := c.initializeOrchestrators(); err != nil {
+		c.logger.Error("failed to initialize orchestrators", "error", err)
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.executionOrchestrator
+}
+
+// SynthesisOrchestrator returns the synthesis phase orchestrator.
+// The orchestrator is created lazily on first access.
+// Returns nil and logs an error if initialization fails.
+func (c *Coordinator) SynthesisOrchestrator() *phase.SynthesisOrchestrator {
+	if c == nil {
+		return nil
+	}
+	if err := c.initializeOrchestrators(); err != nil {
+		c.logger.Error("failed to initialize orchestrators", "error", err)
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.synthesisOrchestrator
+}
+
+// ConsolidationOrchestrator returns the consolidation phase orchestrator.
+// The orchestrator is created lazily on first access.
+// Returns nil and logs an error if initialization fails.
+func (c *Coordinator) ConsolidationOrchestrator() *phase.ConsolidationOrchestrator {
+	if c == nil {
+		return nil
+	}
+	if err := c.initializeOrchestrators(); err != nil {
+		c.logger.Error("failed to initialize orchestrators", "error", err)
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.consolidationOrchestrator
 }
