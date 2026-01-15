@@ -547,6 +547,10 @@ func (m Model) activeInstance() *orchestrator.Instance {
 // switchToInstance switches focus to a new instance index, pausing the old
 // instance's capture and resuming the new one. This reduces overhead by not
 // capturing output for background instances.
+//
+// In grouped sidebar mode, this also handles auto-expand/collapse of groups:
+// - When navigating to an instance in a collapsed group, the group auto-expands
+// - When navigating away from an auto-expanded group, the group auto-collapses
 func (m *Model) switchToInstance(newTab int) {
 	if m.session == nil || len(m.session.Instances) == 0 {
 		return
@@ -560,6 +564,11 @@ func (m *Model) switchToInstance(newTab int) {
 	oldTab := m.activeTab
 	if oldTab == newTab {
 		return // No change needed
+	}
+
+	// Handle group auto-expand/collapse in grouped mode
+	if m.groupViewState != nil && m.sidebarMode == view.SidebarModeGrouped && m.session.HasGroups() {
+		m.handleGroupAutoExpandCollapse(oldTab, newTab)
 	}
 
 	// Pause the old active instance's capture
@@ -579,6 +588,49 @@ func (m *Model) switchToInstance(newTab int) {
 	newInst := m.session.Instances[newTab]
 	if mgr := m.orchestrator.GetInstanceManager(newInst.ID); mgr != nil {
 		_ = mgr.Resume()
+	}
+}
+
+// handleGroupAutoExpandCollapse manages automatic group expansion and collapse
+// when navigating between instances in grouped sidebar mode.
+func (m *Model) handleGroupAutoExpandCollapse(oldTab, newTab int) {
+	var oldInstanceID, newInstanceID string
+
+	if oldTab >= 0 && oldTab < len(m.session.Instances) {
+		oldInstanceID = m.session.Instances[oldTab].ID
+	}
+	if newTab >= 0 && newTab < len(m.session.Instances) {
+		newInstanceID = m.session.Instances[newTab].ID
+	}
+
+	// Find which groups contain each instance
+	oldGroupPath := view.FindGroupContainingInstance(m.session, oldInstanceID)
+	newGroupPath := view.FindGroupContainingInstance(m.session, newInstanceID)
+
+	// Convert to sets for easier comparison
+	oldGroups := make(map[string]bool)
+	for _, gid := range oldGroupPath {
+		oldGroups[gid] = true
+	}
+	newGroups := make(map[string]bool)
+	for _, gid := range newGroupPath {
+		newGroups[gid] = true
+	}
+
+	// Auto-collapse groups we're leaving (that were auto-expanded)
+	for _, gid := range oldGroupPath {
+		if !newGroups[gid] {
+			// We're leaving this group - collapse it if it was auto-expanded
+			m.groupViewState.AutoCollapse(gid)
+		}
+	}
+
+	// Auto-expand groups we're entering (that are collapsed)
+	for _, gid := range newGroupPath {
+		if !oldGroups[gid] && m.groupViewState.IsCollapsed(gid) {
+			// We're entering this collapsed group - auto-expand it
+			m.groupViewState.AutoExpand(gid)
+		}
 	}
 }
 

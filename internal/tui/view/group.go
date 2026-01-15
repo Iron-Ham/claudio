@@ -14,6 +14,11 @@ type GroupViewState struct {
 	// CollapsedGroups tracks which group IDs are collapsed (hidden).
 	CollapsedGroups map[string]bool
 
+	// AutoExpandedGroups tracks groups that were automatically expanded when
+	// navigating to an instance inside them. These groups should auto-collapse
+	// when the user navigates away from them (unlike manually expanded groups).
+	AutoExpandedGroups map[string]bool
+
 	// SelectedGroupID is the ID of the currently focused group (for J/K navigation).
 	// Empty string means no group is selected (instance navigation mode).
 	SelectedGroupID string
@@ -27,19 +32,52 @@ type GroupViewState struct {
 func NewGroupViewState() *GroupViewState {
 	return &GroupViewState{
 		CollapsedGroups:     make(map[string]bool),
+		AutoExpandedGroups:  make(map[string]bool),
 		SelectedGroupID:     "",
 		SelectedInstanceIdx: 0,
 	}
 }
 
 // ToggleCollapse toggles the collapsed state of a group.
+// When manually toggled, the group is no longer considered auto-expanded.
 func (s *GroupViewState) ToggleCollapse(groupID string) {
 	s.CollapsedGroups[groupID] = !s.CollapsedGroups[groupID]
+	// Clear auto-expanded state since this is a manual toggle
+	delete(s.AutoExpandedGroups, groupID)
 }
 
 // IsCollapsed returns whether a group is collapsed.
 func (s *GroupViewState) IsCollapsed(groupID string) bool {
 	return s.CollapsedGroups[groupID]
+}
+
+// AutoExpand expands a collapsed group and marks it as auto-expanded.
+// Auto-expanded groups will automatically collapse when navigating away.
+// Returns true if the group was expanded (was collapsed), false if already expanded.
+func (s *GroupViewState) AutoExpand(groupID string) bool {
+	if !s.CollapsedGroups[groupID] {
+		return false // Already expanded
+	}
+	s.CollapsedGroups[groupID] = false
+	s.AutoExpandedGroups[groupID] = true
+	return true
+}
+
+// AutoCollapse collapses a group if it was auto-expanded.
+// Does nothing if the group was manually expanded or is already collapsed.
+// Returns true if the group was collapsed.
+func (s *GroupViewState) AutoCollapse(groupID string) bool {
+	if !s.AutoExpandedGroups[groupID] {
+		return false // Not auto-expanded, don't collapse
+	}
+	s.CollapsedGroups[groupID] = true
+	delete(s.AutoExpandedGroups, groupID)
+	return true
+}
+
+// IsAutoExpanded returns whether a group was auto-expanded.
+func (s *GroupViewState) IsAutoExpanded(groupID string) bool {
+	return s.AutoExpandedGroups[groupID]
 }
 
 // GroupProgress holds the completion progress for a group.
@@ -722,4 +760,40 @@ func findInstanceIndex(session *orchestrator.Session, instID string) int {
 		}
 	}
 	return -1
+}
+
+// FindGroupContainingInstance finds the group (and all ancestor groups) that contains
+// the given instance ID. Returns a slice of group IDs from outermost to innermost
+// (i.e., top-level group first, immediate parent last).
+// Returns nil if the instance is not in any group or is ungrouped.
+func FindGroupContainingInstance(session *orchestrator.Session, instanceID string) []string {
+	if session == nil || !session.HasGroups() {
+		return nil
+	}
+
+	for _, group := range session.GetGroups() {
+		if path := findGroupContainingInstanceRecursive(group, instanceID); path != nil {
+			return path
+		}
+	}
+	return nil
+}
+
+func findGroupContainingInstanceRecursive(group *orchestrator.InstanceGroup, instanceID string) []string {
+	// Check if this group directly contains the instance
+	for _, instID := range group.Instances {
+		if instID == instanceID {
+			return []string{group.ID}
+		}
+	}
+
+	// Check sub-groups
+	for _, subGroup := range group.SubGroups {
+		if path := findGroupContainingInstanceRecursive(subGroup, instanceID); path != nil {
+			// Prepend this group's ID to the path
+			return append([]string{group.ID}, path...)
+		}
+	}
+
+	return nil
 }
