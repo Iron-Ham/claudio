@@ -36,6 +36,12 @@ type ConsolidationState struct {
 	// ConflictFiles lists files with merge conflicts (if paused)
 	ConflictFiles []string
 
+	// ConflictTaskID is the task ID that caused the conflict (if paused)
+	ConflictTaskID string
+
+	// ConflictWorktree is the worktree path where the conflict occurred (if paused)
+	ConflictWorktree string
+
 	// Error holds the error message if consolidation failed
 	Error string
 }
@@ -230,11 +236,13 @@ func (o *ConsolidationOrchestrator) SetState(state ConsolidationState) {
 
 	// Deep copy slices to prevent external mutation
 	o.state = &ConsolidationState{
-		SubPhase:     state.SubPhase,
-		CurrentGroup: state.CurrentGroup,
-		TotalGroups:  state.TotalGroups,
-		CurrentTask:  state.CurrentTask,
-		Error:        state.Error,
+		SubPhase:         state.SubPhase,
+		CurrentGroup:     state.CurrentGroup,
+		TotalGroups:      state.TotalGroups,
+		CurrentTask:      state.CurrentTask,
+		ConflictTaskID:   state.ConflictTaskID,
+		ConflictWorktree: state.ConflictWorktree,
+		Error:            state.Error,
 	}
 	if state.GroupBranches != nil {
 		o.state.GroupBranches = make([]string, len(state.GroupBranches))
@@ -348,7 +356,7 @@ type ConsolidationOrchestratorExtended interface {
 	GetConsolidationInstance(id string) ConsolidationInstanceInfo
 
 	// GetBaseSession returns the base session for instance creation
-	GetBaseSession() interface{}
+	GetBaseSession() any
 
 	// GetSessionType returns the session type for group management
 	GetSessionType() string
@@ -609,11 +617,18 @@ func (o *ConsolidationOrchestrator) AddGroupBranch(branch string) {
 
 // SetConflict records that consolidation is paused due to a merge conflict.
 // This allows the orchestrator to track conflicts for potential resumption.
-func (o *ConsolidationOrchestrator) SetConflict(taskID string, files []string) {
+//
+// Parameters:
+//   - taskID: The ID of the task that caused the conflict
+//   - worktreePath: The path to the worktree where the conflict occurred
+//   - files: The list of files with merge conflicts
+func (o *ConsolidationOrchestrator) SetConflict(taskID, worktreePath string, files []string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.state.SubPhase = "paused"
 	o.state.CurrentTask = taskID
+	o.state.ConflictTaskID = taskID
+	o.state.ConflictWorktree = worktreePath
 	o.state.ConflictFiles = make([]string, len(files))
 	copy(o.state.ConflictFiles, files)
 }
@@ -623,6 +638,8 @@ func (o *ConsolidationOrchestrator) ClearConflict() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.state.CurrentTask = ""
+	o.state.ConflictTaskID = ""
+	o.state.ConflictWorktree = ""
 	o.state.ConflictFiles = nil
 }
 
@@ -652,4 +669,232 @@ func (o *ConsolidationOrchestrator) Reset() {
 	// Create a new cancellable context
 	o.cancel()
 	o.ctx, o.cancel = context.WithCancel(context.Background())
+}
+
+// WorktreeOperator defines the worktree operations needed for conflict handling.
+// This interface allows the orchestrator to check for and resolve merge conflicts
+// without depending on the worktree package directly.
+type WorktreeOperator interface {
+	// GetConflictingFiles returns the list of files with merge conflicts in a worktree.
+	// Returns an empty slice if there are no conflicts.
+	GetConflictingFiles(worktreePath string) ([]string, error)
+
+	// IsCherryPickInProgress returns true if a cherry-pick is in progress in the worktree.
+	IsCherryPickInProgress(worktreePath string) bool
+
+	// ContinueCherryPick continues a cherry-pick operation after conflict resolution.
+	ContinueCherryPick(worktreePath string) error
+}
+
+// ConsolidationRestartCallback is called when consolidation needs to be restarted.
+// This callback is provided by the Coordinator to trigger a fresh consolidation.
+type ConsolidationRestartCallback func() error
+
+// ConsolidationSessionSaver defines the interface for saving session state.
+// This is used during resume to persist state changes.
+type ConsolidationSessionSaver interface {
+	// SaveSession persists the current session state to disk.
+	SaveSession() error
+}
+
+// Error variables for resume operations.
+var (
+	// ErrNoConsolidation is returned when attempting to resume without an active consolidation.
+	ErrNoConsolidation = errors.New("no consolidation in progress")
+
+	// ErrNotPaused is returned when attempting to resume a consolidation that is not paused.
+	ErrNotPaused = errors.New("consolidation is not paused")
+
+	// ErrNoConflictWorktree is returned when resuming without a recorded conflict worktree.
+	ErrNoConflictWorktree = errors.New("no conflict worktree recorded")
+
+	// ErrUnresolvedConflicts is returned when attempting to resume with unresolved conflicts.
+	ErrUnresolvedConflicts = errors.New("unresolved conflicts remain")
+)
+
+// ResumeConsolidation resumes consolidation after a conflict has been resolved.
+// The user must first resolve the conflict manually in the conflict worktree,
+// then call this method to continue the cherry-pick and restart consolidation.
+//
+// The method performs the following steps:
+//  1. Validates that consolidation is in a paused state with a conflict
+//  2. Verifies there are no remaining unresolved conflicts
+//  3. Continues the cherry-pick operation if one is in progress
+//  4. Clears the conflict state
+//  5. Saves the session state
+//  6. Restarts consolidation via the provided callback
+//
+// Note: This restarts the consolidation instance from scratch, replaying any
+// already-completed group merges (which will be no-ops since commits exist).
+//
+// Parameters:
+//   - worktreeOp: The worktree operator for checking/resolving conflicts
+//   - sessionSaver: Interface for saving session state
+//   - restartCallback: Callback to restart consolidation after clearing conflict state
+//
+// Returns an error if:
+//   - Consolidation is not in progress or not paused
+//   - No conflict worktree is recorded
+//   - Unresolved conflicts remain
+//   - The cherry-pick continuation fails
+//   - Session save fails
+//   - The restart callback fails
+func (o *ConsolidationOrchestrator) ResumeConsolidation(
+	worktreeOp WorktreeOperator,
+	sessionSaver ConsolidationSessionSaver,
+	restartCallback ConsolidationRestartCallback,
+) error {
+	// Get current state
+	state := o.State()
+
+	// Validate state
+	if state.SubPhase != "paused" {
+		return fmt.Errorf("%w (current sub-phase: %s)", ErrNotPaused, state.SubPhase)
+	}
+
+	conflictWorktree := state.ConflictWorktree
+	if conflictWorktree == "" {
+		return ErrNoConflictWorktree
+	}
+
+	// Log the resume attempt
+	o.logger.Info("resuming consolidation",
+		"conflict_worktree", conflictWorktree,
+		"conflict_task_id", state.ConflictTaskID,
+		"conflict_files", state.ConflictFiles,
+	)
+
+	// Check if there are still unresolved conflicts
+	conflictFiles, err := worktreeOp.GetConflictingFiles(conflictWorktree)
+	if err != nil {
+		return fmt.Errorf("failed to check for conflicts in worktree %s: %w", conflictWorktree, err)
+	}
+	if len(conflictFiles) > 0 {
+		return fmt.Errorf("%w in %d file(s): %v", ErrUnresolvedConflicts, len(conflictFiles), conflictFiles)
+	}
+
+	// Continue the cherry-pick if one is in progress
+	if worktreeOp.IsCherryPickInProgress(conflictWorktree) {
+		if err := worktreeOp.ContinueCherryPick(conflictWorktree); err != nil {
+			return fmt.Errorf("failed to continue cherry-pick: %w", err)
+		}
+		o.logger.Info("continued cherry-pick operation", "worktree", conflictWorktree)
+	} else {
+		// No cherry-pick in progress - user may have resolved via abort/skip
+		o.logger.Info("no cherry-pick in progress, assuming conflict was resolved via abort or skip",
+			"worktree", conflictWorktree,
+		)
+	}
+
+	// Clear the conflict state
+	o.ClearConflict()
+
+	// Also clear the instance ID so a new one will be created
+	o.mu.Lock()
+	o.instanceID = ""
+	o.mu.Unlock()
+
+	// Save session state before restarting
+	if err := sessionSaver.SaveSession(); err != nil {
+		return fmt.Errorf("failed to save session state: %w", err)
+	}
+
+	// Restart consolidation from scratch
+	// The consolidation instance will replay all groups, but already-merged
+	// commits will be detected and skipped
+	o.logger.Info("restarting consolidation instance after conflict resolution")
+
+	if err := restartCallback(); err != nil {
+		return fmt.Errorf("failed to restart consolidation: %w", err)
+	}
+
+	return nil
+}
+
+// GetConsolidation returns a copy of the current consolidation state.
+// This is an alias for State() that matches the naming convention used by the Coordinator.
+// Returns nil if no consolidation is in progress (i.e., state is at initial values).
+func (o *ConsolidationOrchestrator) GetConsolidation() *ConsolidationState {
+	state := o.State()
+
+	// Return nil if there's no active consolidation
+	// (state is at initial values - no groups processed, no sub-phase set)
+	if state.SubPhase == "" && state.TotalGroups == 0 && state.CurrentGroup == 0 {
+		return nil
+	}
+
+	return &state
+}
+
+// ClearStateForRestart prepares the orchestrator for a fresh restart while
+// preserving any progress that should be maintained (like completed groups).
+// This is different from Reset() which clears everything.
+//
+// ClearStateForRestart:
+//   - Clears conflict state
+//   - Clears the instance ID (so a new instance will be created)
+//   - Resets completion flags
+//   - Does NOT clear group branches or PR URLs (progress tracking)
+//   - Does NOT clear the error field (for debugging)
+func (o *ConsolidationOrchestrator) ClearStateForRestart() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Clear conflict-related state
+	o.state.SubPhase = ""
+	o.state.CurrentTask = ""
+	o.state.ConflictTaskID = ""
+	o.state.ConflictWorktree = ""
+	o.state.ConflictFiles = nil
+
+	// Clear instance tracking (will be set when new instance starts)
+	o.instanceID = ""
+	o.completionFile = nil
+
+	// Reset completion flags (preserve times for debugging)
+	o.completed = false
+
+	// Reset cancellation state
+	o.cancelled = false
+	o.running = false
+
+	// Create a new cancellable context
+	o.cancel()
+	o.ctx, o.cancel = context.WithCancel(context.Background())
+}
+
+// GetConflictInfo returns detailed information about the current conflict.
+// Returns empty strings if there is no conflict.
+func (o *ConsolidationOrchestrator) GetConflictInfo() (taskID, worktreePath string, files []string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.state.SubPhase != "paused" {
+		return "", "", nil
+	}
+
+	// Return copies to prevent external mutation
+	var filesCopy []string
+	if o.state.ConflictFiles != nil {
+		filesCopy = make([]string, len(o.state.ConflictFiles))
+		copy(filesCopy, o.state.ConflictFiles)
+	}
+
+	return o.state.ConflictTaskID, o.state.ConflictWorktree, filesCopy
+}
+
+// IsPaused returns true if the consolidation is in a paused state.
+// This includes conflicts and any other paused conditions.
+func (o *ConsolidationOrchestrator) IsPaused() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.state.SubPhase == "paused"
+}
+
+// CanResume returns true if consolidation can be resumed.
+// This requires being paused with a valid conflict worktree.
+func (o *ConsolidationOrchestrator) CanResume() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.state.SubPhase == "paused" && o.state.ConflictWorktree != ""
 }

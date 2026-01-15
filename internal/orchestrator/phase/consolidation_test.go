@@ -1201,7 +1201,7 @@ func TestConsolidationOrchestrator_Conflict(t *testing.T) {
 			t.Error("HasConflict() should return false initially")
 		}
 
-		orch.SetConflict("task-1", []string{"file1.go", "file2.go"})
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go", "file2.go"})
 
 		if !orch.HasConflict() {
 			t.Error("HasConflict() should return true after SetConflict")
@@ -1213,6 +1213,12 @@ func TestConsolidationOrchestrator_Conflict(t *testing.T) {
 		}
 		if state.CurrentTask != "task-1" {
 			t.Errorf("CurrentTask = %v, want %v", state.CurrentTask, "task-1")
+		}
+		if state.ConflictTaskID != "task-1" {
+			t.Errorf("ConflictTaskID = %v, want %v", state.ConflictTaskID, "task-1")
+		}
+		if state.ConflictWorktree != "/path/to/worktree" {
+			t.Errorf("ConflictWorktree = %v, want %v", state.ConflictWorktree, "/path/to/worktree")
 		}
 		if len(state.ConflictFiles) != 2 {
 			t.Errorf("len(ConflictFiles) = %v, want %v", len(state.ConflictFiles), 2)
@@ -1227,13 +1233,19 @@ func TestConsolidationOrchestrator_Conflict(t *testing.T) {
 		}
 
 		orch := NewConsolidationOrchestrator(phaseCtx)
-		orch.SetConflict("task-1", []string{"file1.go"})
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
 
 		orch.ClearConflict()
 
 		state := orch.State()
 		if state.CurrentTask != "" {
 			t.Errorf("CurrentTask = %v, want empty string", state.CurrentTask)
+		}
+		if state.ConflictTaskID != "" {
+			t.Errorf("ConflictTaskID = %v, want empty string", state.ConflictTaskID)
+		}
+		if state.ConflictWorktree != "" {
+			t.Errorf("ConflictWorktree = %v, want empty string", state.ConflictWorktree)
 		}
 		if state.ConflictFiles != nil {
 			t.Error("ConflictFiles should be nil after ClearConflict")
@@ -1249,7 +1261,7 @@ func TestConsolidationOrchestrator_Conflict(t *testing.T) {
 
 		orch := NewConsolidationOrchestrator(phaseCtx)
 		files := []string{"file1.go", "file2.go"}
-		orch.SetConflict("task-1", files)
+		orch.SetConflict("task-1", "/path/to/worktree", files)
 
 		// Modify the original slice
 		files[0] = "modified.go"
@@ -1388,4 +1400,653 @@ func TestInstanceStatus_Constants(t *testing.T) {
 			t.Errorf("InstanceStatus %v = %v, want %v", tt.status, string(tt.status), tt.want)
 		}
 	}
+}
+
+// mockWorktreeOperator implements WorktreeOperator for testing
+type mockWorktreeOperator struct {
+	conflictFiles        []string
+	conflictErr          error
+	cherryPickInProgress bool
+	continueErr          error
+	continueCalled       bool
+}
+
+func (m *mockWorktreeOperator) GetConflictingFiles(worktreePath string) ([]string, error) {
+	return m.conflictFiles, m.conflictErr
+}
+
+func (m *mockWorktreeOperator) IsCherryPickInProgress(worktreePath string) bool {
+	return m.cherryPickInProgress
+}
+
+func (m *mockWorktreeOperator) ContinueCherryPick(worktreePath string) error {
+	m.continueCalled = true
+	return m.continueErr
+}
+
+// mockSessionSaver implements ConsolidationSessionSaver for testing
+type mockSessionSaver struct {
+	saveErr    error
+	saveCalled bool
+}
+
+func (m *mockSessionSaver) SaveSession() error {
+	m.saveCalled = true
+	return m.saveErr
+}
+
+func TestConsolidationOrchestrator_ResumeConsolidation(t *testing.T) {
+	t.Run("returns ErrNotPaused when not paused", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		// State is not paused by default
+
+		worktreeOp := &mockWorktreeOperator{}
+		sessionSaver := &mockSessionSaver{}
+		restartCalled := false
+
+		err := orch.ResumeConsolidation(worktreeOp, sessionSaver, func() error {
+			restartCalled = true
+			return nil
+		})
+
+		if !errors.Is(err, ErrNotPaused) {
+			t.Errorf("ResumeConsolidation() = %v, want error containing %v", err, ErrNotPaused)
+		}
+		if restartCalled {
+			t.Error("restart callback should not have been called")
+		}
+	})
+
+	t.Run("returns ErrNoConflictWorktree when no worktree recorded", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		// Set paused state but no worktree
+		orch.SetState(ConsolidationState{
+			SubPhase:         "paused",
+			ConflictWorktree: "", // No worktree
+		})
+
+		worktreeOp := &mockWorktreeOperator{}
+		sessionSaver := &mockSessionSaver{}
+
+		err := orch.ResumeConsolidation(worktreeOp, sessionSaver, func() error {
+			return nil
+		})
+
+		if err != ErrNoConflictWorktree {
+			t.Errorf("ResumeConsolidation() = %v, want %v", err, ErrNoConflictWorktree)
+		}
+	})
+
+	t.Run("returns error when checking conflicts fails", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
+
+		worktreeOp := &mockWorktreeOperator{
+			conflictErr: errors.New("git error"),
+		}
+		sessionSaver := &mockSessionSaver{}
+
+		err := orch.ResumeConsolidation(worktreeOp, sessionSaver, func() error {
+			return nil
+		})
+
+		if err == nil || !errors.Is(err, errors.New("git error")) && err.Error() != "failed to check for conflicts in worktree /path/to/worktree: git error" {
+			t.Errorf("ResumeConsolidation() = %v, want error about checking conflicts", err)
+		}
+	})
+
+	t.Run("returns ErrUnresolvedConflicts when conflicts remain", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
+
+		worktreeOp := &mockWorktreeOperator{
+			conflictFiles: []string{"file1.go", "file2.go"}, // Still has conflicts
+		}
+		sessionSaver := &mockSessionSaver{}
+
+		err := orch.ResumeConsolidation(worktreeOp, sessionSaver, func() error {
+			return nil
+		})
+
+		if !errors.Is(err, ErrUnresolvedConflicts) {
+			t.Errorf("ResumeConsolidation() = %v, want error containing %v", err, ErrUnresolvedConflicts)
+		}
+	})
+
+	t.Run("continues cherry-pick when in progress", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
+
+		worktreeOp := &mockWorktreeOperator{
+			conflictFiles:        []string{}, // No conflicts remaining
+			cherryPickInProgress: true,
+		}
+		sessionSaver := &mockSessionSaver{}
+		restartCalled := false
+
+		err := orch.ResumeConsolidation(worktreeOp, sessionSaver, func() error {
+			restartCalled = true
+			return nil
+		})
+
+		if err != nil {
+			t.Errorf("ResumeConsolidation() = %v, want nil", err)
+		}
+		if !worktreeOp.continueCalled {
+			t.Error("ContinueCherryPick should have been called")
+		}
+		if !sessionSaver.saveCalled {
+			t.Error("SaveSession should have been called")
+		}
+		if !restartCalled {
+			t.Error("restart callback should have been called")
+		}
+	})
+
+	t.Run("returns error when cherry-pick continue fails", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
+
+		worktreeOp := &mockWorktreeOperator{
+			conflictFiles:        []string{},
+			cherryPickInProgress: true,
+			continueErr:          errors.New("continue failed"),
+		}
+		sessionSaver := &mockSessionSaver{}
+
+		err := orch.ResumeConsolidation(worktreeOp, sessionSaver, func() error {
+			return nil
+		})
+
+		if err == nil || !errors.Is(err, errors.New("continue failed")) && err.Error() != "failed to continue cherry-pick: continue failed" {
+			t.Errorf("ResumeConsolidation() = %v, want error about cherry-pick", err)
+		}
+	})
+
+	t.Run("succeeds without cherry-pick in progress", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
+
+		worktreeOp := &mockWorktreeOperator{
+			conflictFiles:        []string{},
+			cherryPickInProgress: false, // No cherry-pick in progress
+		}
+		sessionSaver := &mockSessionSaver{}
+		restartCalled := false
+
+		err := orch.ResumeConsolidation(worktreeOp, sessionSaver, func() error {
+			restartCalled = true
+			return nil
+		})
+
+		if err != nil {
+			t.Errorf("ResumeConsolidation() = %v, want nil", err)
+		}
+		if worktreeOp.continueCalled {
+			t.Error("ContinueCherryPick should not have been called")
+		}
+		if !restartCalled {
+			t.Error("restart callback should have been called")
+		}
+	})
+
+	t.Run("returns error when session save fails", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
+
+		worktreeOp := &mockWorktreeOperator{
+			conflictFiles: []string{},
+		}
+		sessionSaver := &mockSessionSaver{
+			saveErr: errors.New("save failed"),
+		}
+
+		err := orch.ResumeConsolidation(worktreeOp, sessionSaver, func() error {
+			return nil
+		})
+
+		if err == nil || !errors.Is(err, errors.New("save failed")) && err.Error() != "failed to save session state: save failed" {
+			t.Errorf("ResumeConsolidation() = %v, want error about save", err)
+		}
+	})
+
+	t.Run("returns error when restart callback fails", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
+
+		worktreeOp := &mockWorktreeOperator{
+			conflictFiles: []string{},
+		}
+		sessionSaver := &mockSessionSaver{}
+
+		err := orch.ResumeConsolidation(worktreeOp, sessionSaver, func() error {
+			return errors.New("restart failed")
+		})
+
+		if err == nil || !errors.Is(err, errors.New("restart failed")) && err.Error() != "failed to restart consolidation: restart failed" {
+			t.Errorf("ResumeConsolidation() = %v, want error about restart", err)
+		}
+	})
+
+	t.Run("clears conflict state on success", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
+
+		worktreeOp := &mockWorktreeOperator{
+			conflictFiles: []string{},
+		}
+		sessionSaver := &mockSessionSaver{}
+
+		err := orch.ResumeConsolidation(worktreeOp, sessionSaver, func() error {
+			return nil
+		})
+
+		if err != nil {
+			t.Errorf("ResumeConsolidation() = %v, want nil", err)
+		}
+
+		// Verify conflict state is cleared
+		state := orch.State()
+		if state.ConflictTaskID != "" {
+			t.Errorf("ConflictTaskID = %v, want empty string", state.ConflictTaskID)
+		}
+		if state.ConflictWorktree != "" {
+			t.Errorf("ConflictWorktree = %v, want empty string", state.ConflictWorktree)
+		}
+		if state.ConflictFiles != nil {
+			t.Error("ConflictFiles should be nil")
+		}
+
+		// Verify instance ID is cleared
+		if orch.GetInstanceID() != "" {
+			t.Errorf("GetInstanceID() = %v, want empty string", orch.GetInstanceID())
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_GetConsolidation(t *testing.T) {
+	t.Run("returns nil when no consolidation in progress", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		result := orch.GetConsolidation()
+		if result != nil {
+			t.Errorf("GetConsolidation() = %v, want nil", result)
+		}
+	})
+
+	t.Run("returns state when consolidation has started", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetState(ConsolidationState{
+			SubPhase:     "merging",
+			TotalGroups:  3,
+			CurrentGroup: 1,
+		})
+
+		result := orch.GetConsolidation()
+		if result == nil {
+			t.Fatal("GetConsolidation() returned nil, want non-nil")
+		}
+		if result.SubPhase != "merging" {
+			t.Errorf("SubPhase = %v, want %v", result.SubPhase, "merging")
+		}
+	})
+
+	t.Run("returns state when TotalGroups is set", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetState(ConsolidationState{
+			TotalGroups: 5,
+		})
+
+		result := orch.GetConsolidation()
+		if result == nil {
+			t.Fatal("GetConsolidation() returned nil, want non-nil")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_ClearStateForRestart(t *testing.T) {
+	t.Run("clears conflict-related state", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
+		orch.setInstanceID("test-instance")
+
+		orch.ClearStateForRestart()
+
+		state := orch.State()
+		if state.SubPhase != "" {
+			t.Errorf("SubPhase = %v, want empty string", state.SubPhase)
+		}
+		if state.CurrentTask != "" {
+			t.Errorf("CurrentTask = %v, want empty string", state.CurrentTask)
+		}
+		if state.ConflictTaskID != "" {
+			t.Errorf("ConflictTaskID = %v, want empty string", state.ConflictTaskID)
+		}
+		if state.ConflictWorktree != "" {
+			t.Errorf("ConflictWorktree = %v, want empty string", state.ConflictWorktree)
+		}
+		if state.ConflictFiles != nil {
+			t.Error("ConflictFiles should be nil")
+		}
+		if orch.GetInstanceID() != "" {
+			t.Errorf("GetInstanceID() = %v, want empty string", orch.GetInstanceID())
+		}
+	})
+
+	t.Run("preserves progress tracking state", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetState(ConsolidationState{
+			SubPhase:      "merging",
+			CurrentGroup:  2,
+			TotalGroups:   5,
+			GroupBranches: []string{"branch-1", "branch-2"},
+			PRUrls:        []string{"https://pr-1"},
+			Error:         "previous error",
+		})
+
+		orch.ClearStateForRestart()
+
+		state := orch.State()
+		// These should be preserved
+		if state.CurrentGroup != 2 {
+			t.Errorf("CurrentGroup = %v, want %v", state.CurrentGroup, 2)
+		}
+		if state.TotalGroups != 5 {
+			t.Errorf("TotalGroups = %v, want %v", state.TotalGroups, 5)
+		}
+		if len(state.GroupBranches) != 2 {
+			t.Errorf("len(GroupBranches) = %v, want %v", len(state.GroupBranches), 2)
+		}
+		if len(state.PRUrls) != 1 {
+			t.Errorf("len(PRUrls) = %v, want %v", len(state.PRUrls), 1)
+		}
+		if state.Error != "previous error" {
+			t.Errorf("Error = %v, want %v", state.Error, "previous error")
+		}
+	})
+
+	t.Run("resets completion and cancellation flags", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.setCompleted(true)
+		orch.Cancel()
+
+		orch.ClearStateForRestart()
+
+		if orch.IsComplete() {
+			t.Error("IsComplete() should be false after ClearStateForRestart")
+		}
+		if orch.IsCancelled() {
+			t.Error("IsCancelled() should be false after ClearStateForRestart")
+		}
+		if orch.IsRunning() {
+			t.Error("IsRunning() should be false after ClearStateForRestart")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_GetConflictInfo(t *testing.T) {
+	t.Run("returns empty when not paused", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		taskID, worktree, files := orch.GetConflictInfo()
+		if taskID != "" {
+			t.Errorf("taskID = %v, want empty string", taskID)
+		}
+		if worktree != "" {
+			t.Errorf("worktree = %v, want empty string", worktree)
+		}
+		if files != nil {
+			t.Errorf("files = %v, want nil", files)
+		}
+	})
+
+	t.Run("returns conflict info when paused", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go", "file2.go"})
+
+		taskID, worktree, files := orch.GetConflictInfo()
+		if taskID != "task-1" {
+			t.Errorf("taskID = %v, want %v", taskID, "task-1")
+		}
+		if worktree != "/path/to/worktree" {
+			t.Errorf("worktree = %v, want %v", worktree, "/path/to/worktree")
+		}
+		if len(files) != 2 {
+			t.Errorf("len(files) = %v, want %v", len(files), 2)
+		}
+	})
+
+	t.Run("returns copy of files slice", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
+
+		_, _, files := orch.GetConflictInfo()
+		files[0] = "modified"
+
+		// Verify internal state is unchanged
+		_, _, files2 := orch.GetConflictInfo()
+		if files2[0] == "modified" {
+			t.Error("GetConflictInfo() should return a copy of files slice")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_IsPaused(t *testing.T) {
+	t.Run("returns false initially", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		if orch.IsPaused() {
+			t.Error("IsPaused() should return false initially")
+		}
+	})
+
+	t.Run("returns true when paused", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
+
+		if !orch.IsPaused() {
+			t.Error("IsPaused() should return true after SetConflict")
+		}
+	})
+}
+
+func TestConsolidationOrchestrator_CanResume(t *testing.T) {
+	t.Run("returns false when not paused", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+
+		if orch.CanResume() {
+			t.Error("CanResume() should return false when not paused")
+		}
+	})
+
+	t.Run("returns false when paused without worktree", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetState(ConsolidationState{
+			SubPhase:         "paused",
+			ConflictWorktree: "", // No worktree
+		})
+
+		if orch.CanResume() {
+			t.Error("CanResume() should return false without worktree")
+		}
+	})
+
+	t.Run("returns true when paused with worktree", func(t *testing.T) {
+		phaseCtx := &PhaseContext{
+			Manager:      &mockManagerForConsolidation{},
+			Orchestrator: &mockOrchestratorForConsolidation{},
+			Session:      &mockSessionForConsolidation{},
+		}
+
+		orch := NewConsolidationOrchestrator(phaseCtx)
+		orch.SetConflict("task-1", "/path/to/worktree", []string{"file1.go"})
+
+		if !orch.CanResume() {
+			t.Error("CanResume() should return true after SetConflict")
+		}
+	})
+}
+
+func TestResumeErrors(t *testing.T) {
+	t.Run("ErrNoConsolidation has correct message", func(t *testing.T) {
+		if ErrNoConsolidation.Error() != "no consolidation in progress" {
+			t.Errorf("ErrNoConsolidation = %v, want %v", ErrNoConsolidation.Error(), "no consolidation in progress")
+		}
+	})
+
+	t.Run("ErrNotPaused has correct message", func(t *testing.T) {
+		if ErrNotPaused.Error() != "consolidation is not paused" {
+			t.Errorf("ErrNotPaused = %v, want %v", ErrNotPaused.Error(), "consolidation is not paused")
+		}
+	})
+
+	t.Run("ErrNoConflictWorktree has correct message", func(t *testing.T) {
+		if ErrNoConflictWorktree.Error() != "no conflict worktree recorded" {
+			t.Errorf("ErrNoConflictWorktree = %v, want %v", ErrNoConflictWorktree.Error(), "no conflict worktree recorded")
+		}
+	})
+
+	t.Run("ErrUnresolvedConflicts has correct message", func(t *testing.T) {
+		if ErrUnresolvedConflicts.Error() != "unresolved conflicts remain" {
+			t.Errorf("ErrUnresolvedConflicts = %v, want %v", ErrUnresolvedConflicts.Error(), "unresolved conflicts remain")
+		}
+	})
 }
