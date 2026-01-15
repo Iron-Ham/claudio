@@ -83,6 +83,7 @@ type SynthesisOrchestrator struct {
 
 	// wg tracks background goroutines spawned by this orchestrator.
 	// Execute waits on wg before returning.
+	// nolint:unused // Reserved for future use when Execute implementation spawns goroutines
 	wg sync.WaitGroup
 
 	// cancelled indicates whether Cancel() has been called.
