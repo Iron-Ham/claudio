@@ -268,3 +268,320 @@ func TestRenderGroupHeader_WrappedOutput(t *testing.T) {
 		t.Errorf("RenderGroupHeader() should contain progress [1/3], got: %s", result)
 	}
 }
+
+func TestGroupViewState_AutoExpand(t *testing.T) {
+	tests := []struct {
+		name            string
+		initialState    func() *GroupViewState
+		groupID         string
+		expectedReturn  bool
+		expectCollapsed bool
+		expectAutoExp   bool
+	}{
+		{
+			name: "auto-expands collapsed group",
+			initialState: func() *GroupViewState {
+				s := NewGroupViewState()
+				s.CollapsedGroups["group-1"] = true
+				return s
+			},
+			groupID:         "group-1",
+			expectedReturn:  true,
+			expectCollapsed: false,
+			expectAutoExp:   true,
+		},
+		{
+			name: "returns false for already expanded group",
+			initialState: func() *GroupViewState {
+				return NewGroupViewState()
+			},
+			groupID:         "group-1",
+			expectedReturn:  false,
+			expectCollapsed: false,
+			expectAutoExp:   false,
+		},
+		{
+			name: "returns false for group never in collapsed map",
+			initialState: func() *GroupViewState {
+				return NewGroupViewState() // Empty maps - group was never collapsed
+			},
+			groupID:         "never-existed",
+			expectedReturn:  false,
+			expectCollapsed: false,
+			expectAutoExp:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := tt.initialState()
+			result := state.AutoExpand(tt.groupID)
+
+			if result != tt.expectedReturn {
+				t.Errorf("AutoExpand() = %v, want %v", result, tt.expectedReturn)
+			}
+			if state.IsCollapsed(tt.groupID) != tt.expectCollapsed {
+				t.Errorf("IsCollapsed() = %v, want %v", state.IsCollapsed(tt.groupID), tt.expectCollapsed)
+			}
+			if state.IsAutoExpanded(tt.groupID) != tt.expectAutoExp {
+				t.Errorf("IsAutoExpanded() = %v, want %v", state.IsAutoExpanded(tt.groupID), tt.expectAutoExp)
+			}
+		})
+	}
+}
+
+func TestGroupViewState_AutoCollapse(t *testing.T) {
+	tests := []struct {
+		name            string
+		initialState    func() *GroupViewState
+		groupID         string
+		expectedReturn  bool
+		expectCollapsed bool
+		expectAutoExp   bool
+	}{
+		{
+			name: "auto-collapses auto-expanded group",
+			initialState: func() *GroupViewState {
+				s := NewGroupViewState()
+				s.AutoExpandedGroups["group-1"] = true
+				return s
+			},
+			groupID:         "group-1",
+			expectedReturn:  true,
+			expectCollapsed: true,
+			expectAutoExp:   false,
+		},
+		{
+			name: "does not collapse manually expanded group",
+			initialState: func() *GroupViewState {
+				return NewGroupViewState()
+			},
+			groupID:         "group-1",
+			expectedReturn:  false,
+			expectCollapsed: false,
+			expectAutoExp:   false,
+		},
+		{
+			name: "does not collapse already collapsed group",
+			initialState: func() *GroupViewState {
+				s := NewGroupViewState()
+				s.CollapsedGroups["group-1"] = true
+				return s
+			},
+			groupID:         "group-1",
+			expectedReturn:  false,
+			expectCollapsed: true,
+			expectAutoExp:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := tt.initialState()
+			result := state.AutoCollapse(tt.groupID)
+
+			if result != tt.expectedReturn {
+				t.Errorf("AutoCollapse() = %v, want %v", result, tt.expectedReturn)
+			}
+			if state.IsCollapsed(tt.groupID) != tt.expectCollapsed {
+				t.Errorf("IsCollapsed() = %v, want %v", state.IsCollapsed(tt.groupID), tt.expectCollapsed)
+			}
+			if state.IsAutoExpanded(tt.groupID) != tt.expectAutoExp {
+				t.Errorf("IsAutoExpanded() = %v, want %v", state.IsAutoExpanded(tt.groupID), tt.expectAutoExp)
+			}
+		})
+	}
+}
+
+func TestGroupViewState_ToggleCollapse_ClearsAutoExpanded(t *testing.T) {
+	state := NewGroupViewState()
+	state.AutoExpandedGroups["group-1"] = true
+	state.CollapsedGroups["group-1"] = false
+
+	// Manual toggle should clear auto-expanded state
+	state.ToggleCollapse("group-1")
+
+	if !state.IsCollapsed("group-1") {
+		t.Error("expected group to be collapsed after toggle")
+	}
+	if state.IsAutoExpanded("group-1") {
+		t.Error("expected auto-expanded state to be cleared after manual toggle")
+	}
+}
+
+func TestFindGroupContainingInstance(t *testing.T) {
+	tests := []struct {
+		name       string
+		session    *orchestrator.Session
+		instanceID string
+		expected   []string
+	}{
+		{
+			name:       "nil session returns nil",
+			session:    nil,
+			instanceID: "inst-1",
+			expected:   nil,
+		},
+		{
+			name: "session without groups returns nil",
+			session: &orchestrator.Session{
+				Instances: []*orchestrator.Instance{
+					{ID: "inst-1"},
+				},
+			},
+			instanceID: "inst-1",
+			expected:   nil,
+		},
+		{
+			name: "finds instance in top-level group",
+			session: func() *orchestrator.Session {
+				s := &orchestrator.Session{
+					Instances: []*orchestrator.Instance{
+						{ID: "inst-1"},
+						{ID: "inst-2"},
+					},
+				}
+				s.AddGroup(&orchestrator.InstanceGroup{
+					ID:        "group-1",
+					Name:      "Group 1",
+					Instances: []string{"inst-1", "inst-2"},
+				})
+				return s
+			}(),
+			instanceID: "inst-1",
+			expected:   []string{"group-1"},
+		},
+		{
+			name: "finds instance in nested sub-group",
+			session: func() *orchestrator.Session {
+				s := &orchestrator.Session{
+					Instances: []*orchestrator.Instance{
+						{ID: "inst-1"},
+						{ID: "inst-2"},
+					},
+				}
+				s.AddGroup(&orchestrator.InstanceGroup{
+					ID:   "group-1",
+					Name: "Group 1",
+					SubGroups: []*orchestrator.InstanceGroup{
+						{
+							ID:        "sub-group-1",
+							Name:      "Sub Group 1",
+							Instances: []string{"inst-1"},
+						},
+					},
+				})
+				return s
+			}(),
+			instanceID: "inst-1",
+			expected:   []string{"group-1", "sub-group-1"},
+		},
+		{
+			name: "returns nil for ungrouped instance",
+			session: func() *orchestrator.Session {
+				s := &orchestrator.Session{
+					Instances: []*orchestrator.Instance{
+						{ID: "inst-1"},
+						{ID: "inst-2"},
+					},
+				}
+				s.AddGroup(&orchestrator.InstanceGroup{
+					ID:        "group-1",
+					Name:      "Group 1",
+					Instances: []string{"inst-1"},
+				})
+				return s
+			}(),
+			instanceID: "inst-2", // not in any group
+			expected:   nil,
+		},
+		{
+			name: "returns nil for non-existent instance",
+			session: func() *orchestrator.Session {
+				s := &orchestrator.Session{
+					Instances: []*orchestrator.Instance{
+						{ID: "inst-1"},
+					},
+				}
+				s.AddGroup(&orchestrator.InstanceGroup{
+					ID:        "group-1",
+					Name:      "Group 1",
+					Instances: []string{"inst-1"},
+				})
+				return s
+			}(),
+			instanceID: "inst-999",
+			expected:   nil,
+		},
+		{
+			name: "finds instance in deeply nested sub-group (3 levels)",
+			session: func() *orchestrator.Session {
+				s := &orchestrator.Session{
+					Instances: []*orchestrator.Instance{
+						{ID: "inst-1"},
+					},
+				}
+				s.AddGroup(&orchestrator.InstanceGroup{
+					ID:   "group-1",
+					Name: "Group 1",
+					SubGroups: []*orchestrator.InstanceGroup{
+						{
+							ID:   "sub-group-1",
+							Name: "Sub Group 1",
+							SubGroups: []*orchestrator.InstanceGroup{
+								{
+									ID:        "sub-sub-group-1",
+									Name:      "Sub Sub Group 1",
+									Instances: []string{"inst-1"},
+								},
+							},
+						},
+					},
+				})
+				return s
+			}(),
+			instanceID: "inst-1",
+			expected:   []string{"group-1", "sub-group-1", "sub-sub-group-1"},
+		},
+		{
+			name: "finds instance in second top-level group",
+			session: func() *orchestrator.Session {
+				s := &orchestrator.Session{
+					Instances: []*orchestrator.Instance{
+						{ID: "inst-1"},
+						{ID: "inst-2"},
+					},
+				}
+				s.AddGroup(&orchestrator.InstanceGroup{
+					ID:        "group-1",
+					Name:      "Group 1",
+					Instances: []string{"inst-1"},
+				})
+				s.AddGroup(&orchestrator.InstanceGroup{
+					ID:        "group-2",
+					Name:      "Group 2",
+					Instances: []string{"inst-2"},
+				})
+				return s
+			}(),
+			instanceID: "inst-2",
+			expected:   []string{"group-2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FindGroupContainingInstance(tt.session, tt.instanceID)
+
+			if len(result) != len(tt.expected) {
+				t.Errorf("FindGroupContainingInstance() returned %v, want %v", result, tt.expected)
+				return
+			}
+			for i, gid := range result {
+				if gid != tt.expected[i] {
+					t.Errorf("FindGroupContainingInstance()[%d] = %q, want %q", i, gid, tt.expected[i])
+				}
+			}
+		})
+	}
+}
