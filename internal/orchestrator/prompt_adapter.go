@@ -390,6 +390,51 @@ func (a *PromptAdapter) BuildSynthesisContext() (*prompt.Context, error) {
 	return ctx, nil
 }
 
+// BuildPlanSelectionContext creates a prompt.Context configured for the plan selection phase.
+// This is used during multi-pass planning when multiple candidate plans have been generated
+// and need to be compared/selected. It populates CandidatePlans by converting each PlanSpec
+// from the session's CandidatePlans using candidatePlanInfoFromPlanSpec.
+//
+// Returns an error if the adapter has no coordinator, no manager, no session,
+// or if the resulting context fails validation (which requires non-empty CandidatePlans).
+func (a *PromptAdapter) BuildPlanSelectionContext() (*prompt.Context, error) {
+	if a.coordinator == nil {
+		return nil, ErrNilCoordinator
+	}
+
+	manager := a.coordinator.manager
+	if manager == nil {
+		return nil, ErrNilManager
+	}
+
+	session := manager.Session()
+	if session == nil {
+		return nil, ErrNilSession
+	}
+
+	ctx := &prompt.Context{
+		Phase:     prompt.PhasePlanSelection,
+		SessionID: session.ID,
+		Objective: session.Objective,
+	}
+
+	// Convert session.CandidatePlans to prompt.CandidatePlanInfo slice
+	// Strategy names are derived from the index position in MultiPassPlanningPrompts:
+	// 0=maximize-parallelism, 1=minimize-complexity, 2=balanced-approach
+	if len(session.CandidatePlans) > 0 {
+		ctx.CandidatePlans = make([]prompt.CandidatePlanInfo, len(session.CandidatePlans))
+		for i, planSpec := range session.CandidatePlans {
+			ctx.CandidatePlans[i] = candidatePlanInfoFromPlanSpec(planSpec, i)
+		}
+	}
+
+	if err := ctx.Validate(); err != nil {
+		return nil, err
+	}
+
+	return ctx, nil
+}
+
 // buildPreviousGroupContextStrings extracts context strings from GroupConsolidationCompletionFile entries.
 // For each completed group, it formats the notes and issues into a readable string.
 func buildPreviousGroupContextStrings(contexts []*GroupConsolidationCompletionFile) []string {

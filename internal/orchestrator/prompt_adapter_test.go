@@ -2370,6 +2370,352 @@ func TestBuildConsolidationContext(t *testing.T) {
 	})
 }
 
+func TestBuildPlanSelectionContext(t *testing.T) {
+	t.Run("nil coordinator returns error", func(t *testing.T) {
+		adapter := NewPromptAdapter(nil)
+		ctx, err := adapter.BuildPlanSelectionContext()
+		if err != ErrNilCoordinator {
+			t.Errorf("BuildPlanSelectionContext() error = %v, want %v", err, ErrNilCoordinator)
+		}
+		if ctx != nil {
+			t.Errorf("BuildPlanSelectionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("nil manager returns error", func(t *testing.T) {
+		coordinator := &Coordinator{manager: nil}
+		adapter := NewPromptAdapter(coordinator)
+		ctx, err := adapter.BuildPlanSelectionContext()
+		if err != ErrNilManager {
+			t.Errorf("BuildPlanSelectionContext() error = %v, want %v", err, ErrNilManager)
+		}
+		if ctx != nil {
+			t.Errorf("BuildPlanSelectionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("nil session returns error", func(t *testing.T) {
+		manager := &UltraPlanManager{session: nil}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+		ctx, err := adapter.BuildPlanSelectionContext()
+		if err != ErrNilSession {
+			t.Errorf("BuildPlanSelectionContext() error = %v, want %v", err, ErrNilSession)
+		}
+		if ctx != nil {
+			t.Errorf("BuildPlanSelectionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("validation error for empty objective", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-1",
+			Objective: "", // Empty objective should fail validation
+			CandidatePlans: []*PlanSpec{
+				{Summary: "Plan 1", Tasks: []PlannedTask{{ID: "t1"}}},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildPlanSelectionContext()
+		if err == nil {
+			t.Error("BuildPlanSelectionContext() error = nil, want validation error")
+		}
+		if ctx != nil {
+			t.Errorf("BuildPlanSelectionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("validation error for empty session ID", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "", // Empty session ID should fail validation
+			Objective: "Test objective",
+			CandidatePlans: []*PlanSpec{
+				{Summary: "Plan 1", Tasks: []PlannedTask{{ID: "t1"}}},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildPlanSelectionContext()
+		if err == nil {
+			t.Error("BuildPlanSelectionContext() error = nil, want validation error")
+		}
+		if ctx != nil {
+			t.Errorf("BuildPlanSelectionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("validation error for empty candidate plans", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:             "session-1",
+			Objective:      "Test objective",
+			CandidatePlans: []*PlanSpec{}, // Empty candidate plans should fail validation
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildPlanSelectionContext()
+		if err == nil {
+			t.Error("BuildPlanSelectionContext() error = nil, want validation error for empty candidate plans")
+		}
+		if !errors.Is(err, prompt.ErrMissingCandidatePlans) {
+			t.Errorf("BuildPlanSelectionContext() error = %v, want %v", err, prompt.ErrMissingCandidatePlans)
+		}
+		if ctx != nil {
+			t.Errorf("BuildPlanSelectionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("validation error for nil candidate plans", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:             "session-1",
+			Objective:      "Test objective",
+			CandidatePlans: nil, // Nil candidate plans should fail validation
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildPlanSelectionContext()
+		if err == nil {
+			t.Error("BuildPlanSelectionContext() error = nil, want validation error for nil candidate plans")
+		}
+		if !errors.Is(err, prompt.ErrMissingCandidatePlans) {
+			t.Errorf("BuildPlanSelectionContext() error = %v, want %v", err, prompt.ErrMissingCandidatePlans)
+		}
+		if ctx != nil {
+			t.Errorf("BuildPlanSelectionContext() ctx = %v, want nil", ctx)
+		}
+	})
+
+	t.Run("successful plan selection context with single plan", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-123",
+			Objective: "Implement feature X",
+			CandidatePlans: []*PlanSpec{
+				{
+					Summary: "Maximize parallelism plan",
+					Tasks: []PlannedTask{
+						{ID: "task-1", Title: "Task 1", EstComplexity: ComplexityLow},
+						{ID: "task-2", Title: "Task 2", EstComplexity: ComplexityMedium},
+					},
+					ExecutionOrder: [][]string{{"task-1", "task-2"}},
+					Insights:       []string{"Can run in parallel"},
+					Constraints:    []string{"Memory constraint"},
+				},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildPlanSelectionContext()
+		if err != nil {
+			t.Fatalf("BuildPlanSelectionContext() error = %v, want nil", err)
+		}
+
+		if ctx.Phase != prompt.PhasePlanSelection {
+			t.Errorf("ctx.Phase = %v, want %v", ctx.Phase, prompt.PhasePlanSelection)
+		}
+		if ctx.SessionID != "session-123" {
+			t.Errorf("ctx.SessionID = %q, want %q", ctx.SessionID, "session-123")
+		}
+		if ctx.Objective != "Implement feature X" {
+			t.Errorf("ctx.Objective = %q, want %q", ctx.Objective, "Implement feature X")
+		}
+
+		// Check candidate plans
+		if len(ctx.CandidatePlans) != 1 {
+			t.Fatalf("ctx.CandidatePlans length = %d, want 1", len(ctx.CandidatePlans))
+		}
+
+		plan := ctx.CandidatePlans[0]
+		if plan.Strategy != "maximize-parallelism" {
+			t.Errorf("ctx.CandidatePlans[0].Strategy = %q, want %q", plan.Strategy, "maximize-parallelism")
+		}
+		if plan.Summary != "Maximize parallelism plan" {
+			t.Errorf("ctx.CandidatePlans[0].Summary = %q, want %q", plan.Summary, "Maximize parallelism plan")
+		}
+		if len(plan.Tasks) != 2 {
+			t.Errorf("ctx.CandidatePlans[0].Tasks length = %d, want 2", len(plan.Tasks))
+		}
+		if len(plan.ExecutionOrder) != 1 {
+			t.Errorf("ctx.CandidatePlans[0].ExecutionOrder length = %d, want 1", len(plan.ExecutionOrder))
+		}
+		if len(plan.Insights) != 1 {
+			t.Errorf("ctx.CandidatePlans[0].Insights length = %d, want 1", len(plan.Insights))
+		}
+		if len(plan.Constraints) != 1 {
+			t.Errorf("ctx.CandidatePlans[0].Constraints length = %d, want 1", len(plan.Constraints))
+		}
+	})
+
+	t.Run("successful plan selection context with three plans", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-456",
+			Objective: "Build REST API",
+			CandidatePlans: []*PlanSpec{
+				{
+					Summary: "Maximize parallelism approach",
+					Tasks: []PlannedTask{
+						{ID: "t1", Title: "Task A"},
+						{ID: "t2", Title: "Task B"},
+					},
+					ExecutionOrder: [][]string{{"t1", "t2"}},
+				},
+				{
+					Summary: "Minimize complexity approach",
+					Tasks: []PlannedTask{
+						{ID: "t1", Title: "Task A"},
+						{ID: "t2", Title: "Task B"},
+					},
+					ExecutionOrder: [][]string{{"t1"}, {"t2"}},
+				},
+				{
+					Summary: "Balanced approach",
+					Tasks: []PlannedTask{
+						{ID: "t1", Title: "Task A"},
+						{ID: "t2", Title: "Task B"},
+						{ID: "t3", Title: "Task C"},
+					},
+					ExecutionOrder: [][]string{{"t1"}, {"t2", "t3"}},
+				},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildPlanSelectionContext()
+		if err != nil {
+			t.Fatalf("BuildPlanSelectionContext() error = %v, want nil", err)
+		}
+
+		if len(ctx.CandidatePlans) != 3 {
+			t.Fatalf("ctx.CandidatePlans length = %d, want 3", len(ctx.CandidatePlans))
+		}
+
+		// Verify strategy names are mapped correctly by index
+		expectedStrategies := []string{"maximize-parallelism", "minimize-complexity", "balanced-approach"}
+		for i, expected := range expectedStrategies {
+			if ctx.CandidatePlans[i].Strategy != expected {
+				t.Errorf("ctx.CandidatePlans[%d].Strategy = %q, want %q", i, ctx.CandidatePlans[i].Strategy, expected)
+			}
+		}
+
+		// Verify summaries preserved
+		if ctx.CandidatePlans[0].Summary != "Maximize parallelism approach" {
+			t.Errorf("ctx.CandidatePlans[0].Summary = %q, want %q", ctx.CandidatePlans[0].Summary, "Maximize parallelism approach")
+		}
+		if ctx.CandidatePlans[1].Summary != "Minimize complexity approach" {
+			t.Errorf("ctx.CandidatePlans[1].Summary = %q, want %q", ctx.CandidatePlans[1].Summary, "Minimize complexity approach")
+		}
+		if ctx.CandidatePlans[2].Summary != "Balanced approach" {
+			t.Errorf("ctx.CandidatePlans[2].Summary = %q, want %q", ctx.CandidatePlans[2].Summary, "Balanced approach")
+		}
+
+		// Verify third plan has 3 tasks
+		if len(ctx.CandidatePlans[2].Tasks) != 3 {
+			t.Errorf("ctx.CandidatePlans[2].Tasks length = %d, want 3", len(ctx.CandidatePlans[2].Tasks))
+		}
+	})
+
+	t.Run("handles nil plan spec in candidate plans", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-789",
+			Objective: "Test nil handling",
+			CandidatePlans: []*PlanSpec{
+				{Summary: "Valid plan", Tasks: []PlannedTask{{ID: "t1"}}},
+				nil, // nil plan spec - candidatePlanInfoFromPlanSpec returns empty struct
+				{Summary: "Another valid plan", Tasks: []PlannedTask{{ID: "t2"}}},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildPlanSelectionContext()
+		if err != nil {
+			t.Fatalf("BuildPlanSelectionContext() error = %v, want nil", err)
+		}
+
+		if len(ctx.CandidatePlans) != 3 {
+			t.Fatalf("ctx.CandidatePlans length = %d, want 3", len(ctx.CandidatePlans))
+		}
+
+		// First plan should be valid with maximize-parallelism strategy
+		if ctx.CandidatePlans[0].Strategy != "maximize-parallelism" {
+			t.Errorf("ctx.CandidatePlans[0].Strategy = %q, want %q", ctx.CandidatePlans[0].Strategy, "maximize-parallelism")
+		}
+		if ctx.CandidatePlans[0].Summary != "Valid plan" {
+			t.Errorf("ctx.CandidatePlans[0].Summary = %q, want %q", ctx.CandidatePlans[0].Summary, "Valid plan")
+		}
+
+		// Second plan (nil) returns empty CandidatePlanInfo per candidatePlanInfoFromPlanSpec behavior
+		// The strategy is empty because nil spec returns an empty struct without looking up the index
+		if ctx.CandidatePlans[1].Strategy != "" {
+			t.Errorf("ctx.CandidatePlans[1].Strategy = %q, want empty (nil spec returns empty struct)", ctx.CandidatePlans[1].Strategy)
+		}
+		if ctx.CandidatePlans[1].Summary != "" {
+			t.Errorf("ctx.CandidatePlans[1].Summary = %q, want empty", ctx.CandidatePlans[1].Summary)
+		}
+
+		// Third plan should be valid with balanced-approach strategy
+		if ctx.CandidatePlans[2].Strategy != "balanced-approach" {
+			t.Errorf("ctx.CandidatePlans[2].Strategy = %q, want %q", ctx.CandidatePlans[2].Strategy, "balanced-approach")
+		}
+		if ctx.CandidatePlans[2].Summary != "Another valid plan" {
+			t.Errorf("ctx.CandidatePlans[2].Summary = %q, want %q", ctx.CandidatePlans[2].Summary, "Another valid plan")
+		}
+	})
+
+	t.Run("task complexity is converted correctly", func(t *testing.T) {
+		session := &UltraPlanSession{
+			ID:        "session-complex",
+			Objective: "Test complexity conversion",
+			CandidatePlans: []*PlanSpec{
+				{
+					Summary: "Plan with varied complexity",
+					Tasks: []PlannedTask{
+						{ID: "t1", Title: "Low task", EstComplexity: ComplexityLow},
+						{ID: "t2", Title: "Medium task", EstComplexity: ComplexityMedium},
+						{ID: "t3", Title: "High task", EstComplexity: ComplexityHigh},
+					},
+				},
+			},
+		}
+		manager := &UltraPlanManager{session: session}
+		coordinator := &Coordinator{manager: manager}
+		adapter := NewPromptAdapter(coordinator)
+
+		ctx, err := adapter.BuildPlanSelectionContext()
+		if err != nil {
+			t.Fatalf("BuildPlanSelectionContext() error = %v, want nil", err)
+		}
+
+		tasks := ctx.CandidatePlans[0].Tasks
+		if len(tasks) != 3 {
+			t.Fatalf("Tasks length = %d, want 3", len(tasks))
+		}
+
+		// Verify complexity is converted to string
+		if tasks[0].EstComplexity != "low" {
+			t.Errorf("tasks[0].EstComplexity = %q, want %q", tasks[0].EstComplexity, "low")
+		}
+		if tasks[1].EstComplexity != "medium" {
+			t.Errorf("tasks[1].EstComplexity = %q, want %q", tasks[1].EstComplexity, "medium")
+		}
+		if tasks[2].EstComplexity != "high" {
+			t.Errorf("tasks[2].EstComplexity = %q, want %q", tasks[2].EstComplexity, "high")
+		}
+	})
+}
+
 func TestBuildSynthesisContext(t *testing.T) {
 	t.Run("nil coordinator returns error", func(t *testing.T) {
 		adapter := NewPromptAdapter(nil)
