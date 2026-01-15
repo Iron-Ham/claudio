@@ -1,7 +1,20 @@
 package orchestrator
 
 import (
+	"errors"
+
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
+)
+
+// Error sentinels for PromptAdapter operations
+var (
+	// ErrNilCoordinator is returned when a PromptAdapter method requires a
+	// Coordinator but the adapter was created with a nil coordinator.
+	ErrNilCoordinator = errors.New("prompt adapter has nil coordinator")
+
+	// ErrNilUltraPlanSession is returned when a PromptAdapter method requires
+	// an UltraPlanSession but the coordinator's manager returns nil.
+	ErrNilUltraPlanSession = errors.New("coordinator has nil ultra-plan session")
 )
 
 // PromptAdapter bridges orchestrator types to prompt.Context, enabling the
@@ -250,4 +263,39 @@ func candidatePlanInfoFromPlanSpec(spec *PlanSpec, strategyIndex int) prompt.Can
 		Insights:       spec.Insights,
 		Constraints:    spec.Constraints,
 	}
+}
+
+// BuildPlanningContext creates a prompt.Context configured for the planning phase.
+// It populates the context with session ID, objective, and base directory from
+// the Coordinator's UltraPlanSession and base Session respectively.
+//
+// Returns an error if the adapter has no coordinator, no UltraPlanSession,
+// or if the resulting context fails validation.
+func (a *PromptAdapter) BuildPlanningContext() (*prompt.Context, error) {
+	if a.coordinator == nil {
+		return nil, ErrNilCoordinator
+	}
+
+	session := a.coordinator.manager.Session()
+	if session == nil {
+		return nil, ErrNilUltraPlanSession
+	}
+
+	baseDir := ""
+	if a.coordinator.baseSession != nil {
+		baseDir = a.coordinator.baseSession.BaseRepo
+	}
+
+	ctx := &prompt.Context{
+		Phase:     prompt.PhasePlanning,
+		SessionID: session.ID,
+		Objective: session.Objective,
+		BaseDir:   baseDir,
+	}
+
+	if err := ctx.Validate(); err != nil {
+		return nil, err
+	}
+
+	return ctx, nil
 }

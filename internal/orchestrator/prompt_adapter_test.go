@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
@@ -1335,6 +1336,126 @@ func TestCandidatePlanInfoFromPlanSpec(t *testing.T) {
 			// Check constraints
 			if len(got.Constraints) != len(tt.want.Constraints) {
 				t.Errorf("candidatePlanInfoFromPlanSpec().Constraints length = %d, want %d", len(got.Constraints), len(tt.want.Constraints))
+			}
+		})
+	}
+}
+
+func TestBuildPlanningContext(t *testing.T) {
+	tests := []struct {
+		name        string
+		adapter     *PromptAdapter
+		wantErr     error
+		wantPhase   prompt.PhaseType
+		wantSession string
+		wantObj     string
+		wantBaseDir string
+	}{
+		{
+			name:    "nil coordinator returns error",
+			adapter: NewPromptAdapter(nil),
+			wantErr: ErrNilCoordinator,
+		},
+		{
+			name: "nil manager session returns error",
+			adapter: NewPromptAdapter(&Coordinator{
+				manager: NewUltraPlanManager(nil, nil, nil, nil),
+			}),
+			wantErr: ErrNilUltraPlanSession,
+		},
+		{
+			name: "valid coordinator with nil base session",
+			adapter: NewPromptAdapter(&Coordinator{
+				manager: NewUltraPlanManager(nil, nil, &UltraPlanSession{
+					ID:        "session-123",
+					Objective: "Implement feature X",
+				}, nil),
+				baseSession: nil,
+			}),
+			wantErr:     nil,
+			wantPhase:   prompt.PhasePlanning,
+			wantSession: "session-123",
+			wantObj:     "Implement feature X",
+			wantBaseDir: "",
+		},
+		{
+			name: "valid coordinator with base session",
+			adapter: NewPromptAdapter(&Coordinator{
+				manager: NewUltraPlanManager(nil, nil, &UltraPlanSession{
+					ID:        "session-456",
+					Objective: "Build a REST API",
+				}, nil),
+				baseSession: &Session{
+					BaseRepo: "/path/to/repo",
+				},
+			}),
+			wantErr:     nil,
+			wantPhase:   prompt.PhasePlanning,
+			wantSession: "session-456",
+			wantObj:     "Build a REST API",
+			wantBaseDir: "/path/to/repo",
+		},
+		{
+			name: "empty objective fails validation",
+			adapter: NewPromptAdapter(&Coordinator{
+				manager: NewUltraPlanManager(nil, nil, &UltraPlanSession{
+					ID:        "session-789",
+					Objective: "",
+				}, nil),
+				baseSession: &Session{
+					BaseRepo: "/path/to/repo",
+				},
+			}),
+			wantErr: prompt.ErrEmptyObjective,
+		},
+		{
+			name: "empty session ID fails validation",
+			adapter: NewPromptAdapter(&Coordinator{
+				manager: NewUltraPlanManager(nil, nil, &UltraPlanSession{
+					ID:        "",
+					Objective: "Some objective",
+				}, nil),
+			}),
+			wantErr: prompt.ErrEmptySessionID,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, err := tt.adapter.BuildPlanningContext()
+
+			if tt.wantErr != nil {
+				if err == nil {
+					t.Fatalf("BuildPlanningContext() error = nil, want %v", tt.wantErr)
+				}
+				if !errors.Is(err, tt.wantErr) {
+					t.Errorf("BuildPlanningContext() error = %v, want %v", err, tt.wantErr)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("BuildPlanningContext() unexpected error = %v", err)
+			}
+
+			if ctx == nil {
+				t.Fatal("BuildPlanningContext() returned nil context")
+			}
+
+			if ctx.Phase != tt.wantPhase {
+				t.Errorf("BuildPlanningContext().Phase = %v, want %v", ctx.Phase, tt.wantPhase)
+			}
+
+			if ctx.SessionID != tt.wantSession {
+				t.Errorf("BuildPlanningContext().SessionID = %q, want %q", ctx.SessionID, tt.wantSession)
+			}
+
+			if ctx.Objective != tt.wantObj {
+				t.Errorf("BuildPlanningContext().Objective = %q, want %q", ctx.Objective, tt.wantObj)
+			}
+
+			if ctx.BaseDir != tt.wantBaseDir {
+				t.Errorf("BuildPlanningContext().BaseDir = %q, want %q", ctx.BaseDir, tt.wantBaseDir)
 			}
 		})
 	}
