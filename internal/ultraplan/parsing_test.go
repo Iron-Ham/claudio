@@ -1,6 +1,7 @@
 package ultraplan
 
 import (
+	"os"
 	"testing"
 )
 
@@ -297,4 +298,238 @@ func TestValidatePlanSimple_InvalidDependency(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error for invalid dependency")
 	}
+}
+
+func TestParsePlanFromFile_RootLevelFormat(t *testing.T) {
+	// Create a temp file with root-level JSON format
+	tmpFile := t.TempDir() + "/plan.json"
+	content := `{
+  "summary": "Root level plan",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "First task",
+      "description": "Do first thing",
+      "files": ["file1.go"],
+      "depends_on": [],
+      "priority": 1,
+      "est_complexity": "low"
+    }
+  ],
+  "insights": ["insight1"],
+  "constraints": ["constraint1"]
+}`
+	if err := writeTestFile(tmpFile, content); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	plan, err := ParsePlanFromFile(tmpFile, "Test objective")
+	if err != nil {
+		t.Fatalf("ParsePlanFromFile failed: %v", err)
+	}
+
+	if plan.Summary != "Root level plan" {
+		t.Errorf("Expected summary 'Root level plan', got '%s'", plan.Summary)
+	}
+
+	if len(plan.Tasks) != 1 {
+		t.Fatalf("Expected 1 task, got %d", len(plan.Tasks))
+	}
+
+	if plan.Tasks[0].ID != "task-1" {
+		t.Errorf("Expected task ID 'task-1', got '%s'", plan.Tasks[0].ID)
+	}
+}
+
+func TestParsePlanFromFile_NestedPlanFormat(t *testing.T) {
+	// Create a temp file with nested "plan" wrapper format
+	tmpFile := t.TempDir() + "/plan.json"
+	content := `{
+  "plan": {
+    "summary": "Nested format plan",
+    "tasks": [
+      {
+        "id": "task-nested",
+        "title": "Nested task",
+        "description": "Do nested thing",
+        "files": ["nested.go"],
+        "depends_on": [],
+        "priority": 1,
+        "est_complexity": "medium"
+      }
+    ],
+    "insights": ["nested insight"],
+    "constraints": ["nested constraint"]
+  }
+}`
+	if err := writeTestFile(tmpFile, content); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	plan, err := ParsePlanFromFile(tmpFile, "Test nested objective")
+	if err != nil {
+		t.Fatalf("ParsePlanFromFile failed for nested format: %v", err)
+	}
+
+	if plan.Summary != "Nested format plan" {
+		t.Errorf("Expected summary 'Nested format plan', got '%s'", plan.Summary)
+	}
+
+	if len(plan.Tasks) != 1 {
+		t.Fatalf("Expected 1 task, got %d", len(plan.Tasks))
+	}
+
+	if plan.Tasks[0].ID != "task-nested" {
+		t.Errorf("Expected task ID 'task-nested', got '%s'", plan.Tasks[0].ID)
+	}
+}
+
+func TestParsePlanFromFile_AlternativeFieldNames(t *testing.T) {
+	// Test "depends" instead of "depends_on" and "complexity" instead of "est_complexity"
+	tmpFile := t.TempDir() + "/plan.json"
+	content := `{
+  "plan": {
+    "summary": "Alternative field names",
+    "tasks": [
+      {
+        "id": "task-alt-1",
+        "title": "Alt task 1",
+        "description": "First alt task",
+        "files": ["alt1.go"],
+        "depends": [],
+        "priority": 1,
+        "complexity": "low"
+      },
+      {
+        "id": "task-alt-2",
+        "title": "Alt task 2",
+        "description": "Second alt task",
+        "files": ["alt2.go"],
+        "depends": ["task-alt-1"],
+        "priority": 2,
+        "complexity": "high"
+      }
+    ],
+    "insights": [],
+    "constraints": []
+  }
+}`
+	if err := writeTestFile(tmpFile, content); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	plan, err := ParsePlanFromFile(tmpFile, "Test alternative fields")
+	if err != nil {
+		t.Fatalf("ParsePlanFromFile failed for alternative field names: %v", err)
+	}
+
+	if len(plan.Tasks) != 2 {
+		t.Fatalf("Expected 2 tasks, got %d", len(plan.Tasks))
+	}
+
+	// Check that "depends" was mapped to DependsOn
+	if len(plan.Tasks[1].DependsOn) != 1 || plan.Tasks[1].DependsOn[0] != "task-alt-1" {
+		t.Errorf("Expected task-alt-2 to depend on task-alt-1, got %v", plan.Tasks[1].DependsOn)
+	}
+
+	// Check that "complexity" was mapped to EstComplexity
+	if plan.Tasks[0].EstComplexity != "low" {
+		t.Errorf("Expected est_complexity 'low', got '%s'", plan.Tasks[0].EstComplexity)
+	}
+	if plan.Tasks[1].EstComplexity != "high" {
+		t.Errorf("Expected est_complexity 'high', got '%s'", plan.Tasks[1].EstComplexity)
+	}
+}
+
+func TestParsePlanFromFile_MixedFieldNames(t *testing.T) {
+	// Test that standard field names take precedence over alternatives
+	tmpFile := t.TempDir() + "/plan.json"
+	content := `{
+  "summary": "Mixed fields",
+  "tasks": [
+    {
+      "id": "task-mix",
+      "title": "Mixed task",
+      "description": "Mixed field task",
+      "files": [],
+      "depends_on": ["dep-standard"],
+      "depends": ["dep-alt"],
+      "priority": 1,
+      "est_complexity": "medium",
+      "complexity": "low"
+    }
+  ]
+}`
+	if err := writeTestFile(tmpFile, content); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	plan, err := ParsePlanFromFile(tmpFile, "Test mixed fields")
+	if err != nil {
+		t.Fatalf("ParsePlanFromFile failed: %v", err)
+	}
+
+	// Standard field names should take precedence
+	if len(plan.Tasks[0].DependsOn) != 1 || plan.Tasks[0].DependsOn[0] != "dep-standard" {
+		t.Errorf("Expected depends_on to take precedence, got %v", plan.Tasks[0].DependsOn)
+	}
+	if plan.Tasks[0].EstComplexity != "medium" {
+		t.Errorf("Expected est_complexity to take precedence, got '%s'", plan.Tasks[0].EstComplexity)
+	}
+}
+
+func TestParsePlanFromFile_EmptyTasks(t *testing.T) {
+	tmpFile := t.TempDir() + "/plan.json"
+	content := `{"summary": "Empty plan", "tasks": []}`
+	if err := writeTestFile(tmpFile, content); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	_, err := ParsePlanFromFile(tmpFile, "Test")
+	if err == nil {
+		t.Error("Expected error for empty tasks")
+	}
+}
+
+func TestParsePlanFromFile_NestedEmptyTasks(t *testing.T) {
+	tmpFile := t.TempDir() + "/plan.json"
+	content := `{"plan": {"summary": "Empty nested plan", "tasks": []}}`
+	if err := writeTestFile(tmpFile, content); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	_, err := ParsePlanFromFile(tmpFile, "Test")
+	if err == nil {
+		t.Error("Expected error for empty tasks in nested format")
+	}
+}
+
+func TestParsePlanFromFile_InvalidJSON(t *testing.T) {
+	tmpFile := t.TempDir() + "/plan.json"
+	content := `not valid json at all`
+	if err := writeTestFile(tmpFile, content); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	_, err := ParsePlanFromFile(tmpFile, "Test")
+	if err == nil {
+		t.Error("Expected error for invalid JSON")
+	}
+}
+
+func TestParsePlanFromFile_FileNotFound(t *testing.T) {
+	_, err := ParsePlanFromFile("/nonexistent/path/plan.json", "Test")
+	if err == nil {
+		t.Error("Expected error for nonexistent file")
+	}
+}
+
+// writeTestFile is a helper to write content to a file for testing
+func writeTestFile(path, content string) error {
+	return writeFile(path, []byte(content))
+}
+
+// writeFile wraps os.WriteFile for testing
+var writeFile = func(path string, data []byte) error {
+	return os.WriteFile(path, data, 0644)
 }
