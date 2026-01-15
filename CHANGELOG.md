@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Changelog CI Check** - PRs now require a CHANGELOG.md entry. Add the `skip-changelog` label to bypass for trivial changes (test-only, internal refactors, docs-only, dependency updates).
 - **Multi-Pass Plan Mode** (Experimental) - New `:multiplan` (or `:mp`) command launches competitive multi-pass planning with 3 parallel planners using different strategies (maximize-parallelism, minimize-complexity, balanced-approach) plus a plan manager/assessor that evaluates and merges the best plan. This provides the same competitive planning approach as `:ultraplan --multi-pass` but within the simpler inline plan workflow.
+- **Ultraplan Group Expand/Collapse** - Execution groups in ultraplan sessions now support intelligent expand/collapse behavior. By default, only the currently active group is expanded; past and future groups are collapsed. When execution moves to a new group, it auto-expands and the previous group auto-collapses (unless you're viewing a task from that group). Groups show ▼/▶ indicators and can be manually toggled via group navigation mode (press `g` to enter, then `j/k` to navigate and `Enter`/`Space` to toggle). Collapsed groups display a summary showing completion progress like `[✓ 3/5]`. Tasks in collapsed groups are not navigable until the group is expanded.
 
 ### Changed
 

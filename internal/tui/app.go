@@ -63,8 +63,9 @@ func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Ses
 	}
 
 	model.ultraPlan = &UltraPlanState{
-		Coordinator:  coordinator,
-		ShowPlanView: false,
+		Coordinator:           coordinator,
+		ShowPlanView:          false,
+		LastAutoExpandedGroup: -1, // Sentinel value to trigger initial expansion
 	}
 	return &App{
 		model:        model,
@@ -345,6 +346,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ultraPlan.NeedsNotification = false
 			cmds = append(cmds, tuimsg.NotifyUser())
 		}
+
+		// Update ultraplan group collapse state when current group changes
+		m.updateGroupCollapseState()
+
 		return m, tea.Batch(cmds...)
 
 	case tuimsg.UltraPlanInitMsg:

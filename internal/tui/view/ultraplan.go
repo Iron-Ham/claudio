@@ -29,9 +29,44 @@ type UltraPlanState struct {
 	RetriggerMode bool // When true, next digit key triggers group re-trigger
 
 	// Collapsible group state
-	CollapsedGroups  map[int]bool // Track which groups are collapsed (true = collapsed)
+	CollapsedGroups  map[int]bool // Track explicit collapse state (true = collapsed, false = expanded)
 	SelectedGroupIdx int          // Currently selected group index for group-level navigation (0 = first group)
 	GroupNavMode     bool         // When true, arrow keys navigate groups instead of tasks
+	// LastAutoExpandedGroup tracks which group was last auto-expanded to detect changes.
+	// Initialized to -1 as a sentinel value to ensure the first active group is
+	// always auto-expanded on initial render.
+	LastAutoExpandedGroup int
+}
+
+// IsGroupCollapsed returns whether a group should be displayed as collapsed.
+// Default behavior: groups are collapsed unless they are the current active group.
+// When currentGroup is -1 (no active group), all groups default to collapsed.
+// Users can explicitly expand/collapse groups, overriding the default.
+func (s *UltraPlanState) IsGroupCollapsed(groupIdx, currentGroup int) bool {
+	// If there's an explicit state set, use it
+	if s.CollapsedGroups != nil {
+		if explicit, ok := s.CollapsedGroups[groupIdx]; ok {
+			return explicit
+		}
+	}
+	// Default: collapsed unless it's the current group
+	return groupIdx != currentGroup
+}
+
+// SetGroupExpanded explicitly sets a group to expanded state.
+func (s *UltraPlanState) SetGroupExpanded(groupIdx int) {
+	if s.CollapsedGroups == nil {
+		s.CollapsedGroups = make(map[int]bool)
+	}
+	s.CollapsedGroups[groupIdx] = false
+}
+
+// SetGroupCollapsed explicitly sets a group to collapsed state.
+func (s *UltraPlanState) SetGroupCollapsed(groupIdx int) {
+	if s.CollapsedGroups == nil {
+		s.CollapsedGroups = make(map[int]bool)
+	}
+	s.CollapsedGroups[groupIdx] = true
 }
 
 // RenderContext provides the necessary context for rendering ultraplan views.
@@ -295,8 +330,8 @@ func (v *UltraplanView) RenderSidebar(width int, height int) string {
 				break
 			}
 
-			// Check if this group is collapsed
-			isCollapsed := v.ctx.UltraPlan.CollapsedGroups != nil && v.ctx.UltraPlan.CollapsedGroups[groupIdx]
+			// Check if this group is collapsed (default: collapsed unless it's the current group)
+			isCollapsed := v.ctx.UltraPlan.IsGroupCollapsed(groupIdx, session.CurrentGroup)
 			isGroupSelected := v.ctx.UltraPlan.GroupNavMode && v.ctx.UltraPlan.SelectedGroupIdx == groupIdx
 
 			// Determine collapse indicator
@@ -647,6 +682,11 @@ func (v *UltraplanView) RenderInlineContent(width int, maxLines int) string {
 
 	// ========== EXECUTION SECTION ==========
 	if session.Plan != nil {
+		executionStarted := session.Phase == orchestrator.PhaseExecuting ||
+			session.Phase == orchestrator.PhaseSynthesis ||
+			session.Phase == orchestrator.PhaseConsolidating ||
+			session.Phase == orchestrator.PhaseComplete
+
 		execStatus := v.getPhaseSectionStatus(orchestrator.PhaseExecuting, session)
 		b.WriteString(indent)
 		b.WriteString(styles.Muted.Render(fmt.Sprintf("Execution %s", execStatus)))
@@ -656,7 +696,7 @@ func (v *UltraplanView) RenderInlineContent(width int, maxLines int) string {
 			return b.String()
 		}
 
-		// Show execution groups (collapsed view)
+		// Show execution groups with expand/collapse support
 		for groupIdx, group := range session.Plan.ExecutionOrder {
 			if lineCount >= maxLines-2 {
 				b.WriteString(indent)
@@ -666,11 +706,80 @@ func (v *UltraplanView) RenderInlineContent(width int, maxLines int) string {
 				break
 			}
 
+			// Check if this group is collapsed (default: collapsed unless it's the current group)
+			isCollapsed := v.ctx.UltraPlan.IsGroupCollapsed(groupIdx, session.CurrentGroup)
+			isGroupSelected := v.ctx.UltraPlan.GroupNavMode && v.ctx.UltraPlan.SelectedGroupIdx == groupIdx
+
+			// Determine collapse indicator
+			collapseIcon := "▼"
+			if isCollapsed {
+				collapseIcon = "▶"
+			}
+
+			// Build group header with collapse indicator and status
 			groupStatus := v.getGroupStatus(session, group)
+			var groupHeader string
+			if isCollapsed {
+				// Show summary stats when collapsed
+				stats := v.calculateGroupStats(session, group)
+				summary := v.formatGroupSummary(stats)
+				groupHeader = fmt.Sprintf("  %s Group %d %s %s", collapseIcon, groupIdx+1, groupStatus, summary)
+			} else {
+				groupHeader = fmt.Sprintf("  %s Group %d %s", collapseIcon, groupIdx+1, groupStatus)
+			}
+
+			// Apply styling based on state
 			b.WriteString(indent)
-			b.WriteString(styles.Muted.Render(fmt.Sprintf("  Group %d %s (%d tasks)", groupIdx+1, groupStatus, len(group))))
+			if isGroupSelected {
+				// Highlight selected group
+				groupHeader = lipgloss.NewStyle().
+					Background(styles.PrimaryColor).
+					Foreground(styles.TextColor).
+					Render(groupHeader)
+				b.WriteString(groupHeader)
+			} else if !executionStarted {
+				b.WriteString(styles.Muted.Render(groupHeader))
+			} else {
+				b.WriteString(styles.Muted.Render(groupHeader))
+			}
 			b.WriteString("\n")
 			lineCount++
+
+			// Only render tasks if group is expanded
+			if !isCollapsed {
+				for _, taskID := range group {
+					if lineCount >= maxLines-2 {
+						break
+					}
+
+					task := session.GetTask(taskID)
+					if task == nil {
+						continue
+					}
+
+					instID := v.findInstanceIDForTask(session, taskID)
+					selected := v.ctx.IsSelected(instID)
+					navigable := instID != ""
+					taskResult := v.renderExecutionTaskLine(session, task, instID, selected, navigable, width-8)
+					b.WriteString(indent)
+					b.WriteString(taskResult.Content)
+					b.WriteString("\n")
+					lineCount += taskResult.LineCount
+				}
+
+				// Render group consolidator if exists
+				if groupIdx < len(session.GroupConsolidatorIDs) && session.GroupConsolidatorIDs[groupIdx] != "" {
+					consolidatorID := session.GroupConsolidatorIDs[groupIdx]
+					inst := v.ctx.GetInstance(consolidatorID)
+					selected := v.ctx.IsSelected(consolidatorID)
+					navigable := true
+					consolidatorLine := v.renderGroupConsolidatorLine(inst, groupIdx, selected, navigable, width-8)
+					b.WriteString(indent)
+					b.WriteString(consolidatorLine)
+					b.WriteString("\n")
+					lineCount++
+				}
+			}
 		}
 	}
 
