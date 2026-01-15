@@ -197,7 +197,22 @@ You must either:
 
 ## Output
 
-Write your final plan to ` + "`" + PlanFileName + "`" + ` using the standard plan JSON schema.
+Write your final plan to ` + "`" + PlanFileName + "`" + ` using the JSON schema below.
+
+### Plan JSON Schema
+
+Write a JSON file with this exact structure at the root level (do NOT wrap in a "plan" object):
+- "summary": Brief executive summary (string)
+- "tasks": Array of task objects, each with:
+  - "id": Unique identifier like "task-1-setup" (string)
+  - "title": Short title (string)
+  - "description": Detailed instructions for another Claude instance to execute independently (string)
+  - "files": Files this task will modify (array of strings)
+  - "depends_on": IDs of tasks that must complete first (array of strings, empty for independent tasks)
+  - "priority": Lower = higher priority within dependency level (number)
+  - "est_complexity": "low", "medium", or "high" (string)
+- "insights": Key findings about the codebase (array of strings)
+- "constraints": Risks or constraints to consider (array of strings)
 
 Before the plan file, output your reasoning in this format:
 <plan_decision>
