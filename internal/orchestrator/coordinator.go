@@ -760,128 +760,76 @@ func (c *Coordinator) RunPlanManager() error {
 // It includes all candidate plans formatted for comparison
 func (c *Coordinator) buildPlanManagerPrompt() string {
 	session := c.Session()
-	var plansSection strings.Builder
-
 	strategyNames := GetMultiPassStrategyNames()
-	for i, plan := range session.CandidatePlans {
-		strategyName := "unknown"
-		if i < len(strategyNames) {
-			strategyName = strategyNames[i]
-		}
 
-		plansSection.WriteString(fmt.Sprintf("\n### Plan %d: %s Strategy\n\n", i+1, strategyName))
-		plansSection.WriteString(fmt.Sprintf("**Summary:** %s\n\n", plan.Summary))
-		plansSection.WriteString(fmt.Sprintf("**Tasks (%d total):**\n", len(plan.Tasks)))
-		for _, task := range plan.Tasks {
-			deps := "none"
-			if len(task.DependsOn) > 0 {
-				deps = strings.Join(task.DependsOn, ", ")
-			}
-			plansSection.WriteString(fmt.Sprintf("- [%s] %s (complexity: %s, depends: %s)\n",
-				task.ID, task.Title, task.EstComplexity, deps))
-		}
-		plansSection.WriteString(fmt.Sprintf("\n**Execution Groups:** %d parallel groups\n", len(plan.ExecutionOrder)))
-		for groupIdx, group := range plan.ExecutionOrder {
-			plansSection.WriteString(fmt.Sprintf("  - Group %d: %s\n", groupIdx+1, strings.Join(group, ", ")))
-		}
+	// Convert []*PlanSpec to []prompt.CandidatePlanInfo
+	candidatePlans := convertPlanSpecsToCandidatePlans(session.CandidatePlans, strategyNames)
 
-		if len(plan.Insights) > 0 {
-			plansSection.WriteString("\n**Insights:**\n")
-			for _, insight := range plan.Insights {
-				plansSection.WriteString(fmt.Sprintf("- %s\n", insight))
-			}
-		}
-
-		if len(plan.Constraints) > 0 {
-			plansSection.WriteString("\n**Constraints:**\n")
-			for _, constraint := range plan.Constraints {
-				plansSection.WriteString(fmt.Sprintf("- %s\n", constraint))
-			}
-		}
-		plansSection.WriteString("\n---\n")
-	}
-
-	return fmt.Sprintf(PlanManagerPromptTemplate, session.Objective, plansSection.String())
+	// Use PlanningBuilder to format the prompt
+	builder := prompt.NewPlanningBuilder()
+	return builder.BuildCompactPlanManagerPrompt(session.Objective, candidatePlans, strategyNames)
 }
 
 // buildPlanComparisonSection formats all candidate plans for comparison by the plan manager.
 // Each plan includes its strategy name, summary, and full task list in JSON format.
 func (c *Coordinator) buildPlanComparisonSection() string {
 	session := c.Session()
-	var sb strings.Builder
+	strategyNames := GetMultiPassStrategyNames()
 
-	strategies := GetMultiPassStrategyNames()
+	// Convert []*PlanSpec to []prompt.CandidatePlanInfo, filtering out nil plans
+	candidatePlans := convertPlanSpecsToCandidatePlans(session.CandidatePlans, strategyNames)
 
-	for i, plan := range session.CandidatePlans {
+	// Use PlanningBuilder to format detailed plans with JSON task output
+	builder := prompt.NewPlanningBuilder()
+	return builder.FormatDetailedPlans(candidatePlans, strategyNames)
+}
+
+// convertPlanSpecsToCandidatePlans converts []*PlanSpec to []prompt.CandidatePlanInfo.
+// This bridges the orchestrator types to the prompt package types without requiring
+// the prompt package to import orchestrator (avoiding circular dependencies).
+// Nil plans in the input are skipped (not included in the output).
+func convertPlanSpecsToCandidatePlans(plans []*PlanSpec, strategies []string) []prompt.CandidatePlanInfo {
+	if len(plans) == 0 {
+		return nil
+	}
+
+	result := make([]prompt.CandidatePlanInfo, 0, len(plans))
+	for i, plan := range plans {
+		// Skip nil plans to match original buildPlanComparisonSection behavior
 		if plan == nil {
 			continue
 		}
 
-		// Determine strategy name (use index if out of bounds)
-		strategyName := fmt.Sprintf("strategy-%d", i+1)
+		var strategy string
 		if i < len(strategies) {
-			strategyName = strategies[i]
+			strategy = strategies[i]
 		}
 
-		sb.WriteString(fmt.Sprintf("### Plan %d: %s\n\n", i+1, strategyName))
-		sb.WriteString(fmt.Sprintf("**Summary**: %s\n\n", plan.Summary))
-
-		// Task count and parallelism stats
-		sb.WriteString(fmt.Sprintf("**Task Count**: %d tasks\n", len(plan.Tasks)))
-		if len(plan.ExecutionOrder) > 0 {
-			sb.WriteString(fmt.Sprintf("**Execution Groups**: %d groups\n", len(plan.ExecutionOrder)))
-			// Calculate max parallelism (largest group)
-			maxParallel := 0
-			for _, group := range plan.ExecutionOrder {
-				if len(group) > maxParallel {
-					maxParallel = len(group)
-				}
+		// Convert tasks
+		taskInfos := make([]prompt.TaskInfo, len(plan.Tasks))
+		for j, task := range plan.Tasks {
+			taskInfos[j] = prompt.TaskInfo{
+				ID:            task.ID,
+				Title:         task.Title,
+				Description:   task.Description,
+				Files:         task.Files,
+				DependsOn:     task.DependsOn,
+				Priority:      task.Priority,
+				EstComplexity: string(task.EstComplexity),
 			}
-			sb.WriteString(fmt.Sprintf("**Max Parallelism**: %d concurrent tasks\n", maxParallel))
-		}
-		sb.WriteString("\n")
-
-		// Insights
-		if len(plan.Insights) > 0 {
-			sb.WriteString("**Insights**:\n")
-			for _, insight := range plan.Insights {
-				sb.WriteString(fmt.Sprintf("- %s\n", insight))
-			}
-			sb.WriteString("\n")
 		}
 
-		// Constraints
-		if len(plan.Constraints) > 0 {
-			sb.WriteString("**Constraints**:\n")
-			for _, constraint := range plan.Constraints {
-				sb.WriteString(fmt.Sprintf("- %s\n", constraint))
-			}
-			sb.WriteString("\n")
-		}
-
-		// Full task list in JSON format for detailed comparison
-		sb.WriteString("**Tasks (JSON)**:\n```json\n")
-		tasksJSON, err := json.MarshalIndent(plan.Tasks, "", "  ")
-		if err != nil {
-			sb.WriteString(fmt.Sprintf("Error marshaling tasks: %v\n", err))
-		} else {
-			sb.WriteString(string(tasksJSON))
-		}
-		sb.WriteString("\n```\n\n")
-
-		// Execution order visualization
-		if len(plan.ExecutionOrder) > 0 {
-			sb.WriteString("**Execution Order**:\n")
-			for groupIdx, group := range plan.ExecutionOrder {
-				sb.WriteString(fmt.Sprintf("- Group %d: %s\n", groupIdx+1, strings.Join(group, ", ")))
-			}
-			sb.WriteString("\n")
-		}
-
-		sb.WriteString("---\n\n")
+		result = append(result, prompt.CandidatePlanInfo{
+			Strategy:       strategy,
+			Summary:        plan.Summary,
+			Tasks:          taskInfos,
+			ExecutionOrder: plan.ExecutionOrder,
+			Insights:       plan.Insights,
+			Constraints:    plan.Constraints,
+		})
 	}
 
-	return sb.String()
+	return result
 }
 
 // SetPlan sets the plan for this ultra-plan session (used after planning completes)

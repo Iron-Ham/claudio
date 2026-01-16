@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Prompt Building Refactor** - Extracted prompt-building logic from coordinator.go into the orchestrator/prompt package, improving code organization and testability
+- **Prompt Building Refactor** - Extracted prompt-building logic from coordinator.go into the orchestrator/prompt package, improving code organization and testability. Updated `buildPlanManagerPrompt` and `buildPlanComparisonSection` methods to use `PlanningBuilder` with the new conversion helpers. Added `FormatDetailedPlans` and `BuildCompactPlanManagerPrompt` methods to `PlanningBuilder` for flexible plan formatting. Exported `PlanManagerPromptTemplate` in the prompt package.
 
 ## [0.7.1] - 2026-01-15
 
