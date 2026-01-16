@@ -524,10 +524,40 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // Normal Mode Key Handlers
 // -----------------------------------------------------------------------------
 
-// handleNextInstance switches to the next instance tab.
+// handleNextInstance switches to the next instance in display order.
+// This navigates based on how instances appear in the sidebar, not by creation order.
 func (m Model) handleNextInstance() (tea.Model, tea.Cmd) {
-	if m.instanceCount() > 0 {
-		newTab := (m.activeTab + 1) % m.instanceCount()
+	displayOrder := m.getInstanceDisplayOrder()
+	if len(displayOrder) == 0 {
+		return m, nil
+	}
+
+	// Find current instance's position in display order
+	currentInst := m.activeInstance()
+	if currentInst == nil {
+		return m, nil
+	}
+
+	currentDisplayIdx := -1
+	for i, id := range displayOrder {
+		if id == currentInst.ID {
+			currentDisplayIdx = i
+			break
+		}
+	}
+
+	if currentDisplayIdx == -1 {
+		// Current instance not found in display order, fall back to first
+		currentDisplayIdx = 0
+	}
+
+	// Move to next in display order (with wrap-around)
+	nextDisplayIdx := (currentDisplayIdx + 1) % len(displayOrder)
+	nextID := displayOrder[nextDisplayIdx]
+
+	// Find the session.Instances index for the target instance
+	newTab := m.findInstanceIndexByID(nextID)
+	if newTab >= 0 {
 		m.switchToInstance(newTab)
 		m.ensureActiveVisible()
 		m.updateTerminalOnInstanceChange()
@@ -541,10 +571,40 @@ func (m Model) handleNextInstance() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handlePrevInstance switches to the previous instance tab.
+// handlePrevInstance switches to the previous instance in display order.
+// This navigates based on how instances appear in the sidebar, not by creation order.
 func (m Model) handlePrevInstance() (tea.Model, tea.Cmd) {
-	if m.instanceCount() > 0 {
-		newTab := (m.activeTab - 1 + m.instanceCount()) % m.instanceCount()
+	displayOrder := m.getInstanceDisplayOrder()
+	if len(displayOrder) == 0 {
+		return m, nil
+	}
+
+	// Find current instance's position in display order
+	currentInst := m.activeInstance()
+	if currentInst == nil {
+		return m, nil
+	}
+
+	currentDisplayIdx := -1
+	for i, id := range displayOrder {
+		if id == currentInst.ID {
+			currentDisplayIdx = i
+			break
+		}
+	}
+
+	if currentDisplayIdx == -1 {
+		// Current instance not found in display order, fall back to last
+		currentDisplayIdx = len(displayOrder) - 1
+	}
+
+	// Move to previous in display order (with wrap-around)
+	prevDisplayIdx := (currentDisplayIdx - 1 + len(displayOrder)) % len(displayOrder)
+	prevID := displayOrder[prevDisplayIdx]
+
+	// Find the session.Instances index for the target instance
+	newTab := m.findInstanceIndexByID(prevID)
+	if newTab >= 0 {
 		m.switchToInstance(newTab)
 		m.ensureActiveVisible()
 		m.updateTerminalOnInstanceChange()

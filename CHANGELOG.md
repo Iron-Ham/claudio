@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Prompt Building Refactor** - Extracted prompt-building logic from coordinator.go into the orchestrator/prompt package, improving code organization and testability. Updated `buildPlanManagerPrompt` and `buildPlanComparisonSection` methods to use `PlanningBuilder` with the new conversion helpers. Added `FormatDetailedPlans` and `BuildCompactPlanManagerPrompt` methods to `PlanningBuilder` for flexible plan formatting. Exported `PlanManagerPromptTemplate` in the prompt package.
 - **Complete Coordinator Prompt Builder Migration** - Migrated remaining coordinator prompt-building methods (`buildRevisionPrompt`, `buildSynthesisPrompt`, `buildConsolidationPrompt`) to use the extracted prompt builders (`RevisionBuilder`, `SynthesisBuilder`, `ConsolidationBuilder`). Removed duplicate prompt templates from `ultraplan.go` that are now defined in the `orchestrator/prompt` package. Removed unused `PromptAdapter` struct and its methods (keeping only the standalone type conversion functions that are actively used). This completes the separation of prompt-building concerns from the Coordinator.
 
+### Fixed
+
+- **Sidebar Navigation Order** - Fixed h/l (or tab/shift-tab) navigation in the sidebar navigating by instance creation order instead of display order. When instances are grouped (e.g., in ultraplan mode), the sidebar displays instances in a specific hierarchy (ungrouped first, then by group). Navigation now correctly follows the visual display order rather than the internal creation order, preventing user confusion when pressing tab/l to move to the "next" instance.
+
 ## [0.7.1] - 2026-01-15
 
 This release focuses on **Phase Orchestration** - extracting the monolithic Coordinator into four phase-specific orchestrators and implementing comprehensive synthesis/revision orchestration logic.
