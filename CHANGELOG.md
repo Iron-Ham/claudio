@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tmux Panel Width Not Using Configured Sidebar** - Fixed an issue where the tmux panel width was not respecting the user-configured sidebar width (`tui.sidebar_width`). When resizing the terminal, the content area calculation now uses the configured sidebar width instead of the default, ensuring tmux panels are correctly sized to match the visible sidebar. Also removed dead code from `view/dashboard.go` that contained an outdated hardcoded sidebar width constant.
+
 ## [0.9.0] - 2026-01-16
 
 This release brings **Sidebar Customization & Group Dismiss** - allowing users to configure the sidebar width for their workflow preferences and quickly dismiss entire instance groups with a single shortcut.
