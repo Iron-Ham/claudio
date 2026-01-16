@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-01-16
+
+This patch release focuses on **Critical Stability Fix** - resolving a bug that could cause the TUI to display frozen/stale output when tmux is under heavy load.
+
 ### Fixed
 
 - **Frozen Output During Tmux Timeout** - Fixed a critical bug where tmux output would freeze completely when the tmux status query timed out. Previously, when `getSessionStatus()` took longer than 2 seconds (due to heavy system load or many tmux sessions), the capture loop would skip output capture entirely, causing the TUI to display stale content indefinitely. Now output capture continues even when the status query fails, using a full pane capture as fallback.
@@ -500,6 +504,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.9.2]: https://github.com/Iron-Ham/claudio/releases/tag/v0.9.2
 [0.9.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.9.1
 [0.9.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.9.0
 [0.8.2]: https://github.com/Iron-Ham/claudio/releases/tag/v0.8.2
