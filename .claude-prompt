@@ -1,0 +1,1 @@
+Implement a group shortcut that effectively does a `:D` on every member of the group. maybe `gq` if that's in keeping with vim norms?

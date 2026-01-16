@@ -147,6 +147,7 @@ func DefaultHelpSections() []HelpSection {
 				{Key: "gs", Description: "Skip current group (mark pending as skipped)"},
 				{Key: "gr", Description: "Retry failed tasks in current group"},
 				{Key: "gf", Description: "Force-start next group (ignore dependencies)"},
+				{Key: "gq", Description: "Dismiss all instances in current group"},
 			},
 		},
 		{
