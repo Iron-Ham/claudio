@@ -82,6 +82,16 @@ type RenderContext struct {
 	Outputs      map[string]string
 	GetInstance  func(id string) *orchestrator.Instance
 	IsSelected   func(instanceID string) bool
+
+	// InputMode indicates whether input forwarding mode is active.
+	// Used by help bar rendering to show appropriate mode badge.
+	InputMode bool
+
+	// TerminalFocused indicates whether the terminal pane has focus.
+	TerminalFocused bool
+
+	// TerminalDirMode is the current terminal directory mode ("invoke" or "worktree").
+	TerminalDirMode string
 }
 
 // UltraplanView handles rendering of ultra-plan UI components including
@@ -1512,6 +1522,27 @@ func (v *UltraplanView) RenderPlanView(width int) string {
 
 // RenderHelp renders the help bar for ultra-plan mode
 func (v *UltraplanView) RenderHelp() string {
+	// Input mode takes highest priority - shows INPUT badge with exit instructions
+	if v.ctx.InputMode {
+		badge := styles.ModeBadgeInput.Render("INPUT")
+		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
+			styles.Muted.Render("All keystrokes forwarded to Claude")
+		return styles.HelpBar.Width(v.ctx.Width).Render(badge + "  " + help)
+	}
+
+	// Terminal focused mode - shows TERMINAL badge
+	if v.ctx.TerminalFocused {
+		badge := styles.ModeBadgeTerminal.Render("TERMINAL")
+		dirMode := "invoke"
+		if v.ctx.TerminalDirMode == "worktree" {
+			dirMode = "worktree"
+		}
+		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
+			styles.HelpKey.Render("[Ctrl+Shift+T]") + " switch dir  " +
+			styles.Muted.Render("("+dirMode+")")
+		return styles.HelpBar.Width(v.ctx.Width).Render(badge + "  " + help)
+	}
+
 	if v.ctx.UltraPlan == nil {
 		return ""
 	}

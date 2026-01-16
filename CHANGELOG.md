@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Footer Input Mode Badge in Special Modes** - Fixed the INPUT and TERMINAL mode badges not appearing in the footer when in triple-shot mode or ultra-plan mode. Previously, entering input mode (`i`) while in these special modes would continue showing the NORMAL/ULTRAPLAN badge instead of the INPUT badge. Now the footer correctly shows the INPUT badge with exit instructions when input forwarding is active, regardless of the underlying session mode.
 - **Git Submodule File Traversal** - Fixed errors and warnings when working with repositories containing git submodules. File traversal in the conflict detector, completion file verifier, and code analyzer now correctly skips submodule directories to prevent permission errors, symlink errors, and duplicate events when submodules are uninitialized or partially initialized.
 
 ### Changed
