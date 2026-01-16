@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Configurable Sidebar Width** - The sidebar width is now user-configurable through the interactive configuration UI (`tui.sidebar_width`). The default width has been increased from 30 to 36 columns to provide more space for instance names and metrics. Users can configure widths between 20-60 columns.
 - **Group Dismiss Shortcut** - Added `gq` keyboard shortcut to dismiss (remove) all instances in the currently selected group. This applies the `:D` (remove) action to every instance in the group, providing a quick way to clean up an entire group at once.
 
 ### Changed

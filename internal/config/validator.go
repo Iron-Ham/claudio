@@ -125,6 +125,28 @@ func (c *Config) validateTUI() []ValidationError {
 		})
 	}
 
+	// Sidebar width validation (0 means use default, which is valid).
+	// These values must match tui.SidebarMinWidth and tui.SidebarMaxWidth
+	// (defined separately to avoid circular import).
+	const minSidebarWidth = 20
+	const maxSidebarWidth = 60
+	if c.TUI.SidebarWidth != 0 {
+		if c.TUI.SidebarWidth < minSidebarWidth {
+			errors = append(errors, ValidationError{
+				Field:   "tui.sidebar_width",
+				Value:   c.TUI.SidebarWidth,
+				Message: fmt.Sprintf("must be at least %d columns", minSidebarWidth),
+			})
+		}
+		if c.TUI.SidebarWidth > maxSidebarWidth {
+			errors = append(errors, ValidationError{
+				Field:   "tui.sidebar_width",
+				Value:   c.TUI.SidebarWidth,
+				Message: fmt.Sprintf("exceeds maximum of %d columns", maxSidebarWidth),
+			})
+		}
+	}
+
 	return errors
 }
 

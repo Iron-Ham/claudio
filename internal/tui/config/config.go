@@ -92,6 +92,13 @@ func New() Model {
 					Type:        "bool",
 					Category:    "tui",
 				},
+				{
+					Key:         "tui.sidebar_width",
+					Label:       "Sidebar Width",
+					Description: "Width of the sidebar panel in columns (20-60, default: 36)",
+					Type:        "int",
+					Category:    "tui",
+				},
 			},
 		},
 		{
@@ -1119,6 +1126,7 @@ func (m *Model) resetCurrentToDefault() {
 		"tui.auto_focus_on_input":  defaults.TUI.AutoFocusOnInput,
 		"tui.max_output_lines":     defaults.TUI.MaxOutputLines,
 		"tui.verbose_command_help": defaults.TUI.VerboseCommandHelp,
+		"tui.sidebar_width":        defaults.TUI.SidebarWidth,
 		// Instance
 		"instance.output_buffer_size":         defaults.Instance.OutputBufferSize,
 		"instance.capture_interval_ms":        defaults.Instance.CaptureIntervalMs,
