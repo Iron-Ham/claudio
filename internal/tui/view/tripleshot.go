@@ -25,10 +25,6 @@ type TripleShotState struct {
 	// This enables multiple concurrent tripleshot sessions.
 	Coordinators map[string]*orchestrator.TripleShotCoordinator
 
-	// Coordinator is kept for backward compatibility during transition.
-	// Deprecated: Use Coordinators map instead.
-	Coordinator *orchestrator.TripleShotCoordinator
-
 	NeedsNotification bool // Set when user input is needed (checked on tick)
 
 	// PlanGroupIDs tracks groups created by :plan commands while in triple-shot mode.
@@ -39,39 +35,31 @@ type TripleShotState struct {
 
 // GetCoordinatorForGroup returns the coordinator for a specific group ID.
 func (s *TripleShotState) GetCoordinatorForGroup(groupID string) *orchestrator.TripleShotCoordinator {
-	if s.Coordinators != nil {
-		if coord, ok := s.Coordinators[groupID]; ok {
-			return coord
-		}
+	if s == nil || s.Coordinators == nil {
+		return nil
 	}
-	// Fall back to single coordinator for backward compatibility
-	return s.Coordinator
+	return s.Coordinators[groupID]
 }
 
 // GetAllCoordinators returns all active tripleshot coordinators.
 // Results are sorted by group ID for deterministic ordering.
 func (s *TripleShotState) GetAllCoordinators() []*orchestrator.TripleShotCoordinator {
-	if s == nil {
+	if s == nil || len(s.Coordinators) == 0 {
 		return nil
 	}
-	if len(s.Coordinators) > 0 {
-		// Sort keys for deterministic iteration order
-		keys := make([]string, 0, len(s.Coordinators))
-		for k := range s.Coordinators {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
 
-		coords := make([]*orchestrator.TripleShotCoordinator, 0, len(s.Coordinators))
-		for _, k := range keys {
-			coords = append(coords, s.Coordinators[k])
-		}
-		return coords
+	// Sort keys for deterministic iteration order
+	keys := make([]string, 0, len(s.Coordinators))
+	for k := range s.Coordinators {
+		keys = append(keys, k)
 	}
-	if s.Coordinator != nil {
-		return []*orchestrator.TripleShotCoordinator{s.Coordinator}
+	sort.Strings(keys)
+
+	coords := make([]*orchestrator.TripleShotCoordinator, 0, len(s.Coordinators))
+	for _, k := range keys {
+		coords = append(coords, s.Coordinators[k])
 	}
-	return nil
+	return coords
 }
 
 // HasActiveCoordinators returns true if there are any active tripleshot coordinators.
@@ -79,7 +67,7 @@ func (s *TripleShotState) HasActiveCoordinators() bool {
 	if s == nil {
 		return false
 	}
-	return len(s.Coordinators) > 0 || s.Coordinator != nil
+	return len(s.Coordinators) > 0
 }
 
 // TripleShotRenderContext provides the necessary context for rendering triple-shot views

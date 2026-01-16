@@ -115,7 +115,7 @@ func runTripleshot(cmd *cobra.Command, args []string) error {
 	tripleSession := orchestrator.NewTripleShotSession(task, tripleConfig)
 
 	// Link triple-shot session to main session for persistence
-	session.TripleShot = tripleSession
+	session.TripleShots = append(session.TripleShots, tripleSession)
 
 	// Create coordinator with logger
 	coordinator := orchestrator.NewTripleShotCoordinator(orch, session, tripleSession, logger)

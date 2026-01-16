@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Deprecated TripleShot Single Coordinator** - Removed the deprecated `Coordinator` field from `TripleShotState` and `TripleShot` field from `Session`. All code now uses the `Coordinators` map and `TripleShots` slice for multiple concurrent tripleshot support.
+- **Deprecated Plan/Issue Wrapper Functions** - Removed deprecated wrapper functions (`CreateIssue`, `UpdateIssueBody`, `GetIssueNodeID`, `AddSubIssue`) and `IssueOptions` type from `internal/plan/issue.go`. Use `tracker.GitHubTracker` methods directly.
+- **Deprecated PR Wrapper Functions** - Removed deprecated `CreatePR` and `CreatePRDraft` wrapper functions from `internal/pr/pr.go`. Use `pr.Create(PROptions{...})` directly.
+- **Deprecated Instance Manager Constructors** - Removed deprecated constructors `NewManager`, `NewManagerWithConfig`, `NewManagerWithSession`, and method `SetStateMonitor` from `internal/instance/manager.go`. Use `NewManagerWithDeps(ManagerOptions{...})` for explicit dependency injection.
+- **Deprecated Terminal Constants** - Removed deprecated type alias `TerminalDirMode` and constants `TerminalDirInvocation`, `TerminalDirWorktree`, `DefaultTerminalHeight`, `MinTerminalHeight`, `MaxTerminalHeightRatio` from `internal/tui/model.go`. Use the `terminal` package exports directly.
+- **Deprecated GetTripleShotCoordinator** - Removed deprecated `GetTripleShotCoordinator()` method from `command.Dependencies` interface and `Model`. Use `GetTripleShotCoordinators()` which returns all active coordinators.
+- **Deprecated getHistorySize Function** - Removed the deprecated `getHistorySize` method from instance Manager. Use `getSessionStatus` for batched queries with reduced subprocess overhead.
+- **Unused Error Sentinels** - Removed unused error sentinels from `internal/orchestrator/prompt_adapter.go`: `ErrNilUltraPlanSession`, `ErrTaskNotFoundInPlan`, and `ErrNilGroupTracker`. These were leftover from the removed `PromptAdapter` struct.
+
 ### Added
 
 - **Force Quit Command** - Added `:q!` (and `:quit!`) command to force quit Claudio, stopping all running instances, cleaning up all worktrees, and exiting immediately. This provides a quick way to completely exit and clean up when you want to abandon all work in progress.

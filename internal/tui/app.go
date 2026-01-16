@@ -78,7 +78,6 @@ func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Ses
 func NewWithTripleShot(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.TripleShotCoordinator, logger *logging.Logger) *App {
 	model := NewModel(orch, session, logger)
 	model.tripleShot = &TripleShotState{
-		Coordinator:  coordinator,
 		Coordinators: make(map[string]*orchestrator.TripleShotCoordinator),
 	}
 	// Add the coordinator to the map keyed by its group ID for multiple tripleshot support
@@ -141,11 +140,6 @@ func NewWithTripleShots(orch *orchestrator.Orchestrator, session *orchestrator.S
 	// Auto-enable grouped sidebar mode if we created any groups
 	if createdGroup {
 		model.autoEnableGroupedMode()
-	}
-
-	// Set the first coordinator as the deprecated single Coordinator for backward compatibility
-	if len(coordinators) > 0 {
-		model.tripleShot.Coordinator = coordinators[0]
 	}
 
 	return &App{
@@ -1373,9 +1367,6 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	// Add to TripleShots slice for persistence (supports multiple)
 	m.session.TripleShots = append(m.session.TripleShots, tripleSession)
 
-	// Also set single TripleShot field for backward compatibility
-	m.session.TripleShot = tripleSession
-
 	// Create coordinator
 	coordinator := orchestrator.NewTripleShotCoordinator(m.orchestrator, m.session, tripleSession, m.logger)
 
@@ -1393,9 +1384,6 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 
 	// Add coordinator to the map keyed by group ID
 	m.tripleShot.Coordinators[tripleGroup.ID] = coordinator
-
-	// Also set the deprecated single Coordinator for backward compatibility
-	m.tripleShot.Coordinator = coordinator
 
 	numActive := len(m.tripleShot.Coordinators)
 	if numActive > 1 {

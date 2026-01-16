@@ -6,28 +6,18 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
 )
 
-// Error sentinels for PromptAdapter operations
+// Error sentinels for phase adapter operations.
+// These are used by coordinator_phase_adapter.go for nil checks.
 var (
-	// ErrNilCoordinator is returned when a PromptAdapter method requires a
-	// Coordinator but the adapter was created with a nil coordinator.
+	// ErrNilCoordinator is returned when an operation requires a
+	// Coordinator but nil was provided.
 	ErrNilCoordinator = errors.New("prompt adapter has nil coordinator")
-
-	// ErrNilUltraPlanSession is returned when a PromptAdapter method requires
-	// an UltraPlanSession but the coordinator's manager returns nil.
-	ErrNilUltraPlanSession = errors.New("coordinator has nil ultra-plan session")
 
 	// ErrNilManager is returned when the coordinator's manager is nil.
 	ErrNilManager = errors.New("prompt adapter: manager is required")
 
 	// ErrNilSession is returned when the manager's session is nil.
 	ErrNilSession = errors.New("prompt adapter: session is required")
-
-	// ErrTaskNotFoundInPlan is returned when the requested task ID does not
-	// exist in the current plan.
-	ErrTaskNotFoundInPlan = errors.New("prompt adapter: task not found in plan")
-
-	// ErrNilGroupTracker is returned when the Coordinator's groupTracker is nil.
-	ErrNilGroupTracker = errors.New("prompt adapter: group tracker is required")
 )
 
 // planInfoFromPlanSpec converts a PlanSpec to a prompt.PlanInfo.

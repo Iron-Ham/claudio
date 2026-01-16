@@ -8,35 +8,34 @@ import (
 
 func TestTerminalHeightConstants(t *testing.T) {
 	// Verify the terminal height constants are set to reasonable values
-	// These are re-exported from terminal package for backward compatibility
-	t.Run("DefaultTerminalHeight is at least MinTerminalHeight", func(t *testing.T) {
-		if DefaultTerminalHeight < MinTerminalHeight {
-			t.Errorf("DefaultTerminalHeight (%d) should be >= MinTerminalHeight (%d)",
-				DefaultTerminalHeight, MinTerminalHeight)
+	t.Run("DefaultPaneHeight is at least MinPaneHeight", func(t *testing.T) {
+		if terminal.DefaultPaneHeight < terminal.MinPaneHeight {
+			t.Errorf("DefaultPaneHeight (%d) should be >= MinPaneHeight (%d)",
+				terminal.DefaultPaneHeight, terminal.MinPaneHeight)
 		}
 	})
 
-	t.Run("DefaultTerminalHeight is reasonable", func(t *testing.T) {
+	t.Run("DefaultPaneHeight is reasonable", func(t *testing.T) {
 		// The default height should be at least 10 lines to be useful
-		if DefaultTerminalHeight < 10 {
-			t.Errorf("DefaultTerminalHeight (%d) should be >= 10 for usability",
-				DefaultTerminalHeight)
+		if terminal.DefaultPaneHeight < 10 {
+			t.Errorf("DefaultPaneHeight (%d) should be >= 10 for usability",
+				terminal.DefaultPaneHeight)
 		}
 	})
 
-	t.Run("MinTerminalHeight allows for content", func(t *testing.T) {
+	t.Run("MinPaneHeight allows for content", func(t *testing.T) {
 		// Minimum height should account for border (2) + header (1) + at least 1 content line
 		// So minimum should be at least 4
-		if MinTerminalHeight < 4 {
-			t.Errorf("MinTerminalHeight (%d) should be >= 4 to allow for border, header, and content",
-				MinTerminalHeight)
+		if terminal.MinPaneHeight < 4 {
+			t.Errorf("MinPaneHeight (%d) should be >= 4 to allow for border, header, and content",
+				terminal.MinPaneHeight)
 		}
 	})
 
-	t.Run("MaxTerminalHeightRatio is sensible", func(t *testing.T) {
-		if MaxTerminalHeightRatio <= 0 || MaxTerminalHeightRatio > 0.8 {
-			t.Errorf("MaxTerminalHeightRatio (%f) should be between 0 and 0.8",
-				MaxTerminalHeightRatio)
+	t.Run("MaxPaneHeightRatio is sensible", func(t *testing.T) {
+		if terminal.MaxPaneHeightRatio <= 0 || terminal.MaxPaneHeightRatio > 0.8 {
+			t.Errorf("MaxPaneHeightRatio (%f) should be between 0 and 0.8",
+				terminal.MaxPaneHeightRatio)
 		}
 	})
 }

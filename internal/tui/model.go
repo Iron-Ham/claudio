@@ -16,17 +16,6 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 )
 
-// TerminalDirMode indicates which directory the terminal pane is using.
-// Deprecated: Use terminal.DirMode instead.
-type TerminalDirMode = terminal.DirMode
-
-// Terminal directory mode constants.
-// Deprecated: Use terminal.DirInvocation and terminal.DirWorktree instead.
-const (
-	TerminalDirInvocation = terminal.DirInvocation
-	TerminalDirWorktree   = terminal.DirWorktree
-)
-
 // modelInstanceProvider adapts the Model to the terminal.ActiveInstanceProvider interface.
 type modelInstanceProvider struct {
 	model *Model
@@ -968,20 +957,6 @@ func isWordChar(r rune) bool {
 // Terminal pane helper methods
 // -----------------------------------------------------------------------------
 
-// DefaultTerminalHeight is the default height of the terminal pane in lines.
-// Set to 15 to provide a more useful terminal display showing adequate
-// command output and shell history.
-// Deprecated: Use terminal.DefaultPaneHeight instead.
-const DefaultTerminalHeight = terminal.DefaultPaneHeight
-
-// MinTerminalHeight is the minimum height of the terminal pane.
-// Deprecated: Use terminal.MinPaneHeight instead.
-const MinTerminalHeight = terminal.MinPaneHeight
-
-// MaxTerminalHeightRatio is the maximum ratio of terminal height to total height.
-// Deprecated: Use terminal.MaxPaneHeightRatio instead.
-const MaxTerminalHeightRatio = terminal.MaxPaneHeightRatio
-
 // IsTerminalMode returns true if the terminal pane has input focus.
 func (m Model) IsTerminalMode() bool {
 	return m.terminalManager.IsFocused()
@@ -1153,14 +1128,6 @@ func (m Model) GetUltraPlanCoordinator() *orchestrator.Coordinator {
 	return m.ultraPlan.Coordinator
 }
 
-// GetTripleShotCoordinator returns the triple-shot coordinator if in triple-shot mode.
-func (m Model) GetTripleShotCoordinator() *orchestrator.TripleShotCoordinator {
-	if m.tripleShot == nil {
-		return nil
-	}
-	return m.tripleShot.Coordinator
-}
-
 // GetTripleShotCoordinators returns all active tripleshot coordinators.
 func (m Model) GetTripleShotCoordinators() []*orchestrator.TripleShotCoordinator {
 	if m.tripleShot == nil {
@@ -1187,13 +1154,6 @@ func (m Model) IsInstanceTripleShotJudge(instanceID string) bool {
 	// Check all coordinators in the map
 	for _, coord := range m.tripleShot.Coordinators {
 		session := coord.Session()
-		if session != nil && session.JudgeID == instanceID {
-			return true
-		}
-	}
-	// Also check deprecated single coordinator for backward compatibility
-	if m.tripleShot.Coordinator != nil {
-		session := m.tripleShot.Coordinator.Session()
 		if session != nil && session.JudgeID == instanceID {
 			return true
 		}

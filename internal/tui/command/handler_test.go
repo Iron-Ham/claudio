@@ -58,9 +58,6 @@ func (m *mockDeps) IsTripleShotMode() bool                      { return m.tripl
 func (m *mockDeps) GetUltraPlanCoordinator() *orchestrator.Coordinator {
 	return m.ultraCoordinator
 }
-func (m *mockDeps) GetTripleShotCoordinator() *orchestrator.TripleShotCoordinator {
-	return m.tripleShotCoordinator
-}
 func (m *mockDeps) GetTripleShotCoordinators() []*orchestrator.TripleShotCoordinator {
 	if m.tripleShotCoordinator != nil {
 		return []*orchestrator.TripleShotCoordinator{m.tripleShotCoordinator}
