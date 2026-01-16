@@ -1887,47 +1887,41 @@ func (c *Coordinator) startRevisionTask(taskID string, completionChan chan<- tas
 	return nil
 }
 
-// buildRevisionPrompt creates the prompt for a revision task
+// buildRevisionPrompt creates the prompt for a revision task using the prompt.RevisionBuilder.
+// It builds a prompt.Context with plan info, task info, and revision state, then delegates
+// to the builder to produce the formatted prompt string.
 func (c *Coordinator) buildRevisionPrompt(task *PlannedTask) string {
 	session := c.Session()
 
-	// Gather issues for this specific task
-	var taskIssues []RevisionIssue
-	for _, issue := range session.Revision.Issues {
-		if issue.TaskID == task.ID || issue.TaskID == "" {
-			taskIssues = append(taskIssues, issue)
-		}
+	// Build prompt context for the revision builder
+	ctx := &prompt.Context{
+		Phase:     prompt.PhaseRevision,
+		SessionID: session.ID,
+		Objective: session.Objective,
+		Plan:      planInfoFromPlanSpec(session.Plan),
+		Task:      taskInfoPtr(taskInfoFromPlannedTask(*task)),
+		Revision:  revisionInfoFromState(session.Revision),
 	}
 
-	// Format issues as a readable list
-	var issuesStr strings.Builder
-	for i, issue := range taskIssues {
-		issuesStr.WriteString(fmt.Sprintf("%d. **%s**: %s\n", i+1, issue.Severity, issue.Description))
-		if len(issue.Files) > 0 {
-			issuesStr.WriteString(fmt.Sprintf("   Files: %s\n", strings.Join(issue.Files, ", ")))
-		}
-		if issue.Suggestion != "" {
-			issuesStr.WriteString(fmt.Sprintf("   Suggestion: %s\n", issue.Suggestion))
-		}
-		issuesStr.WriteString("\n")
+	// Use the RevisionBuilder to generate the prompt
+	builder := prompt.NewRevisionBuilder()
+	result, err := builder.Build(ctx)
+	if err != nil {
+		// Log the error and fall back to a minimal prompt
+		c.logger.Error("failed to build revision prompt",
+			"task_id", task.ID,
+			"error", err.Error(),
+		)
+		return fmt.Sprintf("Revise task %s: %s\n\nFix the issues identified during synthesis.", task.ID, task.Title)
 	}
 
-	// Get current revision round (default to 1 if not set)
-	revisionRound := 1
-	if session.Revision != nil {
-		revisionRound = session.Revision.RevisionRound + 1
-	}
+	return result
+}
 
-	return fmt.Sprintf(RevisionPromptTemplate,
-		session.Objective,
-		task.ID,
-		task.Title,
-		task.Description,
-		revisionRound,
-		issuesStr.String(),
-		task.ID,       // For completion file JSON
-		revisionRound, // For completion file JSON
-	)
+// taskInfoPtr returns a pointer to the given TaskInfo.
+// This is a helper for building prompt contexts.
+func taskInfoPtr(t prompt.TaskInfo) *prompt.TaskInfo {
+	return &t
 }
 
 // monitorRevisionTasks monitors all revision tasks and triggers re-synthesis when complete
@@ -2079,7 +2073,9 @@ func (c *Coordinator) StartConsolidation() error {
 	return nil
 }
 
-// buildConsolidationPrompt creates the prompt for the consolidation phase
+// buildConsolidationPrompt creates the prompt for the consolidation phase using the prompt.ConsolidationBuilder.
+// It builds a prompt.Context with plan info, consolidation configuration, synthesis context, and task worktrees,
+// then delegates to the builder to produce the formatted prompt string.
 func (c *Coordinator) buildConsolidationPrompt() string {
 	session := c.Session()
 
@@ -2093,119 +2089,37 @@ func (c *Coordinator) buildConsolidationPrompt() string {
 	}
 
 	mainBranch := c.orch.wt.FindMainBranch()
-	mode := string(session.Config.ConsolidationMode)
-	createDrafts := session.Config.CreateDraftPRs
 
-	// Check if we have pre-consolidated group branches (from incremental consolidation)
-	hasPreConsolidatedBranches := len(session.GroupConsolidatedBranches) > 0
-
-	// Build the execution groups and task branches information
-	var groupsInfo strings.Builder
-	for groupIdx, taskIDs := range session.Plan.ExecutionOrder {
-		groupsInfo.WriteString(fmt.Sprintf("\n### Group %d\n", groupIdx+1))
-
-		// If we have a pre-consolidated branch for this group, include it
-		if hasPreConsolidatedBranches && groupIdx < len(session.GroupConsolidatedBranches) {
-			consolidatedBranch := session.GroupConsolidatedBranches[groupIdx]
-			if consolidatedBranch != "" {
-				groupsInfo.WriteString(fmt.Sprintf("**CONSOLIDATED BRANCH (ALREADY MERGED)**: %s\n", consolidatedBranch))
-				groupsInfo.WriteString("The tasks in this group have already been consolidated into this branch.\n")
-			}
-		}
-
-		groupsInfo.WriteString("Tasks in this group:\n")
-		for _, taskID := range taskIDs {
-			task := session.GetTask(taskID)
-			if task == nil {
-				continue
-			}
-
-			// Find the branch for this task
-			branchName := "unknown"
-			for _, inst := range c.baseSession.Instances {
-				if strings.Contains(inst.Task, taskID) || strings.Contains(inst.Branch, slugify(task.Title)) {
-					branchName = inst.Branch
-					break
-				}
-			}
-
-			groupsInfo.WriteString(fmt.Sprintf("- Task: %s (%s)\n", task.Title, taskID))
-			groupsInfo.WriteString(fmt.Sprintf("  Branch: %s\n", branchName))
-		}
+	// Build prompt context for the consolidation builder
+	ctx := &prompt.Context{
+		Phase:         prompt.PhaseConsolidation,
+		SessionID:     session.ID,
+		Objective:     session.Objective,
+		Plan:          planInfoFromPlanSpec(session.Plan),
+		Consolidation: consolidationInfoFromSession(session, mainBranch),
+		Synthesis:     synthesisInfoFromCompletion(session.SynthesisCompletion),
 	}
 
-	// Build worktree details from captured task worktree info
-	var worktreeInfo strings.Builder
-	if len(session.TaskWorktrees) > 0 {
-		for _, twi := range session.TaskWorktrees {
-			worktreeInfo.WriteString(fmt.Sprintf("- **%s** (%s)\n", twi.TaskTitle, twi.TaskID))
-			worktreeInfo.WriteString(fmt.Sprintf("  - Worktree: %s\n", twi.WorktreePath))
-			worktreeInfo.WriteString(fmt.Sprintf("  - Branch: %s\n", twi.Branch))
-		}
-	} else {
-		// Fall back to building from instances if TaskWorktrees wasn't captured
-		for _, taskID := range session.CompletedTasks {
-			task := session.GetTask(taskID)
-			if task == nil {
-				continue
-			}
-			for _, inst := range c.baseSession.Instances {
-				if strings.Contains(inst.Task, taskID) || strings.Contains(inst.Branch, slugify(task.Title)) {
-					worktreeInfo.WriteString(fmt.Sprintf("- **%s** (%s)\n", task.Title, taskID))
-					worktreeInfo.WriteString(fmt.Sprintf("  - Worktree: %s\n", inst.WorktreePath))
-					worktreeInfo.WriteString(fmt.Sprintf("  - Branch: %s\n", inst.Branch))
-					break
-				}
-			}
-		}
+	// Ensure consolidation info has the resolved branch prefix
+	if ctx.Consolidation != nil && ctx.Consolidation.BranchPrefix == "" {
+		ctx.Consolidation.BranchPrefix = branchPrefix
 	}
 
-	// Add note about pre-consolidated branches if available
-	if hasPreConsolidatedBranches {
-		worktreeInfo.WriteString("\n## Pre-Consolidated Group Branches\n")
-		worktreeInfo.WriteString("**IMPORTANT**: Groups have already been incrementally consolidated. Use these branches directly:\n")
-		for groupIdx, branch := range session.GroupConsolidatedBranches {
-			if branch != "" {
-				worktreeInfo.WriteString(fmt.Sprintf("- Group %d: %s\n", groupIdx+1, branch))
-			}
-		}
-		worktreeInfo.WriteString("\nYou do NOT need to cherry-pick individual task branches - just create PRs from these consolidated branches.\n")
+	// Add previous group context if available
+	ctx.PreviousGroupContext = buildPreviousGroupContextStrings(session.GroupConsolidationContexts)
+
+	// Use the ConsolidationBuilder to generate the prompt
+	builder := prompt.NewConsolidationBuilder()
+	result, err := builder.Build(ctx)
+	if err != nil {
+		// Log the error and fall back to a minimal prompt
+		c.logger.Error("failed to build consolidation prompt",
+			"error", err.Error(),
+		)
+		return fmt.Sprintf("Consolidate task branches for objective: %s\n\nMerge all completed task branches and create pull requests.", session.Objective)
 	}
 
-	// Build synthesis context from the synthesis completion file
-	var synthesisContext strings.Builder
-	if session.SynthesisCompletion != nil {
-		synthesisContext.WriteString(fmt.Sprintf("Status: %s\n", session.SynthesisCompletion.Status))
-		if session.SynthesisCompletion.IntegrationNotes != "" {
-			synthesisContext.WriteString(fmt.Sprintf("Integration Notes: %s\n", session.SynthesisCompletion.IntegrationNotes))
-		}
-		if len(session.SynthesisCompletion.Recommendations) > 0 {
-			synthesisContext.WriteString("Recommendations:\n")
-			for _, rec := range session.SynthesisCompletion.Recommendations {
-				synthesisContext.WriteString(fmt.Sprintf("- %s\n", rec))
-			}
-		}
-		if len(session.SynthesisCompletion.IssuesFound) > 0 {
-			synthesisContext.WriteString(fmt.Sprintf("Issues Found: %d\n", len(session.SynthesisCompletion.IssuesFound)))
-			for _, issue := range session.SynthesisCompletion.IssuesFound {
-				synthesisContext.WriteString(fmt.Sprintf("- [%s] %s\n", issue.Severity, issue.Description))
-			}
-		}
-	} else {
-		synthesisContext.WriteString("No synthesis context available (synthesis may have used legacy mode)\n")
-	}
-
-	return fmt.Sprintf(ConsolidationPromptTemplate,
-		session.Objective,
-		branchPrefix,
-		mainBranch,
-		mode,
-		createDrafts,
-		groupsInfo.String(),
-		worktreeInfo.String(),
-		synthesisContext.String(),
-		mode, // For completion file JSON
-	)
+	return result
 }
 
 // monitorConsolidationInstance monitors the consolidation instance and completes when done
@@ -2363,76 +2277,37 @@ func (c *Coordinator) ResumeConsolidation() error {
 	return nil
 }
 
-// buildSynthesisPrompt creates the prompt for the synthesis phase
+// buildSynthesisPrompt creates the prompt for the synthesis phase using the prompt.SynthesisBuilder.
+// It builds a prompt.Context with plan info (including commit counts), completed tasks, and failed tasks,
+// then delegates to the builder to produce the formatted prompt string.
 func (c *Coordinator) buildSynthesisPrompt() string {
 	session := c.Session()
 
-	var taskList strings.Builder
-	var resultsSummary strings.Builder
-
-	for _, taskID := range session.CompletedTasks {
-		task := session.GetTask(taskID)
-		if task == nil {
-			continue
-		}
-
-		// Include commit count in task list
-		commitCount := 0
-		if count, ok := session.TaskCommitCounts[taskID]; ok {
-			commitCount = count
-		}
-
-		if commitCount > 0 {
-			taskList.WriteString(fmt.Sprintf("- [%s] %s (%d commits)\n", task.ID, task.Title, commitCount))
-		} else {
-			taskList.WriteString(fmt.Sprintf("- [%s] %s (NO COMMITS - verify this task)\n", task.ID, task.Title))
-		}
+	// Build prompt context for the synthesis builder
+	ctx := &prompt.Context{
+		Phase:          prompt.PhaseSynthesis,
+		SessionID:      session.ID,
+		Objective:      session.Objective,
+		Plan:           planInfoWithCommitCounts(session.Plan, session.TaskCommitCounts),
+		CompletedTasks: session.CompletedTasks,
+		FailedTasks:    session.FailedTasks,
 	}
 
-	// Get summaries from completed instances
-	for taskID, instanceID := range session.TaskToInstance {
-		task := session.GetTask(taskID)
-		inst := c.orch.GetInstance(instanceID)
-		if task != nil && inst != nil {
-			resultsSummary.WriteString(fmt.Sprintf("### %s\n", task.Title))
-			resultsSummary.WriteString(fmt.Sprintf("Status: %s\n", inst.Status))
+	// Add previous group context if available
+	ctx.PreviousGroupContext = buildPreviousGroupContextStrings(session.GroupConsolidationContexts)
 
-			// Add commit count
-			if count, ok := session.TaskCommitCounts[taskID]; ok {
-				resultsSummary.WriteString(fmt.Sprintf("Commits: %d\n", count))
-			}
-
-			if len(inst.FilesModified) > 0 {
-				resultsSummary.WriteString(fmt.Sprintf("Files modified: %s\n", strings.Join(inst.FilesModified, ", ")))
-			}
-			resultsSummary.WriteString("\n")
-		}
+	// Use the SynthesisBuilder to generate the prompt
+	builder := prompt.NewSynthesisBuilder()
+	result, err := builder.Build(ctx)
+	if err != nil {
+		// Log the error and fall back to a minimal prompt
+		c.logger.Error("failed to build synthesis prompt",
+			"error", err.Error(),
+		)
+		return fmt.Sprintf("Review the completed work for objective: %s\n\nIdentify any integration issues or missing functionality.", session.Objective)
 	}
 
-	// Also include tasks that completed but are no longer in TaskToInstance
-	for _, taskID := range session.CompletedTasks {
-		if _, inMap := session.TaskToInstance[taskID]; inMap {
-			continue // Already processed above
-		}
-		task := session.GetTask(taskID)
-		if task == nil {
-			continue
-		}
-		resultsSummary.WriteString(fmt.Sprintf("### %s\n", task.Title))
-		resultsSummary.WriteString("Status: completed\n")
-		if count, ok := session.TaskCommitCounts[taskID]; ok {
-			resultsSummary.WriteString(fmt.Sprintf("Commits: %d\n", count))
-		}
-		resultsSummary.WriteString("\n")
-	}
-
-	// Get current revision round (0 for first synthesis)
-	revisionRound := 0
-	if session.Revision != nil {
-		revisionRound = session.Revision.RevisionRound
-	}
-
-	return fmt.Sprintf(SynthesisPromptTemplate, session.Objective, taskList.String(), resultsSummary.String(), revisionRound)
+	return result
 }
 
 // Cancel cancels the ultra-plan execution
