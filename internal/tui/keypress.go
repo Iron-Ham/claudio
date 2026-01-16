@@ -101,8 +101,8 @@ func (h *GroupKeyHandler) HandleGroupKey(key tea.KeyMsg) GroupKeyResult {
 func (h *GroupKeyHandler) handleToggleCollapse() GroupKeyResult {
 	groupID := h.groupState.SelectedGroupID
 	if groupID == "" {
-		// If no group is selected, try to select the first group and toggle it
-		groupIDs := view.GetGroupIDs(h.session)
+		// If no group is selected, try to select the first visible group and toggle it
+		groupIDs := view.GetVisibleGroupIDs(h.session, h.groupState)
 		if len(groupIDs) > 0 {
 			groupID = groupIDs[0]
 			h.groupState.SelectedGroupID = groupID

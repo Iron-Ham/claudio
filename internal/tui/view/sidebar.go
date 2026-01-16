@@ -260,14 +260,15 @@ func NewGroupNavigator(session *orchestrator.Session, groupState *GroupViewState
 	}
 }
 
-// MoveToNextGroup moves selection to the next group (gn).
+// MoveToNextGroup moves selection to the next visible group (gn).
 // Returns the new selected group ID.
+// Only navigates to groups that are visible (not hidden by a collapsed parent).
 func (n *GroupNavigator) MoveToNextGroup() string {
 	if n.session == nil || !n.session.HasGroups() {
 		return ""
 	}
 
-	groupIDs := GetGroupIDs(n.session)
+	groupIDs := GetVisibleGroupIDs(n.session, n.groupState)
 	if len(groupIDs) == 0 {
 		return ""
 	}
@@ -292,19 +293,20 @@ func (n *GroupNavigator) MoveToNextGroup() string {
 		}
 	}
 
-	// Current group not found, select first
+	// Current group not found (may have been hidden), select first visible
 	n.groupState.SelectedGroupID = groupIDs[0]
 	return groupIDs[0]
 }
 
-// MoveToPrevGroup moves selection to the previous group (gp).
+// MoveToPrevGroup moves selection to the previous visible group (gp).
 // Returns the new selected group ID.
+// Only navigates to groups that are visible (not hidden by a collapsed parent).
 func (n *GroupNavigator) MoveToPrevGroup() string {
 	if n.session == nil || !n.session.HasGroups() {
 		return ""
 	}
 
-	groupIDs := GetGroupIDs(n.session)
+	groupIDs := GetVisibleGroupIDs(n.session, n.groupState)
 	if len(groupIDs) == 0 {
 		return ""
 	}
@@ -329,7 +331,7 @@ func (n *GroupNavigator) MoveToPrevGroup() string {
 		}
 	}
 
-	// Current group not found, select last
+	// Current group not found (may have been hidden), select last visible
 	n.groupState.SelectedGroupID = groupIDs[len(groupIDs)-1]
 	return groupIDs[len(groupIDs)-1]
 }

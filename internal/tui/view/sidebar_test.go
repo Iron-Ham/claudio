@@ -827,6 +827,177 @@ func TestGetGroupIDs_EmptySession(t *testing.T) {
 	}
 }
 
+func TestGetVisibleGroupIDs(t *testing.T) {
+	session := &orchestrator.Session{
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID: "group-1",
+				SubGroups: []*orchestrator.InstanceGroup{
+					{ID: "subgroup-1"},
+					{ID: "subgroup-2"},
+				},
+			},
+			{ID: "group-2"},
+		},
+	}
+
+	t.Run("all expanded", func(t *testing.T) {
+		state := NewGroupViewState()
+		ids := GetVisibleGroupIDs(session, state)
+
+		expected := []string{"group-1", "subgroup-1", "subgroup-2", "group-2"}
+		if len(ids) != len(expected) {
+			t.Fatalf("GetVisibleGroupIDs() returned %d ids, want %d", len(ids), len(expected))
+		}
+		for i, id := range ids {
+			if id != expected[i] {
+				t.Errorf("GetVisibleGroupIDs()[%d] = %q, want %q", i, id, expected[i])
+			}
+		}
+	})
+
+	t.Run("parent collapsed hides subgroups", func(t *testing.T) {
+		state := NewGroupViewState()
+		state.CollapsedGroups["group-1"] = true
+
+		ids := GetVisibleGroupIDs(session, state)
+
+		// Subgroups should be hidden when parent is collapsed
+		expected := []string{"group-1", "group-2"}
+		if len(ids) != len(expected) {
+			t.Fatalf("GetVisibleGroupIDs() returned %d ids, want %d", len(ids), len(expected))
+		}
+		for i, id := range ids {
+			if id != expected[i] {
+				t.Errorf("GetVisibleGroupIDs()[%d] = %q, want %q", i, id, expected[i])
+			}
+		}
+	})
+
+	t.Run("nil state returns nil", func(t *testing.T) {
+		ids := GetVisibleGroupIDs(session, nil)
+		if ids != nil {
+			t.Errorf("GetVisibleGroupIDs(session, nil) = %v, want nil", ids)
+		}
+	})
+
+	t.Run("deeply nested subgroups", func(t *testing.T) {
+		deepSession := &orchestrator.Session{
+			Groups: []*orchestrator.InstanceGroup{
+				{
+					ID: "level-1",
+					SubGroups: []*orchestrator.InstanceGroup{
+						{
+							ID: "level-2",
+							SubGroups: []*orchestrator.InstanceGroup{
+								{ID: "level-3"},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		t.Run("all expanded shows all levels", func(t *testing.T) {
+			state := NewGroupViewState()
+			ids := GetVisibleGroupIDs(deepSession, state)
+			expected := []string{"level-1", "level-2", "level-3"}
+			if len(ids) != len(expected) {
+				t.Fatalf("GetVisibleGroupIDs() returned %d ids, want %d", len(ids), len(expected))
+			}
+			for i, id := range ids {
+				if id != expected[i] {
+					t.Errorf("GetVisibleGroupIDs()[%d] = %q, want %q", i, id, expected[i])
+				}
+			}
+		})
+
+		t.Run("collapsing level-1 hides level-2 and level-3", func(t *testing.T) {
+			state := NewGroupViewState()
+			state.CollapsedGroups["level-1"] = true
+			ids := GetVisibleGroupIDs(deepSession, state)
+			expected := []string{"level-1"}
+			if len(ids) != len(expected) {
+				t.Fatalf("GetVisibleGroupIDs() returned %d ids, want %d", len(ids), len(expected))
+			}
+			if ids[0] != expected[0] {
+				t.Errorf("GetVisibleGroupIDs()[0] = %q, want %q", ids[0], expected[0])
+			}
+		})
+
+		t.Run("collapsing level-2 hides only level-3", func(t *testing.T) {
+			state := NewGroupViewState()
+			state.CollapsedGroups["level-2"] = true
+			ids := GetVisibleGroupIDs(deepSession, state)
+			expected := []string{"level-1", "level-2"}
+			if len(ids) != len(expected) {
+				t.Fatalf("GetVisibleGroupIDs() returned %d ids, want %d", len(ids), len(expected))
+			}
+			for i, id := range ids {
+				if id != expected[i] {
+					t.Errorf("GetVisibleGroupIDs()[%d] = %q, want %q", i, id, expected[i])
+				}
+			}
+		})
+	})
+}
+
+func TestGroupNavigator_NextGroup_SelectedGroupHidden(t *testing.T) {
+	session := &orchestrator.Session{
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID: "group-1",
+				SubGroups: []*orchestrator.InstanceGroup{
+					{ID: "subgroup-1"},
+				},
+			},
+			{ID: "group-2"},
+		},
+	}
+
+	state := NewGroupViewState()
+	// Select a subgroup
+	state.SelectedGroupID = "subgroup-1"
+	// Collapse the parent (making subgroup-1 invisible)
+	state.CollapsedGroups["group-1"] = true
+
+	nav := NewGroupNavigator(session, state)
+
+	// Navigate should reset to first visible group since current selection is hidden
+	id := nav.MoveToNextGroup()
+	if id != "group-1" {
+		t.Errorf("MoveToNextGroup() when selected is hidden = %q, want %q (first visible)", id, "group-1")
+	}
+}
+
+func TestGroupNavigator_PrevGroup_SelectedGroupHidden(t *testing.T) {
+	session := &orchestrator.Session{
+		Groups: []*orchestrator.InstanceGroup{
+			{ID: "group-1"},
+			{
+				ID: "group-2",
+				SubGroups: []*orchestrator.InstanceGroup{
+					{ID: "subgroup-2"},
+				},
+			},
+		},
+	}
+
+	state := NewGroupViewState()
+	// Select a subgroup
+	state.SelectedGroupID = "subgroup-2"
+	// Collapse the parent (making subgroup-2 invisible)
+	state.CollapsedGroups["group-2"] = true
+
+	nav := NewGroupNavigator(session, state)
+
+	// Navigate should reset to last visible group since current selection is hidden
+	id := nav.MoveToPrevGroup()
+	if id != "group-2" {
+		t.Errorf("MoveToPrevGroup() when selected is hidden = %q, want %q (last visible)", id, "group-2")
+	}
+}
+
 func TestGroupNavigator_MoveToPrevInstance(t *testing.T) {
 	session := &orchestrator.Session{
 		Instances: []*orchestrator.Instance{

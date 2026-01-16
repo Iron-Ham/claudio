@@ -90,6 +90,35 @@ func TestGroupKeyHandler_ToggleCollapse_NoSelection(t *testing.T) {
 	}
 }
 
+func TestGroupKeyHandler_ToggleCollapse_Subgroup(t *testing.T) {
+	session := createTestSessionWithSubgroups()
+	groupState := view.NewGroupViewState()
+
+	// Select the subgroup directly
+	groupState.SelectedGroupID = "subgroup-1"
+
+	handler := NewGroupKeyHandler(session, groupState)
+	result := handler.HandleGroupKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+
+	if !result.Handled {
+		t.Error("expected Handled=true for subgroup")
+	}
+	if result.Action != GroupActionToggleCollapse {
+		t.Errorf("expected Action=%v, got %v", GroupActionToggleCollapse, result.Action)
+	}
+	if result.GroupID != "subgroup-1" {
+		t.Errorf("expected GroupID=subgroup-1, got %s", result.GroupID)
+	}
+	// Verify the subgroup was toggled
+	if !groupState.IsCollapsed("subgroup-1") {
+		t.Error("expected subgroup to be collapsed after toggle")
+	}
+	// Verify parent group was NOT toggled
+	if groupState.IsCollapsed("group-1") {
+		t.Error("expected parent group to remain expanded")
+	}
+}
+
 func TestGroupKeyHandler_CollapseAll(t *testing.T) {
 	session := createTestSession()
 	groupState := view.NewGroupViewState()
@@ -150,6 +179,71 @@ func TestGroupKeyHandler_NextGroup(t *testing.T) {
 	result = handler.HandleGroupKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	if result.GroupID != session.Groups[1].ID {
 		t.Errorf("expected second group to be selected")
+	}
+}
+
+func TestGroupKeyHandler_NextGroup_Subgroups(t *testing.T) {
+	session := createTestSessionWithSubgroups()
+	groupState := view.NewGroupViewState()
+
+	handler := NewGroupKeyHandler(session, groupState)
+
+	// First 'gn' should select group-1
+	result := handler.HandleGroupKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if result.GroupID != "group-1" {
+		t.Errorf("expected group-1, got %s", result.GroupID)
+	}
+
+	// Second 'gn' should select subgroup-1 (child of group-1)
+	result = handler.HandleGroupKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if result.GroupID != "subgroup-1" {
+		t.Errorf("expected subgroup-1, got %s", result.GroupID)
+	}
+
+	// Third 'gn' should select group-2
+	result = handler.HandleGroupKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if result.GroupID != "group-2" {
+		t.Errorf("expected group-2, got %s", result.GroupID)
+	}
+}
+
+func TestGroupKeyHandler_NextGroup_ParentCollapsed(t *testing.T) {
+	session := createTestSessionWithSubgroups()
+	groupState := view.NewGroupViewState()
+
+	// Collapse the parent group
+	groupState.CollapsedGroups["group-1"] = true
+
+	handler := NewGroupKeyHandler(session, groupState)
+
+	// First 'gn' should select group-1 (the collapsed parent)
+	result := handler.HandleGroupKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if result.GroupID != "group-1" {
+		t.Errorf("expected group-1, got %s", result.GroupID)
+	}
+
+	// When parent is collapsed, 'gn' should skip the subgroup and go to group-2
+	result = handler.HandleGroupKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if result.GroupID != "group-2" {
+		t.Errorf("expected group-2 (skip hidden subgroup), got %s", result.GroupID)
+	}
+}
+
+func TestGroupKeyHandler_PrevGroup_ParentCollapsed(t *testing.T) {
+	session := createTestSessionWithSubgroups()
+	groupState := view.NewGroupViewState()
+
+	// Collapse the parent group
+	groupState.CollapsedGroups["group-1"] = true
+	// Start at group-2
+	groupState.SelectedGroupID = "group-2"
+
+	handler := NewGroupKeyHandler(session, groupState)
+
+	// 'gp' from group-2 should skip hidden subgroup-1 and go to group-1
+	result := handler.HandleGroupKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if result.GroupID != "group-1" {
+		t.Errorf("expected group-1 (skip hidden subgroup), got %s", result.GroupID)
 	}
 }
 
@@ -432,6 +526,39 @@ func createTestSessionAllCompleted() *orchestrator.Session {
 		},
 		Instances: []*orchestrator.Instance{
 			{ID: "inst-1", Status: orchestrator.StatusCompleted, Created: now},
+		},
+	}
+}
+
+func createTestSessionWithSubgroups() *orchestrator.Session {
+	return &orchestrator.Session{
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Name:      "Group 1",
+				Phase:     orchestrator.GroupPhaseExecuting,
+				Instances: []string{"inst-1"},
+				SubGroups: []*orchestrator.InstanceGroup{
+					{
+						ID:        "subgroup-1",
+						Name:      "Subgroup 1",
+						Phase:     orchestrator.GroupPhaseExecuting,
+						Instances: []string{"inst-2"},
+						ParentID:  "group-1",
+					},
+				},
+			},
+			{
+				ID:        "group-2",
+				Name:      "Group 2",
+				Phase:     orchestrator.GroupPhaseExecuting,
+				Instances: []string{"inst-3"},
+			},
+		},
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Status: orchestrator.StatusWorking},
+			{ID: "inst-2", Status: orchestrator.StatusWorking},
+			{ID: "inst-3", Status: orchestrator.StatusWorking},
 		},
 	}
 }
