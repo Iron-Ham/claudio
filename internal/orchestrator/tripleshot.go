@@ -375,12 +375,15 @@ Your goal is to solve the problem using your own approach - be creative and thor
 3. **Document your approach** - Write clear commit messages and code comments
 4. **Be thorough** - Make sure your solution is complete and well-tested
 
-## Completion Protocol
+## CRITICAL: Completion File Requirement
 
-When your solution is complete, you MUST write a completion file:
+**YOUR WORK IS NOT COMPLETE UNTIL YOU WRITE THE COMPLETION FILE.**
 
-1. Use Write tool to create ` + "`" + TripleShotCompletionFileName + "`" + ` in your worktree root
-2. Include this JSON structure:
+The orchestration system is waiting for this file to know you are done. Without it, your work will be ignored and the system will hang indefinitely. You MUST write this file as your FINAL action, no matter what.
+
+**File:** ` + "`" + TripleShotCompletionFileName + "`" + ` (in your worktree root)
+
+**Required JSON structure:**
 ` + "```json" + `
 {
   "attempt_index": %d,
@@ -392,10 +395,13 @@ When your solution is complete, you MUST write a completion file:
 }
 ` + "```" + `
 
-3. Set status to "complete" if you finished successfully, or "failed" if you couldn't complete the task
-4. The approach field is important - it helps the judge understand your solution
+**Rules:**
+- Set status to "complete" if you finished successfully, or "failed" if you couldn't complete the task
+- The approach field is critical - it helps the judge understand and evaluate your solution
+- Even if you encounter errors or cannot complete the task, you MUST still write this file with status "failed"
+- This file is your ONLY way to signal completion - do not skip it under any circumstances
 
-This file signals that your work is done and provides context for evaluation.`
+**REMINDER: Write ` + "`" + TripleShotCompletionFileName + "`" + ` as your absolute last action.**`
 
 // TripleShotJudgePromptTemplate is the prompt template for the judge instance
 const TripleShotJudgePromptTemplate = `You are a senior software architect evaluating three different solutions to the same problem.
