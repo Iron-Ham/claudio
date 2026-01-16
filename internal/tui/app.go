@@ -936,7 +936,51 @@ func (m Model) renderHeader() string {
 		title = fmt.Sprintf("Claudio: %s", m.session.Name)
 	}
 
-	return styles.Header.Width(m.terminalManager.Width()).Render(title)
+	// Build mode indicator state
+	modeState := &view.ModeIndicatorState{
+		CommandMode:     m.commandMode,
+		SearchMode:      m.searchMode,
+		FilterMode:      m.filterMode,
+		InputMode:       m.inputMode,
+		TerminalFocused: m.terminalManager.IsFocused(),
+		AddingTask:      m.addingTask,
+	}
+
+	// Get the mode indicator
+	modeIndicator := view.RenderModeIndicator(modeState)
+
+	// Calculate available width for layout
+	termWidth := m.terminalManager.Width()
+
+	// If no mode indicator, render simple header
+	if modeIndicator == "" {
+		return styles.Header.Width(termWidth).Render(title)
+	}
+
+	// Calculate widths for left-right layout
+	// lipgloss.Width accounts for ANSI escape codes
+	modeWidth := lipgloss.Width(modeIndicator)
+	titleWidth := termWidth - modeWidth - 2 // 2 for spacing
+
+	// Style for title (left side)
+	titleStyled := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(styles.PrimaryColor).
+		Width(titleWidth).
+		Render(title)
+
+	// Join title and mode indicator
+	content := lipgloss.JoinHorizontal(lipgloss.Center, titleStyled, " ", modeIndicator)
+
+	// Apply the header border styling
+	return lipgloss.NewStyle().
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderBottom(true).
+		BorderForeground(styles.BorderColor).
+		MarginBottom(1).
+		PaddingBottom(1).
+		Width(termWidth).
+		Render(content)
 }
 
 // renderTerminalPane renders the terminal pane at the bottom of the screen.
