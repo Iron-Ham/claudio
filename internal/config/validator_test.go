@@ -145,6 +145,66 @@ func TestConfig_Validate_TUI(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("valid sidebar width", func(t *testing.T) {
+		for _, width := range []int{20, 30, 36, 45, 60} {
+			cfg := Default()
+			cfg.TUI.SidebarWidth = width
+			errs := cfg.Validate()
+
+			for _, err := range errs {
+				if err.Field == "tui.sidebar_width" {
+					t.Errorf("width %d should be valid, got error: %v", width, err)
+				}
+			}
+		}
+	})
+
+	t.Run("zero sidebar width uses default (valid)", func(t *testing.T) {
+		cfg := Default()
+		cfg.TUI.SidebarWidth = 0
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if err.Field == "tui.sidebar_width" {
+				t.Errorf("zero sidebar width should be valid (uses default), got error: %v", err)
+			}
+		}
+	})
+
+	t.Run("sidebar width too small", func(t *testing.T) {
+		cfg := Default()
+		cfg.TUI.SidebarWidth = 15
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "tui.sidebar_width" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for small sidebar width")
+		}
+	})
+
+	t.Run("sidebar width too large", func(t *testing.T) {
+		cfg := Default()
+		cfg.TUI.SidebarWidth = 80
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "tui.sidebar_width" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for large sidebar width")
+		}
+	})
 }
 
 func TestConfig_Validate_Instance(t *testing.T) {

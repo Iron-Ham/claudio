@@ -41,6 +41,8 @@ type TUIConfig struct {
 	MaxOutputLines int `mapstructure:"max_output_lines"`
 	// VerboseCommandHelp shows full command descriptions in command mode instead of single letters
 	VerboseCommandHelp bool `mapstructure:"verbose_command_help"`
+	// SidebarWidth is the width of the sidebar panel in columns (default: 36, min: 20, max: 60)
+	SidebarWidth int `mapstructure:"sidebar_width"`
 }
 
 // SessionConfig controls session behavior
@@ -329,6 +331,7 @@ func Default() *Config {
 			AutoFocusOnInput:   true,
 			MaxOutputLines:     1000,
 			VerboseCommandHelp: true,
+			SidebarWidth:       36,
 		},
 		Session: SessionConfig{},
 		Instance: InstanceConfig{
@@ -440,6 +443,7 @@ func SetDefaults() {
 	viper.SetDefault("tui.auto_focus_on_input", defaults.TUI.AutoFocusOnInput)
 	viper.SetDefault("tui.max_output_lines", defaults.TUI.MaxOutputLines)
 	viper.SetDefault("tui.verbose_command_help", defaults.TUI.VerboseCommandHelp)
+	viper.SetDefault("tui.sidebar_width", defaults.TUI.SidebarWidth)
 
 	// Session defaults (currently empty)
 

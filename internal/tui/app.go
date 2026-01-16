@@ -838,10 +838,8 @@ func (m Model) View() string {
 
 	// Get pane dimensions, accounting for dynamic footer elements
 	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
-	effectiveSidebarWidth := SidebarWidth
-	if dims.TerminalWidth < 80 {
-		effectiveSidebarWidth = SidebarMinWidth
-	}
+	cfg := config.Get()
+	effectiveSidebarWidth := CalculateEffectiveSidebarWidthWithConfig(dims.TerminalWidth, cfg.TUI.SidebarWidth)
 	mainContentWidth := dims.TerminalWidth - effectiveSidebarWidth - 3 // 3 for gap between panels
 
 	// Main area height is pre-calculated by terminal manager
