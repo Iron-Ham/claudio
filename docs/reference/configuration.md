@@ -329,6 +329,59 @@ Replace dots with underscores and use uppercase:
 
 ---
 
+## iOS Development Example
+
+Recommended configuration for iOS projects using Xcode:
+
+```yaml
+# ~/.config/claudio/config.yaml
+
+# iOS builds can take a while - extend timeout
+instance:
+  activity_timeout_minutes: 45
+  completion_timeout_minutes: 120
+
+# Parallel instances can overwhelm Xcode builds
+ultraplan:
+  max_parallel: 2
+
+# iOS PRs often need specific reviewers
+pr:
+  reviewers:
+    default: [ios-lead]
+    by_path:
+      "*.swift": [ios-team]
+      "*.xib": [ios-team]
+      "*.storyboard": [ios-team]
+      "*.xcconfig": [ios-team, devops]
+      "Podfile*": [ios-team, devops]
+      "Package.swift": [ios-team]
+
+# iOS builds are resource-intensive
+resources:
+  cost_warning_threshold: 10.00
+
+# Optional: Use fast SSD for worktrees (faster builds)
+# paths:
+#   worktree_dir: /Volumes/FastSSD/claudio-worktrees
+
+# Optional: Sparse checkout for iOS in a large monorepo
+# paths:
+#   sparse_checkout:
+#     enabled: true
+#     directories:
+#       - "ios/"
+#       - "shared/"
+#     always_include:
+#       - "scripts/"
+#       - ".github/"
+#     cone_mode: true
+```
+
+See the [iOS Development Tutorial](../tutorials/ios-development.md) for comprehensive guidance.
+
+---
+
 ## Complete Example
 
 ```yaml
