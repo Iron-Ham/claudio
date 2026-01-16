@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Sidebar Navigation Order** - Fixed h/l (or tab/shift-tab) navigation in the sidebar navigating by instance creation order instead of display order. When instances are grouped (e.g., in ultraplan mode), the sidebar displays instances in a specific hierarchy (ungrouped first, then by group). Navigation now correctly follows the visual display order rather than the internal creation order, preventing user confusion when pressing tab/l to move to the "next" instance.
+- **Sidebar Navigation Hints** - Fixed incorrect keyboard hints in the grouped sidebar view. The hints incorrectly showed `[j/k] nav [J/K] groups [Space] toggle` when the actual bindings are `[j/k] scroll [gn/gp] groups [gc] toggle`. The `j/k` keys scroll the output panel (not sidebar navigation), and group navigation uses vim-style g-prefix commands (`gn`/`gp` for next/previous group, `gc` for toggle collapse).
 
 ## [0.7.1] - 2026-01-15
 
