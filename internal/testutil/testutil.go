@@ -304,3 +304,51 @@ func joinStrings(strs []string, sep string) string {
 	}
 	return result
 }
+
+// SetupTestRepoWithSubmodule creates a test repository that contains a git submodule.
+// Returns paths to both the main repo and the submodule repo.
+// The submodule is added at the path "vendor/submod" within the main repo.
+func SetupTestRepoWithSubmodule(t *testing.T) (mainRepoDir, submoduleRepoDir string) {
+	t.Helper()
+
+	// Create the submodule repository first (as a "remote")
+	submoduleRepoDir = t.TempDir()
+	if err := runGit(submoduleRepoDir, "init"); err != nil {
+		t.Fatalf("failed to init submodule repo: %v", err)
+	}
+	if err := runGit(submoduleRepoDir, "config", "user.email", "test@claudio.dev"); err != nil {
+		t.Fatalf("failed to configure git email: %v", err)
+	}
+	if err := runGit(submoduleRepoDir, "config", "user.name", "Claudio Test"); err != nil {
+		t.Fatalf("failed to configure git name: %v", err)
+	}
+
+	// Create a file in the submodule
+	subFile := filepath.Join(submoduleRepoDir, "submodule-file.txt")
+	if err := os.WriteFile(subFile, []byte("submodule content\n"), 0644); err != nil {
+		t.Fatalf("failed to create submodule file: %v", err)
+	}
+	if err := runGit(submoduleRepoDir, "add", "."); err != nil {
+		t.Fatalf("failed to stage submodule files: %v", err)
+	}
+	if err := runGit(submoduleRepoDir, "commit", "-m", "Initial submodule commit"); err != nil {
+		t.Fatalf("failed to create submodule commit: %v", err)
+	}
+	if err := runGit(submoduleRepoDir, "branch", "-M", "main"); err != nil {
+		t.Fatalf("failed to rename submodule branch to main: %v", err)
+	}
+
+	// Create the main repository
+	mainRepoDir = SetupTestRepo(t)
+
+	// Enable file protocol for submodule operations (required for git 2.38+)
+	// This is safe for tests since we control both repositories
+	if err := runGit(mainRepoDir, "-c", "protocol.file.allow=always", "submodule", "add", submoduleRepoDir, "vendor/submod"); err != nil {
+		t.Fatalf("failed to add submodule: %v", err)
+	}
+	if err := runGit(mainRepoDir, "commit", "-m", "Add submodule"); err != nil {
+		t.Fatalf("failed to commit submodule addition: %v", err)
+	}
+
+	return mainRepoDir, submoduleRepoDir
+}

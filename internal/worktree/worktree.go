@@ -64,7 +64,8 @@ func New(repoDir string) (*Manager, error) {
 	return &Manager{repoDir: gitRoot}, nil
 }
 
-// Create creates a new worktree at the given path with a new branch
+// Create creates a new worktree at the given path with a new branch.
+// If the repository has submodules, they are automatically initialized in the new worktree.
 func (m *Manager) Create(path, branch string) error {
 	// First, create the branch from current HEAD
 	// Use git worktree add -b to create branch and worktree in one step
@@ -87,11 +88,22 @@ func (m *Manager) Create(path, branch string) error {
 		m.logger.Info("worktree created", "path", path, "branch", branch)
 	}
 
+	// Initialize submodules if the repository has any
+	if err := m.InitSubmodules(path); err != nil {
+		// Log but don't fail - submodule init issues are non-fatal
+		if m.logger != nil {
+			m.logger.Warn("failed to initialize submodules in worktree",
+				"path", path,
+				"error", err)
+		}
+	}
+
 	return nil
 }
 
 // CreateFromBranch creates a new worktree at the given path with a new branch based off a specific base branch.
 // This is used when we want a task's branch to start from a consolidated branch rather than HEAD.
+// If the repository has submodules, they are automatically initialized in the new worktree.
 func (m *Manager) CreateFromBranch(path, newBranch, baseBranch string) error {
 	// Use git worktree add -b <newBranch> <path> <baseBranch>
 	// This creates a worktree at <path> with a new branch <newBranch> starting from <baseBranch>
@@ -112,6 +124,16 @@ func (m *Manager) CreateFromBranch(path, newBranch, baseBranch string) error {
 
 	if m.logger != nil {
 		m.logger.Info("worktree created", "path", path, "branch", newBranch)
+	}
+
+	// Initialize submodules if the repository has any
+	if err := m.InitSubmodules(path); err != nil {
+		// Log but don't fail - submodule init issues are non-fatal
+		if m.logger != nil {
+			m.logger.Warn("failed to initialize submodules in worktree",
+				"path", path,
+				"error", err)
+		}
 	}
 
 	return nil
@@ -515,13 +537,24 @@ func (m *Manager) CreateBranchFrom(branchName, baseBranch string) error {
 	return nil
 }
 
-// CreateWorktreeFromBranch creates a worktree from an existing branch
+// CreateWorktreeFromBranch creates a worktree from an existing branch.
+// If the repository has submodules, they are automatically initialized in the new worktree.
 func (m *Manager) CreateWorktreeFromBranch(path, branch string) error {
 	cmd := exec.Command("git", "worktree", "add", path, branch)
 	cmd.Dir = m.repoDir
 
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to create worktree from branch %s: %w\n%s", branch, err, string(output))
+	}
+
+	// Initialize submodules if the repository has any
+	if err := m.InitSubmodules(path); err != nil {
+		// Log but don't fail - submodule init issues are non-fatal
+		if m.logger != nil {
+			m.logger.Warn("failed to initialize submodules in worktree",
+				"path", path,
+				"error", err)
+		}
 	}
 
 	return nil

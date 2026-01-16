@@ -201,3 +201,89 @@ func TestDetector_RemoveInstance(t *testing.T) {
 		t.Error("Expected no conflict after removing instance")
 	}
 }
+
+func TestIsInsideSubmodule(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T) string
+		want  bool
+	}{
+		{
+			name: "non-existent path returns false",
+			setup: func(t *testing.T) string {
+				return filepath.Join(t.TempDir(), "nonexistent", "file.txt")
+			},
+			want: false,
+		},
+		{
+			name: "normal git directory returns false",
+			setup: func(t *testing.T) string {
+				dir := t.TempDir()
+				gitDir := filepath.Join(dir, ".git")
+				if err := os.Mkdir(gitDir, 0755); err != nil {
+					t.Fatalf("failed to create .git directory: %v", err)
+				}
+				return filepath.Join(dir, "file.txt")
+			},
+			want: false,
+		},
+		{
+			name: "submodule directory returns true",
+			setup: func(t *testing.T) string {
+				dir := t.TempDir()
+				gitFile := filepath.Join(dir, ".git")
+				if err := os.WriteFile(gitFile, []byte("gitdir: /path/to/main/.git/modules/sub"), 0644); err != nil {
+					t.Fatalf("failed to create .git file: %v", err)
+				}
+				return filepath.Join(dir, "file.txt")
+			},
+			want: true,
+		},
+		{
+			name: "nested file in submodule returns true",
+			setup: func(t *testing.T) string {
+				dir := t.TempDir()
+				gitFile := filepath.Join(dir, ".git")
+				if err := os.WriteFile(gitFile, []byte("gitdir: /path/to/main/.git/modules/sub"), 0644); err != nil {
+					t.Fatalf("failed to create .git file: %v", err)
+				}
+				nested := filepath.Join(dir, "deep", "nested")
+				if err := os.MkdirAll(nested, 0755); err != nil {
+					t.Fatalf("failed to create nested directory: %v", err)
+				}
+				return filepath.Join(nested, "file.txt")
+			},
+			want: true,
+		},
+		{
+			name: "directory without .git returns false",
+			setup: func(t *testing.T) string {
+				dir := t.TempDir()
+				return filepath.Join(dir, "file.txt")
+			},
+			want: false,
+		},
+		{
+			name: ".git file without gitdir prefix returns false",
+			setup: func(t *testing.T) string {
+				dir := t.TempDir()
+				gitFile := filepath.Join(dir, ".git")
+				if err := os.WriteFile(gitFile, []byte("some other content"), 0644); err != nil {
+					t.Fatalf("failed to create .git file: %v", err)
+				}
+				return filepath.Join(dir, "file.txt")
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := tt.setup(t)
+			got := isInsideSubmodule(path)
+			if got != tt.want {
+				t.Errorf("isInsideSubmodule(%q) = %v, want %v", path, got, tt.want)
+			}
+		})
+	}
+}
