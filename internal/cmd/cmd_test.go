@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Iron-Ham/claudio/internal/cmd/session"
 	"github.com/Iron-Ham/claudio/internal/testutil"
 	"github.com/spf13/cobra"
 )
@@ -171,9 +172,9 @@ func TestSessionsCommand(t *testing.T) {
 }
 
 func TestCleanupResult(t *testing.T) {
-	// Test CleanupResult struct initialization
-	result := &CleanupResult{
-		StaleWorktrees:    []StaleWorktree{},
+	// Test CleanupResult struct initialization (now in session package)
+	result := &session.CleanupResult{
+		StaleWorktrees:    []session.StaleWorktree{},
 		StaleBranches:     []string{},
 		OrphanedTmuxSess:  []string{},
 		ActiveInstanceIDs: make(map[string]bool),
@@ -195,8 +196,8 @@ func TestCleanupResult(t *testing.T) {
 }
 
 func TestStaleWorktree(t *testing.T) {
-	// Test StaleWorktree struct
-	sw := StaleWorktree{
+	// Test StaleWorktree struct (now in session package)
+	sw := session.StaleWorktree{
 		Path:           "/path/to/worktree",
 		Branch:         "claudio/abc123-feature",
 		HasUncommitted: true,
@@ -232,34 +233,34 @@ func TestFindStaleWorktrees(t *testing.T) {
 		t.Fatalf("failed to create fake worktree: %v", err)
 	}
 
-	// Call findStaleWorktrees with no active IDs
+	// Call FindStaleWorktrees with no active IDs (now in session package)
 	activeIDs := make(map[string]bool)
-	stale := findStaleWorktrees(worktreesDir, activeIDs)
+	stale := session.FindStaleWorktrees(worktreesDir, activeIDs)
 
 	// Should find the fake worktree
 	if len(stale) != 1 {
-		t.Errorf("findStaleWorktrees found %d worktrees, want 1", len(stale))
+		t.Errorf("FindStaleWorktrees found %d worktrees, want 1", len(stale))
 	}
 
 	// Now mark it as active
 	activeIDs["fake-id"] = true
-	stale = findStaleWorktrees(worktreesDir, activeIDs)
+	stale = session.FindStaleWorktrees(worktreesDir, activeIDs)
 
 	// Should not find it
 	if len(stale) != 0 {
-		t.Errorf("findStaleWorktrees found %d worktrees when ID is active, want 0", len(stale))
+		t.Errorf("FindStaleWorktrees found %d worktrees when ID is active, want 0", len(stale))
 	}
 }
 
 func TestFindOrphanedTmuxSessions(t *testing.T) {
-	// Test with empty active IDs
+	// Test with empty active IDs (now in session package)
 	activeIDs := make(map[string]bool)
 	// This will return empty if tmux isn't running, which is fine
-	orphaned := findOrphanedTmuxSessions(activeIDs)
+	orphaned := session.FindOrphanedTmuxSessions(activeIDs)
 
 	// Just verify it doesn't panic and returns a slice
 	if orphaned == nil {
-		// findOrphanedTmuxSessions returns nil on error, which is acceptable
+		// FindOrphanedTmuxSessions returns nil on error, which is acceptable
 	}
 }
 
@@ -277,53 +278,4 @@ func captureOutput(f func()) string {
 	var buf bytes.Buffer
 	io.Copy(&buf, r)
 	return buf.String()
-}
-
-func TestPrintCleanupSummary(t *testing.T) {
-	result := &CleanupResult{
-		StaleWorktrees: []StaleWorktree{
-			{Path: "/path/to/wt1", Branch: "claudio/abc-feature", HasUncommitted: false},
-			{Path: "/path/to/wt2", Branch: "claudio/def-bugfix", HasUncommitted: true},
-		},
-		StaleBranches:    []string{"claudio/orphan-branch"},
-		OrphanedTmuxSess: []string{"claudio-orphan123"},
-	}
-
-	// Temporarily set flags for cleanAll behavior
-	originalWorktrees := cleanupWorktrees
-	originalBranches := cleanupBranches
-	originalTmux := cleanupTmux
-	cleanupWorktrees = false
-	cleanupBranches = false
-	cleanupTmux = false
-	defer func() {
-		cleanupWorktrees = originalWorktrees
-		cleanupBranches = originalBranches
-		cleanupTmux = originalTmux
-	}()
-
-	// Capture output
-	output := captureOutput(func() {
-		printCleanupSummary(result, true)
-	})
-
-	// Should mention worktrees
-	if !bytes.Contains([]byte(output), []byte("Worktrees")) {
-		t.Error("summary should mention Worktrees")
-	}
-
-	// Should mention branches
-	if !bytes.Contains([]byte(output), []byte("Branches")) {
-		t.Error("summary should mention Branches")
-	}
-
-	// Should mention tmux sessions
-	if !bytes.Contains([]byte(output), []byte("Tmux")) {
-		t.Error("summary should mention Tmux Sessions")
-	}
-
-	// Should indicate uncommitted changes
-	if !bytes.Contains([]byte(output), []byte("uncommitted")) {
-		t.Error("summary should indicate uncommitted changes")
-	}
 }

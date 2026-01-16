@@ -1,4 +1,4 @@
-package cmd
+package instance
 
 import (
 	"fmt"
@@ -20,8 +20,12 @@ its worktree and branch. Use --force to remove even if there are uncommitted cha
 var forceRemove bool
 
 func init() {
-	rootCmd.AddCommand(removeCmd)
 	removeCmd.Flags().BoolVarP(&forceRemove, "force", "f", false, "Force removal even with uncommitted changes")
+}
+
+// RegisterRemoveCmd registers the remove command with the given parent command.
+func RegisterRemoveCmd(parent *cobra.Command) {
+	parent.AddCommand(removeCmd)
 }
 
 func runRemove(cmd *cobra.Command, args []string) error {

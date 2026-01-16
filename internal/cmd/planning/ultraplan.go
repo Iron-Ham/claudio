@@ -1,4 +1,4 @@
-package cmd
+package planning
 
 import (
 	"bufio"
@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/config"
+	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
 	sessutil "github.com/Iron-Ham/claudio/internal/session"
@@ -95,8 +96,6 @@ var (
 )
 
 func init() {
-	rootCmd.AddCommand(ultraplanCmd)
-
 	ultraplanCmd.Flags().StringVar(&ultraplanPlanFile, "plan", "", "Use existing plan file instead of planning phase")
 	ultraplanCmd.Flags().IntVar(&ultraplanMaxParallel, "max-parallel", 3, "Maximum concurrent child sessions (0 = unlimited)")
 	ultraplanCmd.Flags().BoolVar(&ultraplanDryRun, "dry-run", false, "Run planning only, output plan without executing")
@@ -104,6 +103,11 @@ func init() {
 	ultraplanCmd.Flags().BoolVar(&ultraplanAutoApprove, "auto-approve", false, "Auto-approve spawned tasks without confirmation")
 	ultraplanCmd.Flags().BoolVar(&ultraplanReview, "review", false, "Review and edit plan before execution (opens plan editor)")
 	ultraplanCmd.Flags().BoolVar(&ultraplanMultiPass, "multi-pass", false, "Enable multi-pass planning with 3 strategic approaches (maximize-parallelism, minimize-complexity, balanced) - best plan is selected or merged")
+}
+
+// RegisterUltraplanCmd registers the ultraplan command with the given parent command.
+func RegisterUltraplanCmd(parent *cobra.Command) {
+	parent.AddCommand(ultraplanCmd)
 }
 
 func runUltraplan(cmd *cobra.Command, args []string) error {
@@ -118,7 +122,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 		objective = args[0]
 	} else if ultraplanPlanFile == "" {
 		// Prompt for objective if not provided and no plan file
-		objective, err = promptObjective()
+		objective, err = promptUltraplanObjective()
 		if err != nil {
 			return err
 		}
@@ -134,7 +138,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 
 	// Create logger if enabled - we need session dir which requires session ID
 	sessionDir := sessutil.GetSessionDir(cwd, sessionID)
-	logger := CreateLogger(sessionDir, cfg)
+	logger := createLogger(sessionDir, cfg)
 	defer func() { _ = logger.Close() }()
 
 	// Create orchestrator with multi-session support
@@ -154,7 +158,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 		if len(words) > 3 {
 			words = words[:3]
 		}
-		sessionName = "ultraplan-" + slugifyWords(words)
+		sessionName = "ultraplan-" + SlugifyWords(words)
 	}
 
 	session, err := orch.StartSession(sessionName)
@@ -165,7 +169,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 	// Load plan file if provided
 	var plan *orchestrator.PlanSpec
 	if ultraplanPlanFile != "" {
-		plan, err = loadPlanFile(ultraplanPlanFile)
+		plan, err = loadUltraplanFile(ultraplanPlanFile)
 		if err != nil {
 			return fmt.Errorf("failed to load plan file: %w", err)
 		}
@@ -185,7 +189,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 
 	var initResult *ultraplan.InitResult
 	if plan != nil {
-		// Use InitWithPlan for additional validation (plan already validated in loadPlanFile,
+		// Use InitWithPlan for additional validation (plan already validated in loadUltraplanFile,
 		// but InitWithPlan also calls SetPlan to ensure coordinator state is synchronized)
 		initResult, err = ultraplan.InitWithPlan(initParams, plan)
 		if err != nil {
@@ -238,8 +242,8 @@ func applyUltraplanFlagOverrides(cmd *cobra.Command, cfg *orchestrator.UltraPlan
 	cfg.Review = ultraplanReview
 }
 
-// promptObjective prompts the user to enter an objective
-func promptObjective() (string, error) {
+// promptUltraplanObjective prompts the user to enter an objective
+func promptUltraplanObjective() (string, error) {
 	fmt.Println("\nUltra-Plan Mode")
 	fmt.Println("===============")
 	fmt.Println("Enter a high-level objective for Claude to plan and execute.")
@@ -261,8 +265,8 @@ func promptObjective() (string, error) {
 	return input, nil
 }
 
-// loadPlanFile loads a plan from a JSON file
-func loadPlanFile(path string) (*orchestrator.PlanSpec, error) {
+// loadUltraplanFile loads a plan from a JSON file
+func loadUltraplanFile(path string) (*orchestrator.PlanSpec, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
@@ -284,8 +288,9 @@ func loadPlanFile(path string) (*orchestrator.PlanSpec, error) {
 	return &plan, nil
 }
 
-// slugifyWords creates a slug from words
-func slugifyWords(words []string) string {
+// SlugifyWords creates a slug from words.
+// Exported for use by tripleshot.
+func SlugifyWords(words []string) string {
 	joined := strings.ToLower(strings.Join(words, "-"))
 	var result strings.Builder
 	for _, r := range joined {
@@ -298,4 +303,30 @@ func slugifyWords(words []string) string {
 		slug = slug[:20]
 	}
 	return strings.TrimSuffix(slug, "-")
+}
+
+// createLogger creates a logger if logging is enabled in config.
+// Returns a NopLogger if logging is disabled or if creation fails.
+func createLogger(sessionDir string, cfg *config.Config) *logging.Logger {
+	// Check if logging is enabled
+	if !cfg.Logging.Enabled {
+		return logging.NopLogger()
+	}
+
+	// Build rotation config from logging config
+	rotationConfig := logging.RotationConfig{
+		MaxSizeMB:  cfg.Logging.MaxSizeMB,
+		MaxBackups: cfg.Logging.MaxBackups,
+		Compress:   false, // Not exposed in config yet
+	}
+
+	// Create the logger with rotation support
+	logger, err := logging.NewLoggerWithRotation(sessionDir, cfg.Logging.Level, rotationConfig)
+	if err != nil {
+		// Log creation failure shouldn't prevent the application from starting
+		fmt.Fprintf(os.Stderr, "Warning: failed to create logger: %v\n", err)
+		return logging.NopLogger()
+	}
+
+	return logger
 }

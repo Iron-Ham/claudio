@@ -1,4 +1,4 @@
-package cmd
+package project
 
 import (
 	"fmt"
@@ -37,7 +37,6 @@ var (
 )
 
 func init() {
-	rootCmd.AddCommand(prCmd)
 	prCmd.Flags().BoolVarP(&prDraft, "draft", "d", false, "Create as a draft PR")
 	prCmd.Flags().BoolVar(&prNoPush, "no-push", false, "Don't push the branch before creating the PR")
 	prCmd.Flags().BoolVar(&prNoAI, "no-ai", false, "Skip AI generation, use simple defaults")
@@ -47,6 +46,11 @@ func init() {
 	prCmd.Flags().StringSliceVarP(&prReviewers, "reviewer", "r", nil, "Add reviewers (can be specified multiple times)")
 	prCmd.Flags().StringSliceVarP(&prLabels, "label", "l", nil, "Add labels (can be specified multiple times)")
 	prCmd.Flags().StringSliceVar(&prCloses, "closes", nil, "Link issues to close (e.g., --closes 42)")
+}
+
+// RegisterPRCmd registers the pr command with the given parent command.
+func RegisterPRCmd(parent *cobra.Command) {
+	parent.AddCommand(prCmd)
 }
 
 func runPR(cmd *cobra.Command, args []string) error {

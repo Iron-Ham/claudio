@@ -1,4 +1,4 @@
-package cmd
+package instance
 
 import (
 	"fmt"
@@ -15,8 +15,9 @@ var statusCmd = &cobra.Command{
 	RunE:  runStatus,
 }
 
-func init() {
-	rootCmd.AddCommand(statusCmd)
+// RegisterStatusCmd registers the status command with the given parent command.
+func RegisterStatusCmd(parent *cobra.Command) {
+	parent.AddCommand(statusCmd)
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {

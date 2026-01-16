@@ -1,4 +1,4 @@
-package cmd
+package session
 
 import (
 	"fmt"
@@ -26,7 +26,7 @@ var sessionsListCmd = &cobra.Command{
 - Number of instances
 - Lock status (whether another process is attached)
 - Orphaned tmux sessions`,
-	RunE: runSessionsList,
+	RunE: RunSessionsList,
 }
 
 var sessionsAttachCmd = &cobra.Command{
@@ -73,7 +73,6 @@ var (
 )
 
 func init() {
-	rootCmd.AddCommand(sessionsCmd)
 	sessionsCmd.AddCommand(sessionsListCmd)
 	sessionsCmd.AddCommand(sessionsAttachCmd)
 	sessionsCmd.AddCommand(sessionsRecoverCmd)
@@ -83,7 +82,14 @@ func init() {
 	sessionsCleanCmd.Flags().StringVar(&cleanSessionID, "session", "", "Clean specific session by ID")
 }
 
-func runSessionsList(cmd *cobra.Command, args []string) error {
+// RegisterSessionsCmd registers the sessions command with the given parent command.
+func RegisterSessionsCmd(parent *cobra.Command) {
+	parent.AddCommand(sessionsCmd)
+}
+
+// RunSessionsList lists all Claudio sessions with their status.
+// This is exported so it can be called from start.go.
+func RunSessionsList(cmd *cobra.Command, args []string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get current directory: %w", err)
@@ -223,7 +229,7 @@ func runSessionsAttach(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Attaching to session %s...\n", targetSession.ID)
 
 	cfg := config.Get()
-	return attachToSession(cwd, targetSession.ID, cfg)
+	return AttachToSession(cwd, targetSession.ID, cfg)
 }
 
 func runSessionsRecover(cmd *cobra.Command, args []string) error {
@@ -236,7 +242,7 @@ func runSessionsRecover(cmd *cobra.Command, args []string) error {
 
 	// If session ID is provided, use attach
 	if len(args) > 0 {
-		return attachToSession(cwd, args[0], cfg)
+		return AttachToSession(cwd, args[0], cfg)
 	}
 
 	// Try to recover legacy session

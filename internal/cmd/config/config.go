@@ -1,4 +1,5 @@
-package cmd
+// Package config provides CLI commands for managing Claudio configuration.
+package config
 
 import (
 	"fmt"
@@ -8,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Iron-Ham/claudio/internal/config"
+	appconfig "github.com/Iron-Ham/claudio/internal/config"
 	tuiconfig "github.com/Iron-Ham/claudio/internal/tui/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -100,7 +101,6 @@ Examples:
 }
 
 func init() {
-	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configInitCmd)
@@ -109,12 +109,19 @@ func init() {
 	configCmd.AddCommand(configResetCmd)
 }
 
+// Register adds all config-related commands to the given parent command.
+// This is the main entry point for integrating the config subpackage with
+// the root command.
+func Register(parent *cobra.Command) {
+	parent.AddCommand(configCmd)
+}
+
 func runConfigInteractive(cmd *cobra.Command, args []string) error {
 	return tuiconfig.Run()
 }
 
 func runConfigShow(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg := appconfig.Get()
 
 	fmt.Println("Current configuration:")
 	fmt.Println()
@@ -180,9 +187,9 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	var typedValue interface{}
 	switch keyType {
 	case "string":
-		if key == "completion.default_action" && !config.IsValidCompletionAction(value) {
+		if key == "completion.default_action" && !appconfig.IsValidCompletionAction(value) {
 			return fmt.Errorf("invalid value for %s: %s\nValid options: %s",
-				key, value, strings.Join(config.ValidCompletionActions(), ", "))
+				key, value, strings.Join(appconfig.ValidCompletionActions(), ", "))
 		}
 		typedValue = value
 	case "bool":
@@ -202,7 +209,7 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	}
 
 	// Ensure config directory exists
-	configDir := config.ConfigDir()
+	configDir := appconfig.ConfigDir()
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
@@ -211,7 +218,7 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	viper.Set(key, typedValue)
 
 	// Write to config file
-	configFile := config.ConfigFile()
+	configFile := appconfig.ConfigFile()
 	if err := viper.WriteConfigAs(configFile); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
@@ -223,8 +230,8 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 }
 
 func runConfigInit(cmd *cobra.Command, args []string) error {
-	configDir := config.ConfigDir()
-	configFile := config.ConfigFile()
+	configDir := appconfig.ConfigDir()
+	configFile := appconfig.ConfigFile()
 
 	// Check if config file already exists
 	if _, err := os.Stat(configFile); err == nil {
@@ -283,7 +290,7 @@ pr:
 }
 
 func runConfigPath(cmd *cobra.Command, args []string) error {
-	configFile := config.ConfigFile()
+	configFile := appconfig.ConfigFile()
 
 	if viper.ConfigFileUsed() != "" {
 		fmt.Printf("Active config: %s\n", viper.ConfigFileUsed())
@@ -293,7 +300,7 @@ func runConfigPath(cmd *cobra.Command, args []string) error {
 
 	// Also show config search paths
 	fmt.Println("\nSearch paths:")
-	fmt.Printf("  1. %s\n", filepath.Join(config.ConfigDir(), "config.yaml"))
+	fmt.Printf("  1. %s\n", filepath.Join(appconfig.ConfigDir(), "config.yaml"))
 	fmt.Printf("  2. $HOME/.config/claudio/config.yaml\n")
 	fmt.Printf("  3. ./config.yaml (current directory)\n")
 	fmt.Println("\nEnvironment variables: CLAUDIO_* (e.g., CLAUDIO_COMPLETION_DEFAULT_ACTION)")
@@ -302,7 +309,7 @@ func runConfigPath(cmd *cobra.Command, args []string) error {
 }
 
 func runConfigEdit(cmd *cobra.Command, args []string) error {
-	configFile := config.ConfigFile()
+	configFile := appconfig.ConfigFile()
 
 	// Check if config file exists, if not create it
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
@@ -345,7 +352,7 @@ func runConfigEdit(cmd *cobra.Command, args []string) error {
 }
 
 func runConfigReset(cmd *cobra.Command, args []string) error {
-	defaults := config.Default()
+	defaults := appconfig.Default()
 
 	// Map of keys to their default values
 	defaultValues := map[string]interface{}{
@@ -379,10 +386,10 @@ func runConfigReset(cmd *cobra.Command, args []string) error {
 	}
 
 	// Write to config file
-	configFile := config.ConfigFile()
+	configFile := appconfig.ConfigFile()
 
 	// Ensure config directory exists
-	configDir := config.ConfigDir()
+	configDir := appconfig.ConfigDir()
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}

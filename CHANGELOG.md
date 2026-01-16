@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CLI Command Package Reorganization** - Reorganized the flat `internal/cmd/` package (17 files) into domain-specific subpackages for better maintainability and easier onboarding. Commands are now grouped into: `session/` (start, stop, sessions, cleanup), `planning/` (plan, ultraplan, tripleshot), `instance/` (add, remove, status, stats), `observability/` (logs, harvest), `project/` (init, pr), and `config/` (config management). Each subpackage has a `Register()` function that wires its commands to the root command. This change is purely organizational and has no impact on CLI behavior.
+
 ## [0.8.2] - 2026-01-16
 
 ### Fixed
