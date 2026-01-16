@@ -456,14 +456,6 @@ func (p *PlanningOrchestrator) GetInstanceID() string {
 	return p.state.InstanceID
 }
 
-// setInstanceID updates the planning instance ID.
-// nolint:unused // Reserved for future use when Execute implementation is complete
-func (p *PlanningOrchestrator) setInstanceID(id string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.state.InstanceID = id
-}
-
 // IsAwaitingCompletion returns true if planning is waiting for instance(s) to finish.
 func (p *PlanningOrchestrator) IsAwaitingCompletion() bool {
 	p.mu.RLock()

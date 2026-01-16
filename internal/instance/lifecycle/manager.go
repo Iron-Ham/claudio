@@ -481,13 +481,6 @@ func (m *Manager) Reconnect(inst Instance) error {
 	return nil
 }
 
-// SessionExists checks if a tmux session with the given name exists on the default socket.
-// Deprecated: Use SessionExistsWithSocket for socket-specific checks.
-func (m *Manager) SessionExists(sessionName string) bool {
-	cmd := tmux.Command("has-session", "-t", sessionName)
-	return cmd.Run() == nil
-}
-
 // SessionExistsWithSocket checks if a tmux session exists on a specific socket.
 func (m *Manager) SessionExistsWithSocket(sessionName, socketName string) bool {
 	cmd := tmux.CommandWithSocket(socketName, "has-session", "-t", sessionName)

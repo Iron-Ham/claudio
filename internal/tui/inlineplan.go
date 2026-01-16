@@ -280,7 +280,9 @@ func (m *Model) handleInlinePlanObjectiveSubmit(objective string) {
 	if oldInst := m.activeInstance(); oldInst != nil {
 		m.pauseInstance(oldInst.ID)
 	}
-	m.activeTab = m.findInstanceIndex(inst.ID)
+	if idx := m.findInstanceIndexByID(inst.ID); idx >= 0 {
+		m.activeTab = idx
+	}
 	m.ensureActiveVisible()
 	// Resume the new active instance's capture
 	m.resumeActiveInstance()
@@ -403,7 +405,9 @@ func (m *Model) handleMultiPlanObjectiveSubmit(objective string) {
 
 	// Switch to the first planning instance
 	if firstInstanceID != "" {
-		m.activeTab = m.findInstanceIndex(firstInstanceID)
+		if idx := m.findInstanceIndexByID(firstInstanceID); idx >= 0 {
+			m.activeTab = idx
+		}
 		m.ensureActiveVisible()
 		m.resumeActiveInstance()
 	}
@@ -740,44 +744,6 @@ The plan should:
 4. List the files each task will likely modify`, objective, objective)
 }
 
-// handleInlinePlanCompletion handles when the planning instance completes.
-// Parses the generated plan and enters the plan editor.
-// Integration note: This should be called from the instance completion handler
-// when an inline planning instance completes.
-//
-//nolint:unused // Integration with instance completion handler pending
-func (m *Model) handleInlinePlanCompletion(inst *orchestrator.Instance) bool {
-	if m.inlinePlan == nil || !m.inlinePlan.AwaitingPlanCreation {
-		return false
-	}
-
-	if inst.ID != m.inlinePlan.PlanningInstanceID {
-		return false
-	}
-
-	// Try to parse the plan from the instance's worktree
-	planPath := orchestrator.PlanFilePath(inst.WorktreePath)
-	plan, err := orchestrator.ParsePlanFromFile(planPath, m.inlinePlan.Objective)
-	if err != nil {
-		// Fall back to output parsing
-		output := m.outputManager.GetOutput(inst.ID)
-		plan, err = orchestrator.ParsePlanFromOutput(output, m.inlinePlan.Objective)
-		if err != nil {
-			m.errorMessage = fmt.Sprintf("Failed to parse plan: %v", err)
-			return true
-		}
-	}
-
-	m.inlinePlan.Plan = plan
-	m.inlinePlan.AwaitingPlanCreation = false
-
-	// Enter the inline plan editor
-	m.enterInlinePlanEditor()
-	m.infoMessage = fmt.Sprintf("Plan ready: %d tasks. Edit and press [enter] to start execution.", len(plan.Tasks))
-
-	return true
-}
-
 // getGroupManager returns the group manager for the session, creating one if needed.
 func (m *Model) getGroupManager() *group.Manager {
 	if m.session == nil {
@@ -873,21 +839,6 @@ func convertGroupToOrchestratorGroup(g *group.InstanceGroup) *orchestrator.Insta
 	return og
 }
 
-// findInstanceIndex finds the index of an instance in the session's instance list
-//
-//nolint:unused // Used by handleInlinePlanObjectiveSubmit
-func (m *Model) findInstanceIndex(instanceID string) int {
-	if m.session == nil {
-		return 0
-	}
-	for i, inst := range m.session.Instances {
-		if inst.ID == instanceID {
-			return i
-		}
-	}
-	return 0
-}
-
 // expandTildePath expands a tilde prefix (~/) to the user's home directory.
 // Other path formats are returned unchanged.
 func expandTildePath(path string) string {
@@ -898,16 +849,6 @@ func expandTildePath(path string) string {
 		}
 	}
 	return path
-}
-
-// getPlanForInlineEditor returns the plan for inline plan editing
-//
-//nolint:unused // Superseded by getPlanForEditor with inline mode check
-func (m *Model) getPlanForInlineEditor() *orchestrator.PlanSpec {
-	if m.inlinePlan == nil {
-		return nil
-	}
-	return m.inlinePlan.Plan
 }
 
 // syncPlanTasksToInstances synchronizes plan tasks to instances in the group.
@@ -1047,112 +988,6 @@ func (m *Model) confirmInlinePlanAndExecute() error {
 		m.logger.Info("inline plan execution started",
 			"task_count", len(m.inlinePlan.Plan.Tasks),
 			"objective", m.inlinePlan.Objective)
-	}
-
-	return nil
-}
-
-// handleInlinePlanTaskDelete handles deleting a task from the inline plan.
-// If the task has a started instance, requires confirmation.
-// Integration note: This should be called from plan editor when deleting
-// a task in inline mode (D key).
-//
-//nolint:unused // Integration with plan editor pending
-func (m *Model) handleInlinePlanTaskDelete(plan *orchestrator.PlanSpec, taskID string) error {
-	if m.inlinePlan == nil {
-		return fmt.Errorf("not in inline plan mode")
-	}
-
-	// Check if this task has an instance
-	instanceID, hasInstance := m.inlinePlan.TaskToInstance[taskID]
-	if hasInstance {
-		inst := m.orchestrator.GetInstance(instanceID)
-		if inst != nil && inst.Status != orchestrator.StatusPending {
-			// Instance has started - require confirmation
-			m.planEditor.pendingConfirmDelete = taskID
-			m.infoMessage = "Task has started instance. Press 'D' again to confirm deletion."
-			return nil
-		}
-
-		// Remove pending instance
-		_ = m.orchestrator.RemoveInstance(m.session, instanceID, true)
-		delete(m.inlinePlan.TaskToInstance, taskID)
-	}
-
-	// Delete from plan
-	return orchestrator.DeleteTask(plan, taskID)
-}
-
-// handleInlinePlanTaskAdd handles adding a task to the inline plan.
-// Creates a pending instance in the plan's group.
-// Integration note: This should be called from plan editor when adding
-// a new task in inline mode (n key).
-//
-//nolint:unused // Integration with plan editor pending
-func (m *Model) handleInlinePlanTaskAdd(plan *orchestrator.PlanSpec, afterTaskID string, newTask orchestrator.PlannedTask) error {
-	if m.inlinePlan == nil {
-		return fmt.Errorf("not in inline plan mode")
-	}
-
-	// Add to plan
-	if err := orchestrator.AddTask(plan, afterTaskID, newTask); err != nil {
-		return err
-	}
-
-	// Create a pending instance for the new task
-	inst, err := m.orchestrator.AddInstance(m.session, newTask.Description)
-	if err != nil {
-		// Rollback plan change
-		_ = orchestrator.DeleteTask(plan, newTask.ID)
-		return fmt.Errorf("failed to create instance: %w", err)
-	}
-
-	inst.Task = newTask.Title
-	m.inlinePlan.TaskToInstance[newTask.ID] = inst.ID
-
-	// Add to group
-	gm := m.getGroupManager()
-	if gm != nil && m.inlinePlan.GroupID != "" {
-		gm.MoveInstanceToGroup(inst.ID, m.inlinePlan.GroupID)
-	}
-
-	return nil
-}
-
-// handleInlinePlanTaskReorder handles reordering tasks in the inline plan.
-// Updates instance dependencies based on new task order.
-// Integration note: This should be called from plan editor when reordering
-// tasks in inline mode (J/K keys).
-//
-//nolint:unused // Integration with plan editor pending
-func (m *Model) handleInlinePlanTaskReorder(plan *orchestrator.PlanSpec) error {
-	if m.inlinePlan == nil {
-		return fmt.Errorf("not in inline plan mode")
-	}
-
-	// Recalculate execution order based on dependencies
-	// EnsurePlanComputed will rebuild ExecutionOrder if needed
-	orchestrator.EnsurePlanComputed(plan)
-
-	// Update instance dependencies to match new order
-	for _, task := range plan.Tasks {
-		instanceID, ok := m.inlinePlan.TaskToInstance[task.ID]
-		if !ok {
-			continue
-		}
-
-		inst := m.orchestrator.GetInstance(instanceID)
-		if inst == nil {
-			continue
-		}
-
-		// Clear and rebuild dependencies
-		inst.DependsOn = nil
-		for _, depTaskID := range task.DependsOn {
-			if depInstID, exists := m.inlinePlan.TaskToInstance[depTaskID]; exists {
-				inst.DependsOn = append(inst.DependsOn, depInstID)
-			}
-		}
 	}
 
 	return nil
