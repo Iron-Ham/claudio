@@ -12,6 +12,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/phase"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/retry"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/verify"
 )
@@ -1079,83 +1080,44 @@ func (c *Coordinator) startTask(taskID string, completionChan chan<- taskComplet
 	return nil
 }
 
-// buildTaskPrompt creates the prompt for a child task instance
+// buildTaskPrompt creates the prompt for a child task instance.
+// This method delegates to the prompt.TaskBuilder for consistent prompt generation.
 func (c *Coordinator) buildTaskPrompt(task *PlannedTask) string {
 	session := c.Session()
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# Task: %s\n\n", task.Title))
-	sb.WriteString(fmt.Sprintf("## Part of Ultra-Plan: %s\n\n", session.Plan.Summary))
-	sb.WriteString("## Your Task\n\n")
-	sb.WriteString(task.Description)
-	sb.WriteString("\n\n")
-
-	if len(task.Files) > 0 {
-		sb.WriteString("## Expected Files\n\n")
-		sb.WriteString("You are expected to work with these files:\n")
-		for _, f := range task.Files {
-			sb.WriteString(fmt.Sprintf("- %s\n", f))
-		}
-		sb.WriteString("\n")
-	}
-
-	// Add context from previous group's consolidator if this task is not in group 0
 	groupIndex := c.getTaskGroupIndex(task.ID)
+
+	// Convert the PlannedTask to TaskInfo using the conversion helper
+	taskInfo := prompt.ConvertPlannedTaskToTaskInfo(task)
+
+	// Build the prompt context
+	ctx := &prompt.Context{
+		Phase:      prompt.PhaseTask,
+		SessionID:  session.ID,
+		Objective:  session.Objective,
+		Plan:       &prompt.PlanInfo{Summary: session.Plan.Summary},
+		Task:       &taskInfo,
+		GroupIndex: groupIndex,
+	}
+
+	// Add previous group context if not in group 0
 	if groupIndex > 0 {
-		prevGroupIdx := groupIndex - 1
-		if prevGroupIdx < len(session.GroupConsolidationContexts) && session.GroupConsolidationContexts[prevGroupIdx] != nil {
-			prevContext := session.GroupConsolidationContexts[prevGroupIdx]
-			sb.WriteString("## Context from Previous Group\n\n")
-			sb.WriteString(fmt.Sprintf("This task builds on work consolidated from Group %d.\n\n", prevGroupIdx+1))
-
-			if prevContext.Notes != "" {
-				sb.WriteString(fmt.Sprintf("**Consolidator Notes**: %s\n\n", prevContext.Notes))
-			}
-
-			if len(prevContext.IssuesForNextGroup) > 0 {
-				sb.WriteString("**Important**: The previous group's consolidator flagged these issues:\n")
-				for _, issue := range prevContext.IssuesForNextGroup {
-					sb.WriteString(fmt.Sprintf("- %s\n", issue))
-				}
-				sb.WriteString("\n")
-			}
-
-			if prevContext.Verification.OverallSuccess {
-				sb.WriteString("The consolidated code from the previous group has been verified (build/lint/tests passed).\n\n")
-			} else {
-				sb.WriteString("**Warning**: The previous group's code verification may have issues. Check carefully.\n\n")
-			}
+		prevIdx := groupIndex - 1
+		if prevIdx < len(session.GroupConsolidationContexts) && session.GroupConsolidationContexts[prevIdx] != nil {
+			ctx.PreviousGroup = prompt.ConvertGroupConsolidationToGroupContext(
+				session.GroupConsolidationContexts[prevIdx],
+				prevIdx,
+			)
 		}
 	}
 
-	sb.WriteString("## Guidelines\n\n")
-	sb.WriteString("- Focus only on this specific task\n")
-	sb.WriteString("- Do not modify files outside of your assigned scope unless necessary\n")
-	sb.WriteString("- Commit your changes before writing the completion file\n\n")
-
-	// Add completion protocol instructions
-	sb.WriteString("## Completion Protocol\n\n")
-	sb.WriteString("When your task is complete, you MUST write a completion file to signal the orchestrator:\n\n")
-	sb.WriteString("**CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.\n")
-	sb.WriteString("If you changed directories during the task (e.g., `cd project/`), use an absolute path or navigate back to the root first.\n\n")
-	sb.WriteString(fmt.Sprintf("1. Use Write tool to create `%s` in your worktree root\n", TaskCompletionFileName))
-	sb.WriteString("2. Include this JSON structure:\n")
-	sb.WriteString("```json\n")
-	sb.WriteString("{\n")
-	sb.WriteString(fmt.Sprintf("  \"task_id\": \"%s\",\n", task.ID))
-	sb.WriteString("  \"status\": \"complete\",\n")
-	sb.WriteString("  \"summary\": \"Brief description of what you accomplished\",\n")
-	sb.WriteString("  \"files_modified\": [\"list\", \"of\", \"files\", \"you\", \"changed\"],\n")
-	sb.WriteString("  \"notes\": \"Any implementation notes for the consolidation phase\",\n")
-	sb.WriteString("  \"issues\": [\"Any concerns or blocking issues found\"],\n")
-	sb.WriteString("  \"suggestions\": [\"Suggestions for integration with other tasks\"],\n")
-	sb.WriteString("  \"dependencies\": [\"Any new runtime dependencies added\"]\n")
-	sb.WriteString("}\n")
-	sb.WriteString("```\n\n")
-	sb.WriteString("3. Use status \"blocked\" if you cannot complete (explain in issues), or \"failed\" if something broke\n")
-	sb.WriteString("4. This file signals that your work is done and provides context for consolidation\n")
-
-	return sb.String()
+	// Build the prompt using TaskBuilder
+	builder := prompt.NewTaskBuilder()
+	result, err := builder.Build(ctx)
+	if err != nil {
+		// Fallback to basic prompt on error (should not happen with valid input)
+		return fmt.Sprintf("# Task: %s\n\n%s", task.Title, task.Description)
+	}
+	return result
 }
 
 // getTaskGroupIndex returns the group index for a given task ID, or -1 if not found
