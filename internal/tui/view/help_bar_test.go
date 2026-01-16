@@ -160,20 +160,79 @@ func TestRenderHelp(t *testing.T) {
 }
 
 func TestRenderTripleShotHelp(t *testing.T) {
-	result := RenderTripleShotHelp()
+	t.Run("normal mode without state", func(t *testing.T) {
+		result := RenderTripleShotHelp(nil)
 
-	// Should contain standard navigation keys
-	expectedKeys := []string{"cmd", "scroll", "switch", "search", "help", "quit"}
-	for _, key := range expectedKeys {
-		if !strings.Contains(result, key) {
-			t.Errorf("expected triple-shot help to contain %q, got: %s", key, result)
+		// Should contain standard navigation keys
+		expectedKeys := []string{"cmd", "scroll", "switch", "search", "help", "quit"}
+		for _, key := range expectedKeys {
+			if !strings.Contains(result, key) {
+				t.Errorf("expected triple-shot help to contain %q, got: %s", key, result)
+			}
 		}
-	}
 
-	// Should not contain input mode key (triple-shot specific)
-	if strings.Contains(result, "input") {
-		t.Errorf("triple-shot help should not contain input key, got: %s", result)
-	}
+		// Should not contain input mode key (triple-shot specific)
+		if strings.Contains(result, "input") {
+			t.Errorf("triple-shot help should not contain input key, got: %s", result)
+		}
+	})
+
+	t.Run("normal mode with state", func(t *testing.T) {
+		state := &HelpBarState{InputMode: false}
+		result := RenderTripleShotHelp(state)
+
+		// Should contain NORMAL badge and standard keys
+		if !strings.Contains(result, "NORMAL") {
+			t.Errorf("expected NORMAL badge in triple-shot help, got: %s", result)
+		}
+		expectedKeys := []string{"cmd", "scroll", "switch"}
+		for _, key := range expectedKeys {
+			if !strings.Contains(result, key) {
+				t.Errorf("expected triple-shot help to contain %q, got: %s", key, result)
+			}
+		}
+	})
+
+	t.Run("input mode shows INPUT badge", func(t *testing.T) {
+		state := &HelpBarState{InputMode: true}
+		result := RenderTripleShotHelp(state)
+
+		// Should show INPUT badge instead of NORMAL
+		if !strings.Contains(result, "INPUT") {
+			t.Errorf("expected INPUT badge when in input mode, got: %s", result)
+		}
+		if strings.Contains(result, "NORMAL") {
+			t.Errorf("should not show NORMAL badge when in input mode, got: %s", result)
+		}
+		// Should show exit instruction
+		if !strings.Contains(result, "Ctrl+]") {
+			t.Errorf("expected exit key hint in input mode, got: %s", result)
+		}
+	})
+
+	t.Run("terminal focused shows TERMINAL badge", func(t *testing.T) {
+		state := &HelpBarState{TerminalFocused: true, TerminalDirMode: "worktree"}
+		result := RenderTripleShotHelp(state)
+
+		// Should show TERMINAL badge
+		if !strings.Contains(result, "TERMINAL") {
+			t.Errorf("expected TERMINAL badge when terminal focused, got: %s", result)
+		}
+		// Should show dir mode
+		if !strings.Contains(result, "worktree") {
+			t.Errorf("expected worktree dir mode indicator, got: %s", result)
+		}
+	})
+
+	t.Run("input mode takes priority over terminal", func(t *testing.T) {
+		state := &HelpBarState{InputMode: true, TerminalFocused: true}
+		result := RenderTripleShotHelp(state)
+
+		// Input mode should take priority
+		if !strings.Contains(result, "INPUT") {
+			t.Errorf("expected INPUT badge (takes priority over TERMINAL), got: %s", result)
+		}
+	})
 }
 
 func TestHelpBarView(t *testing.T) {

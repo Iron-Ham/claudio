@@ -208,7 +208,30 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 }
 
 // RenderTripleShotHelp renders the help bar for triple-shot mode.
-func (v *HelpBarView) RenderTripleShotHelp() string {
+// Accepts optional state to properly display INPUT mode when active.
+func (v *HelpBarView) RenderTripleShotHelp(state *HelpBarState) string {
+	// Check for input mode first - this takes priority
+	if state != nil && state.InputMode {
+		badge := styles.ModeBadgeInput.Render("INPUT")
+		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
+			styles.Muted.Render("All keystrokes forwarded to Claude")
+		return styles.HelpBar.Render(badge + "  " + help)
+	}
+
+	// Check for terminal focused mode
+	if state != nil && state.TerminalFocused {
+		badge := styles.ModeBadgeTerminal.Render("TERMINAL")
+		dirMode := "invoke"
+		if state.TerminalDirMode == "worktree" {
+			dirMode = "worktree"
+		}
+		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
+			styles.HelpKey.Render("[Ctrl+Shift+T]") + " switch dir  " +
+			styles.Muted.Render("("+dirMode+")")
+		return styles.HelpBar.Render(badge + "  " + help)
+	}
+
+	// Normal triple-shot mode
 	badge := styles.ModeBadgeNormal.Render("NORMAL")
 	keys := []string{
 		styles.HelpKey.Render("[:]") + " cmd",
@@ -237,6 +260,6 @@ func RenderHelp(state *HelpBarState) string {
 }
 
 // RenderTripleShotHelp renders the help bar for triple-shot mode.
-func RenderTripleShotHelp() string {
-	return helpBarView.RenderTripleShotHelp()
+func RenderTripleShotHelp(state *HelpBarState) string {
+	return helpBarView.RenderTripleShotHelp(state)
 }

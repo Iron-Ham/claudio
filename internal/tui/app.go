@@ -1346,7 +1346,7 @@ func (m Model) renderTripleShotSidebar(width, height int) string {
 // renderTripleShotHelp renders the help bar for triple-shot mode.
 // Delegates to view.RenderTripleShotHelp for the actual rendering.
 func (m Model) renderTripleShotHelp() string {
-	return view.RenderTripleShotHelp()
+	return view.RenderTripleShotHelp(m.buildHelpBarState())
 }
 
 // initiateTripleShotMode creates and starts a triple-shot session.
