@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-01-16
+
+### Fixed
+
+- **Sidebar Navigation Hint** - Updated the sidebar keyboard hint from `j/k scroll` to `h/l nav` to accurately reflect the actual key bindings for navigating between instances.
+
+## [0.8.1] - 2026-01-16
+
 ### Fixed
 
 - **Sidebar Keyboard Hint** - Changed sidebar help hint from `[j/k] scroll` to `[h/l] nav` since `h/l` navigates between instances which is more relevant when viewing the sidebar, while `j/k` scrolls the main content pane.
@@ -461,6 +469,8 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.8.2]: https://github.com/Iron-Ham/claudio/releases/tag/v0.8.2
+[0.8.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.8.1
 [0.8.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.8.0
 [0.7.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.7.0
