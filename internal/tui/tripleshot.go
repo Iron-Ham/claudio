@@ -140,12 +140,16 @@ func (m *Model) handleTripleShotAttemptProcessed(msg tuimsg.TripleShotAttemptPro
 			)
 		}
 		m.errorMessage = fmt.Sprintf("Failed to process attempt %d completion", msg.AttemptIndex+1)
-		return m, nil
+		// Don't return early - the attempt may have been marked as failed, and we still
+		// need to check if all attempts are complete to trigger the judge
+	} else {
+		m.infoMessage = "Attempt completed - checking progress..."
 	}
 
-	m.infoMessage = "Attempt completed - checking progress..."
-
 	// Check if all attempts are complete and we should start the judge
+	// This check runs even when msg.Err != nil because the attempt may have been
+	// marked as failed (e.g., due to parse error), and this could be the last
+	// attempt to finish - we still need to start the judge if we have >= 2 successes
 	session := coordinator.Session()
 	if session != nil && session.AllAttemptsComplete() && session.JudgeID == "" {
 		if session.SuccessfulAttemptCount() >= 2 {

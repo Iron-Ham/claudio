@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Triple-Shot Judge Not Triggering** - Fixed a critical bug where the triple-shot judge would not start when the last attempt to complete had a parsing error. Previously, if the completion file for an attempt failed to parse (e.g., due to schema variations like `notes` being an array instead of a string), the error handling path would return early without checking if all attempts were complete. Now the judge-triggering check runs regardless of parsing errors, ensuring the judge starts as long as at least 2 attempts succeeded.
+
+- **Flexible Notes Field in Completion Files** - Changed the `Notes` field in `TripleShotCompletionFile` to use `FlexibleString` type (reusing the existing type from ultraplan.go), which accepts both string and array-of-strings JSON values. This prevents JSON parsing failures when Claude instances write completion files with `notes` as an array, which was causing attempts to be incorrectly marked as failed.
+
 ## [0.8.0] - 2026-01-16
 
 This release focuses on **Multi-Session Support & Deprecation Cleanup** - enabling multiple concurrent `:plan` and `:multiplan` sessions, adding sparse checkout for monorepo support, improved mode visibility, and removing deprecated APIs to streamline the codebase.

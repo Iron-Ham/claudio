@@ -146,12 +146,12 @@ const TripleShotCompletionFileName = ".claudio-tripleshot-complete.json"
 
 // TripleShotCompletionFile represents the completion report written by an attempt
 type TripleShotCompletionFile struct {
-	AttemptIndex  int      `json:"attempt_index"`
-	Status        string   `json:"status"` // "complete" or "failed"
-	Summary       string   `json:"summary"`
-	FilesModified []string `json:"files_modified"`
-	Approach      string   `json:"approach"` // Description of the approach taken
-	Notes         string   `json:"notes,omitempty"`
+	AttemptIndex  int            `json:"attempt_index"`
+	Status        string         `json:"status"` // "complete" or "failed"
+	Summary       string         `json:"summary"`
+	FilesModified []string       `json:"files_modified"`
+	Approach      string         `json:"approach"`        // Description of the approach taken
+	Notes         FlexibleString `json:"notes,omitempty"` // Uses FlexibleString to accept both string and []string
 }
 
 // TripleShotCompletionFilePath returns the full path to the completion file
