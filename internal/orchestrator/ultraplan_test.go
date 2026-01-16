@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
 )
 
 func TestParsePlanFromOutput(t *testing.T) {
@@ -1170,5 +1172,338 @@ func TestGroupConsolidationCompletionFile_Getters_EmptyFields(t *testing.T) {
 	// Default VerificationResult has OverallSuccess = false
 	if completion.IsVerificationSuccess() {
 		t.Error("IsVerificationSuccess() = true, want false for default")
+	}
+}
+
+// =============================================================================
+// Interface Implementation Tests
+//
+// These tests verify that orchestrator types properly implement the prompt
+// package interfaces, enabling type conversion without circular dependencies.
+//
+// The prompt package defines matching interfaces (PlannedTaskLike, PlanSpecLike,
+// GroupConsolidationLike) that use duck typing. The orchestrator types implement
+// getter methods that satisfy both packages' interface definitions.
+//
+// Note on PlanSpecLike: The PlanSpec.GetTasks() method returns []PlannedTaskLike
+// (the orchestrator package's interface), which is structurally compatible with
+// but not identical to []prompt.PlannedTaskLike. This is intentional - the prompt
+// package's ConvertPlanSpecToPlanInfo function handles this conversion.
+// =============================================================================
+
+func TestPlannedTaskImplementsInterface(t *testing.T) {
+	// Create a PlannedTask with test data
+	task := &PlannedTask{
+		ID:            "task-test-123",
+		Title:         "Test Task Title",
+		Description:   "Detailed description of what this task should accomplish",
+		Files:         []string{"internal/foo/bar.go", "internal/foo/baz.go"},
+		DependsOn:     []string{"task-1", "task-2"},
+		Priority:      3,
+		EstComplexity: ComplexityMedium,
+		IssueURL:      "https://github.com/example/repo/issues/42",
+		NoCode:        false,
+	}
+
+	// Compile-time interface check: if PlannedTask does not satisfy
+	// prompt.PlannedTaskLike, this line will cause a compilation error.
+	// This verifies that the getter methods have the correct signatures.
+	var _ prompt.PlannedTaskLike = task
+
+	// Runtime verification of each getter method
+	if got := task.GetID(); got != "task-test-123" {
+		t.Errorf("GetID() = %q, want %q", got, "task-test-123")
+	}
+
+	if got := task.GetTitle(); got != "Test Task Title" {
+		t.Errorf("GetTitle() = %q, want %q", got, "Test Task Title")
+	}
+
+	if got := task.GetDescription(); got != "Detailed description of what this task should accomplish" {
+		t.Errorf("GetDescription() = %q, want %q", got, "Detailed description of what this task should accomplish")
+	}
+
+	files := task.GetFiles()
+	if len(files) != 2 {
+		t.Errorf("GetFiles() returned %d files, want 2", len(files))
+	} else {
+		if files[0] != "internal/foo/bar.go" {
+			t.Errorf("GetFiles()[0] = %q, want %q", files[0], "internal/foo/bar.go")
+		}
+		if files[1] != "internal/foo/baz.go" {
+			t.Errorf("GetFiles()[1] = %q, want %q", files[1], "internal/foo/baz.go")
+		}
+	}
+
+	deps := task.GetDependsOn()
+	if len(deps) != 2 {
+		t.Errorf("GetDependsOn() returned %d dependencies, want 2", len(deps))
+	} else {
+		if deps[0] != "task-1" {
+			t.Errorf("GetDependsOn()[0] = %q, want %q", deps[0], "task-1")
+		}
+		if deps[1] != "task-2" {
+			t.Errorf("GetDependsOn()[1] = %q, want %q", deps[1], "task-2")
+		}
+	}
+
+	if got := task.GetPriority(); got != 3 {
+		t.Errorf("GetPriority() = %d, want %d", got, 3)
+	}
+
+	if got := task.GetEstComplexity(); got != "medium" {
+		t.Errorf("GetEstComplexity() = %q, want %q", got, "medium")
+	}
+
+	// Verify the conversion function works with this task
+	taskInfo := prompt.ConvertPlannedTaskToTaskInfo(task)
+	if taskInfo.ID != task.ID {
+		t.Errorf("ConvertPlannedTaskToTaskInfo().ID = %q, want %q", taskInfo.ID, task.ID)
+	}
+	if taskInfo.Title != task.Title {
+		t.Errorf("ConvertPlannedTaskToTaskInfo().Title = %q, want %q", taskInfo.Title, task.Title)
+	}
+}
+
+func TestPlanSpecImplementsInterface(t *testing.T) {
+	// Create a PlanSpec with test data
+	plan := &PlanSpec{
+		ID:        "plan-test-456",
+		Objective: "Test objective for the plan",
+		Summary:   "Executive summary of the implementation plan",
+		Tasks: []PlannedTask{
+			{
+				ID:            "task-a",
+				Title:         "First Task",
+				Description:   "Description of task A",
+				Files:         []string{"file_a.go"},
+				DependsOn:     []string{},
+				Priority:      1,
+				EstComplexity: ComplexityLow,
+			},
+			{
+				ID:            "task-b",
+				Title:         "Second Task",
+				Description:   "Description of task B",
+				Files:         []string{"file_b.go"},
+				DependsOn:     []string{"task-a"},
+				Priority:      2,
+				EstComplexity: ComplexityMedium,
+			},
+			{
+				ID:            "task-c",
+				Title:         "Third Task",
+				Description:   "Description of task C",
+				Files:         []string{"file_c.go"},
+				DependsOn:     []string{"task-a"},
+				Priority:      3,
+				EstComplexity: ComplexityHigh,
+			},
+		},
+		DependencyGraph: map[string][]string{
+			"task-a": {},
+			"task-b": {"task-a"},
+			"task-c": {"task-a"},
+		},
+		ExecutionOrder: [][]string{
+			{"task-a"},
+			{"task-b", "task-c"},
+		},
+		Insights:    []string{"Codebase uses clean architecture", "Tests are comprehensive"},
+		Constraints: []string{"Must maintain API compatibility", "No breaking changes"},
+	}
+
+	// Note: PlanSpec cannot directly satisfy prompt.PlanSpecLike because
+	// GetTasks() returns []orchestrator.PlannedTaskLike, not []prompt.PlannedTaskLike.
+	// This is a Go type system limitation - the interfaces are structurally
+	// identical but the return type slice element types don't match.
+	//
+	// Instead, we verify the local interface satisfaction and that the
+	// conversion function works correctly.
+
+	// Compile-time check that PlanSpec satisfies the local PlannedTaskLike interface
+	// for each task (via GetTasks returning []PlannedTaskLike)
+	var _ PlannedTaskLike = &plan.Tasks[0]
+
+	// Runtime verification of each getter method
+	if got := plan.GetSummary(); got != "Executive summary of the implementation plan" {
+		t.Errorf("GetSummary() = %q, want %q", got, "Executive summary of the implementation plan")
+	}
+
+	// Verify GetTasks returns the correct tasks as PlannedTaskLike interfaces
+	tasks := plan.GetTasks()
+	if len(tasks) != 3 {
+		t.Errorf("GetTasks() returned %d tasks, want 3", len(tasks))
+	} else {
+		// Verify first task
+		if tasks[0].GetID() != "task-a" {
+			t.Errorf("GetTasks()[0].GetID() = %q, want %q", tasks[0].GetID(), "task-a")
+		}
+		if tasks[0].GetTitle() != "First Task" {
+			t.Errorf("GetTasks()[0].GetTitle() = %q, want %q", tasks[0].GetTitle(), "First Task")
+		}
+		if tasks[0].GetEstComplexity() != "low" {
+			t.Errorf("GetTasks()[0].GetEstComplexity() = %q, want %q", tasks[0].GetEstComplexity(), "low")
+		}
+
+		// Verify second task
+		if tasks[1].GetID() != "task-b" {
+			t.Errorf("GetTasks()[1].GetID() = %q, want %q", tasks[1].GetID(), "task-b")
+		}
+		deps := tasks[1].GetDependsOn()
+		if len(deps) != 1 || deps[0] != "task-a" {
+			t.Errorf("GetTasks()[1].GetDependsOn() = %v, want %v", deps, []string{"task-a"})
+		}
+
+		// Verify third task
+		if tasks[2].GetID() != "task-c" {
+			t.Errorf("GetTasks()[2].GetID() = %q, want %q", tasks[2].GetID(), "task-c")
+		}
+	}
+
+	// Verify GetExecutionOrder
+	order := plan.GetExecutionOrder()
+	if len(order) != 2 {
+		t.Errorf("GetExecutionOrder() returned %d groups, want 2", len(order))
+	} else {
+		if len(order[0]) != 1 || order[0][0] != "task-a" {
+			t.Errorf("GetExecutionOrder()[0] = %v, want %v", order[0], []string{"task-a"})
+		}
+		if len(order[1]) != 2 {
+			t.Errorf("GetExecutionOrder()[1] has %d tasks, want 2", len(order[1]))
+		}
+	}
+
+	// Verify GetInsights
+	insights := plan.GetInsights()
+	if len(insights) != 2 {
+		t.Errorf("GetInsights() returned %d insights, want 2", len(insights))
+	} else {
+		if insights[0] != "Codebase uses clean architecture" {
+			t.Errorf("GetInsights()[0] = %q, want %q", insights[0], "Codebase uses clean architecture")
+		}
+		if insights[1] != "Tests are comprehensive" {
+			t.Errorf("GetInsights()[1] = %q, want %q", insights[1], "Tests are comprehensive")
+		}
+	}
+
+	// Verify GetConstraints
+	constraints := plan.GetConstraints()
+	if len(constraints) != 2 {
+		t.Errorf("GetConstraints() returned %d constraints, want 2", len(constraints))
+	} else {
+		if constraints[0] != "Must maintain API compatibility" {
+			t.Errorf("GetConstraints()[0] = %q, want %q", constraints[0], "Must maintain API compatibility")
+		}
+		if constraints[1] != "No breaking changes" {
+			t.Errorf("GetConstraints()[1] = %q, want %q", constraints[1], "No breaking changes")
+		}
+	}
+
+	// Verify the tasks returned by GetTasks satisfy prompt.PlannedTaskLike
+	// This is the key integration point - individual tasks can be converted
+	for i, task := range tasks {
+		var _ prompt.PlannedTaskLike = task
+		// Also verify conversion works
+		taskInfo := prompt.ConvertPlannedTaskToTaskInfo(task)
+		if taskInfo.ID != task.GetID() {
+			t.Errorf("Task %d: ConvertPlannedTaskToTaskInfo().ID = %q, want %q", i, taskInfo.ID, task.GetID())
+		}
+	}
+}
+
+func TestGroupConsolidationImplementsInterface(t *testing.T) {
+	// Create a GroupConsolidationCompletionFile with test data
+	consolidation := &GroupConsolidationCompletionFile{
+		GroupIndex: 1,
+		Status:     "complete",
+		BranchName: "ultraplan/group-1-consolidated",
+		TasksConsolidated: []string{
+			"task-auth-models",
+			"task-auth-handlers",
+			"task-auth-middleware",
+		},
+		ConflictsResolved: []ConflictResolution{
+			{
+				File:       "internal/auth/config.go",
+				Resolution: "Merged both import additions",
+			},
+		},
+		Verification: VerificationResult{
+			ProjectType: "go",
+			CommandsRun: []VerificationStep{
+				{Name: "build", Command: "go build ./...", Success: true},
+				{Name: "lint", Command: "golangci-lint run", Success: true},
+				{Name: "test", Command: "go test ./...", Success: true},
+			},
+			OverallSuccess: true,
+			Summary:        "All verification steps passed",
+		},
+		Notes: "Consolidation completed successfully. The auth package changes merge cleanly.",
+		IssuesForNextGroup: []string{
+			"New AuthConfig type added - ensure subsequent tasks use it",
+			"Middleware registration order matters - register auth before routes",
+		},
+	}
+
+	// Compile-time interface check: if GroupConsolidationCompletionFile does not
+	// satisfy prompt.GroupConsolidationLike, this line will cause a compilation error.
+	var _ prompt.GroupConsolidationLike = consolidation
+
+	// Runtime verification of each getter method
+	if got := consolidation.GetNotes(); got != "Consolidation completed successfully. The auth package changes merge cleanly." {
+		t.Errorf("GetNotes() = %q, want %q", got, "Consolidation completed successfully. The auth package changes merge cleanly.")
+	}
+
+	// Verify GetIssuesForNextGroup
+	issues := consolidation.GetIssuesForNextGroup()
+	if len(issues) != 2 {
+		t.Errorf("GetIssuesForNextGroup() returned %d issues, want 2", len(issues))
+	} else {
+		if issues[0] != "New AuthConfig type added - ensure subsequent tasks use it" {
+			t.Errorf("GetIssuesForNextGroup()[0] = %q, want %q", issues[0], "New AuthConfig type added - ensure subsequent tasks use it")
+		}
+		if issues[1] != "Middleware registration order matters - register auth before routes" {
+			t.Errorf("GetIssuesForNextGroup()[1] = %q, want %q", issues[1], "Middleware registration order matters - register auth before routes")
+		}
+	}
+
+	// Verify IsVerificationSuccess
+	if !consolidation.IsVerificationSuccess() {
+		t.Error("IsVerificationSuccess() = false, want true")
+	}
+
+	// Verify the conversion function works
+	groupCtx := prompt.ConvertGroupConsolidationToGroupContext(consolidation, 1)
+	if groupCtx == nil {
+		t.Fatal("ConvertGroupConsolidationToGroupContext() returned nil")
+	}
+	if groupCtx.GroupIndex != 1 {
+		t.Errorf("GroupContext.GroupIndex = %d, want 1", groupCtx.GroupIndex)
+	}
+	if groupCtx.Notes != consolidation.Notes {
+		t.Errorf("GroupContext.Notes = %q, want %q", groupCtx.Notes, consolidation.Notes)
+	}
+	if !groupCtx.VerificationPassed {
+		t.Error("GroupContext.VerificationPassed = false, want true")
+	}
+
+	// Test with failed verification
+	failedConsolidation := &GroupConsolidationCompletionFile{
+		Verification: VerificationResult{
+			OverallSuccess: false,
+		},
+	}
+
+	var _ prompt.GroupConsolidationLike = failedConsolidation
+
+	if failedConsolidation.IsVerificationSuccess() {
+		t.Error("IsVerificationSuccess() = true for failed verification, want false")
+	}
+
+	// Verify conversion reflects failed state
+	failedCtx := prompt.ConvertGroupConsolidationToGroupContext(failedConsolidation, 0)
+	if failedCtx.VerificationPassed {
+		t.Error("GroupContext.VerificationPassed = true for failed verification, want false")
 	}
 }

@@ -1991,3 +1991,803 @@ func TestCoordinator_RetryManager(t *testing.T) {
 		t.Error("RetryManager() should be nil when not set")
 	}
 }
+
+// =============================================================================
+// Prompt Building Regression Tests
+// =============================================================================
+// These tests verify that the refactored prompt-building methods produce
+// output equivalent to the original implementation. They test structural
+// elements rather than exact string matches to be resilient to minor
+// formatting changes while ensuring essential content is preserved.
+
+// TestBuildTaskPrompt_RegressionStructure verifies that buildTaskPrompt produces
+// all expected structural elements after the refactoring to use prompt.TaskBuilder.
+func TestBuildTaskPrompt_RegressionStructure(t *testing.T) {
+	session := NewUltraPlanSession("Build a new feature", DefaultUltraPlanConfig())
+	session.Plan = &PlanSpec{
+		Summary: "Implement authentication system with OAuth support",
+		Tasks: []PlannedTask{
+			{
+				ID:            "task-1",
+				Title:         "Setup database schema",
+				Description:   "Create the user table with OAuth fields",
+				Files:         []string{"migrations/001_users.sql", "models/user.go"},
+				DependsOn:     []string{},
+				Priority:      1,
+				EstComplexity: ComplexityLow,
+			},
+		},
+		ExecutionOrder: [][]string{{"task-1"}},
+	}
+	session.TaskToInstance = map[string]string{"task-1": "inst-1"}
+
+	manager := &UltraPlanManager{session: session}
+
+	// Create group tracker
+	sessionAdapter := group.NewSessionAdapter(
+		func() group.PlanData {
+			return group.NewPlanAdapter(
+				func() [][]string { return session.Plan.ExecutionOrder },
+				func(taskID string) *group.Task {
+					task := session.GetTask(taskID)
+					if task == nil {
+						return nil
+					}
+					return &group.Task{ID: task.ID, Title: task.Title}
+				},
+			)
+		},
+		func() []string { return session.CompletedTasks },
+		func() []string { return session.FailedTasks },
+		func() map[string]int { return session.TaskCommitCounts },
+		func() int { return session.CurrentGroup },
+	)
+	groupTracker := group.NewTracker(sessionAdapter)
+
+	coord := &Coordinator{
+		manager:      manager,
+		groupTracker: groupTracker,
+	}
+
+	// Get the task and build the prompt
+	task := session.GetTask("task-1")
+	if task == nil {
+		t.Fatal("task-1 not found in session")
+	}
+	prompt := coord.buildTaskPrompt(task)
+
+	// Verify essential structural elements are present
+	requiredElements := []struct {
+		name     string
+		expected string
+	}{
+		{"task header", "# Task: Setup database schema"},
+		{"ultra-plan reference", "Part of Ultra-Plan"},
+		{"plan summary", "authentication system"},
+		{"your task section", "## Your Task"},
+		{"task description", "Create the user table with OAuth fields"},
+		{"expected files section", "## Expected Files"},
+		{"first expected file", "migrations/001_users.sql"},
+		{"second expected file", "models/user.go"},
+		{"guidelines section", "## Guidelines"},
+		{"focus instruction", "Focus only on this specific task"},
+		{"commit instruction", "Commit your changes"},
+		{"completion protocol section", "## Completion Protocol"},
+		{"completion file instruction", ".claudio-task-complete.json"},
+		{"task_id in JSON example", "task-1"},
+		{"status field", "\"status\""},
+		{"summary field", "\"summary\""},
+		{"files_modified field", "files_modified"},
+	}
+
+	for _, elem := range requiredElements {
+		if !strings.Contains(prompt, elem.expected) {
+			t.Errorf("buildTaskPrompt missing %s: expected to contain %q\nGot:\n%s",
+				elem.name, elem.expected, prompt)
+		}
+	}
+}
+
+// TestBuildTaskPrompt_RegressionPreviousGroupContext verifies that buildTaskPrompt
+// correctly includes previous group context for tasks in later groups.
+func TestBuildTaskPrompt_RegressionPreviousGroupContext(t *testing.T) {
+	session := NewUltraPlanSession("Multi-group project", DefaultUltraPlanConfig())
+	session.Plan = &PlanSpec{
+		Summary: "Complex multi-phase implementation",
+		Tasks: []PlannedTask{
+			{ID: "task-1", Title: "Foundation", Description: "Setup base"},
+			{ID: "task-2", Title: "Feature", Description: "Add feature", DependsOn: []string{"task-1"}},
+		},
+		ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+	}
+	session.TaskToInstance = map[string]string{
+		"task-1": "inst-1",
+		"task-2": "inst-2",
+	}
+	// Add group consolidation context from group 0
+	session.GroupConsolidationContexts = []*GroupConsolidationCompletionFile{
+		{
+			Notes:              "Group 1 completed with auth module setup",
+			IssuesForNextGroup: []string{"Ensure API compatibility", "Update documentation"},
+			Verification:       VerificationResult{OverallSuccess: true},
+		},
+	}
+
+	manager := &UltraPlanManager{session: session}
+
+	// Create group tracker
+	sessionAdapter := group.NewSessionAdapter(
+		func() group.PlanData {
+			return group.NewPlanAdapter(
+				func() [][]string { return session.Plan.ExecutionOrder },
+				func(taskID string) *group.Task {
+					task := session.GetTask(taskID)
+					if task == nil {
+						return nil
+					}
+					return &group.Task{ID: task.ID, Title: task.Title}
+				},
+			)
+		},
+		func() []string { return session.CompletedTasks },
+		func() []string { return session.FailedTasks },
+		func() map[string]int { return session.TaskCommitCounts },
+		func() int { return session.CurrentGroup },
+	)
+	groupTracker := group.NewTracker(sessionAdapter)
+
+	coord := &Coordinator{
+		manager:      manager,
+		groupTracker: groupTracker,
+	}
+
+	// Build prompt for task-2 which is in group 1 (index 1)
+	task := session.GetTask("task-2")
+	if task == nil {
+		t.Fatal("task-2 not found in session")
+	}
+	prompt := coord.buildTaskPrompt(task)
+
+	// Verify previous group context is included
+	contextElements := []string{
+		"Context from Previous Group",
+		"Group 1",
+		"Group 1 completed with auth module setup",
+		"Ensure API compatibility",
+		"Update documentation",
+		"verified (build/lint/tests passed)",
+	}
+
+	for _, elem := range contextElements {
+		if !strings.Contains(prompt, elem) {
+			t.Errorf("buildTaskPrompt for task in group 1 missing previous group context element: %q\nGot:\n%s",
+				elem, prompt)
+		}
+	}
+}
+
+// TestBuildPlanManagerPrompt_RegressionStructure verifies that buildPlanManagerPrompt
+// produces all expected structural elements after refactoring to use prompt.PlanningBuilder.
+func TestBuildPlanManagerPrompt_RegressionStructure(t *testing.T) {
+	session := &UltraPlanSession{
+		ID:        "test-session",
+		Objective: "Implement a REST API with authentication",
+		Config:    UltraPlanConfig{MultiPass: true},
+		CandidatePlans: []*PlanSpec{
+			{
+				Summary: "Parallel-first approach",
+				Tasks: []PlannedTask{
+					{ID: "t1", Title: "Auth endpoints", EstComplexity: ComplexityMedium, DependsOn: []string{}},
+					{ID: "t2", Title: "User model", EstComplexity: ComplexityLow, DependsOn: []string{}},
+					{ID: "t3", Title: "Integration tests", EstComplexity: ComplexityHigh, DependsOn: []string{"t1", "t2"}},
+				},
+				ExecutionOrder: [][]string{{"t1", "t2"}, {"t3"}},
+				Insights:       []string{"Codebase uses Clean Architecture"},
+				Constraints:    []string{"Must maintain backward compatibility"},
+			},
+			{
+				Summary: "Sequential approach",
+				Tasks: []PlannedTask{
+					{ID: "t1", Title: "User model", EstComplexity: ComplexityLow},
+					{ID: "t2", Title: "Auth endpoints", EstComplexity: ComplexityMedium, DependsOn: []string{"t1"}},
+				},
+				ExecutionOrder: [][]string{{"t1"}, {"t2"}},
+			},
+			{
+				Summary: "Balanced approach",
+				Tasks: []PlannedTask{
+					{ID: "t1", Title: "Foundation", EstComplexity: ComplexityLow},
+					{ID: "t2", Title: "Core features", EstComplexity: ComplexityMedium, DependsOn: []string{"t1"}},
+				},
+				ExecutionOrder: [][]string{{"t1"}, {"t2"}},
+			},
+		},
+	}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{manager: manager}
+
+	prompt := coord.buildPlanManagerPrompt()
+
+	// Verify essential structural elements from PlanManagerPromptTemplate
+	requiredElements := []struct {
+		name     string
+		expected string
+	}{
+		{"senior technical lead intro", "senior technical lead"},
+		{"objective section", "## Objective"},
+		{"objective content", "REST API with authentication"},
+		{"candidate plans section", "## Candidate Plans"},
+		{"plan 1 header", "Plan 1"},
+		{"plan 2 header", "Plan 2"},
+		{"plan 3 header", "Plan 3"},
+		{"maximize-parallelism strategy", "maximize-parallelism"},
+		{"minimize-complexity strategy", "minimize-complexity"},
+		{"balanced-approach strategy", "balanced-approach"},
+		{"plan 1 summary", "Parallel-first approach"},
+		{"plan 2 summary", "Sequential approach"},
+		{"plan 3 summary", "Balanced approach"},
+		{"evaluation criteria section", "## Your Task"},
+		{"parallelism criteria", "Parallelism potential"},
+		{"task granularity criteria", "Task granularity"},
+		{"dependency structure criteria", "Dependency structure"},
+		{"decision section", "## Decision"},
+		{"select option", "Select"},
+		{"merge option", "Merge"},
+		{"output section", "## Output"},
+		{"plan file name", ".claudio-plan.json"},
+		{"plan decision tag", "plan_decision"},
+	}
+
+	for _, elem := range requiredElements {
+		if !strings.Contains(prompt, elem.expected) {
+			t.Errorf("buildPlanManagerPrompt missing %s: expected to contain %q",
+				elem.name, elem.expected)
+		}
+	}
+}
+
+// TestBuildPlanManagerPrompt_RegressionTaskDetails verifies that buildPlanManagerPrompt
+// includes task-level details (complexity, dependencies) in the compact format.
+func TestBuildPlanManagerPrompt_RegressionTaskDetails(t *testing.T) {
+	session := &UltraPlanSession{
+		Objective: "Test task details",
+		CandidatePlans: []*PlanSpec{
+			{
+				Summary: "Test plan",
+				Tasks: []PlannedTask{
+					{ID: "task-a", Title: "First Task", EstComplexity: ComplexityLow, DependsOn: []string{}},
+					{ID: "task-b", Title: "Second Task", EstComplexity: ComplexityMedium, DependsOn: []string{"task-a"}},
+				},
+				ExecutionOrder: [][]string{{"task-a"}, {"task-b"}},
+			},
+		},
+	}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{manager: manager}
+
+	prompt := coord.buildPlanManagerPrompt()
+
+	// Verify task details are present
+	taskDetails := []string{
+		"task-a",
+		"First Task",
+		"low",
+		"task-b",
+		"Second Task",
+		"medium",
+		"depends: task-a",
+		"depends: none",
+	}
+
+	for _, detail := range taskDetails {
+		if !strings.Contains(prompt, detail) {
+			t.Errorf("buildPlanManagerPrompt missing task detail: %q", detail)
+		}
+	}
+}
+
+// TestBuildPlanComparisonSection_RegressionStructure verifies that buildPlanComparisonSection
+// produces all expected structural elements after refactoring to use prompt.PlanningBuilder.
+func TestBuildPlanComparisonSection_RegressionStructure(t *testing.T) {
+	session := &UltraPlanSession{
+		CandidatePlans: []*PlanSpec{
+			{
+				Summary: "Comprehensive plan",
+				Tasks: []PlannedTask{
+					{ID: "task-1", Title: "Initial Setup", Description: "Setup the project", EstComplexity: ComplexityLow},
+					{ID: "task-2", Title: "Core Logic", Description: "Implement core", EstComplexity: ComplexityMedium},
+				},
+				ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+				Insights:       []string{"Architecture follows SOLID principles"},
+				Constraints:    []string{"Must support legacy API"},
+			},
+		},
+	}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{manager: manager}
+
+	result := coord.buildPlanComparisonSection()
+
+	// Verify detailed format elements
+	requiredElements := []struct {
+		name     string
+		expected string
+	}{
+		{"plan header", "### Plan 1:"},
+		{"strategy name", "maximize-parallelism"},
+		{"summary label", "**Summary**"},
+		{"plan summary", "Comprehensive plan"},
+		{"task count label", "**Task Count**"},
+		{"task count value", "2 tasks"},
+		{"execution groups label", "**Execution Groups**"},
+		{"groups count", "2 groups"},
+		{"max parallelism label", "**Max Parallelism**"},
+		{"parallelism value", "1 concurrent tasks"},
+		{"insights label", "**Insights**"},
+		{"insight content", "SOLID principles"},
+		{"constraints label", "**Constraints**"},
+		{"constraint content", "legacy API"},
+		{"tasks json label", "**Tasks (JSON)**"},
+		{"json code block", "```json"},
+		{"task id in json", "task-1"},
+		{"task title in json", "Initial Setup"},
+		{"execution order label", "**Execution Order**"},
+		{"group 1 order", "Group 1: task-1"},
+		{"group 2 order", "Group 2: task-2"},
+	}
+
+	for _, elem := range requiredElements {
+		if !strings.Contains(result, elem.expected) {
+			t.Errorf("buildPlanComparisonSection missing %s: expected to contain %q\nGot:\n%s",
+				elem.name, elem.expected, result)
+		}
+	}
+}
+
+// TestBuildPlanComparisonSection_RegressionNilPlanHandling verifies that buildPlanComparisonSection
+// correctly handles nil plans (skips them) after refactoring.
+func TestBuildPlanComparisonSection_RegressionNilPlanHandling(t *testing.T) {
+	session := &UltraPlanSession{
+		CandidatePlans: []*PlanSpec{
+			{Summary: "First plan", Tasks: []PlannedTask{{ID: "t1", Title: "Task 1"}}},
+			nil, // This nil plan should be skipped
+			{Summary: "Third plan", Tasks: []PlannedTask{{ID: "t3", Title: "Task 3"}}},
+		},
+	}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{manager: manager}
+
+	result := coord.buildPlanComparisonSection()
+
+	// Should have Plan 1 (index 0)
+	if !strings.Contains(result, "Plan 1") {
+		t.Error("buildPlanComparisonSection should include Plan 1")
+	}
+	if !strings.Contains(result, "First plan") {
+		t.Error("buildPlanComparisonSection should include first plan summary")
+	}
+
+	// Should have Plan 2 (index 2, but renamed since nil was skipped)
+	// The formatter should skip nil plans entirely
+	if !strings.Contains(result, "Third plan") {
+		t.Error("buildPlanComparisonSection should include third plan summary")
+	}
+
+	// Should NOT have "null" as a plan entry (nil plans should be skipped)
+	if strings.Contains(result, "\"null\"") {
+		t.Error("buildPlanComparisonSection should not include 'null' for nil plans")
+	}
+}
+
+// TestBuildPlanComparisonSection_RegressionEmptyPlans verifies that buildPlanComparisonSection
+// correctly handles an empty plans slice.
+func TestBuildPlanComparisonSection_RegressionEmptyPlans(t *testing.T) {
+	session := &UltraPlanSession{
+		CandidatePlans: []*PlanSpec{},
+	}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{manager: manager}
+
+	result := coord.buildPlanComparisonSection()
+
+	// Empty input should produce empty output
+	if result != "" {
+		t.Errorf("buildPlanComparisonSection with empty plans should produce empty string, got: %q", result)
+	}
+}
+
+// =============================================================================
+// Prompt Building Integration Tests
+// =============================================================================
+// These tests verify the end-to-end integration of the prompt-building methods
+// with coordinator session state, ensuring that data flows correctly through
+// the prompt.TaskBuilder and prompt.PlanningBuilder.
+
+// TestBuildTaskPrompt_IntegrationWithFullSession tests buildTaskPrompt with a
+// realistically configured session to verify integration with all dependencies.
+func TestBuildTaskPrompt_IntegrationWithFullSession(t *testing.T) {
+	// Create a realistic session with multiple tasks and groups
+	session := NewUltraPlanSession("Implement user authentication system", DefaultUltraPlanConfig())
+	session.Plan = &PlanSpec{
+		ID:      "plan-auth",
+		Summary: "Authentication system with OAuth2 and JWT",
+		Tasks: []PlannedTask{
+			{
+				ID:            "task-1-schema",
+				Title:         "Database Schema Setup",
+				Description:   "Create users table with OAuth provider fields and JWT refresh tokens",
+				Files:         []string{"migrations/001_create_users.sql", "migrations/002_add_oauth.sql"},
+				DependsOn:     []string{},
+				Priority:      1,
+				EstComplexity: ComplexityLow,
+			},
+			{
+				ID:            "task-2-models",
+				Title:         "User Model Implementation",
+				Description:   "Implement User model with CRUD operations",
+				Files:         []string{"internal/models/user.go", "internal/models/user_test.go"},
+				DependsOn:     []string{"task-1-schema"},
+				Priority:      1,
+				EstComplexity: ComplexityMedium,
+			},
+			{
+				ID:            "task-3-oauth",
+				Title:         "OAuth2 Integration",
+				Description:   "Integrate Google and GitHub OAuth providers",
+				Files:         []string{"internal/auth/oauth.go", "internal/auth/providers/"},
+				DependsOn:     []string{"task-2-models"},
+				Priority:      2,
+				EstComplexity: ComplexityHigh,
+			},
+		},
+		ExecutionOrder: [][]string{{"task-1-schema"}, {"task-2-models"}, {"task-3-oauth"}},
+		Insights:       []string{"Existing auth middleware can be extended"},
+		Constraints:    []string{"Must support existing session tokens during migration"},
+	}
+	session.TaskToInstance = map[string]string{
+		"task-1-schema": "inst-1",
+		"task-2-models": "inst-2",
+		"task-3-oauth":  "inst-3",
+	}
+
+	manager := &UltraPlanManager{session: session}
+
+	// Create group tracker for realistic integration
+	sessionAdapter := group.NewSessionAdapter(
+		func() group.PlanData {
+			return group.NewPlanAdapter(
+				func() [][]string { return session.Plan.ExecutionOrder },
+				func(taskID string) *group.Task {
+					task := session.GetTask(taskID)
+					if task == nil {
+						return nil
+					}
+					return &group.Task{ID: task.ID, Title: task.Title, DependsOn: task.DependsOn}
+				},
+			)
+		},
+		func() []string { return session.CompletedTasks },
+		func() []string { return session.FailedTasks },
+		func() map[string]int { return session.TaskCommitCounts },
+		func() int { return session.CurrentGroup },
+	)
+	groupTracker := group.NewTracker(sessionAdapter)
+
+	coord := &Coordinator{
+		manager:      manager,
+		groupTracker: groupTracker,
+	}
+
+	// Test prompt generation for each task
+	tests := []struct {
+		taskID            string
+		expectedTitle     string
+		expectedFiles     []string
+		expectedInPrompt  []string
+		notExpectedPrompt []string
+	}{
+		{
+			taskID:        "task-1-schema",
+			expectedTitle: "Database Schema Setup",
+			expectedFiles: []string{"migrations/001_create_users.sql", "migrations/002_add_oauth.sql"},
+			expectedInPrompt: []string{
+				"# Task: Database Schema Setup",
+				"Create users table with OAuth provider fields",
+				"## Expected Files",
+				"## Guidelines",
+				"## Completion Protocol",
+				"task-1-schema",
+			},
+			notExpectedPrompt: []string{
+				"Context from Previous Group", // First task shouldn't have previous context
+			},
+		},
+		{
+			taskID:        "task-2-models",
+			expectedTitle: "User Model Implementation",
+			expectedFiles: []string{"internal/models/user.go", "internal/models/user_test.go"},
+			expectedInPrompt: []string{
+				"# Task: User Model Implementation",
+				"Implement User model with CRUD operations",
+				"task-2-models",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.taskID, func(t *testing.T) {
+			task := session.GetTask(tt.taskID)
+			if task == nil {
+				t.Fatalf("task %s not found", tt.taskID)
+			}
+
+			prompt := coord.buildTaskPrompt(task)
+
+			// Verify expected elements are present
+			for _, expected := range tt.expectedInPrompt {
+				if !strings.Contains(prompt, expected) {
+					t.Errorf("prompt for %s missing: %q", tt.taskID, expected)
+				}
+			}
+
+			// Verify expected files are listed
+			for _, file := range tt.expectedFiles {
+				if !strings.Contains(prompt, file) {
+					t.Errorf("prompt for %s missing expected file: %q", tt.taskID, file)
+				}
+			}
+
+			// Verify unexpected elements are absent
+			for _, notExpected := range tt.notExpectedPrompt {
+				if strings.Contains(prompt, notExpected) {
+					t.Errorf("prompt for %s should not contain: %q", tt.taskID, notExpected)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildPlanManagerPrompt_IntegrationWithMultiPass tests buildPlanManagerPrompt
+// with a realistic multi-pass planning session.
+func TestBuildPlanManagerPrompt_IntegrationWithMultiPass(t *testing.T) {
+	session := &UltraPlanSession{
+		ID:        "session-multipass",
+		Objective: "Refactor database layer to support multiple backends",
+		Config:    UltraPlanConfig{MultiPass: true, MaxParallel: 4},
+		CandidatePlans: []*PlanSpec{
+			// Plan from maximize-parallelism strategy
+			{
+				Summary: "Highly parallel approach with interface extraction",
+				Tasks: []PlannedTask{
+					{ID: "interface", Title: "Extract DB Interface", EstComplexity: ComplexityMedium},
+					{ID: "postgres", Title: "Postgres Backend", EstComplexity: ComplexityMedium, DependsOn: []string{"interface"}},
+					{ID: "mysql", Title: "MySQL Backend", EstComplexity: ComplexityMedium, DependsOn: []string{"interface"}},
+					{ID: "sqlite", Title: "SQLite Backend", EstComplexity: ComplexityLow, DependsOn: []string{"interface"}},
+					{ID: "tests", Title: "Integration Tests", EstComplexity: ComplexityHigh, DependsOn: []string{"postgres", "mysql", "sqlite"}},
+				},
+				ExecutionOrder: [][]string{{"interface"}, {"postgres", "mysql", "sqlite"}, {"tests"}},
+				Insights:       []string{"Existing queries are Postgres-specific", "Connection pooling varies by backend"},
+				Constraints:    []string{"Zero downtime migration required"},
+			},
+			// Plan from minimize-complexity strategy
+			{
+				Summary: "Sequential approach with one backend at a time",
+				Tasks: []PlannedTask{
+					{ID: "abstract", Title: "Abstract Current DB", EstComplexity: ComplexityLow},
+					{ID: "postgres-refactor", Title: "Refactor Postgres", EstComplexity: ComplexityMedium, DependsOn: []string{"abstract"}},
+					{ID: "add-mysql", Title: "Add MySQL Support", EstComplexity: ComplexityHigh, DependsOn: []string{"postgres-refactor"}},
+					{ID: "add-sqlite", Title: "Add SQLite Support", EstComplexity: ComplexityMedium, DependsOn: []string{"add-mysql"}},
+				},
+				ExecutionOrder: [][]string{{"abstract"}, {"postgres-refactor"}, {"add-mysql"}, {"add-sqlite"}},
+				Insights:       []string{"Simpler to test incrementally"},
+			},
+			// Plan from balanced-approach strategy
+			{
+				Summary: "Balanced approach with phased parallelism",
+				Tasks: []PlannedTask{
+					{ID: "foundation", Title: "Foundation Work", EstComplexity: ComplexityMedium},
+					{ID: "backend-1", Title: "First Backend", EstComplexity: ComplexityMedium, DependsOn: []string{"foundation"}},
+					{ID: "backend-2", Title: "Second Backend", EstComplexity: ComplexityMedium, DependsOn: []string{"foundation"}},
+					{ID: "finalize", Title: "Finalization", EstComplexity: ComplexityLow, DependsOn: []string{"backend-1", "backend-2"}},
+				},
+				ExecutionOrder: [][]string{{"foundation"}, {"backend-1", "backend-2"}, {"finalize"}},
+				Constraints:    []string{"Allow time for integration testing between phases"},
+			},
+		},
+		PlanCoordinatorIDs: []string{"coord-parallel", "coord-simple", "coord-balanced"},
+	}
+
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{manager: manager}
+
+	prompt := coord.buildPlanManagerPrompt()
+
+	// Verify the prompt integrates all three plans correctly
+	integrationChecks := []struct {
+		description string
+		expected    string
+	}{
+		{"objective included", "Refactor database layer"},
+		{"multiple backends mentioned", "multiple backends"},
+		{"plan 1 present", "Highly parallel approach"},
+		{"plan 2 present", "Sequential approach"},
+		{"plan 3 present", "Balanced approach"},
+		{"strategy 1 present", "maximize-parallelism"},
+		{"strategy 2 present", "minimize-complexity"},
+		{"strategy 3 present", "balanced-approach"},
+		{"plan 1 insight", "Postgres-specific"},
+		{"plan 1 constraint", "Zero downtime"},
+		{"plan 2 insight", "incrementally"},
+		{"plan 3 constraint", "integration testing"},
+		{"execution groups shown", "parallel groups"},
+		{"dependency format", "depends:"},
+	}
+
+	for _, check := range integrationChecks {
+		if !strings.Contains(prompt, check.expected) {
+			t.Errorf("integration check failed - %s: expected to contain %q",
+				check.description, check.expected)
+		}
+	}
+
+	// Verify all tasks from all plans are represented
+	allTaskTitles := []string{
+		"Extract DB Interface", "Postgres Backend", "MySQL Backend", "SQLite Backend",
+		"Abstract Current DB", "Refactor Postgres", "Add MySQL Support",
+		"Foundation Work", "First Backend", "Second Backend",
+	}
+
+	for _, title := range allTaskTitles {
+		if !strings.Contains(prompt, title) {
+			t.Errorf("integration test missing task: %q", title)
+		}
+	}
+}
+
+// TestConvertPlanSpecsToCandidatePlans verifies the conversion helper function
+// that bridges orchestrator.PlanSpec to prompt.CandidatePlanInfo.
+func TestConvertPlanSpecsToCandidatePlans(t *testing.T) {
+	strategyNames := GetMultiPassStrategyNames()
+
+	tests := []struct {
+		name     string
+		plans    []*PlanSpec
+		expected int // expected number of non-nil results
+	}{
+		{
+			name:     "nil input",
+			plans:    nil,
+			expected: 0,
+		},
+		{
+			name:     "empty input",
+			plans:    []*PlanSpec{},
+			expected: 0,
+		},
+		{
+			name: "single plan",
+			plans: []*PlanSpec{
+				{Summary: "Test plan", Tasks: []PlannedTask{{ID: "t1", Title: "Task 1"}}},
+			},
+			expected: 1,
+		},
+		{
+			name: "plan with nil entry",
+			plans: []*PlanSpec{
+				{Summary: "First"},
+				nil,
+				{Summary: "Third"},
+			},
+			expected: 2, // nil plans are skipped
+		},
+		{
+			name: "full three plans",
+			plans: []*PlanSpec{
+				{Summary: "Plan A", Tasks: []PlannedTask{{ID: "a1"}}},
+				{Summary: "Plan B", Tasks: []PlannedTask{{ID: "b1"}}},
+				{Summary: "Plan C", Tasks: []PlannedTask{{ID: "c1"}}},
+			},
+			expected: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertPlanSpecsToCandidatePlans(tt.plans, strategyNames)
+
+			if len(result) != tt.expected {
+				t.Errorf("convertPlanSpecsToCandidatePlans returned %d items, want %d",
+					len(result), tt.expected)
+			}
+
+			// Note: Strategy names are assigned sequentially to non-nil plans.
+			// Due to nil skipping, indices may not align with strategyNames perfectly.
+			// The key is that each resulting plan gets a strategy from the list.
+			for _, plan := range result {
+				if plan.Strategy == "" {
+					t.Error("plan has empty strategy, want non-empty strategy name")
+				}
+			}
+		})
+	}
+}
+
+// TestConvertPlanSpecsToCandidatePlans_TaskConversion verifies that task details
+// are correctly converted from PlannedTask to TaskInfo.
+func TestConvertPlanSpecsToCandidatePlans_TaskConversion(t *testing.T) {
+	strategyNames := []string{"test-strategy"}
+	plans := []*PlanSpec{
+		{
+			Summary: "Test plan",
+			Tasks: []PlannedTask{
+				{
+					ID:            "task-1",
+					Title:         "First Task",
+					Description:   "Detailed description",
+					Files:         []string{"file1.go", "file2.go"},
+					DependsOn:     []string{"task-0"},
+					Priority:      2,
+					EstComplexity: ComplexityHigh,
+				},
+			},
+			ExecutionOrder: [][]string{{"task-1"}},
+			Insights:       []string{"Key insight"},
+			Constraints:    []string{"Important constraint"},
+		},
+	}
+
+	result := convertPlanSpecsToCandidatePlans(plans, strategyNames)
+
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(result))
+	}
+
+	plan := result[0]
+
+	// Verify plan-level fields
+	if plan.Summary != "Test plan" {
+		t.Errorf("Summary = %q, want %q", plan.Summary, "Test plan")
+	}
+	if plan.Strategy != "test-strategy" {
+		t.Errorf("Strategy = %q, want %q", plan.Strategy, "test-strategy")
+	}
+	if len(plan.Insights) != 1 || plan.Insights[0] != "Key insight" {
+		t.Errorf("Insights = %v, want [Key insight]", plan.Insights)
+	}
+	if len(plan.Constraints) != 1 || plan.Constraints[0] != "Important constraint" {
+		t.Errorf("Constraints = %v, want [Important constraint]", plan.Constraints)
+	}
+
+	// Verify task-level conversion
+	if len(plan.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(plan.Tasks))
+	}
+
+	task := plan.Tasks[0]
+	if task.ID != "task-1" {
+		t.Errorf("task.ID = %q, want %q", task.ID, "task-1")
+	}
+	if task.Title != "First Task" {
+		t.Errorf("task.Title = %q, want %q", task.Title, "First Task")
+	}
+	if task.Description != "Detailed description" {
+		t.Errorf("task.Description = %q, want %q", task.Description, "Detailed description")
+	}
+	if len(task.Files) != 2 || task.Files[0] != "file1.go" {
+		t.Errorf("task.Files = %v, want [file1.go file2.go]", task.Files)
+	}
+	if len(task.DependsOn) != 1 || task.DependsOn[0] != "task-0" {
+		t.Errorf("task.DependsOn = %v, want [task-0]", task.DependsOn)
+	}
+	if task.Priority != 2 {
+		t.Errorf("task.Priority = %d, want 2", task.Priority)
+	}
+	if task.EstComplexity != string(ComplexityHigh) {
+		t.Errorf("task.EstComplexity = %q, want %q", task.EstComplexity, ComplexityHigh)
+	}
+}
