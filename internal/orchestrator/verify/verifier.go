@@ -280,7 +280,8 @@ func (v *TaskVerifier) findCompletionFile(worktreePath, filename string) string 
 	return found
 }
 
-// ParseTaskCompletionFile reads and parses a task completion file.
+// ParseTaskCompletionFile reads and parses a task completion file from the worktree root.
+// Use FindAndParseTaskCompletionFile for recursive search when the file location is unknown.
 func (v *TaskVerifier) ParseTaskCompletionFile(worktreePath string) (*TaskCompletionFile, error) {
 	completionPath := filepath.Join(worktreePath, TaskCompletionFileName)
 	data, err := os.ReadFile(completionPath)
@@ -294,6 +295,18 @@ func (v *TaskVerifier) ParseTaskCompletionFile(worktreePath string) (*TaskComple
 	}
 
 	return &completion, nil
+}
+
+// FindAndParseTaskCompletionFile searches for and parses a task completion file.
+// Unlike ParseTaskCompletionFile, this uses recursive search to find the file
+// in subdirectories if not found at the root. This handles cases where Claude
+// changed directories during task execution.
+func (v *TaskVerifier) FindAndParseTaskCompletionFile(worktreePath string) (*TaskCompletionFile, error) {
+	completionPath := v.findCompletionFile(worktreePath, TaskCompletionFileName)
+	if completionPath == "" {
+		return nil, os.ErrNotExist
+	}
+	return v.parseTaskCompletionFileAtPath(completionPath)
 }
 
 // ParseRevisionCompletionFile reads and parses a revision completion file.
@@ -382,8 +395,10 @@ func (v *TaskVerifier) VerifyTaskWork(taskID, instanceID, worktreePath, baseBran
 	// Check if task produced any commits
 	if commitCount == 0 {
 		// Before failing, check if task wrote a completion file with status="complete"
-		// This allows tasks to explicitly signal success without code changes
-		completion, parseErr := v.ParseTaskCompletionFile(worktreePath)
+		// This allows tasks to explicitly signal success without code changes.
+		// Use FindAndParseTaskCompletionFile to search subdirectories in case Claude
+		// changed directories during task execution.
+		completion, parseErr := v.FindAndParseTaskCompletionFile(worktreePath)
 		if parseErr == nil {
 			if completion.Status == "complete" {
 				v.logger.Debug("task has no commits but completion file indicates success",

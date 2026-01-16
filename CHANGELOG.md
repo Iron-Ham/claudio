@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Completion File in Subdirectory Detection** - Fixed a bug where tasks that completed their work but wrote the completion file in a subdirectory (e.g., after `cd project/`) would be incorrectly marked as failed. The `CheckCompletionFile` function used recursive search to detect completion, but `VerifyTaskWork` only checked the worktree root when parsing the file. Now `VerifyTaskWork` uses `FindAndParseTaskCompletionFile` which searches subdirectories, ensuring completion files are found regardless of where Claude wrote them.
+
 ## [0.9.0] - 2026-01-16
 
 This release brings **Sidebar Customization & Group Dismiss** - allowing users to configure the sidebar width for their workflow preferences and quickly dismiss entire instance groups with a single shortcut.
