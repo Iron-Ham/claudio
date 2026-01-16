@@ -28,8 +28,8 @@ func (b *PlanningBuilder) Build(ctx *Context) (string, error) {
 		return "", err
 	}
 
-	plansSection := b.formatCandidatePlans(ctx.CandidatePlans)
-	return fmt.Sprintf(planManagerPromptTemplate, ctx.Objective, plansSection), nil
+	plansSection := b.formatCandidatePlans(ctx)
+	return fmt.Sprintf(PlanManagerPromptTemplate, ctx.Objective, plansSection), nil
 }
 
 // validate checks that the context has all required fields for planning.
@@ -51,11 +51,23 @@ func (b *PlanningBuilder) validate(ctx *Context) error {
 }
 
 // formatCandidatePlans formats all candidate plans for comparison.
-func (b *PlanningBuilder) formatCandidatePlans(plans []CandidatePlanInfo) string {
+// Uses ctx.StrategyNames[i] as fallback when plan.Strategy is empty.
+func (b *PlanningBuilder) formatCandidatePlans(ctx *Context) string {
+	return b.FormatDetailedPlans(ctx.CandidatePlans, ctx.StrategyNames)
+}
+
+// FormatDetailedPlans formats candidate plans with full JSON task details.
+// This is the detailed format used for plan comparison and selection.
+// Uses strategyNames[i] as fallback when plan.Strategy is empty.
+// Plans with nil entries are skipped.
+func (b *PlanningBuilder) FormatDetailedPlans(plans []CandidatePlanInfo, strategyNames []string) string {
 	var sb strings.Builder
 
 	for i, plan := range plans {
 		strategyName := plan.Strategy
+		if strategyName == "" && strategyNames != nil && i < len(strategyNames) {
+			strategyName = strategyNames[i]
+		}
 		if strategyName == "" {
 			strategyName = fmt.Sprintf("strategy-%d", i+1)
 		}
@@ -123,11 +135,22 @@ func (b *PlanningBuilder) formatCandidatePlans(plans []CandidatePlanInfo) string
 
 // FormatCompactPlans formats candidate plans in a compact format
 // suitable for the initial plan manager prompt.
+// For fallback strategy names from context, use FormatCompactPlansWithContext.
 func (b *PlanningBuilder) FormatCompactPlans(plans []CandidatePlanInfo) string {
+	return b.FormatCompactPlansWithContext(plans, nil)
+}
+
+// FormatCompactPlansWithContext formats candidate plans in a compact format
+// suitable for the initial plan manager prompt.
+// Uses strategyNames[i] as fallback when plan.Strategy is empty.
+func (b *PlanningBuilder) FormatCompactPlansWithContext(plans []CandidatePlanInfo, strategyNames []string) string {
 	var sb strings.Builder
 
 	for i, plan := range plans {
 		strategyName := plan.Strategy
+		if strategyName == "" && strategyNames != nil && i < len(strategyNames) {
+			strategyName = strategyNames[i]
+		}
 		if strategyName == "" {
 			strategyName = "unknown"
 		}
@@ -167,9 +190,16 @@ func (b *PlanningBuilder) FormatCompactPlans(plans []CandidatePlanInfo) string {
 	return sb.String()
 }
 
-// planManagerPromptTemplate is the prompt for the coordinator-manager in multi-pass mode.
+// BuildCompactPlanManagerPrompt builds a plan manager prompt using compact plan formatting.
+// This is useful when you need a less verbose prompt compared to Build() which uses detailed JSON output.
+func (b *PlanningBuilder) BuildCompactPlanManagerPrompt(objective string, plans []CandidatePlanInfo, strategyNames []string) string {
+	plansSection := b.FormatCompactPlansWithContext(plans, strategyNames)
+	return fmt.Sprintf(PlanManagerPromptTemplate, objective, plansSection)
+}
+
+// PlanManagerPromptTemplate is the prompt for the coordinator-manager in multi-pass mode.
 // It receives all candidate plans and must select the best one or merge them.
-const planManagerPromptTemplate = `You are a senior technical lead evaluating multiple implementation plans.
+const PlanManagerPromptTemplate = `You are a senior technical lead evaluating multiple implementation plans.
 
 ## Objective
 %s

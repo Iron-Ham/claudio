@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Prompt Type Conversion Helpers** - Added interface-based type conversion helpers in `internal/orchestrator/prompt/convert.go` to enable decoupled conversion from orchestrator types to prompt types. Includes `PlannedTaskLike`, `PlanSpecLike`, and `GroupConsolidationLike` interfaces with corresponding conversion functions (`ConvertPlannedTaskToTaskInfo`, `ConvertPlanSpecToPlanInfo`, `ConvertPlanSpecsToCandidatePlans`, `ConvertGroupConsolidationToGroupContext`). This enables extracting prompt-building logic from coordinator.go into the prompt package without creating circular imports.
+- **Strategy Names Context Support** - Added `StrategyNames` field to `prompt.Context` to provide fallback strategy names when `CandidatePlanInfo.Strategy` is empty. This allows the coordinator to pass strategy names via Context rather than requiring the prompt package to import from ultraplan.go (avoiding circular imports). Also added `FormatCompactPlansWithContext` method to `PlanningBuilder` for compact plan formatting with strategy name fallback support.
+
+### Changed
+
+- **Prompt Building Refactor** - Extracted prompt-building logic from coordinator.go into the orchestrator/prompt package, improving code organization and testability. Updated `buildPlanManagerPrompt` and `buildPlanComparisonSection` methods to use `PlanningBuilder` with the new conversion helpers. Added `FormatDetailedPlans` and `BuildCompactPlanManagerPrompt` methods to `PlanningBuilder` for flexible plan formatting. Exported `PlanManagerPromptTemplate` in the prompt package.
+
 ## [0.7.1] - 2026-01-15
 
 This release focuses on **Phase Orchestration** - extracting the monolithic Coordinator into four phase-specific orchestrators and implementing comprehensive synthesis/revision orchestration logic.

@@ -151,9 +151,10 @@ func TestPlanningBuilder_formatCandidatePlans(t *testing.T) {
 	builder := NewPlanningBuilder()
 
 	tests := []struct {
-		name     string
-		plans    []CandidatePlanInfo
-		contains []string
+		name          string
+		plans         []CandidatePlanInfo
+		strategyNames []string
+		contains      []string
 	}{
 		{
 			name: "formats strategy names",
@@ -175,6 +176,26 @@ func TestPlanningBuilder_formatCandidatePlans(t *testing.T) {
 			},
 			contains: []string{
 				"Plan 1: strategy-1",
+			},
+		},
+		{
+			name: "uses context strategy name as fallback when plan strategy empty",
+			plans: []CandidatePlanInfo{
+				{Strategy: "", Summary: "No strategy name"},
+			},
+			strategyNames: []string{"fallback-strategy"},
+			contains: []string{
+				"Plan 1: fallback-strategy",
+			},
+		},
+		{
+			name: "plan strategy takes precedence over context strategy names",
+			plans: []CandidatePlanInfo{
+				{Strategy: "plan-strategy", Summary: "Has strategy"},
+			},
+			strategyNames: []string{"fallback-strategy"},
+			contains: []string{
+				"Plan 1: plan-strategy",
 			},
 		},
 		{
@@ -261,7 +282,11 @@ func TestPlanningBuilder_formatCandidatePlans(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := builder.formatCandidatePlans(tt.plans)
+			ctx := &Context{
+				CandidatePlans: tt.plans,
+				StrategyNames:  tt.strategyNames,
+			}
+			result := builder.formatCandidatePlans(ctx)
 
 			for _, want := range tt.contains {
 				if !strings.Contains(result, want) {
@@ -313,6 +338,74 @@ func TestPlanningBuilder_FormatCompactPlans(t *testing.T) {
 	}
 }
 
+func TestPlanningBuilder_FormatCompactPlansWithContext(t *testing.T) {
+	builder := NewPlanningBuilder()
+
+	tests := []struct {
+		name          string
+		plans         []CandidatePlanInfo
+		strategyNames []string
+		contains      []string
+		notContains   []string
+	}{
+		{
+			name: "uses plan strategy when set",
+			plans: []CandidatePlanInfo{
+				{Strategy: "plan-strategy", Summary: "Test"},
+			},
+			strategyNames: []string{"fallback-strategy"},
+			contains:      []string{"Plan 1: plan-strategy Strategy"},
+			notContains:   []string{"fallback-strategy"},
+		},
+		{
+			name: "uses fallback strategy from context when plan strategy empty",
+			plans: []CandidatePlanInfo{
+				{Strategy: "", Summary: "Test"},
+			},
+			strategyNames: []string{"context-fallback"},
+			contains:      []string{"Plan 1: context-fallback Strategy"},
+			notContains:   []string{"unknown"},
+		},
+		{
+			name: "uses unknown when no strategy and no fallback",
+			plans: []CandidatePlanInfo{
+				{Strategy: "", Summary: "Test"},
+			},
+			strategyNames: nil,
+			contains:      []string{"Plan 1: unknown Strategy"},
+		},
+		{
+			name: "handles more plans than strategy names",
+			plans: []CandidatePlanInfo{
+				{Strategy: "", Summary: "First"},
+				{Strategy: "", Summary: "Second"},
+			},
+			strategyNames: []string{"fallback-1"},
+			contains: []string{
+				"Plan 1: fallback-1 Strategy",
+				"Plan 2: unknown Strategy",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := builder.FormatCompactPlansWithContext(tt.plans, tt.strategyNames)
+
+			for _, want := range tt.contains {
+				if !strings.Contains(result, want) {
+					t.Errorf("FormatCompactPlansWithContext() missing %q\nGot:\n%s", want, result)
+				}
+			}
+			for _, notWant := range tt.notContains {
+				if strings.Contains(result, notWant) {
+					t.Errorf("FormatCompactPlansWithContext() should not contain %q\nGot:\n%s", notWant, result)
+				}
+			}
+		})
+	}
+}
+
 func TestPlanningBuilder_JSONValidity(t *testing.T) {
 	builder := NewPlanningBuilder()
 
@@ -333,7 +426,10 @@ func TestPlanningBuilder_JSONValidity(t *testing.T) {
 		ExecutionOrder: [][]string{{"task-1"}},
 	}
 
-	result := builder.formatCandidatePlans([]CandidatePlanInfo{plan})
+	ctx := &Context{
+		CandidatePlans: []CandidatePlanInfo{plan},
+	}
+	result := builder.formatCandidatePlans(ctx)
 
 	// Extract JSON from the result
 	jsonStart := strings.Index(result, "```json\n") + len("```json\n")
@@ -411,5 +507,108 @@ func TestNewPlanningBuilder(t *testing.T) {
 	builder := NewPlanningBuilder()
 	if builder == nil {
 		t.Error("NewPlanningBuilder() returned nil")
+	}
+}
+
+func TestPlanningBuilder_BuildCompactPlanManagerPrompt(t *testing.T) {
+	builder := NewPlanningBuilder()
+
+	tests := []struct {
+		name          string
+		objective     string
+		plans         []CandidatePlanInfo
+		strategyNames []string
+		contains      []string
+	}{
+		{
+			name:      "builds complete prompt with single plan",
+			objective: "Build a REST API",
+			plans: []CandidatePlanInfo{
+				{Strategy: "maximize-parallelism", Summary: "Parallel execution plan"},
+			},
+			strategyNames: nil,
+			contains: []string{
+				"senior technical lead",
+				"## Objective",
+				"Build a REST API",
+				"## Candidate Plans",
+				"Plan 1: maximize-parallelism",
+				"Parallel execution plan",
+				"## Your Task",
+				"## Decision",
+			},
+		},
+		{
+			name:      "builds prompt with multiple plans",
+			objective: "Implement authentication",
+			plans: []CandidatePlanInfo{
+				{Strategy: "minimize-dependencies", Summary: "Low coupling approach"},
+				{Strategy: "maximize-parallelism", Summary: "High parallelism approach"},
+				{Strategy: "balanced", Summary: "Balanced trade-offs"},
+			},
+			strategyNames: nil,
+			contains: []string{
+				"## Objective",
+				"Implement authentication",
+				"Plan 1: minimize-dependencies",
+				"Plan 2: maximize-parallelism",
+				"Plan 3: balanced",
+				"Low coupling approach",
+				"High parallelism approach",
+				"Balanced trade-offs",
+			},
+		},
+		{
+			name:      "uses fallback strategy names when plan strategy is empty",
+			objective: "Refactor module",
+			plans: []CandidatePlanInfo{
+				{Strategy: "", Summary: "First plan"},
+				{Strategy: "", Summary: "Second plan"},
+			},
+			strategyNames: []string{"fallback-strategy-1", "fallback-strategy-2"},
+			contains: []string{
+				"Plan 1: fallback-strategy-1",
+				"Plan 2: fallback-strategy-2",
+			},
+		},
+		{
+			name:      "uses unknown when no strategy and no fallback",
+			objective: "Fix bugs",
+			plans: []CandidatePlanInfo{
+				{Strategy: "", Summary: "Bug fix plan"},
+			},
+			strategyNames: nil,
+			contains: []string{
+				"Plan 1: unknown",
+			},
+		},
+		{
+			name:      "includes evaluation criteria",
+			objective: "Add feature",
+			plans: []CandidatePlanInfo{
+				{Strategy: "test", Summary: "Test plan"},
+			},
+			strategyNames: nil,
+			contains: []string{
+				"Parallelism potential",
+				"Task granularity",
+				"Dependency structure",
+				"File ownership",
+				"Completeness",
+				"Risk mitigation",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := builder.BuildCompactPlanManagerPrompt(tt.objective, tt.plans, tt.strategyNames)
+
+			for _, want := range tt.contains {
+				if !strings.Contains(result, want) {
+					t.Errorf("BuildCompactPlanManagerPrompt() missing %q\nGot:\n%s", want, result)
+				}
+			}
+		})
 	}
 }
