@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Instance Header Simplified** - Removed the truncated task/prompt text from the instance detail view header. The header now shows only the branch name, reducing visual noise and giving more space to the output area.
+
 ### Added
 
 - **Phase Orchestrator Integration Tests** - Added comprehensive integration tests for the phase orchestrator (`internal/orchestrator/phase/integration_test.go`). These tests exercise full phase lifecycles and transitions between phases (Planning → Execution → Consolidation → Synthesis), which are critical paths that can fail in complex multi-task scenarios. Coverage includes: planning-to-execution transitions, execution-to-consolidation flows with multi-group support, execution-to-synthesis transitions, partial group failure handling, synthesis lifecycle and revision cycle state management, concurrent phase operations, and phase callback consistency. Test infrastructure includes `IntegrationTestCoordinator` for simulating coordinator behavior across phase boundaries.

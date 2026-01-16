@@ -919,7 +919,6 @@ func (m Model) calculateInstanceOverhead() int {
 
 	// Build overhead params
 	params := view.OverheadParams{
-		Task:            inst.Task,
 		HasDependencies: len(inst.DependsOn) > 0,
 		HasDependents:   len(inst.Dependents) > 0,
 		ShowMetrics:     showMetrics,

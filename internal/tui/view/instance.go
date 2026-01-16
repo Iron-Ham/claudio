@@ -105,10 +105,6 @@ func (v *InstanceView) RenderWithSession(inst *orchestrator.Instance, state Rend
 		}
 	}
 
-	// Render task description
-	b.WriteString(v.RenderTask(inst.Task))
-	b.WriteString("\n")
-
 	// Render dependency information if available (individual instance dependencies)
 	if session != nil {
 		depInfo := v.RenderDependencies(inst, session)
@@ -368,15 +364,9 @@ func truncateTask(task string, maxLen int) string {
 	return task[:maxLen-3] + "..."
 }
 
-// MaxTaskDisplayLines is the maximum number of lines shown for task descriptions.
-// Task text exceeding this limit is truncated with "...".
-const MaxTaskDisplayLines = 5
-
 // OverheadParams contains the parameters needed to calculate overhead lines.
 // These are the variable factors that affect how many lines are used above the output area.
 type OverheadParams struct {
-	// Task is the instance task description
-	Task string
 	// HasDependencies indicates if the instance has dependencies to display
 	HasDependencies bool
 	// HasDependents indicates if the instance has dependents to display
@@ -401,7 +391,7 @@ type OverheadParams struct {
 }
 
 // CalculateOverheadLines calculates the number of lines used by the instance view
-// above the output area. This accounts for header, group status, task, dependencies,
+// above the output area. This accounts for header, group status, dependencies,
 // metrics, status banner, scroll indicator, and search bar.
 func (v *InstanceView) CalculateOverheadLines(params OverheadParams) int {
 	lines := 0
@@ -422,13 +412,6 @@ func (v *InstanceView) CalculateOverheadLines(params OverheadParams) int {
 			lines++
 		}
 	}
-
-	// Task section: 1 to MaxTaskDisplayLines+1 lines (extra for "..." when truncated), plus newline
-	taskLines := strings.Count(params.Task, "\n") + 1
-	if taskLines > MaxTaskDisplayLines {
-		taskLines = MaxTaskDisplayLines + 1 // +1 for the "..." line
-	}
-	lines += taskLines + 1 // +1 for the newline after task
 
 	// Dependencies: 1 line each if present
 	if params.HasDependencies {
@@ -462,12 +445,6 @@ func (v *InstanceView) CalculateOverheadLines(params OverheadParams) int {
 	}
 
 	return lines
-}
-
-// RenderTask renders the task description, truncated to MaxTaskDisplayLines.
-func (v *InstanceView) RenderTask(task string) string {
-	taskDisplay := truncateLines(task, MaxTaskDisplayLines)
-	return styles.Subtitle.Render("Task: " + taskDisplay)
 }
 
 // FormatMetrics formats instance metrics for display.
@@ -735,15 +712,6 @@ func (v *InstanceView) RenderWaitingState(status orchestrator.InstanceStatus) st
 }
 
 // Helper functions
-
-// truncateLines limits text to maxLines, adding ellipsis if truncated.
-func truncateLines(s string, maxLines int) string {
-	lines := strings.Split(s, "\n")
-	if len(lines) <= maxLines {
-		return s
-	}
-	return strings.Join(lines[:maxLines], "\n") + "\n..."
-}
 
 // FormatDuration formats a duration for display.
 func FormatDuration(d time.Duration) string {
