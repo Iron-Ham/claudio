@@ -15,8 +15,6 @@ import (
 
 // Layout constants for dashboard rendering
 const (
-	SidebarWidth       = 30 // Fixed sidebar width
-	SidebarMinWidth    = 20 // Minimum sidebar width for narrow terminals
 	ExpandedNameMaxLen = 50 // Maximum length for expanded instance names
 )
 
@@ -316,20 +314,6 @@ func (dv *DashboardView) buildConflictMap(conflicts []conflict.FileConflict) map
 		}
 	}
 	return conflictingInstances
-}
-
-// CalculateEffectiveSidebarWidth returns the appropriate sidebar width
-// based on terminal width.
-func CalculateEffectiveSidebarWidth(termWidth int) int {
-	if termWidth < 80 {
-		return SidebarMinWidth
-	}
-	return SidebarWidth
-}
-
-// CalculateMainAreaHeight returns the height available for the main content area.
-func CalculateMainAreaHeight(termHeight int) int {
-	return termHeight - 6 // Header + help bar + margins
 }
 
 // truncate truncates a string to max length, adding ellipsis if needed.
