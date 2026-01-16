@@ -627,28 +627,35 @@ func (m *Manager) captureLoop() {
 				return
 			}
 
-			// If history size query failed but session exists, skip capture this tick
-			if status.historySize == -1 {
-				continue
-			}
+			// When status query fails (historySize == -1) but session still exists,
+			// we can't use differential capture optimization but MUST still capture
+			// output to prevent frozen displays. Force a full capture in this case.
+			statusQueryFailed := status.historySize == -1
 
 			// Differential capture optimization:
 			// - Check history size to detect new output
 			// - Capture only visible pane when nothing changed (much faster)
 			// - Do full capture when history grows or periodically (every 50 ticks = 5 seconds)
+			// - Always do full capture when status query failed (can't determine changes)
 			m.mu.Lock()
 			lastHistorySize := m.lastHistorySize
 			m.fullRefreshCounter++
 			// Do full capture when:
-			// 1. Periodic refresh interval reached (every 5 seconds)
-			// 2. History size increased (new scrollback lines)
-			// 3. Visible content changed in previous tick (user typing)
-			doFullCapture := m.fullRefreshCounter >= fullRefreshInterval ||
+			// 1. Status query failed (can't do differential capture without history_size)
+			// 2. Periodic refresh interval reached (every 5 seconds)
+			// 3. History size increased (new scrollback lines)
+			// 4. Visible content changed in previous tick (user typing)
+			doFullCapture := statusQueryFailed ||
+				m.fullRefreshCounter >= fullRefreshInterval ||
 				status.historySize > lastHistorySize ||
 				m.forceFullCapture
 			if doFullCapture {
 				m.fullRefreshCounter = 0
-				m.lastHistorySize = status.historySize
+				// Only update lastHistorySize when we have a valid value.
+				// When status query failed (historySize == -1), preserve the previous value.
+				if status.historySize >= 0 {
+					m.lastHistorySize = status.historySize
+				}
 				m.forceFullCapture = false
 			}
 			m.mu.Unlock()
@@ -686,8 +693,9 @@ func (m *Manager) captureLoop() {
 					// to the buffer would cause the output to flash between short (visible) and
 					// long (full) content, breaking scroll position.
 					byteCount := len(output)
-					m.outputBuf.Reset()
-					_, _ = m.outputBuf.Write(output)
+					// Use ReplaceWith for atomic reset+write to prevent race condition where
+					// concurrent GetOutput() calls could see an empty buffer between Reset and Write.
+					m.outputBuf.ReplaceWith(output)
 
 					if logger != nil {
 						logger.Debug("output captured",

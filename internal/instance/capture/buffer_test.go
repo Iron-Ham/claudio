@@ -458,6 +458,176 @@ func TestRingBuffer_NilWrite(t *testing.T) {
 	}
 }
 
+func TestRingBuffer_ReplaceWith(t *testing.T) {
+	tests := []struct {
+		name        string
+		size        int
+		initialData string
+		replaceData string
+		expected    string
+		expectedLen int
+	}{
+		{
+			name:        "replace empty buffer",
+			size:        10,
+			initialData: "",
+			replaceData: "hello",
+			expected:    "hello",
+			expectedLen: 5,
+		},
+		{
+			name:        "replace existing data",
+			size:        10,
+			initialData: "old data",
+			replaceData: "new",
+			expected:    "new",
+			expectedLen: 3,
+		},
+		{
+			name:        "replace with overflow",
+			size:        5,
+			initialData: "abc",
+			replaceData: "hello world",
+			expected:    "world",
+			expectedLen: 5,
+		},
+		{
+			name:        "replace with empty data",
+			size:        10,
+			initialData: "old data",
+			replaceData: "",
+			expected:    "",
+			expectedLen: 0,
+		},
+		{
+			name:        "replace after overflow",
+			size:        5,
+			initialData: "this is longer than the buffer",
+			replaceData: "new",
+			expected:    "new",
+			expectedLen: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rb := NewRingBuffer(tt.size)
+
+			// Write initial data if any
+			if tt.initialData != "" {
+				_, _ = rb.Write([]byte(tt.initialData))
+			}
+
+			// Replace with new data
+			rb.ReplaceWith([]byte(tt.replaceData))
+
+			// Verify result
+			result := string(rb.Bytes())
+			if result != tt.expected {
+				t.Errorf("got %q, expected %q", result, tt.expected)
+			}
+
+			// Verify length
+			if rb.Len() != tt.expectedLen {
+				t.Errorf("got length %d, expected %d", rb.Len(), tt.expectedLen)
+			}
+		})
+	}
+}
+
+func TestRingBuffer_ReplaceWithIsAtomic(t *testing.T) {
+	// This test verifies that ReplaceWith is atomic by checking that concurrent
+	// Bytes() calls never see an empty buffer during ReplaceWith operations.
+	rb := NewRingBuffer(100)
+	iterations := 1000
+
+	// Initialize with some data
+	_, _ = rb.Write([]byte("initial"))
+
+	var wg sync.WaitGroup
+	seenEmpty := false
+	var seenEmptyMu sync.Mutex
+
+	// Writer goroutine - repeatedly replaces buffer content
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			rb.ReplaceWith([]byte("replacement data that is long enough"))
+		}
+	}()
+
+	// Reader goroutine - checks if buffer is ever empty
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			data := rb.Bytes()
+			if len(data) == 0 {
+				seenEmptyMu.Lock()
+				seenEmpty = true
+				seenEmptyMu.Unlock()
+				return
+			}
+		}
+	}()
+
+	wg.Wait()
+
+	// We should never see an empty buffer during atomic replace
+	if seenEmpty {
+		t.Error("Bytes() saw empty buffer during ReplaceWith - atomicity violated")
+	}
+}
+
+func TestRingBuffer_ReplaceWithVsResetWrite(t *testing.T) {
+	// Verify that ReplaceWith produces the same result as Reset+Write
+	size := 20
+	testData := []string{
+		"hello",
+		"longer data that exceeds buffer",
+		"short",
+		"",
+	}
+
+	for _, data := range testData {
+		t.Run(data, func(t *testing.T) {
+			// Using Reset+Write
+			rb1 := NewRingBuffer(size)
+			_, _ = rb1.Write([]byte("initial"))
+			rb1.Reset()
+			_, _ = rb1.Write([]byte(data))
+
+			// Using ReplaceWith
+			rb2 := NewRingBuffer(size)
+			_, _ = rb2.Write([]byte("initial"))
+			rb2.ReplaceWith([]byte(data))
+
+			// Results should be identical
+			result1 := string(rb1.Bytes())
+			result2 := string(rb2.Bytes())
+			if result1 != result2 {
+				t.Errorf("Reset+Write got %q, ReplaceWith got %q", result1, result2)
+			}
+
+			// Lengths should be identical
+			if rb1.Len() != rb2.Len() {
+				t.Errorf("Reset+Write length %d, ReplaceWith length %d", rb1.Len(), rb2.Len())
+			}
+		})
+	}
+}
+
+func BenchmarkRingBuffer_ReplaceWith(b *testing.B) {
+	rb := NewRingBuffer(1024)
+	data := []byte("benchmark data for testing replace performance")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rb.ReplaceWith(data)
+	}
+}
+
 func BenchmarkRingBuffer_Write(b *testing.B) {
 	rb := NewRingBuffer(1024)
 	data := []byte("benchmark data for testing write performance")
