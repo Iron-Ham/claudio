@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-01-16
+
+This release brings **Sidebar Customization & Group Dismiss** - allowing users to configure the sidebar width for their workflow preferences and quickly dismiss entire instance groups with a single shortcut.
+
 ### Added
 
 - **Configurable Sidebar Width** - The sidebar width is now user-configurable through the interactive configuration UI (`tui.sidebar_width`). The default width has been increased from 30 to 36 columns to provide more space for instance names and metrics. Users can configure widths between 20-60 columns.
@@ -476,6 +480,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.9.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.9.0
 [0.8.2]: https://github.com/Iron-Ham/claudio/releases/tag/v0.8.2
 [0.8.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.8.1
 [0.8.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.8.0
