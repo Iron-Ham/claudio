@@ -10,6 +10,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
@@ -586,7 +587,7 @@ func (m *Model) buildInlineMultiPlanManagerPrompt() string {
 		plansSection.WriteString("\n---\n")
 	}
 
-	return fmt.Sprintf(orchestrator.PlanManagerPromptTemplate, m.inlinePlan.Objective, plansSection.String())
+	return fmt.Sprintf(prompt.PlanManagerPromptTemplate, m.inlinePlan.Objective, plansSection.String())
 }
 
 // handleInlineMultiPlanManagerCompletion handles completion of the plan manager.

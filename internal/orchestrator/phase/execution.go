@@ -5,11 +5,11 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
 )
 
 // TaskCompletionFileName is the sentinel file that tasks write to signal completion.
@@ -732,6 +732,8 @@ func (e *ExecutionOrchestrator) startTask(taskID string) error {
 }
 
 // buildTaskPrompt creates the prompt for a child task instance.
+// It delegates to prompt.TaskBuilder for the actual prompt generation,
+// after converting the task data to the prompt package's types.
 func (e *ExecutionOrchestrator) buildTaskPrompt(taskID string, task any) string {
 	// Try to use the task as PlannedTaskData
 	taskData, ok := task.(PlannedTaskData)
@@ -740,92 +742,96 @@ func (e *ExecutionOrchestrator) buildTaskPrompt(taskID string, task any) string 
 		return fmt.Sprintf("# Task: %s\n\nPlease complete this task.", taskID)
 	}
 
-	var sb strings.Builder
-
 	// Get plan summary
 	planSummary := "Ultra-Plan Task"
 	if e.execCtx != nil && e.execCtx.ExecutionSession != nil {
 		planSummary = e.execCtx.ExecutionSession.GetPlanSummary()
 	}
 
-	sb.WriteString(fmt.Sprintf("# Task: %s\n\n", taskData.GetTitle()))
-	sb.WriteString(fmt.Sprintf("## Part of Ultra-Plan: %s\n\n", planSummary))
-	sb.WriteString("## Your Task\n\n")
-	sb.WriteString(taskData.GetDescription())
-	sb.WriteString("\n\n")
-
-	files := taskData.GetFiles()
-	if len(files) > 0 {
-		sb.WriteString("## Expected Files\n\n")
-		sb.WriteString("You are expected to work with these files:\n")
-		for _, f := range files {
-			sb.WriteString(fmt.Sprintf("- %s\n", f))
-		}
-		sb.WriteString("\n")
-	}
-
-	// Add context from previous group's consolidator if this task is not in group 0
+	// Determine group index for this task
 	groupIndex := 0
 	if e.execCtx != nil && e.execCtx.Coordinator != nil {
 		groupIndex = e.execCtx.Coordinator.GetTaskGroupIndex(taskID)
 	}
+
+	// Build prompt context
+	ctx := &prompt.Context{
+		Phase: prompt.PhaseTask,
+		Plan: &prompt.PlanInfo{
+			Summary: planSummary,
+		},
+		Task:       convertPlannedTaskDataToTaskInfo(taskData),
+		GroupIndex: groupIndex,
+	}
+
+	// Add previous group context if this task is not in group 0
 	if groupIndex > 0 && e.execCtx != nil && e.execCtx.ExecutionSession != nil {
 		prevGroupIdx := groupIndex - 1
 		prevContext := e.execCtx.ExecutionSession.GetGroupConsolidationContext(prevGroupIdx)
 		if prevContext != nil {
-			sb.WriteString("## Context from Previous Group\n\n")
-			sb.WriteString(fmt.Sprintf("This task builds on work consolidated from Group %d.\n\n", prevGroupIdx+1))
-
-			notes := prevContext.GetNotes()
-			if notes != "" {
-				sb.WriteString(fmt.Sprintf("**Consolidator Notes**: %s\n\n", notes))
-			}
-
-			issues := prevContext.GetIssuesForNextGroup()
-			if len(issues) > 0 {
-				sb.WriteString("**Important**: The previous group's consolidator flagged these issues:\n")
-				for _, issue := range issues {
-					sb.WriteString(fmt.Sprintf("- %s\n", issue))
-				}
-				sb.WriteString("\n")
-			}
-
-			if prevContext.IsVerificationSuccess() {
-				sb.WriteString("The consolidated code from the previous group has been verified (build/lint/tests passed).\n\n")
-			} else {
-				sb.WriteString("**Warning**: The previous group's code verification may have issues. Check carefully.\n\n")
-			}
+			ctx.PreviousGroup = convertGroupConsolidationContextToGroupContext(prevContext, prevGroupIdx)
 		}
 	}
 
-	sb.WriteString("## Guidelines\n\n")
-	sb.WriteString("- Focus only on this specific task\n")
-	sb.WriteString("- Do not modify files outside of your assigned scope unless necessary\n")
-	sb.WriteString("- Commit your changes before writing the completion file\n\n")
+	// Build prompt using TaskBuilder
+	builder := prompt.NewTaskBuilder()
+	result, err := builder.Build(ctx)
+	if err != nil {
+		// Fallback to basic prompt on error
+		e.logger.Error("failed to build task prompt, using fallback",
+			"task_id", taskID,
+			"error", err.Error(),
+		)
+		return fmt.Sprintf("# Task: %s\n\nPlease complete this task.", taskID)
+	}
 
-	// Add completion protocol instructions
-	sb.WriteString("## Completion Protocol\n\n")
-	sb.WriteString("When your task is complete, you MUST write a completion file to signal the orchestrator:\n\n")
-	sb.WriteString("**CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.\n")
-	sb.WriteString("If you changed directories during the task (e.g., `cd project/`), use an absolute path or navigate back to the root first.\n\n")
-	sb.WriteString(fmt.Sprintf("1. Use Write tool to create `%s` in your worktree root\n", TaskCompletionFileName))
-	sb.WriteString("2. Include this JSON structure:\n")
-	sb.WriteString("```json\n")
-	sb.WriteString("{\n")
-	sb.WriteString(fmt.Sprintf("  \"task_id\": \"%s\",\n", taskID))
-	sb.WriteString("  \"status\": \"complete\",\n")
-	sb.WriteString("  \"summary\": \"Brief description of what you accomplished\",\n")
-	sb.WriteString("  \"files_modified\": [\"list\", \"of\", \"files\", \"you\", \"changed\"],\n")
-	sb.WriteString("  \"notes\": \"Any implementation notes for the consolidation phase\",\n")
-	sb.WriteString("  \"issues\": [\"Any concerns or blocking issues found\"],\n")
-	sb.WriteString("  \"suggestions\": [\"Suggestions for integration with other tasks\"],\n")
-	sb.WriteString("  \"dependencies\": [\"Any new runtime dependencies added\"]\n")
-	sb.WriteString("}\n")
-	sb.WriteString("```\n\n")
-	sb.WriteString("3. Use status \"blocked\" if you cannot complete (explain in issues), or \"failed\" if something broke\n")
-	sb.WriteString("4. This file signals that your work is done and provides context for consolidation\n")
+	return result
+}
 
-	return sb.String()
+// convertPlannedTaskDataToTaskInfo converts a PlannedTaskData interface to prompt.TaskInfo.
+// This adapter function bridges the phase package's interface with the prompt package's type.
+func convertPlannedTaskDataToTaskInfo(task PlannedTaskData) *prompt.TaskInfo {
+	if task == nil {
+		return nil
+	}
+
+	// Copy files slice to avoid aliasing
+	files := task.GetFiles()
+	var filesCopy []string
+	if files != nil {
+		filesCopy = make([]string, len(files))
+		copy(filesCopy, files)
+	}
+
+	return &prompt.TaskInfo{
+		ID:          task.GetID(),
+		Title:       task.GetTitle(),
+		Description: task.GetDescription(),
+		Files:       filesCopy,
+	}
+}
+
+// convertGroupConsolidationContextToGroupContext converts a GroupConsolidationContextData
+// interface to prompt.GroupContext.
+func convertGroupConsolidationContextToGroupContext(gc GroupConsolidationContextData, groupIndex int) *prompt.GroupContext {
+	if gc == nil {
+		return nil
+	}
+
+	// Copy issues slice to avoid aliasing
+	issues := gc.GetIssuesForNextGroup()
+	var issuesCopy []string
+	if issues != nil {
+		issuesCopy = make([]string, len(issues))
+		copy(issuesCopy, issues)
+	}
+
+	return &prompt.GroupContext{
+		GroupIndex:         groupIndex,
+		Notes:              gc.GetNotes(),
+		IssuesForNextGroup: issuesCopy,
+		VerificationPassed: gc.IsVerificationSuccess(),
+	}
 }
 
 // monitorTaskInstance monitors an instance and reports when it completes.
