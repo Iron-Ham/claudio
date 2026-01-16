@@ -1,4 +1,6 @@
-package cmd
+// Package project provides CLI commands for project-level operations.
+// This includes initialization and pull request management.
+package project
 
 import (
 	"fmt"
@@ -18,8 +20,9 @@ This creates a .claudio directory to store session state and worktrees.`,
 	RunE: runInit,
 }
 
-func init() {
-	rootCmd.AddCommand(initCmd)
+// RegisterInitCmd registers the init command with the given parent command.
+func RegisterInitCmd(parent *cobra.Command) {
+	parent.AddCommand(initCmd)
 }
 
 func runInit(cmd *cobra.Command, args []string) error {

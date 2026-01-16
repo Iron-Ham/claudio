@@ -1,9 +1,26 @@
+// Package cmd provides the CLI command structure for Claudio.
+// Commands are organized into domain-specific subpackages for better
+// maintainability and easier onboarding.
+//
+// Subpackage organization:
+//   - session/: Session lifecycle (start, stop, sessions, cleanup)
+//   - planning/: Planning modes (plan, ultraplan, tripleshot)
+//   - instance/: Instance management (add, remove, status, stats)
+//   - observability/: Monitoring (logs, harvest)
+//   - project/: Project-level operations (init, pr)
+//   - config/: Configuration management
 package cmd
 
 import (
 	"strings"
 
-	"github.com/Iron-Ham/claudio/internal/config"
+	"github.com/Iron-Ham/claudio/internal/cmd/config"
+	"github.com/Iron-Ham/claudio/internal/cmd/instance"
+	"github.com/Iron-Ham/claudio/internal/cmd/observability"
+	"github.com/Iron-Ham/claudio/internal/cmd/planning"
+	"github.com/Iron-Ham/claudio/internal/cmd/project"
+	"github.com/Iron-Ham/claudio/internal/cmd/session"
+	appconfig "github.com/Iron-Ham/claudio/internal/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -27,18 +44,26 @@ func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringP("config", "c", "", "config file (default is $HOME/.config/claudio/config.yaml)")
 	_ = viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config"))
+
+	// Register all command subpackages
+	session.Register(rootCmd)
+	planning.Register(rootCmd)
+	instance.Register(rootCmd)
+	observability.Register(rootCmd)
+	project.Register(rootCmd)
+	config.Register(rootCmd)
 }
 
 func initConfig() {
 	// Set defaults first so they're available even without a config file
-	config.SetDefaults()
+	appconfig.SetDefaults()
 
 	if cfgFile := viper.GetString("config"); cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
 	} else {
 		viper.SetConfigName("config")
 		viper.SetConfigType("yaml")
-		viper.AddConfigPath(config.ConfigDir())
+		viper.AddConfigPath(appconfig.ConfigDir())
 		viper.AddConfigPath("$HOME/.config/claudio")
 		viper.AddConfigPath(".")
 	}

@@ -1,4 +1,4 @@
-package cmd
+package planning
 
 import (
 	"bufio"
@@ -48,9 +48,12 @@ var (
 )
 
 func init() {
-	rootCmd.AddCommand(tripleshotCmd)
-
 	tripleshotCmd.Flags().BoolVar(&tripleshotAutoApprove, "auto-approve", false, "Auto-approve applying the winning solution")
+}
+
+// RegisterTripleshotCmd registers the tripleshot command with the given parent command.
+func RegisterTripleshotCmd(parent *cobra.Command) {
+	parent.AddCommand(tripleshotCmd)
 }
 
 func runTripleshot(cmd *cobra.Command, args []string) error {
@@ -80,7 +83,7 @@ func runTripleshot(cmd *cobra.Command, args []string) error {
 
 	// Create logger if enabled
 	sessionDir := sessutil.GetSessionDir(cwd, sessionID)
-	logger := CreateLogger(sessionDir, cfg)
+	logger := createLogger(sessionDir, cfg)
 	defer func() { _ = logger.Close() }()
 
 	// Create orchestrator with multi-session support
@@ -97,7 +100,7 @@ func runTripleshot(cmd *cobra.Command, args []string) error {
 	if len(words) > 3 {
 		words = words[:3]
 	}
-	sessionName := "tripleshot-" + slugifyWords(words)
+	sessionName := "tripleshot-" + SlugifyWords(words)
 
 	session, err := orch.StartSession(sessionName)
 	if err != nil {

@@ -1,4 +1,6 @@
-package cmd
+// Package instance provides CLI commands for managing Claude instances.
+// This includes adding, removing, and querying instance status.
+package instance
 
 import (
 	"fmt"
@@ -34,9 +36,13 @@ var (
 )
 
 func init() {
-	rootCmd.AddCommand(addCmd)
 	addCmd.Flags().BoolVarP(&autoStart, "start", "s", false, "Automatically start the instance after adding (ignored if --depends-on is set)")
 	addCmd.Flags().StringVarP(&dependsOn, "depends-on", "d", "", "Instance ID(s) or task name(s) that must complete before this instance starts (comma-separated)")
+}
+
+// RegisterAddCmd registers the add command with the given parent command.
+func RegisterAddCmd(parent *cobra.Command) {
+	parent.AddCommand(addCmd)
 }
 
 func runAdd(cmd *cobra.Command, args []string) error {

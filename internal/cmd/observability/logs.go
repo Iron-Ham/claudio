@@ -1,4 +1,6 @@
-package cmd
+// Package observability provides CLI commands for monitoring and observing
+// Claudio sessions and instances. This includes log viewing and worktree harvesting.
+package observability
 
 import (
 	"bufio"
@@ -56,14 +58,17 @@ var (
 )
 
 func init() {
-	rootCmd.AddCommand(logsCmd)
-
 	logsCmd.Flags().StringVarP(&logsSessionID, "session", "s", "", "Session ID (default: most recent)")
 	logsCmd.Flags().IntVarP(&logsTail, "tail", "n", 50, "Number of lines to show (0 for all)")
 	logsCmd.Flags().BoolVarP(&logsFollow, "follow", "f", false, "Follow log output (like tail -f)")
 	logsCmd.Flags().StringVar(&logsLevel, "level", "", "Filter by minimum level (debug/info/warn/error)")
 	logsCmd.Flags().StringVar(&logsSince, "since", "", "Show logs since duration ago (e.g., 1h, 30m)")
 	logsCmd.Flags().StringVar(&logsGrep, "grep", "", "Filter logs matching pattern (regex)")
+}
+
+// RegisterLogsCmd registers the logs command with the given parent command.
+func RegisterLogsCmd(parent *cobra.Command) {
+	parent.AddCommand(logsCmd)
 }
 
 // logEntry represents a parsed JSON log line

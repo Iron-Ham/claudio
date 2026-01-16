@@ -1,4 +1,6 @@
-package cmd
+// Package session provides CLI commands for managing Claudio sessions.
+// This includes starting, stopping, listing, and cleaning up sessions.
+package session
 
 import (
 	"bufio"
@@ -39,9 +41,13 @@ var (
 )
 
 func init() {
-	rootCmd.AddCommand(startCmd)
 	startCmd.Flags().BoolVar(&forceNew, "new", false, "Force start a new session")
 	startCmd.Flags().StringVar(&attachSession, "session", "", "Attach to a specific session by ID")
+}
+
+// RegisterStartCmd registers the start command with the given parent command.
+func RegisterStartCmd(parent *cobra.Command) {
+	parent.AddCommand(startCmd)
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
@@ -75,7 +81,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	// If --session flag is set, attach to that specific session
 	if attachSession != "" {
-		return attachToSession(cwd, attachSession, cfg)
+		return AttachToSession(cwd, attachSession, cfg)
 	}
 
 	// List available sessions
@@ -102,12 +108,12 @@ sessionLoop:
 
 		switch action {
 		case "attach":
-			return attachToSession(cwd, selectedID, cfg)
+			return AttachToSession(cwd, selectedID, cfg)
 		case "new":
 			// Exit loop to create new session below
 			break sessionLoop
 		case "list":
-			return runSessionsList(cmd, args)
+			return RunSessionsList(cmd, args)
 		case "quit":
 			return nil
 		case "refresh":
@@ -130,8 +136,9 @@ sessionLoop:
 	return startNewSession(cwd, sessionName, cfg)
 }
 
-// attachToSession attaches to an existing session by ID
-func attachToSession(cwd, sessionID string, cfg *config.Config) error {
+// AttachToSession attaches to an existing session by ID.
+// This is exported so other packages (like sessions command) can use it.
+func AttachToSession(cwd, sessionID string, cfg *config.Config) error {
 	// Check if session exists
 	if !session.SessionExists(cwd, sessionID) {
 		return fmt.Errorf("session %s not found", sessionID)
@@ -309,7 +316,7 @@ func migrateAndStartLegacySession(cwd, sessionName string, cfg *config.Config) e
 	fmt.Println()
 
 	// Now start with the migrated session
-	return attachToSession(cwd, sessionID, cfg)
+	return AttachToSession(cwd, sessionID, cfg)
 }
 
 // launchTUI sets up terminal dimensions and launches the TUI

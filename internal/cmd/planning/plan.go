@@ -1,4 +1,6 @@
-package cmd
+// Package planning provides CLI commands for planning and orchestration modes.
+// This includes the plan, ultraplan, and tripleshot commands.
+package planning
 
 import (
 	"bufio"
@@ -56,8 +58,6 @@ var (
 )
 
 func init() {
-	rootCmd.AddCommand(planCmd)
-
 	planCmd.Flags().BoolVar(&planDryRun, "dry-run", false, "Show plan without creating output")
 	planCmd.Flags().BoolVar(&planMultiPass, "multi-pass", false, "Use 3-strategy planning for complex tasks")
 	planCmd.Flags().StringSliceVar(&planLabels, "labels", nil, "Labels to add to GitHub Issues")
@@ -65,6 +65,11 @@ func init() {
 	planCmd.Flags().BoolVar(&planNoConfirm, "no-confirm", false, "Skip confirmation prompt")
 	planCmd.Flags().StringVar(&planOutputFormat, "output-format", "issues",
 		"Output format: 'json' (for ultraplan), 'issues' (GitHub Issues), or 'both'")
+}
+
+// RegisterPlanCmd registers the plan command with the given parent command.
+func RegisterPlanCmd(parent *cobra.Command) {
+	parent.AddCommand(planCmd)
 }
 
 func runPlan(cmd *cobra.Command, args []string) error {

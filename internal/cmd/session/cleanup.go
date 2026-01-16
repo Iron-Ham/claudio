@@ -1,4 +1,4 @@
-package cmd
+package session
 
 import (
 	"bufio"
@@ -64,7 +64,6 @@ var (
 )
 
 func init() {
-	rootCmd.AddCommand(cleanupCmd)
 	cleanupCmd.Flags().BoolVar(&cleanupDryRun, "dry-run", false, "Show what would be cleaned up without making changes")
 	cleanupCmd.Flags().BoolVarP(&cleanupForce, "force", "f", false, "Skip confirmation prompt")
 	cleanupCmd.Flags().BoolVar(&cleanupWorktrees, "worktrees", false, "Clean up only worktrees")
@@ -73,6 +72,11 @@ func init() {
 	cleanupCmd.Flags().BoolVar(&cleanupSessions, "sessions", false, "Clean up only empty sessions (0 instances)")
 	cleanupCmd.Flags().BoolVar(&cleanupAllSessions, "all-sessions", false, "Kill all claudio-* tmux sessions")
 	cleanupCmd.Flags().BoolVar(&cleanupDeepClean, "deep-clean", false, "Also remove session directories (empty only, or all with --all-sessions)")
+}
+
+// RegisterCleanupCmd registers the cleanup command with the given parent command.
+func RegisterCleanupCmd(parent *cobra.Command) {
+	parent.AddCommand(cleanupCmd)
 }
 
 func runCleanup(cmd *cobra.Command, args []string) error {
@@ -143,21 +147,21 @@ func discoverStaleResources(baseDir string) (*CleanupResult, error) {
 	// Load active session to know which instances are active
 	orch, err := orchestrator.New(baseDir)
 	if err == nil {
-		if session, err := orch.LoadSession(); err == nil {
-			for _, inst := range session.Instances {
+		if sess, err := orch.LoadSession(); err == nil {
+			for _, inst := range sess.Instances {
 				result.ActiveInstanceIDs[inst.ID] = true
 			}
 		}
 	}
 
 	// Find stale worktrees
-	result.StaleWorktrees = findStaleWorktrees(worktreesDir, result.ActiveInstanceIDs)
+	result.StaleWorktrees = FindStaleWorktrees(worktreesDir, result.ActiveInstanceIDs)
 
 	// Find stale branches using configured prefix
-	result.StaleBranches = findStaleBranches(baseDir, result.ActiveInstanceIDs, branchPrefix)
+	result.StaleBranches = FindStaleBranches(baseDir, result.ActiveInstanceIDs, branchPrefix)
 
 	// Find orphaned tmux sessions
-	result.OrphanedTmuxSess = findOrphanedTmuxSessions(result.ActiveInstanceIDs)
+	result.OrphanedTmuxSess = FindOrphanedTmuxSessions(result.ActiveInstanceIDs)
 
 	// Find empty sessions (0 instances)
 	emptySessions, err := session.FindEmptySessions(baseDir)
@@ -169,7 +173,9 @@ func discoverStaleResources(baseDir string) (*CleanupResult, error) {
 	return result, nil
 }
 
-func findStaleWorktrees(worktreesDir string, activeIDs map[string]bool) []StaleWorktree {
+// FindStaleWorktrees finds worktrees that are not associated with active instances.
+// Exported for testing.
+func FindStaleWorktrees(worktreesDir string, activeIDs map[string]bool) []StaleWorktree {
 	var stale []StaleWorktree
 
 	entries, err := os.ReadDir(worktreesDir)
@@ -218,7 +224,9 @@ func findStaleWorktrees(worktreesDir string, activeIDs map[string]bool) []StaleW
 	return stale
 }
 
-func findStaleBranches(baseDir string, activeIDs map[string]bool, branchPrefix string) []string {
+// FindStaleBranches finds branches that are not associated with active instances.
+// Exported for testing.
+func FindStaleBranches(baseDir string, activeIDs map[string]bool, branchPrefix string) []string {
 	var stale []string
 
 	// Get all local branches starting with the configured prefix
@@ -262,7 +270,9 @@ func findStaleBranches(baseDir string, activeIDs map[string]bool, branchPrefix s
 	return stale
 }
 
-func findOrphanedTmuxSessions(activeIDs map[string]bool) []string {
+// FindOrphanedTmuxSessions finds tmux sessions that are not associated with active instances.
+// Exported for testing.
+func FindOrphanedTmuxSessions(activeIDs map[string]bool) []string {
 	var orphaned []string
 
 	// List all tmux sessions

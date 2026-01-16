@@ -1,4 +1,4 @@
-package cmd
+package instance
 
 import (
 	"fmt"
@@ -31,7 +31,11 @@ var (
 
 func init() {
 	statsCmd.Flags().BoolVar(&statsJSON, "json", false, "Output statistics as JSON")
-	rootCmd.AddCommand(statsCmd)
+}
+
+// RegisterStatsCmd registers the stats command with the given parent command.
+func RegisterStatsCmd(parent *cobra.Command) {
+	parent.AddCommand(statsCmd)
 }
 
 func runStats(cmd *cobra.Command, args []string) error {

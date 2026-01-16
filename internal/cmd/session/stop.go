@@ -1,4 +1,4 @@
-package cmd
+package session
 
 import (
 	"fmt"
@@ -19,8 +19,12 @@ You will be prompted for what to do with each instance's work.`,
 var forceStop bool
 
 func init() {
-	rootCmd.AddCommand(stopCmd)
 	stopCmd.Flags().BoolVarP(&forceStop, "force", "f", false, "Force stop without prompts")
+}
+
+// RegisterStopCmd registers the stop command with the given parent command.
+func RegisterStopCmd(parent *cobra.Command) {
+	parent.AddCommand(stopCmd)
 }
 
 func runStop(cmd *cobra.Command, args []string) error {

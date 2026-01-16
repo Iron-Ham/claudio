@@ -1,4 +1,4 @@
-package cmd
+package observability
 
 import (
 	"fmt"
@@ -40,11 +40,15 @@ var (
 )
 
 func init() {
-	rootCmd.AddCommand(harvestCmd)
 	harvestCmd.Flags().BoolVar(&harvestAutoCommit, "commit", false, "Auto-commit all uncommitted changes")
 	harvestCmd.Flags().BoolVar(&harvestCreatePR, "pr", false, "Create PRs for committed branches")
 	harvestCmd.Flags().BoolVar(&harvestCleanup, "cleanup", false, "Remove worktrees with no changes")
 	harvestCmd.Flags().BoolVar(&harvestAll, "all", false, "Process all worktrees (commit + pr + cleanup)")
+}
+
+// RegisterHarvestCmd registers the harvest command with the given parent command.
+func RegisterHarvestCmd(parent *cobra.Command) {
+	parent.AddCommand(harvestCmd)
 }
 
 func runHarvest(cmd *cobra.Command, args []string) error {
@@ -101,28 +105,28 @@ func runHarvest(cmd *cobra.Command, args []string) error {
 
 	// Show worktrees with changes
 	if len(withChanges) > 0 {
-		fmt.Println("📝 Worktrees with uncommitted changes:")
-		fmt.Println(strings.Repeat("─", 60))
+		fmt.Println("Worktrees with uncommitted changes:")
+		fmt.Println(strings.Repeat("-", 60))
 
 		for _, wt := range withChanges {
-			fmt.Printf("\n🔸 %s\n", wt.Branch)
+			fmt.Printf("\n* %s\n", wt.Branch)
 			fmt.Printf("   Path: %s\n", wt.Path)
 			fmt.Printf("   Files changed: %d\n", len(wt.ChangedFiles))
 			for _, f := range wt.ChangedFiles {
-				fmt.Printf("     • %s\n", f)
+				fmt.Printf("     - %s\n", f)
 			}
 
 			if harvestAutoCommit {
 				if err := commitWorktree(wt); err != nil {
-					fmt.Printf("   ❌ Failed to commit: %v\n", err)
+					fmt.Printf("   [ERROR] Failed to commit: %v\n", err)
 				} else {
-					fmt.Printf("   ✅ Committed\n")
+					fmt.Printf("   [OK] Committed\n")
 
 					if harvestCreatePR {
 						if err := createPR(wt); err != nil {
-							fmt.Printf("   ❌ Failed to create PR: %v\n", err)
+							fmt.Printf("   [ERROR] Failed to create PR: %v\n", err)
 						} else {
-							fmt.Printf("   ✅ PR created\n")
+							fmt.Printf("   [OK] PR created\n")
 						}
 					}
 				}
@@ -133,17 +137,17 @@ func runHarvest(cmd *cobra.Command, args []string) error {
 
 	// Show worktrees without changes
 	if len(withoutChanges) > 0 {
-		fmt.Println("📭 Worktrees with no changes:")
-		fmt.Println(strings.Repeat("─", 60))
+		fmt.Println("Worktrees with no changes:")
+		fmt.Println(strings.Repeat("-", 60))
 
 		for _, wt := range withoutChanges {
 			fmt.Printf("   %s\n", wt.Branch)
 
 			if harvestCleanup {
 				if err := removeWorktree(wt); err != nil {
-					fmt.Printf("   ❌ Failed to remove: %v\n", err)
+					fmt.Printf("   [ERROR] Failed to remove: %v\n", err)
 				} else {
-					fmt.Printf("   ✅ Removed\n")
+					fmt.Printf("   [OK] Removed\n")
 				}
 			}
 		}
@@ -151,7 +155,7 @@ func runHarvest(cmd *cobra.Command, args []string) error {
 	}
 
 	// Summary
-	fmt.Println(strings.Repeat("─", 60))
+	fmt.Println(strings.Repeat("-", 60))
 	fmt.Printf("Summary: %d with changes, %d without changes\n", len(withChanges), len(withoutChanges))
 
 	if !harvestAutoCommit && len(withChanges) > 0 {
