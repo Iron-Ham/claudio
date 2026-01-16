@@ -159,3 +159,34 @@ func (r *RingBuffer) Reset() {
 	r.end = 0
 	r.full = false
 }
+
+// ReplaceWith atomically resets the buffer and writes new data.
+//
+// This is equivalent to calling Reset() followed by Write(), but performs both
+// operations under a single lock acquisition. This prevents race conditions where
+// concurrent Bytes() calls could see an empty buffer between Reset and Write.
+//
+// ReplaceWith is safe for concurrent use with other methods.
+func (r *RingBuffer) ReplaceWith(p []byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Reset the buffer
+	r.start = 0
+	r.end = 0
+	r.full = false
+
+	// Write the new data (inline to avoid lock re-acquisition)
+	for _, b := range p {
+		r.data[r.end] = b
+		r.end = (r.end + 1) % r.size
+
+		if r.full {
+			r.start = (r.start + 1) % r.size
+		}
+
+		if r.end == r.start {
+			r.full = true
+		}
+	}
+}

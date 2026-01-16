@@ -335,9 +335,14 @@ func (p *PRWorkflow) monitorLoop() {
 				"-E", "-",
 			)
 			output, err := captureCmd.Output()
-			if err == nil {
-				p.outputBuf.Reset()
-				_, _ = p.outputBuf.Write(output)
+			if err != nil {
+				p.logDebug("capture failed in PR workflow",
+					"session_name", sessionName,
+					"error", err.Error())
+			} else {
+				// Use ReplaceWith for atomic reset+write to prevent race condition where
+				// concurrent GetOutput() calls could see an empty buffer between Reset and Write.
+				p.outputBuf.ReplaceWith(output)
 			}
 
 			// Check if the session is still running

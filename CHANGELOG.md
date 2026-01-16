@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Frozen Output During Tmux Timeout** - Fixed a critical bug where tmux output would freeze completely when the tmux status query timed out. Previously, when `getSessionStatus()` took longer than 2 seconds (due to heavy system load or many tmux sessions), the capture loop would skip output capture entirely, causing the TUI to display stale content indefinitely. Now output capture continues even when the status query fails, using a full pane capture as fallback.
+
+- **Ring Buffer Race Condition** - Fixed a race condition between `Reset()` and `Write()` operations in the ring buffer that could cause brief display flickering. Added new atomic `ReplaceWith()` method that performs both operations under a single lock acquisition, preventing concurrent `GetOutput()` calls from seeing an empty buffer.
+
 ## [0.9.1] - 2026-01-16
 
 This patch release focuses on **Bug Fixes & UI Polish** - improving completion file detection reliability, fixing sidebar width configuration consistency, and enhancing task status readability in the sidebar.
