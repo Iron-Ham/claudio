@@ -7,15 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-01-16
+
+This patch release focuses on **Bug Fixes & UI Polish** - improving completion file detection reliability, fixing sidebar width configuration consistency, and enhancing task status readability in the sidebar.
+
 ### Changed
 
-- **Sidebar Instance Status Alignment** - Status symbols (WORK, WAIT, DONE, etc.) in both the grouped sidebar view and tripleshot view are now displayed on a new line underneath each task name instead of trailing at the end of the line. This improves readability by aligning status indicators vertically.
+- **Status Symbol Alignment** - Task status indicators (WORK, WAIT, DONE, etc.) now display on a new line underneath task names in both the grouped sidebar and tripleshot views, improving vertical alignment and readability (#509)
 
 ### Fixed
 
-- **Completion File in Subdirectory Detection** - Fixed a bug where tasks that completed their work but wrote the completion file in a subdirectory (e.g., after `cd project/`) would be incorrectly marked as failed. The `CheckCompletionFile` function used recursive search to detect completion, but `VerifyTaskWork` only checked the worktree root when parsing the file. Now `VerifyTaskWork` uses `FindAndParseTaskCompletionFile` which searches subdirectories, ensuring completion files are found regardless of where Claude wrote them.
-- **Tmux Panel Width Not Using Configured Sidebar** - Fixed an issue where the tmux panel width was not respecting the user-configured sidebar width (`tui.sidebar_width`). When resizing the terminal, the content area calculation now uses the configured sidebar width instead of the default, ensuring tmux panels are correctly sized to match the visible sidebar. Also removed dead code from `view/dashboard.go` that contained an outdated hardcoded sidebar width constant.
+- **Completion File Detection in Subdirectories** - Fixed a bug where tasks would be incorrectly marked as failed when Claude wrote the completion file in a subdirectory. The task verifier now uses recursive search (matching the completion detector behavior) to find completion files regardless of where Claude wrote them (#507)
 
+- **Tmux Panel Width Configuration** - Fixed tmux panel resizing to use the user-configured sidebar width (`tui.sidebar_width`) instead of hardcoded defaults. Previously, the UI layout used the configured width but tmux panels used the default, causing inconsistent sizing (#508)
 
 ## [0.9.0] - 2026-01-16
 
@@ -490,6 +494,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.9.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.9.1
 [0.9.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.9.0
 [0.8.2]: https://github.com/Iron-Ham/claudio/releases/tag/v0.8.2
 [0.8.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.8.1
