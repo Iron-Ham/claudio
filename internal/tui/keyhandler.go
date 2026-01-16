@@ -249,18 +249,21 @@ func (m Model) submitTaskInput() (tea.Model, tea.Cmd) {
 		m = m.cancelTaskInput()
 
 		// Handle inline plan/ultraplan/multiplan objective submission
-		if m.inlinePlan != nil && m.inlinePlan.AwaitingObjective {
-			if m.inlinePlan.IsUltraPlan {
-				// This is an ultraplan objective - create the full ultraplan coordinator
-				m.handleUltraPlanObjectiveSubmit(task)
-			} else if m.inlinePlan.MultiPass {
-				// This is a multiplan objective - create parallel planning instances
-				m.handleMultiPlanObjectiveSubmit(task)
-			} else {
-				// This is a regular plan objective
-				m.handleInlinePlanObjectiveSubmit(task)
+		if m.inlinePlan != nil {
+			session := m.inlinePlan.GetAwaitingObjectiveSession()
+			if session != nil {
+				if session.IsUltraPlan {
+					// This is an ultraplan objective - create the full ultraplan coordinator
+					m.handleUltraPlanObjectiveSubmit(task)
+				} else if session.MultiPass {
+					// This is a multiplan objective - create parallel planning instances
+					m.handleMultiPlanObjectiveSubmit(task)
+				} else {
+					// This is a regular plan objective
+					m.handleInlinePlanObjectiveSubmit(task)
+				}
+				return m, nil
 			}
-			return m, nil
 		}
 
 		// Handle triple-shot mode initiation

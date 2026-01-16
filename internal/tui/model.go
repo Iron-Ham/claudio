@@ -70,10 +70,10 @@ type PlanEditorState struct {
 	pendingConfirmDelete string
 }
 
-// InlinePlanState holds state for inline plan mode (from :plan command).
+// InlinePlanSession holds state for a single inline plan session.
 // Unlike UltraPlanState which uses the orchestrator.Coordinator for ultraplan workflows,
-// InlinePlanState manages a simpler planning flow directly within the TUI.
-type InlinePlanState struct {
+// InlinePlanSession manages a simpler planning flow directly within the TUI.
+type InlinePlanSession struct {
 	// Plan holds the current plan being edited
 	Plan *orchestrator.PlanSpec
 
@@ -125,6 +125,108 @@ type InlinePlanState struct {
 	AwaitingPlanManager bool
 }
 
+// InlinePlanState holds the state for inline plan mode.
+// This supports multiple concurrent plan and multiplan sessions, similar to TripleShotState.
+type InlinePlanState struct {
+	// Sessions maps group IDs to their inline plan sessions.
+	// This enables multiple concurrent plan/multiplan sessions.
+	Sessions map[string]*InlinePlanSession
+
+	// NeedsNotification is set when user input is needed (checked on tick)
+	NeedsNotification bool
+
+	// CurrentSessionID is the group ID of the session that is currently
+	// awaiting objective input or is otherwise the "active" session being configured.
+	CurrentSessionID string
+}
+
+// NewInlinePlanState creates a new InlinePlanState with initialized maps.
+func NewInlinePlanState() *InlinePlanState {
+	return &InlinePlanState{
+		Sessions: make(map[string]*InlinePlanSession),
+	}
+}
+
+// GetSession returns the session for a specific group ID.
+func (s *InlinePlanState) GetSession(groupID string) *InlinePlanSession {
+	if s == nil || s.Sessions == nil {
+		return nil
+	}
+	return s.Sessions[groupID]
+}
+
+// GetCurrentSession returns the current session being configured (if any).
+func (s *InlinePlanState) GetCurrentSession() *InlinePlanSession {
+	if s == nil || s.CurrentSessionID == "" {
+		return nil
+	}
+	return s.GetSession(s.CurrentSessionID)
+}
+
+// GetAwaitingObjectiveSession returns a session awaiting objective input (if any).
+func (s *InlinePlanState) GetAwaitingObjectiveSession() *InlinePlanSession {
+	if s == nil || s.Sessions == nil {
+		return nil
+	}
+	for _, session := range s.Sessions {
+		if session.AwaitingObjective {
+			return session
+		}
+	}
+	return nil
+}
+
+// HasActiveSessions returns true if there are any active inline plan sessions.
+func (s *InlinePlanState) HasActiveSessions() bool {
+	if s == nil {
+		return false
+	}
+	return len(s.Sessions) > 0
+}
+
+// GetSessionCount returns the number of active sessions.
+func (s *InlinePlanState) GetSessionCount() int {
+	if s == nil || s.Sessions == nil {
+		return 0
+	}
+	return len(s.Sessions)
+}
+
+// AddSession adds a new session to the state and sets it as the current session.
+func (s *InlinePlanState) AddSession(groupID string, session *InlinePlanSession) *InlinePlanSession {
+	if s.Sessions == nil {
+		s.Sessions = make(map[string]*InlinePlanSession)
+	}
+	session.GroupID = groupID
+	s.Sessions[groupID] = session
+	s.CurrentSessionID = groupID
+	return session
+}
+
+// RemoveSession removes a session from the state.
+func (s *InlinePlanState) RemoveSession(groupID string) {
+	if s == nil || s.Sessions == nil {
+		return
+	}
+	delete(s.Sessions, groupID)
+	if s.CurrentSessionID == groupID {
+		s.CurrentSessionID = ""
+	}
+}
+
+// GetPlanGroupIDs returns all group IDs for plan sessions.
+func (s *InlinePlanState) GetPlanGroupIDs() []string {
+	if s == nil || s.Sessions == nil {
+		return nil
+	}
+
+	ids := make([]string, 0, len(s.Sessions))
+	for id := range s.Sessions {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // Model holds the TUI application state
 type Model struct {
 	// Core components
@@ -152,6 +254,12 @@ type Model struct {
 	// Inline plan mode (nil if not in inline plan mode)
 	// Used for simpler :plan command workflow, separate from ultraPlan
 	inlinePlan *InlinePlanState
+
+	// Multi-session tracking for sidebar display
+	// These enable displaying multiple concurrent plan/multiplan sessions in the sidebar.
+	// State is synchronized from inlinePlan.Sessions when sessions are created/removed.
+	multiPlanSessions *view.MultiPlanState // Tracks multiple concurrent multiplan sessions
+	planSessions      *view.PlanState      // Tracks multiple concurrent plan sessions
 
 	// UI state
 	activeTab       int
@@ -242,9 +350,9 @@ func (m Model) IsTripleShotMode() bool {
 	return m.tripleShot != nil && m.tripleShot.HasActiveCoordinators()
 }
 
-// IsInlinePlanMode returns true if the model is in inline plan mode
+// IsInlinePlanMode returns true if there are any active inline plan sessions.
 func (m Model) IsInlinePlanMode() bool {
-	return m.inlinePlan != nil
+	return m.inlinePlan != nil && m.inlinePlan.HasActiveSessions()
 }
 
 // IsPlanEditorActive returns true if the plan editor is currently active and visible
@@ -273,6 +381,18 @@ func (m Model) SidebarMode() view.SidebarMode {
 // Implements view.SidebarState interface.
 func (m Model) UltraPlanState() *view.UltraPlanState {
 	return m.ultraPlan
+}
+
+// MultiPlanState returns the multiplan state for tracking multiple concurrent multiplan sessions.
+// Implements view.SidebarState interface.
+func (m Model) MultiPlanState() *view.MultiPlanState {
+	return m.multiPlanSessions
+}
+
+// PlanStateData returns the plan state for tracking multiple concurrent plan sessions.
+// Implements view.SidebarState interface.
+func (m Model) PlanStateData() *view.PlanState {
+	return m.planSessions
 }
 
 // Orchestrator returns the orchestrator for instance lookups.
@@ -338,18 +458,31 @@ func (m *Model) enterInlinePlanEditor() {
 	m.updateInlinePlanValidation()
 }
 
+// getCurrentPlanSession returns the current inline plan session for the plan editor.
+// Returns nil if not in inline plan mode or no current session.
+func (m *Model) getCurrentPlanSession() *InlinePlanSession {
+	if m.inlinePlan == nil {
+		return nil
+	}
+	return m.inlinePlan.GetCurrentSession()
+}
+
 // updateInlinePlanValidation runs validation on the inline plan and updates the editor state
 func (m *Model) updateInlinePlanValidation() {
-	if m.planEditor == nil || m.inlinePlan == nil || m.inlinePlan.Plan == nil {
+	if m.planEditor == nil {
+		return
+	}
+	session := m.getCurrentPlanSession()
+	if session == nil || session.Plan == nil {
 		return
 	}
 
 	// Run validation
-	m.planEditor.validation = orchestrator.ValidatePlanForEditor(m.inlinePlan.Plan)
+	m.planEditor.validation = orchestrator.ValidatePlanForEditor(session.Plan)
 
 	// Update tasks in cycle map for highlighting
 	m.planEditor.tasksInCycle = make(map[string]bool)
-	cycleTasks := orchestrator.GetTasksInCycle(m.inlinePlan.Plan)
+	cycleTasks := orchestrator.GetTasksInCycle(session.Plan)
 	for _, taskID := range cycleTasks {
 		m.planEditor.tasksInCycle[taskID] = true
 	}

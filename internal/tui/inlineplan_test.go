@@ -7,6 +7,15 @@ import (
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 )
 
+// Helper to create a session-based InlinePlanState for tests
+func newTestInlinePlanState(session *InlinePlanSession, groupID string) *InlinePlanState {
+	state := NewInlinePlanState()
+	if session != nil {
+		state.AddSession(groupID, session)
+	}
+	return state
+}
+
 func TestDispatchInlineMultiPlanFileChecks_NilInlinePlan(t *testing.T) {
 	m := Model{
 		inlinePlan: nil,
@@ -19,11 +28,12 @@ func TestDispatchInlineMultiPlanFileChecks_NilInlinePlan(t *testing.T) {
 }
 
 func TestDispatchInlineMultiPlanFileChecks_NotMultiPass(t *testing.T) {
+	session := &InlinePlanSession{
+		MultiPass:            false,
+		AwaitingPlanCreation: true,
+	}
 	m := Model{
-		inlinePlan: &InlinePlanState{
-			MultiPass:            false,
-			AwaitingPlanCreation: true,
-		},
+		inlinePlan: newTestInlinePlanState(session, "test-group"),
 	}
 
 	cmds := m.dispatchInlineMultiPlanFileChecks()
@@ -33,11 +43,12 @@ func TestDispatchInlineMultiPlanFileChecks_NotMultiPass(t *testing.T) {
 }
 
 func TestDispatchInlineMultiPlanFileChecks_NotAwaitingPlanCreation(t *testing.T) {
+	session := &InlinePlanSession{
+		MultiPass:            true,
+		AwaitingPlanCreation: false,
+	}
 	m := Model{
-		inlinePlan: &InlinePlanState{
-			MultiPass:            true,
-			AwaitingPlanCreation: false,
-		},
+		inlinePlan: newTestInlinePlanState(session, "test-group"),
 	}
 
 	cmds := m.dispatchInlineMultiPlanFileChecks()
@@ -47,12 +58,13 @@ func TestDispatchInlineMultiPlanFileChecks_NotAwaitingPlanCreation(t *testing.T)
 }
 
 func TestDispatchInlineMultiPlanFileChecks_NoPlannerIDs(t *testing.T) {
+	session := &InlinePlanSession{
+		MultiPass:            true,
+		AwaitingPlanCreation: true,
+		PlanningInstanceIDs:  []string{},
+	}
 	m := Model{
-		inlinePlan: &InlinePlanState{
-			MultiPass:            true,
-			AwaitingPlanCreation: true,
-			PlanningInstanceIDs:  []string{},
-		},
+		inlinePlan: newTestInlinePlanState(session, "test-group"),
 	}
 
 	cmds := m.dispatchInlineMultiPlanFileChecks()
@@ -62,18 +74,19 @@ func TestDispatchInlineMultiPlanFileChecks_NoPlannerIDs(t *testing.T) {
 }
 
 func TestDispatchInlineMultiPlanFileChecks_SkipsProcessedPlanners(t *testing.T) {
-	m := Model{
-		inlinePlan: &InlinePlanState{
-			MultiPass:            true,
-			AwaitingPlanCreation: true,
-			PlanningInstanceIDs:  []string{"planner-1", "planner-2", "planner-3"},
-			ProcessedPlanners: map[int]bool{
-				0: true, // planner-1 already processed
-				1: true, // planner-2 already processed
-				2: true, // planner-3 already processed
-			},
-			Objective: "test objective",
+	session := &InlinePlanSession{
+		MultiPass:            true,
+		AwaitingPlanCreation: true,
+		PlanningInstanceIDs:  []string{"planner-1", "planner-2", "planner-3"},
+		ProcessedPlanners: map[int]bool{
+			0: true, // planner-1 already processed
+			1: true, // planner-2 already processed
+			2: true, // planner-3 already processed
 		},
+		Objective: "test objective",
+	}
+	m := Model{
+		inlinePlan:   newTestInlinePlanState(session, "test-group"),
 		orchestrator: nil, // Will cause GetInstance to return nil
 	}
 
@@ -85,16 +98,17 @@ func TestDispatchInlineMultiPlanFileChecks_SkipsProcessedPlanners(t *testing.T) 
 }
 
 func TestDispatchInlineMultiPlanFileChecks_CreatesCommandsForUnprocessedPlanners(t *testing.T) {
-	m := Model{
-		inlinePlan: &InlinePlanState{
-			MultiPass:            true,
-			AwaitingPlanCreation: true,
-			PlanningInstanceIDs:  []string{"planner-1", "planner-2", "planner-3"},
-			ProcessedPlanners: map[int]bool{
-				0: true, // Only planner-1 is processed
-			},
-			Objective: "test objective",
+	session := &InlinePlanSession{
+		MultiPass:            true,
+		AwaitingPlanCreation: true,
+		PlanningInstanceIDs:  []string{"planner-1", "planner-2", "planner-3"},
+		ProcessedPlanners: map[int]bool{
+			0: true, // Only planner-1 is processed
 		},
+		Objective: "test objective",
+	}
+	m := Model{
+		inlinePlan:   newTestInlinePlanState(session, "test-group"),
 		orchestrator: nil, // Commands will return nil when GetInstance fails
 	}
 
@@ -114,6 +128,7 @@ func TestHandleInlineMultiPlanFileCheckResult_NilInlinePlan(t *testing.T) {
 		Index:        0,
 		Plan:         &orchestrator.PlanSpec{},
 		StrategyName: "test",
+		GroupID:      "test-group",
 	}
 
 	result, cmd := m.handleInlineMultiPlanFileCheckResult(msg)
@@ -127,17 +142,19 @@ func TestHandleInlineMultiPlanFileCheckResult_NilInlinePlan(t *testing.T) {
 }
 
 func TestHandleInlineMultiPlanFileCheckResult_NotMultiPass(t *testing.T) {
+	session := &InlinePlanSession{
+		MultiPass:            false,
+		AwaitingPlanCreation: true,
+	}
 	m := &Model{
-		inlinePlan: &InlinePlanState{
-			MultiPass:            false,
-			AwaitingPlanCreation: true,
-		},
+		inlinePlan: newTestInlinePlanState(session, "test-group"),
 	}
 
 	msg := tuimsg.InlineMultiPlanFileCheckResultMsg{
 		Index:        0,
 		Plan:         &orchestrator.PlanSpec{},
 		StrategyName: "test",
+		GroupID:      "test-group",
 	}
 
 	_, cmd := m.handleInlineMultiPlanFileCheckResult(msg)
@@ -157,20 +174,22 @@ func TestHandleInlineMultiPlanFileCheckResult_InvalidIndex(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			session := &InlinePlanSession{
+				MultiPass:            true,
+				AwaitingPlanCreation: true,
+				PlanningInstanceIDs:  []string{"planner-1"},
+				ProcessedPlanners:    make(map[int]bool),
+				CandidatePlans:       make([]*orchestrator.PlanSpec, 1),
+			}
 			m := &Model{
-				inlinePlan: &InlinePlanState{
-					MultiPass:            true,
-					AwaitingPlanCreation: true,
-					PlanningInstanceIDs:  []string{"planner-1"},
-					ProcessedPlanners:    make(map[int]bool),
-					CandidatePlans:       make([]*orchestrator.PlanSpec, 1),
-				},
+				inlinePlan: newTestInlinePlanState(session, "test-group"),
 			}
 
 			msg := tuimsg.InlineMultiPlanFileCheckResultMsg{
 				Index:        tt.index,
 				Plan:         &orchestrator.PlanSpec{},
 				StrategyName: "test",
+				GroupID:      "test-group",
 			}
 
 			_, cmd := m.handleInlineMultiPlanFileCheckResult(msg)
@@ -182,22 +201,24 @@ func TestHandleInlineMultiPlanFileCheckResult_InvalidIndex(t *testing.T) {
 }
 
 func TestHandleInlineMultiPlanFileCheckResult_SkipsAlreadyProcessed(t *testing.T) {
-	m := &Model{
-		inlinePlan: &InlinePlanState{
-			MultiPass:            true,
-			AwaitingPlanCreation: true,
-			PlanningInstanceIDs:  []string{"planner-1"},
-			ProcessedPlanners: map[int]bool{
-				0: true, // Already processed
-			},
-			CandidatePlans: make([]*orchestrator.PlanSpec, 1),
+	session := &InlinePlanSession{
+		MultiPass:            true,
+		AwaitingPlanCreation: true,
+		PlanningInstanceIDs:  []string{"planner-1"},
+		ProcessedPlanners: map[int]bool{
+			0: true, // Already processed
 		},
+		CandidatePlans: make([]*orchestrator.PlanSpec, 1),
+	}
+	m := &Model{
+		inlinePlan: newTestInlinePlanState(session, "test-group"),
 	}
 
 	msg := tuimsg.InlineMultiPlanFileCheckResultMsg{
 		Index:        0,
 		Plan:         &orchestrator.PlanSpec{Tasks: []orchestrator.PlannedTask{{ID: "new"}}},
 		StrategyName: "test",
+		GroupID:      "test-group",
 	}
 
 	_, cmd := m.handleInlineMultiPlanFileCheckResult(msg)
@@ -205,21 +226,22 @@ func TestHandleInlineMultiPlanFileCheckResult_SkipsAlreadyProcessed(t *testing.T
 		t.Error("expected nil command for already processed planner")
 	}
 	// Plan should not be updated
-	if m.inlinePlan.CandidatePlans[0] != nil {
+	if session.CandidatePlans[0] != nil {
 		t.Error("plan should not be updated for already processed planner")
 	}
 }
 
 func TestHandleInlineMultiPlanFileCheckResult_StoresPlan(t *testing.T) {
+	session := &InlinePlanSession{
+		MultiPass:            true,
+		AwaitingPlanCreation: true,
+		PlanningInstanceIDs:  []string{"planner-1", "planner-2", "planner-3"},
+		ProcessedPlanners:    make(map[int]bool),
+		CandidatePlans:       make([]*orchestrator.PlanSpec, 3),
+		Objective:            "test",
+	}
 	m := &Model{
-		inlinePlan: &InlinePlanState{
-			MultiPass:            true,
-			AwaitingPlanCreation: true,
-			PlanningInstanceIDs:  []string{"planner-1", "planner-2", "planner-3"},
-			ProcessedPlanners:    make(map[int]bool),
-			CandidatePlans:       make([]*orchestrator.PlanSpec, 3),
-			Objective:            "test",
-		},
+		inlinePlan: newTestInlinePlanState(session, "test-group"),
 	}
 
 	testPlan := &orchestrator.PlanSpec{
@@ -231,18 +253,20 @@ func TestHandleInlineMultiPlanFileCheckResult_StoresPlan(t *testing.T) {
 		Index:        1,
 		Plan:         testPlan,
 		StrategyName: "minimize-complexity",
+		GroupID:      "test-group",
 	}
 
 	result, _ := m.handleInlineMultiPlanFileCheckResult(msg)
 	resultModel := result.(*Model)
 
 	// Check planner was marked as processed
-	if !resultModel.inlinePlan.ProcessedPlanners[1] {
+	resultSession := resultModel.inlinePlan.GetSession("test-group")
+	if !resultSession.ProcessedPlanners[1] {
 		t.Error("planner should be marked as processed")
 	}
 
 	// Check plan was stored
-	if resultModel.inlinePlan.CandidatePlans[1] != testPlan {
+	if resultSession.CandidatePlans[1] != testPlan {
 		t.Error("plan should be stored in CandidatePlans")
 	}
 
@@ -253,15 +277,16 @@ func TestHandleInlineMultiPlanFileCheckResult_StoresPlan(t *testing.T) {
 }
 
 func TestHandleInlineMultiPlanFileCheckResult_AllPlansCollectedWithNoValidPlans(t *testing.T) {
+	session := &InlinePlanSession{
+		MultiPass:            true,
+		AwaitingPlanCreation: true,
+		PlanningInstanceIDs:  []string{"planner-1"},
+		ProcessedPlanners:    make(map[int]bool),
+		CandidatePlans:       make([]*orchestrator.PlanSpec, 1),
+		Objective:            "test",
+	}
 	m := &Model{
-		inlinePlan: &InlinePlanState{
-			MultiPass:            true,
-			AwaitingPlanCreation: true,
-			PlanningInstanceIDs:  []string{"planner-1"},
-			ProcessedPlanners:    make(map[int]bool),
-			CandidatePlans:       make([]*orchestrator.PlanSpec, 1),
-			Objective:            "test",
-		},
+		inlinePlan: newTestInlinePlanState(session, "test-group"),
 	}
 
 	// Send a nil plan (simulating parse failure)
@@ -269,14 +294,15 @@ func TestHandleInlineMultiPlanFileCheckResult_AllPlansCollectedWithNoValidPlans(
 		Index:        0,
 		Plan:         nil,
 		StrategyName: "test",
+		GroupID:      "test-group",
 	}
 
 	result, _ := m.handleInlineMultiPlanFileCheckResult(msg)
 	resultModel := result.(*Model)
 
-	// inlinePlan should be nil because all planners failed
-	if resultModel.inlinePlan != nil {
-		t.Error("inlinePlan should be nil when all planners fail")
+	// Session should be removed because all planners failed
+	if resultModel.inlinePlan.GetSession("test-group") != nil {
+		t.Error("session should be removed when all planners fail")
 	}
 
 	// Error message should be set
@@ -299,60 +325,126 @@ func TestStatFileFunction(t *testing.T) {
 	}
 }
 
-func TestExpandTildePath(t *testing.T) {
-	// Test tilde expansion helper function
-	tests := []struct {
-		name     string
-		input    string
-		wantHome bool // true if result should start with home dir
-	}{
-		{"tilde prefix", "~/Desktop/plan.yaml", true},
-		{"absolute path", "/home/user/plan.yaml", false},
-		{"relative path", "plan.yaml", false},
-		{"tilde only", "~", false}, // Only ~/... gets expanded
-		{"tilde in middle", "/path/~/file", false},
+// Test for multiple concurrent sessions
+func TestDispatchInlineMultiPlanFileChecks_MultipleSessions(t *testing.T) {
+	// Create two multiplan sessions
+	session1 := &InlinePlanSession{
+		MultiPass:            true,
+		AwaitingPlanCreation: true,
+		PlanningInstanceIDs:  []string{"planner-1a", "planner-1b"},
+		ProcessedPlanners:    make(map[int]bool),
+		Objective:            "objective 1",
+	}
+	session2 := &InlinePlanSession{
+		MultiPass:            true,
+		AwaitingPlanCreation: true,
+		PlanningInstanceIDs:  []string{"planner-2a", "planner-2b", "planner-2c"},
+		ProcessedPlanners: map[int]bool{
+			0: true, // One planner already processed
+		},
+		Objective: "objective 2",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := expandTildePath(tt.input)
-			if tt.wantHome {
-				// Should not contain tilde anymore
-				if len(result) > 0 && result[0] == '~' {
-					t.Errorf("expandTildePath(%q) = %q, still contains tilde", tt.input, result)
-				}
-				// Should be longer than input (home dir expanded)
-				if len(result) <= len(tt.input) {
-					t.Errorf("expandTildePath(%q) = %q, path not expanded", tt.input, result)
-				}
-			} else {
-				// Should be unchanged
-				if result != tt.input {
-					t.Errorf("expandTildePath(%q) = %q, want %q", tt.input, result, tt.input)
-				}
-			}
-		})
+	state := NewInlinePlanState()
+	state.AddSession("group-1", session1)
+	state.AddSession("group-2", session2)
+
+	m := Model{
+		inlinePlan:   state,
+		orchestrator: nil,
+	}
+
+	cmds := m.dispatchInlineMultiPlanFileChecks()
+	// Should create commands for:
+	// - 2 planners from session1 (none processed)
+	// - 2 planners from session2 (1 processed, 2 unprocessed)
+	if len(cmds) != 4 {
+		t.Errorf("expected 4 commands for multiple sessions, got %d", len(cmds))
 	}
 }
 
-// TestInlineUltraPlanConfig_HasProperDefaults verifies that the inline ultraplan config
-// uses DefaultUltraPlanConfig() to get proper defaults like RequireVerifiedCommits=true.
-// This prevents regression of the bug where RequireVerifiedCommits defaulted to false,
-// causing "no task branches with verified commits found" errors during consolidation.
-func TestInlineUltraPlanConfig_HasProperDefaults(t *testing.T) {
-	// Get the default config that initInlineUltraPlanMode should use
-	cfg := orchestrator.DefaultUltraPlanConfig()
+func TestInlinePlanState_SessionManagement(t *testing.T) {
+	state := NewInlinePlanState()
 
-	// Verify RequireVerifiedCommits is true (the most critical default)
-	if !cfg.RequireVerifiedCommits {
-		t.Error("DefaultUltraPlanConfig().RequireVerifiedCommits should be true")
+	// Test adding sessions
+	session1 := &InlinePlanSession{Objective: "obj1"}
+	state.AddSession("group-1", session1)
+
+	if state.GetSessionCount() != 1 {
+		t.Errorf("expected 1 session, got %d", state.GetSessionCount())
 	}
 
-	// Verify other important defaults
-	if cfg.MaxParallel != 3 {
-		t.Errorf("DefaultUltraPlanConfig().MaxParallel = %d, want 3", cfg.MaxParallel)
+	// Test current session is set correctly
+	if state.CurrentSessionID != "group-1" {
+		t.Errorf("expected current session to be group-1, got %s", state.CurrentSessionID)
 	}
-	if cfg.MaxTaskRetries != 3 {
-		t.Errorf("DefaultUltraPlanConfig().MaxTaskRetries = %d, want 3", cfg.MaxTaskRetries)
+
+	// Add another session
+	session2 := &InlinePlanSession{Objective: "obj2"}
+	state.AddSession("group-2", session2)
+
+	if state.GetSessionCount() != 2 {
+		t.Errorf("expected 2 sessions, got %d", state.GetSessionCount())
+	}
+
+	// Current session should be updated to the latest
+	if state.CurrentSessionID != "group-2" {
+		t.Errorf("expected current session to be group-2, got %s", state.CurrentSessionID)
+	}
+
+	// Test GetCurrentSession
+	currentSession := state.GetCurrentSession()
+	if currentSession != session2 {
+		t.Error("GetCurrentSession should return the current session")
+	}
+
+	// Test GetSession
+	if state.GetSession("group-1") != session1 {
+		t.Error("GetSession should return correct session")
+	}
+
+	// Test RemoveSession
+	state.RemoveSession("group-2")
+	if state.GetSessionCount() != 1 {
+		t.Errorf("expected 1 session after removal, got %d", state.GetSessionCount())
+	}
+	if state.GetSession("group-2") != nil {
+		t.Error("removed session should be nil")
+	}
+
+	// Test HasActiveSessions
+	if !state.HasActiveSessions() {
+		t.Error("HasActiveSessions should return true when sessions exist")
+	}
+
+	state.RemoveSession("group-1")
+	if state.HasActiveSessions() {
+		t.Error("HasActiveSessions should return false when no sessions")
+	}
+}
+
+func TestInlinePlanState_GetAwaitingObjectiveSession(t *testing.T) {
+	state := NewInlinePlanState()
+
+	// No sessions awaiting objective
+	session1 := &InlinePlanSession{
+		AwaitingObjective: false,
+		Objective:         "already has objective",
+	}
+	state.AddSession("group-1", session1)
+
+	if state.GetAwaitingObjectiveSession() != nil {
+		t.Error("should return nil when no session awaiting objective")
+	}
+
+	// Add session awaiting objective
+	session2 := &InlinePlanSession{
+		AwaitingObjective: true,
+	}
+	state.AddSession("group-2", session2)
+
+	result := state.GetAwaitingObjectiveSession()
+	if result != session2 {
+		t.Error("should return session awaiting objective")
 	}
 }

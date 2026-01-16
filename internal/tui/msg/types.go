@@ -143,4 +143,5 @@ type InlineMultiPlanFileCheckResultMsg struct {
 	Index        int
 	Plan         *orchestrator.PlanSpec
 	StrategyName string
+	GroupID      string // Session group ID for matching to correct session
 }

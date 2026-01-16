@@ -36,6 +36,14 @@ type SidebarState interface {
 	// Returns nil if not in ultraplan mode.
 	UltraPlanState() *UltraPlanState
 
+	// MultiPlanState returns the multiplan state for tracking multiple concurrent multiplan sessions.
+	// Returns nil if no multiplan sessions are active.
+	MultiPlanState() *MultiPlanState
+
+	// PlanStateData returns the plan state for tracking multiple concurrent plan sessions.
+	// Returns nil if no plan sessions are active.
+	PlanStateData() *PlanState
+
 	// Orchestrator returns the orchestrator for instance lookups.
 	Orchestrator() *orchestrator.Orchestrator
 
