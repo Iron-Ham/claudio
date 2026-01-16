@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Prompt Type Conversion Helpers** - Added interface-based type conversion helpers in `internal/orchestrator/prompt/convert.go` to enable decoupled conversion from orchestrator types to prompt types. Includes `PlannedTaskLike`, `PlanSpecLike`, and `GroupConsolidationLike` interfaces with corresponding conversion functions (`ConvertPlannedTaskToTaskInfo`, `ConvertPlanSpecToPlanInfo`, `ConvertPlanSpecsToCandidatePlans`, `ConvertGroupConsolidationToGroupContext`). This enables extracting prompt-building logic from coordinator.go into the prompt package without creating circular imports.
+
 ## [0.7.1] - 2026-01-15
 
 This release focuses on **Phase Orchestration** - extracting the monolithic Coordinator into four phase-specific orchestrators and implementing comprehensive synthesis/revision orchestration logic.
