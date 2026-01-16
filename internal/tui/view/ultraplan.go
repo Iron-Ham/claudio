@@ -1525,22 +1525,24 @@ func (v *UltraplanView) RenderHelp() string {
 
 	// Group navigation mode takes highest priority (when active)
 	if v.ctx.UltraPlan.GroupNavMode && session.Plan != nil {
+		badge := styles.ModeBadgeNormal.Render("GROUP NAV")
 		keys = append(keys, "[↑↓/jk] select group")
 		keys = append(keys, "[enter/space] toggle")
 		keys = append(keys, "[←→/hl] collapse/expand")
 		keys = append(keys, "[e] expand all")
 		keys = append(keys, "[c] collapse all")
 		keys = append(keys, "[g/esc] exit")
-		return styles.HelpBar.Width(v.ctx.Width).Render(strings.Join(keys, "  "))
+		return styles.HelpBar.Width(v.ctx.Width).Render(badge + "  " + strings.Join(keys, "  "))
 	}
 
 	// Group decision mode takes priority
 	if session.GroupDecision != nil && session.GroupDecision.AwaitingDecision {
+		badge := styles.ModeBadgeInput.Render("DECISION")
 		keys = append(keys, "[c] continue partial")
 		keys = append(keys, "[r] retry failed")
 		keys = append(keys, "[q] cancel")
 		keys = append(keys, "[↑↓] nav")
-		return styles.HelpBar.Width(v.ctx.Width).Render(strings.Join(keys, "  "))
+		return styles.HelpBar.Width(v.ctx.Width).Render(badge + "  " + strings.Join(keys, "  "))
 	}
 
 	// Common keys
@@ -1611,7 +1613,9 @@ func (v *UltraplanView) RenderHelp() string {
 		keys = append(keys, "[R] re-trigger group")
 	}
 
-	return styles.HelpBar.Width(v.ctx.Width).Render(strings.Join(keys, "  "))
+	// Add mode badge for ultraplan mode
+	badge := styles.ModeBadgeNormal.Render("ULTRAPLAN")
+	return styles.HelpBar.Width(v.ctx.Width).Render(badge + "  " + strings.Join(keys, "  "))
 }
 
 // RenderConsolidationSidebar renders the sidebar during the consolidation phase

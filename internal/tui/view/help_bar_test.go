@@ -70,7 +70,7 @@ func TestRenderHelp(t *testing.T) {
 			state: &HelpBarState{
 				InputMode: true,
 			},
-			contains: []string{"INPUT MODE", "Ctrl+]"},
+			contains: []string{"INPUT", "Ctrl+]"},
 		},
 		{
 			name: "terminal focused shows terminal help",
@@ -93,14 +93,14 @@ func TestRenderHelp(t *testing.T) {
 			state: &HelpBarState{
 				ShowDiff: true,
 			},
-			contains: []string{"DIFF VIEW", "j/k", "scroll"},
+			contains: []string{"DIFF", "j/k", "scroll"},
 		},
 		{
 			name: "filter mode shows filter help",
 			state: &HelpBarState{
 				FilterMode: true,
 			},
-			contains: []string{"FILTER MODE", "toggle categories"},
+			contains: []string{"FILTER", "toggle"},
 		},
 		{
 			name: "search mode shows search help",
@@ -110,9 +110,9 @@ func TestRenderHelp(t *testing.T) {
 			contains: []string{"SEARCH", "pattern", "regex"},
 		},
 		{
-			name:     "normal mode shows default keys",
+			name:     "normal mode shows default keys with NORMAL badge",
 			state:    &HelpBarState{},
-			contains: []string{"cmd", "scroll", "switch", "help", "quit"},
+			contains: []string{"NORMAL", "cmd", "scroll", "switch", "help", "quit"},
 		},
 		{
 			name: "terminal visible shows hide option",

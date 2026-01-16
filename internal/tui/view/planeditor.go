@@ -252,6 +252,7 @@ func (v *PlanEditorView) Render(params PlanEditorRenderParams) string {
 
 // RenderHelp renders the help bar for plan editor mode.
 func (v *PlanEditorView) RenderHelp(state *PlanEditorState, width int) string {
+	badge := styles.ModeBadgeNormal.Render("PLAN EDIT")
 	var keys []string
 
 	keys = append(keys, "[↑↓] select task")
@@ -267,7 +268,7 @@ func (v *PlanEditorView) RenderHelp(state *PlanEditorState, width int) string {
 	keys = append(keys, "[v] toggle validation")
 	keys = append(keys, "[esc] exit")
 
-	return styles.HelpBar.Width(width).Render(strings.Join(keys, "  "))
+	return styles.HelpBar.Width(width).Render(badge + "  " + strings.Join(keys, "  "))
 }
 
 // renderValidationPanel renders the validation feedback panel at the bottom of the editor.

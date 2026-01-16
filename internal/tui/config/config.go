@@ -882,14 +882,18 @@ func (m Model) renderHelp() string {
 	keyStyle := styles.HelpKey
 
 	if m.editing {
+		badge := styles.ModeBadgeInput.Render("EDITING")
 		return helpStyle.Render(
-			keyStyle.Render("enter") + " save  " +
+			badge + "  " +
+				keyStyle.Render("enter") + " save  " +
 				keyStyle.Render("esc") + " cancel",
 		)
 	}
 
+	badge := styles.ModeBadgeNormal.Render("CONFIG")
 	return helpStyle.Render(
-		keyStyle.Render("j/k") + " navigate  " +
+		badge + "  " +
+			keyStyle.Render("j/k") + " navigate  " +
 			keyStyle.Render("ctrl+d/u") + " page  " +
 			keyStyle.Render("g/G") + " top/bottom  " +
 			keyStyle.Render("tab") + " category  " +

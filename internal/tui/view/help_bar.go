@@ -74,12 +74,14 @@ func (v *HelpBarView) RenderCommandModeHelp(state *HelpBarState) string {
 
 // renderCompactCommandHelp renders the compact single-line command help (for experts).
 func (v *HelpBarView) renderCompactCommandHelp(state *HelpBarState) string {
+	badge := styles.ModeBadgeCommand.Render("COMMAND")
 	return styles.HelpBar.Render(
-		styles.Primary.Bold(true).Render(":") + styles.Primary.Render(state.CommandBuffer) +
+		badge + "  " +
+			styles.Primary.Bold(true).Render(":") + styles.Primary.Render(state.CommandBuffer) +
 			styles.Muted.Render("█") + "  " +
 			styles.HelpKey.Render("[Enter]") + " execute  " +
 			styles.HelpKey.Render("[Esc]") + " cancel  " +
-			styles.Muted.Render("Commands: s/x/e/p/R a/D/C d/m/c/f t/r h/q (or :help)"),
+			styles.Muted.Render("(:help for commands)"),
 	)
 }
 
@@ -88,8 +90,10 @@ func (v *HelpBarView) renderCompactCommandHelp(state *HelpBarState) string {
 func (v *HelpBarView) renderVerboseCommandHelp(state *HelpBarState) string {
 	var lines []string
 
-	// Command input line
-	inputLine := styles.Primary.Bold(true).Render(":") + styles.Primary.Render(state.CommandBuffer) +
+	// Command input line with mode badge
+	badge := styles.ModeBadgeCommand.Render("COMMAND")
+	inputLine := badge + "  " +
+		styles.Primary.Bold(true).Render(":") + styles.Primary.Render(state.CommandBuffer) +
 		styles.Muted.Render("█") + "  " +
 		styles.HelpKey.Render("[Enter]") + " execute  " +
 		styles.HelpKey.Render("[Esc]") + " cancel"
@@ -117,61 +121,59 @@ func (v *HelpBarView) renderVerboseCommandHelp(state *HelpBarState) string {
 }
 
 // RenderHelp renders the main help bar based on current state.
+// Always includes a mode badge at the start for clear mode visibility.
 func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 	if state == nil {
 		return ""
 	}
 
 	if state.InputMode {
-		return styles.HelpBar.Render(
-			styles.Warning.Bold(true).Render("INPUT MODE") + "  " +
-				styles.HelpKey.Render("[Ctrl+]]") + " exit input mode  " +
-				"All keystrokes forwarded to Claude",
-		)
+		badge := styles.ModeBadgeInput.Render("INPUT")
+		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
+			styles.Muted.Render("All keystrokes forwarded to Claude")
+		return styles.HelpBar.Render(badge + "  " + help)
 	}
 
 	if state.TerminalFocused {
+		badge := styles.ModeBadgeTerminal.Render("TERMINAL")
 		dirMode := "invoke"
 		if state.TerminalDirMode == "worktree" {
 			dirMode = "worktree"
 		}
-		return styles.HelpBar.Render(
-			styles.Secondary.Bold(true).Render("TERMINAL") + "  " +
-				styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
-				styles.HelpKey.Render("[Ctrl+Shift+T]") + " switch dir  " +
-				styles.Muted.Render("("+dirMode+")") + "  " +
-				"All keystrokes forwarded to terminal",
-		)
+		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
+			styles.HelpKey.Render("[Ctrl+Shift+T]") + " switch dir  " +
+			styles.Muted.Render("("+dirMode+")")
+		return styles.HelpBar.Render(badge + "  " + help)
 	}
 
 	if state.ShowDiff {
-		return styles.HelpBar.Render(
-			styles.Primary.Bold(true).Render("DIFF VIEW") + "  " +
-				styles.HelpKey.Render("[j/k]") + " scroll  " +
-				styles.HelpKey.Render("[g/G]") + " top/bottom  " +
-				styles.HelpKey.Render("[:d/Esc]") + " close",
-		)
+		badge := styles.ModeBadgeDiff.Render("DIFF")
+		help := styles.HelpKey.Render("[j/k]") + " scroll  " +
+			styles.HelpKey.Render("[g/G]") + " top/bottom  " +
+			styles.HelpKey.Render("[:d/Esc]") + " close"
+		return styles.HelpBar.Render(badge + "  " + help)
 	}
 
 	if state.FilterMode {
-		return styles.HelpBar.Render(
-			styles.Primary.Bold(true).Render("FILTER MODE") + "  " +
-				styles.HelpKey.Render("[e/w/t/h/p]") + " toggle categories  " +
-				styles.HelpKey.Render("[a]") + " all  " +
-				styles.HelpKey.Render("[c]") + " clear  " +
-				styles.HelpKey.Render("[Esc]") + " close",
-		)
+		badge := styles.ModeBadgeFilter.Render("FILTER")
+		help := styles.HelpKey.Render("[e/w/t/h/p]") + " toggle  " +
+			styles.HelpKey.Render("[a]") + " all  " +
+			styles.HelpKey.Render("[c]") + " clear  " +
+			styles.HelpKey.Render("[Esc]") + " close"
+		return styles.HelpBar.Render(badge + "  " + help)
 	}
 
 	if state.SearchMode {
-		return styles.HelpBar.Render(
-			styles.Primary.Bold(true).Render("SEARCH") + "  " +
-				"Type pattern  " +
-				styles.HelpKey.Render("[Enter]") + " confirm  " +
-				styles.HelpKey.Render("[Esc]") + " cancel  " +
-				styles.Muted.Render("r:pattern for regex"),
-		)
+		badge := styles.ModeBadgeSearch.Render("SEARCH")
+		help := "Type pattern  " +
+			styles.HelpKey.Render("[Enter]") + " confirm  " +
+			styles.HelpKey.Render("[Esc]") + " cancel  " +
+			styles.Muted.Render("r:pattern for regex")
+		return styles.HelpBar.Render(badge + "  " + help)
 	}
+
+	// Normal mode - show NORMAL badge
+	badge := styles.ModeBadgeNormal.Render("NORMAL")
 
 	keys := []string{
 		styles.HelpKey.Render("[:]") + " cmd",
@@ -202,11 +204,12 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 		keys = append(keys, searchStatus+" "+styles.HelpKey.Render("[n/N]")+" match")
 	}
 
-	return styles.HelpBar.Render(strings.Join(keys, "  "))
+	return styles.HelpBar.Render(badge + "  " + strings.Join(keys, "  "))
 }
 
 // RenderTripleShotHelp renders the help bar for triple-shot mode.
 func (v *HelpBarView) RenderTripleShotHelp() string {
+	badge := styles.ModeBadgeNormal.Render("NORMAL")
 	keys := []string{
 		styles.HelpKey.Render("[:]") + " cmd",
 		styles.HelpKey.Render("[j/k]") + " scroll",
@@ -215,7 +218,7 @@ func (v *HelpBarView) RenderTripleShotHelp() string {
 		styles.HelpKey.Render("[?]") + " help",
 		styles.HelpKey.Render("[:q]") + " quit",
 	}
-	return styles.HelpBar.Render(strings.Join(keys, "  "))
+	return styles.HelpBar.Render(badge + "  " + strings.Join(keys, "  "))
 }
 
 // Package-level convenience functions for backward compatibility and simpler usage
