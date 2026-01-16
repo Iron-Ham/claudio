@@ -18,6 +18,11 @@ Step-by-step guides for common Claudio workflows.
 ### [Large Refactor](large-refactor.md)
 **20 minutes** - Coordinate a major refactoring effort across your codebase. Handle dependencies, conflicts, and staged rollout.
 
+## Platform-Specific Guides
+
+### [iOS Development](ios-development.md)
+**20-30 minutes** - Use Claudio with Xcode projects. Covers DerivedData management, build strategies, Swift Package Manager, simulator coordination, and handling `project.pbxproj` conflicts.
+
 ## Quick Links
 
 - [User Guide](../guide/index.md) - Comprehensive documentation

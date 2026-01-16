@@ -527,6 +527,138 @@ Many tokens used across instances.
 
 ---
 
+## iOS/Xcode Issues
+
+### xcodebuild fails in worktree
+
+The worktree may be missing project files or have stale build state.
+
+**Solutions:**
+
+1. Verify workspace exists:
+   ```bash
+   ls .claudio/worktrees/<id>/*.xcworkspace
+   ```
+
+2. Clean and rebuild:
+   ```bash
+   cd .claudio/worktrees/<id>
+   xcodebuild clean
+   xcodebuild -scheme MyApp build
+   ```
+
+3. Remove DerivedData for this worktree:
+   ```bash
+   # Find DerivedData for this worktree path
+   rm -rf ~/Library/Developer/Xcode/DerivedData/MyApp-*
+   ```
+
+### "Simulator in use" errors during parallel tests
+
+Multiple instances are trying to use the same simulator.
+
+**Solutions:**
+
+1. Use different simulators per instance:
+   ```bash
+   # Task 1
+   xcodebuild test -destination 'platform=iOS Simulator,name=iPhone 15'
+
+   # Task 2
+   xcodebuild test -destination 'platform=iOS Simulator,name=iPhone 15 Pro'
+   ```
+
+2. Clone simulators for parallel testing:
+   ```bash
+   xcrun simctl clone "iPhone 15" "iPhone 15 - Test 1"
+   xcrun simctl clone "iPhone 15" "iPhone 15 - Test 2"
+   ```
+
+### project.pbxproj conflicts
+
+Multiple instances modified the Xcode project file.
+
+**Solutions:**
+
+1. Use mergepbx for automatic resolution:
+   ```bash
+   brew install mergepbx
+   git config merge.mergepbx.driver "mergepbx %O %A %B"
+   echo "*.pbxproj merge=mergepbx" >> .gitattributes
+   ```
+
+2. Manual resolution:
+   ```bash
+   cd .claudio/worktrees/<id>
+   git checkout --theirs *.pbxproj  # or --ours
+   # Re-add your changes in Xcode
+   ```
+
+3. Prevent conflicts - assign project file changes to one instance
+
+### Xcode index outdated in worktree
+
+After making changes, Xcode shows stale completions or errors.
+
+**Solutions:**
+
+1. Close and reopen project in Xcode
+
+2. Delete index:
+   ```bash
+   rm -rf ~/Library/Developer/Xcode/DerivedData/MyApp-*/Index
+   ```
+
+3. Rebuild:
+   ```bash
+   xcodebuild -scheme MyApp build
+   ```
+
+### Swift Package Manager resolution slow
+
+Each worktree resolving packages separately.
+
+**Solutions:**
+
+1. Pre-resolve in main repo:
+   ```bash
+   swift package resolve
+   ```
+
+2. Check global cache is enabled:
+   ```bash
+   # SPM uses ~/Library/Caches/org.swift.swiftpm/ by default
+   ls ~/Library/Caches/org.swift.swiftpm/
+   ```
+
+3. For large dependencies, use binary frameworks when possible
+
+### CocoaPods issues in worktrees
+
+Pods not properly installed in worktree.
+
+**Solutions:**
+
+1. Run pod install in the worktree:
+   ```bash
+   cd .claudio/worktrees/<id>
+   pod install
+   ```
+
+2. For faster installs, use deployment mode:
+   ```bash
+   pod install --deployment
+   ```
+
+3. Ensure Podfile.lock is committed:
+   ```bash
+   git add Podfile.lock
+   ```
+
+See [iOS Development Tutorial](tutorials/ios-development.md) for comprehensive iOS workflow guidance.
+
+---
+
 ## Recovery
 
 ### Complete reset
