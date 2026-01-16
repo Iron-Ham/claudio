@@ -289,6 +289,8 @@ func (h *Handler) registerCommands() {
 	h.commands["help"] = cmdHelp
 	h.commands["q"] = cmdQuit
 	h.commands["quit"] = cmdQuit
+	h.commands["q!"] = cmdQuitForce
+	h.commands["quit!"] = cmdQuitForce
 }
 
 // buildCategories populates the categories slice with command metadata for help display.
@@ -350,6 +352,7 @@ func (h *Handler) buildCategories() {
 			Commands: []CommandInfo{
 				{ShortKey: "h", LongKey: "help", Description: "Toggle help panel", Category: "session"},
 				{ShortKey: "q", LongKey: "quit", Description: "Quit Claudio", Category: "session"},
+				{ShortKey: "q!", LongKey: "quit!", Description: "Force quit: stop all instances, cleanup worktrees, exit", Category: "session"},
 			},
 		},
 		{
@@ -1149,6 +1152,57 @@ func cmdQuit(deps Dependencies) Result {
 	return Result{
 		Quitting: &quitting,
 		TeaCmd:   tea.Quit,
+	}
+}
+
+func cmdQuitForce(deps Dependencies) Result {
+	orch := deps.GetOrchestrator()
+	session := deps.GetSession()
+
+	// Log session force quit with duration
+	if logger := deps.GetLogger(); logger != nil {
+		duration := time.Since(deps.GetStartTime())
+		logger.Info("TUI session force quit initiated",
+			"duration_ms", duration.Milliseconds(),
+			"instance_count", deps.InstanceCount(),
+		)
+	}
+
+	quitting := true
+
+	// Handle case where orchestrator or session is unavailable
+	if orch == nil || session == nil {
+		if logger := deps.GetLogger(); logger != nil {
+			logger.Warn("force quit with nil orchestrator or session - cleanup skipped",
+				"orch_nil", orch == nil,
+				"session_nil", session == nil,
+			)
+		}
+		return Result{
+			Quitting:    &quitting,
+			TeaCmd:      tea.Quit,
+			InfoMessage: "Force quit: exiting (no active session to clean up)",
+		}
+	}
+
+	// Force stop all instances and clean up worktrees
+	var cleanupErr error
+	if err := orch.StopSession(session, true); err != nil {
+		cleanupErr = err
+		if logger := deps.GetLogger(); logger != nil {
+			logger.Warn("error during force quit cleanup", "error", err)
+		}
+	}
+
+	infoMsg := "Force quit: stopped all instances and cleaned up worktrees"
+	if cleanupErr != nil {
+		infoMsg = "Force quit: exiting (cleanup had errors - some worktrees may remain)"
+	}
+
+	return Result{
+		Quitting:    &quitting,
+		TeaCmd:      tea.Quit,
+		InfoMessage: infoMsg,
 	}
 }
 

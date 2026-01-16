@@ -157,7 +157,7 @@ func TestCategoriesContainAllShortcuts(t *testing.T) {
 	}
 
 	// Verify key shortcuts are documented
-	expectedShortcuts := []string{"s", "x", "e", "p", "R", "a", "D", "C", "d", "m", "c", "f", "t", "r", "h", "q"}
+	expectedShortcuts := []string{"s", "x", "e", "p", "R", "a", "D", "C", "d", "m", "c", "f", "t", "r", "h", "q", "q!"}
 	for _, key := range expectedShortcuts {
 		if !shortKeys[key] {
 			t.Errorf("shortcut %q not found in categories", key)
@@ -249,6 +249,102 @@ func TestQuitCommand(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQuitForceCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+	}{
+		{"quit!", "quit!"},
+		{"q! alias", "q!"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := New()
+			deps := newMockDeps()
+
+			result := h.Execute(tt.cmd, deps)
+			if result.Quitting == nil || !*result.Quitting {
+				t.Error("expected Quitting to be set to true")
+			}
+			if result.TeaCmd == nil {
+				t.Error("expected tea.Quit command")
+			}
+			// Should have info message about force quit
+			if result.InfoMessage == "" {
+				t.Error("expected info message about force quit")
+			}
+		})
+	}
+}
+
+func TestQuitForceCommandWithNilDeps(t *testing.T) {
+	t.Run("handles nil orchestrator gracefully", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.orchestrator = nil
+		deps.session = nil
+
+		result := h.Execute("q!", deps)
+		if result.Quitting == nil || !*result.Quitting {
+			t.Error("expected Quitting to be set to true even with nil orchestrator")
+		}
+		if result.TeaCmd == nil {
+			t.Error("expected tea.Quit command even with nil orchestrator")
+		}
+		// Should indicate no session to clean up
+		if result.InfoMessage != "Force quit: exiting (no active session to clean up)" {
+			t.Errorf("expected 'no active session' message, got %q", result.InfoMessage)
+		}
+	})
+
+	t.Run("handles nil session gracefully", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.session = nil
+		// orchestrator is non-nil but session is nil
+
+		result := h.Execute("q!", deps)
+		if result.Quitting == nil || !*result.Quitting {
+			t.Error("expected Quitting to be set to true even with nil session")
+		}
+		// Should indicate no session to clean up
+		if result.InfoMessage != "Force quit: exiting (no active session to clean up)" {
+			t.Errorf("expected 'no active session' message, got %q", result.InfoMessage)
+		}
+	})
+
+	t.Run("handles nil logger gracefully", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.logger = nil
+		deps.orchestrator = nil
+
+		// Should not panic with nil logger
+		result := h.Execute("q!", deps)
+		if result.Quitting == nil || !*result.Quitting {
+			t.Error("expected Quitting to be set to true")
+		}
+	})
+
+	t.Run("handles nil orchestrator with non-nil session", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		// Session exists but orchestrator is nil - should still take "no session" path
+		// because cleanup requires both to be non-nil
+		deps.session = &orchestrator.Session{ID: "test-session"}
+
+		result := h.Execute("q!", deps)
+		if result.Quitting == nil || !*result.Quitting {
+			t.Error("expected Quitting to be set to true")
+		}
+		// With nil orchestrator, takes "no active session" path regardless of session
+		if result.InfoMessage != "Force quit: exiting (no active session to clean up)" {
+			t.Errorf("expected 'no active session' message, got %q", result.InfoMessage)
+		}
+	})
 }
 
 func TestAddCommand(t *testing.T) {
@@ -749,8 +845,8 @@ func TestAllCommandsRecognized(t *testing.T) {
 		"plan",
 		// Ultraplan arg commands (need viper config)
 		// "ultraplan", "up", // These are arg commands, tested separately
-		// Help
-		"h", "help", "q", "quit",
+		// Help and quit
+		"h", "help", "q", "quit", "q!", "quit!",
 	}
 
 	h := New()
