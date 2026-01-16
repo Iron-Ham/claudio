@@ -78,6 +78,10 @@ type Context struct {
 
 	// CandidatePlans contains multiple plans for plan selection phase (multi-pass planning)
 	CandidatePlans []CandidatePlanInfo
+
+	// StrategyNames provides fallback strategy names when CandidatePlanInfo.Strategy is empty.
+	// Used by plan selection phase to name plans when individual plans don't have strategy names set.
+	StrategyNames []string
 }
 
 // CandidatePlanInfo contains information about a candidate plan for comparison.

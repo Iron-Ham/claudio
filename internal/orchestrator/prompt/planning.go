@@ -28,7 +28,7 @@ func (b *PlanningBuilder) Build(ctx *Context) (string, error) {
 		return "", err
 	}
 
-	plansSection := b.formatCandidatePlans(ctx.CandidatePlans)
+	plansSection := b.formatCandidatePlans(ctx)
 	return fmt.Sprintf(planManagerPromptTemplate, ctx.Objective, plansSection), nil
 }
 
@@ -51,11 +51,15 @@ func (b *PlanningBuilder) validate(ctx *Context) error {
 }
 
 // formatCandidatePlans formats all candidate plans for comparison.
-func (b *PlanningBuilder) formatCandidatePlans(plans []CandidatePlanInfo) string {
+// Uses ctx.StrategyNames[i] as fallback when plan.Strategy is empty.
+func (b *PlanningBuilder) formatCandidatePlans(ctx *Context) string {
 	var sb strings.Builder
 
-	for i, plan := range plans {
+	for i, plan := range ctx.CandidatePlans {
 		strategyName := plan.Strategy
+		if strategyName == "" && i < len(ctx.StrategyNames) {
+			strategyName = ctx.StrategyNames[i]
+		}
 		if strategyName == "" {
 			strategyName = fmt.Sprintf("strategy-%d", i+1)
 		}
@@ -123,11 +127,22 @@ func (b *PlanningBuilder) formatCandidatePlans(plans []CandidatePlanInfo) string
 
 // FormatCompactPlans formats candidate plans in a compact format
 // suitable for the initial plan manager prompt.
+// For fallback strategy names from context, use FormatCompactPlansWithContext.
 func (b *PlanningBuilder) FormatCompactPlans(plans []CandidatePlanInfo) string {
+	return b.FormatCompactPlansWithContext(plans, nil)
+}
+
+// FormatCompactPlansWithContext formats candidate plans in a compact format
+// suitable for the initial plan manager prompt.
+// Uses strategyNames[i] as fallback when plan.Strategy is empty.
+func (b *PlanningBuilder) FormatCompactPlansWithContext(plans []CandidatePlanInfo, strategyNames []string) string {
 	var sb strings.Builder
 
 	for i, plan := range plans {
 		strategyName := plan.Strategy
+		if strategyName == "" && strategyNames != nil && i < len(strategyNames) {
+			strategyName = strategyNames[i]
+		}
 		if strategyName == "" {
 			strategyName = "unknown"
 		}

@@ -151,9 +151,10 @@ func TestPlanningBuilder_formatCandidatePlans(t *testing.T) {
 	builder := NewPlanningBuilder()
 
 	tests := []struct {
-		name     string
-		plans    []CandidatePlanInfo
-		contains []string
+		name          string
+		plans         []CandidatePlanInfo
+		strategyNames []string
+		contains      []string
 	}{
 		{
 			name: "formats strategy names",
@@ -175,6 +176,26 @@ func TestPlanningBuilder_formatCandidatePlans(t *testing.T) {
 			},
 			contains: []string{
 				"Plan 1: strategy-1",
+			},
+		},
+		{
+			name: "uses context strategy name as fallback when plan strategy empty",
+			plans: []CandidatePlanInfo{
+				{Strategy: "", Summary: "No strategy name"},
+			},
+			strategyNames: []string{"fallback-strategy"},
+			contains: []string{
+				"Plan 1: fallback-strategy",
+			},
+		},
+		{
+			name: "plan strategy takes precedence over context strategy names",
+			plans: []CandidatePlanInfo{
+				{Strategy: "plan-strategy", Summary: "Has strategy"},
+			},
+			strategyNames: []string{"fallback-strategy"},
+			contains: []string{
+				"Plan 1: plan-strategy",
 			},
 		},
 		{
@@ -261,7 +282,11 @@ func TestPlanningBuilder_formatCandidatePlans(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := builder.formatCandidatePlans(tt.plans)
+			ctx := &Context{
+				CandidatePlans: tt.plans,
+				StrategyNames:  tt.strategyNames,
+			}
+			result := builder.formatCandidatePlans(ctx)
 
 			for _, want := range tt.contains {
 				if !strings.Contains(result, want) {
@@ -313,6 +338,74 @@ func TestPlanningBuilder_FormatCompactPlans(t *testing.T) {
 	}
 }
 
+func TestPlanningBuilder_FormatCompactPlansWithContext(t *testing.T) {
+	builder := NewPlanningBuilder()
+
+	tests := []struct {
+		name          string
+		plans         []CandidatePlanInfo
+		strategyNames []string
+		contains      []string
+		notContains   []string
+	}{
+		{
+			name: "uses plan strategy when set",
+			plans: []CandidatePlanInfo{
+				{Strategy: "plan-strategy", Summary: "Test"},
+			},
+			strategyNames: []string{"fallback-strategy"},
+			contains:      []string{"Plan 1: plan-strategy Strategy"},
+			notContains:   []string{"fallback-strategy"},
+		},
+		{
+			name: "uses fallback strategy from context when plan strategy empty",
+			plans: []CandidatePlanInfo{
+				{Strategy: "", Summary: "Test"},
+			},
+			strategyNames: []string{"context-fallback"},
+			contains:      []string{"Plan 1: context-fallback Strategy"},
+			notContains:   []string{"unknown"},
+		},
+		{
+			name: "uses unknown when no strategy and no fallback",
+			plans: []CandidatePlanInfo{
+				{Strategy: "", Summary: "Test"},
+			},
+			strategyNames: nil,
+			contains:      []string{"Plan 1: unknown Strategy"},
+		},
+		{
+			name: "handles more plans than strategy names",
+			plans: []CandidatePlanInfo{
+				{Strategy: "", Summary: "First"},
+				{Strategy: "", Summary: "Second"},
+			},
+			strategyNames: []string{"fallback-1"},
+			contains: []string{
+				"Plan 1: fallback-1 Strategy",
+				"Plan 2: unknown Strategy",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := builder.FormatCompactPlansWithContext(tt.plans, tt.strategyNames)
+
+			for _, want := range tt.contains {
+				if !strings.Contains(result, want) {
+					t.Errorf("FormatCompactPlansWithContext() missing %q\nGot:\n%s", want, result)
+				}
+			}
+			for _, notWant := range tt.notContains {
+				if strings.Contains(result, notWant) {
+					t.Errorf("FormatCompactPlansWithContext() should not contain %q\nGot:\n%s", notWant, result)
+				}
+			}
+		})
+	}
+}
+
 func TestPlanningBuilder_JSONValidity(t *testing.T) {
 	builder := NewPlanningBuilder()
 
@@ -333,7 +426,10 @@ func TestPlanningBuilder_JSONValidity(t *testing.T) {
 		ExecutionOrder: [][]string{{"task-1"}},
 	}
 
-	result := builder.formatCandidatePlans([]CandidatePlanInfo{plan})
+	ctx := &Context{
+		CandidatePlans: []CandidatePlanInfo{plan},
+	}
+	result := builder.formatCandidatePlans(ctx)
 
 	// Extract JSON from the result
 	jsonStart := strings.Index(result, "```json\n") + len("```json\n")
