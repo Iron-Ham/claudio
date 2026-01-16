@@ -739,6 +739,10 @@ func (e *ExecutionOrchestrator) buildTaskPrompt(taskID string, task any) string 
 	taskData, ok := task.(PlannedTaskData)
 	if !ok {
 		// Fallback to basic prompt if task doesn't implement interface
+		e.logger.Warn("task does not implement PlannedTaskData interface, using basic prompt",
+			"task_id", taskID,
+			"task_type", fmt.Sprintf("%T", task),
+		)
 		return fmt.Sprintf("# Task: %s\n\nPlease complete this task.", taskID)
 	}
 
@@ -777,12 +781,13 @@ func (e *ExecutionOrchestrator) buildTaskPrompt(taskID string, task any) string 
 	builder := prompt.NewTaskBuilder()
 	result, err := builder.Build(ctx)
 	if err != nil {
-		// Fallback to basic prompt on error
+		// Fallback to basic prompt on error - include task details for context
 		e.logger.Error("failed to build task prompt, using fallback",
 			"task_id", taskID,
+			"task_title", taskData.GetTitle(),
 			"error", err.Error(),
 		)
-		return fmt.Sprintf("# Task: %s\n\nPlease complete this task.", taskID)
+		return fmt.Sprintf("# Task: %s\n\n%s", taskData.GetTitle(), taskData.GetDescription())
 	}
 
 	return result

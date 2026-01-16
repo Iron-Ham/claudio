@@ -509,3 +509,106 @@ func TestNewPlanningBuilder(t *testing.T) {
 		t.Error("NewPlanningBuilder() returned nil")
 	}
 }
+
+func TestPlanningBuilder_BuildCompactPlanManagerPrompt(t *testing.T) {
+	builder := NewPlanningBuilder()
+
+	tests := []struct {
+		name          string
+		objective     string
+		plans         []CandidatePlanInfo
+		strategyNames []string
+		contains      []string
+	}{
+		{
+			name:      "builds complete prompt with single plan",
+			objective: "Build a REST API",
+			plans: []CandidatePlanInfo{
+				{Strategy: "maximize-parallelism", Summary: "Parallel execution plan"},
+			},
+			strategyNames: nil,
+			contains: []string{
+				"senior technical lead",
+				"## Objective",
+				"Build a REST API",
+				"## Candidate Plans",
+				"Plan 1: maximize-parallelism",
+				"Parallel execution plan",
+				"## Your Task",
+				"## Decision",
+			},
+		},
+		{
+			name:      "builds prompt with multiple plans",
+			objective: "Implement authentication",
+			plans: []CandidatePlanInfo{
+				{Strategy: "minimize-dependencies", Summary: "Low coupling approach"},
+				{Strategy: "maximize-parallelism", Summary: "High parallelism approach"},
+				{Strategy: "balanced", Summary: "Balanced trade-offs"},
+			},
+			strategyNames: nil,
+			contains: []string{
+				"## Objective",
+				"Implement authentication",
+				"Plan 1: minimize-dependencies",
+				"Plan 2: maximize-parallelism",
+				"Plan 3: balanced",
+				"Low coupling approach",
+				"High parallelism approach",
+				"Balanced trade-offs",
+			},
+		},
+		{
+			name:      "uses fallback strategy names when plan strategy is empty",
+			objective: "Refactor module",
+			plans: []CandidatePlanInfo{
+				{Strategy: "", Summary: "First plan"},
+				{Strategy: "", Summary: "Second plan"},
+			},
+			strategyNames: []string{"fallback-strategy-1", "fallback-strategy-2"},
+			contains: []string{
+				"Plan 1: fallback-strategy-1",
+				"Plan 2: fallback-strategy-2",
+			},
+		},
+		{
+			name:      "uses unknown when no strategy and no fallback",
+			objective: "Fix bugs",
+			plans: []CandidatePlanInfo{
+				{Strategy: "", Summary: "Bug fix plan"},
+			},
+			strategyNames: nil,
+			contains: []string{
+				"Plan 1: unknown",
+			},
+		},
+		{
+			name:      "includes evaluation criteria",
+			objective: "Add feature",
+			plans: []CandidatePlanInfo{
+				{Strategy: "test", Summary: "Test plan"},
+			},
+			strategyNames: nil,
+			contains: []string{
+				"Parallelism potential",
+				"Task granularity",
+				"Dependency structure",
+				"File ownership",
+				"Completeness",
+				"Risk mitigation",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := builder.BuildCompactPlanManagerPrompt(tt.objective, tt.plans, tt.strategyNames)
+
+			for _, want := range tt.contains {
+				if !strings.Contains(result, want) {
+					t.Errorf("BuildCompactPlanManagerPrompt() missing %q\nGot:\n%s", want, result)
+				}
+			}
+		})
+	}
+}

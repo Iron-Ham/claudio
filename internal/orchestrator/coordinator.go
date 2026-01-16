@@ -1062,7 +1062,13 @@ func (c *Coordinator) buildTaskPrompt(task *PlannedTask) string {
 	builder := prompt.NewTaskBuilder()
 	result, err := builder.Build(ctx)
 	if err != nil {
-		// Fallback to basic prompt on error (should not happen with valid input)
+		// Log the error - this should not happen with valid input but if it does,
+		// we need visibility into the failure
+		c.logger.Error("failed to build task prompt, using fallback",
+			"task_id", task.ID,
+			"task_title", task.Title,
+			"error", err.Error(),
+		)
 		return fmt.Sprintf("# Task: %s\n\n%s", task.Title, task.Description)
 	}
 	return result
