@@ -555,57 +555,46 @@ func RenderGroupedInstance(gi GroupedInstance, isActiveInstance bool, hasConflic
 		}
 	}
 
-	// Status indicator
+	// Status color for the instance
 	statusColor := styles.StatusColor(string(inst.Status))
-	dot := lipgloss.NewStyle().Foreground(statusColor).Render("\u25cf")
 
-	// Instance number (for identification) - use AbsoluteIdx for stable numbering
-	// Fall back to GlobalIdx if AbsoluteIdx is invalid (should not happen in practice)
+	// Instance number - use AbsoluteIdx for stable numbering, fall back to GlobalIdx
 	displayIdx := gi.AbsoluteIdx
 	if displayIdx < 0 {
 		displayIdx = gi.GlobalIdx
 	}
 	idxStr := fmt.Sprintf("[%d]", displayIdx+1)
-	idxStyle := lipgloss.NewStyle().Foreground(styles.MutedColor)
 
-	// Status abbreviation
-	statusAbbrev := instanceStatusAbbrev(inst.Status)
-
-	// Calculate available width for name
-	// Format: "indent connector [N] name STAT"
-	connectorLen := len([]rune(connector))
-	connectorSpace := 0
-	if connectorLen > 0 {
-		connectorSpace = connectorLen + 1 // connector + space
+	// Calculate overhead for width: indent + connector + space + idx + space
+	overhead := len(indent) + len(idxStr) + 1
+	if connector != "" {
+		overhead += len([]rune(connector)) + 1
 	}
-	overhead := len(indent) + connectorSpace + len(idxStr) + 1 + 1 + 4 // indent + connector+space + idx + space + dot + space + status(4)
-	maxNameLen := width - overhead - 4                                 // padding
+	maxNameLen := width - overhead - 4
 
 	displayName := truncate(inst.EffectiveName(), maxNameLen)
 
-	// Choose style - only differentiate active (selected) vs inactive
-	// Status is already shown via the colored status abbreviation
-	var nameStyle lipgloss.Style
+	// Name style: active (selected) vs inactive
+	nameStyle := styles.SidebarItem.Foreground(styles.MutedColor)
 	if isActiveInstance {
 		nameStyle = styles.SidebarItemActive
-	} else {
-		nameStyle = styles.SidebarItem.Foreground(styles.MutedColor)
 	}
 
-	statusStyle := lipgloss.NewStyle().Foreground(statusColor)
-
+	// Build the first line: indent connector [N] name
 	var b strings.Builder
 	b.WriteString(indent)
 	if connector != "" {
-		b.WriteString(lipgloss.NewStyle().Foreground(styles.MutedColor).Render(connector))
+		b.WriteString(styles.Muted.Render(connector))
 		b.WriteString(" ")
 	}
-	b.WriteString(idxStyle.Render(idxStr))
+	b.WriteString(lipgloss.NewStyle().Foreground(styles.MutedColor).Render(idxStr))
 	b.WriteString(" ")
 	b.WriteString(nameStyle.Render(displayName))
-	b.WriteString(" ")
-	b.WriteString(dot)
-	b.WriteString(statusStyle.Render(statusAbbrev))
+	b.WriteString("\n")
+
+	// Second line: status aligned under the name
+	b.WriteString(strings.Repeat(" ", overhead))
+	b.WriteString(lipgloss.NewStyle().Foreground(statusColor).Render("●" + instanceStatusAbbrev(inst.Status)))
 
 	return b.String()
 }

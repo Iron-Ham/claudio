@@ -518,21 +518,12 @@ func renderTripleShotPlanGroups(ctx TripleShotRenderContext, width int) string {
 			}
 
 			// Check if this instance is active
-			var prefix string
+			prefix := "  "
 			if ctx.ActiveTab < len(ctx.Session.Instances) {
-				activeInst := ctx.Session.Instances[ctx.ActiveTab]
-				if activeInst != nil && activeInst.ID == inst.ID {
+				if activeInst := ctx.Session.Instances[ctx.ActiveTab]; activeInst != nil && activeInst.ID == inst.ID {
 					prefix = "▶ "
-				} else {
-					prefix = "  "
 				}
-			} else {
-				prefix = "  "
 			}
-
-			// Render instance line
-			statusColor := styles.StatusColor(string(inst.Status))
-			statusStyle := lipgloss.NewStyle().Foreground(statusColor)
 
 			// Tree connector
 			connector := "├"
@@ -541,12 +532,14 @@ func renderTripleShotPlanGroups(ctx TripleShotRenderContext, width int) string {
 			}
 
 			// Instance display name (use rune-based truncation for Unicode safety)
-			instName := truncateGroupName(inst.EffectiveName(), width-12) // space for prefix, connector, status
+			instName := truncateGroupName(inst.EffectiveName(), width-8)
 
-			lines = append(lines, prefix+
-				styles.Muted.Render(connector)+" "+
-				instName+" "+
-				statusStyle.Render(instanceStatusAbbrev(inst.Status)))
+			// First line: prefix + connector + name
+			lines = append(lines, prefix+styles.Muted.Render(connector)+" "+instName)
+
+			// Second line: status aligned under the instance name
+			statusColor := styles.StatusColor(string(inst.Status))
+			lines = append(lines, "    "+lipgloss.NewStyle().Foreground(statusColor).Render("●"+instanceStatusAbbrev(inst.Status)))
 		}
 
 		// Add blank line between groups
