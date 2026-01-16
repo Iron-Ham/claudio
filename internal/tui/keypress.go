@@ -44,6 +44,8 @@ const (
 	GroupActionRetryGroup
 	// GroupActionForceStart force-starts the next group ignoring dependencies.
 	GroupActionForceStart
+	// GroupActionDismissGroup removes all instances in the current group.
+	GroupActionDismissGroup
 )
 
 // GroupKeyResult represents the result of handling a group key.
@@ -91,6 +93,10 @@ func (h *GroupKeyHandler) HandleGroupKey(key tea.KeyMsg) GroupKeyResult {
 	case "f":
 		// gf - force-start next group (ignore dependencies)
 		return h.handleForceStart()
+
+	case "q":
+		// gq - dismiss/remove all instances in current group
+		return h.handleDismissGroup()
 
 	default:
 		return GroupKeyResult{Handled: false}
@@ -254,6 +260,32 @@ func (h *GroupKeyHandler) handleForceStart() GroupKeyResult {
 		}
 	}
 	return GroupKeyResult{Handled: false}
+}
+
+// handleDismissGroup removes all instances in the current group.
+func (h *GroupKeyHandler) handleDismissGroup() GroupKeyResult {
+	groupID := h.groupState.SelectedGroupID
+	if groupID == "" {
+		return GroupKeyResult{Handled: false}
+	}
+
+	// Find the group and collect all instance IDs
+	group := h.findGroup(groupID)
+	if group == nil {
+		return GroupKeyResult{Handled: false}
+	}
+
+	if len(group.Instances) == 0 {
+		return GroupKeyResult{Handled: false}
+	}
+
+	// Return all instance IDs in the group for dismissal
+	return GroupKeyResult{
+		Action:      GroupActionDismissGroup,
+		Handled:     true,
+		GroupID:     groupID,
+		InstanceIDs: group.Instances,
+	}
 }
 
 // findGroup finds a group by ID in the session.

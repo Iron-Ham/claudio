@@ -362,6 +362,99 @@ func TestGroupKeyHandler_ForceStart_NoPendingGroup(t *testing.T) {
 	}
 }
 
+func TestGroupKeyHandler_DismissGroup(t *testing.T) {
+	session := createTestSession()
+	groupState := view.NewGroupViewState()
+	groupState.SelectedGroupID = session.Groups[0].ID
+
+	handler := NewGroupKeyHandler(session, groupState)
+	result := handler.HandleGroupKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+
+	if !result.Handled {
+		t.Error("expected Handled=true")
+	}
+	if result.Action != GroupActionDismissGroup {
+		t.Errorf("expected Action=%v, got %v", GroupActionDismissGroup, result.Action)
+	}
+	if result.GroupID != session.Groups[0].ID {
+		t.Errorf("expected GroupID=%s, got %s", session.Groups[0].ID, result.GroupID)
+	}
+	// Verify all instances from the group are returned
+	if len(result.InstanceIDs) != 2 {
+		t.Errorf("expected 2 instance IDs, got %d", len(result.InstanceIDs))
+	}
+	// Verify the instance IDs match
+	expectedIDs := map[string]bool{"inst-1": true, "inst-2": true}
+	for _, id := range result.InstanceIDs {
+		if !expectedIDs[id] {
+			t.Errorf("unexpected instance ID: %s", id)
+		}
+	}
+}
+
+func TestGroupKeyHandler_DismissGroup_NoSelection(t *testing.T) {
+	session := createTestSession()
+	groupState := view.NewGroupViewState()
+	// No group selected
+
+	handler := NewGroupKeyHandler(session, groupState)
+	result := handler.HandleGroupKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+
+	if result.Handled {
+		t.Error("expected Handled=false when no group is selected")
+	}
+}
+
+func TestGroupKeyHandler_DismissGroup_EmptyGroup(t *testing.T) {
+	session := &orchestrator.Session{
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "empty-group",
+				Name:      "Empty Group",
+				Phase:     orchestrator.GroupPhaseExecuting,
+				Instances: []string{}, // Empty
+			},
+		},
+	}
+	groupState := view.NewGroupViewState()
+	groupState.SelectedGroupID = "empty-group"
+
+	handler := NewGroupKeyHandler(session, groupState)
+	result := handler.HandleGroupKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+
+	if result.Handled {
+		t.Error("expected Handled=false for empty group")
+	}
+}
+
+func TestGroupKeyHandler_DismissGroup_Subgroup(t *testing.T) {
+	session := createTestSessionWithSubgroups()
+	groupState := view.NewGroupViewState()
+
+	// Select the subgroup
+	groupState.SelectedGroupID = "subgroup-1"
+
+	handler := NewGroupKeyHandler(session, groupState)
+	result := handler.HandleGroupKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+
+	if !result.Handled {
+		t.Error("expected Handled=true for subgroup")
+	}
+	if result.Action != GroupActionDismissGroup {
+		t.Errorf("expected Action=%v, got %v", GroupActionDismissGroup, result.Action)
+	}
+	if result.GroupID != "subgroup-1" {
+		t.Errorf("expected GroupID=subgroup-1, got %s", result.GroupID)
+	}
+	// Verify only subgroup instances are returned
+	if len(result.InstanceIDs) != 1 {
+		t.Errorf("expected 1 instance ID for subgroup, got %d", len(result.InstanceIDs))
+	}
+	if result.InstanceIDs[0] != "inst-2" {
+		t.Errorf("expected inst-2, got %s", result.InstanceIDs[0])
+	}
+}
+
 func TestGroupKeyHandler_UnknownKey(t *testing.T) {
 	session := createTestSession()
 	groupState := view.NewGroupViewState()
