@@ -42,12 +42,11 @@ type ParentChild struct {
 
 // ParentIssueData holds data for rendering the parent issue body
 type ParentIssueData struct {
-	Objective    string
-	Summary      string
-	Insights     []string
-	Constraints  []string
-	GroupedTasks [][]GroupedTask // tasks grouped by execution order (legacy, kept for compatibility)
-	Children     []ParentChild   // hierarchical children (groups or direct tasks)
+	Objective   string
+	Summary     string
+	Insights    []string
+	Constraints []string
+	Children    []ParentChild // hierarchical children (groups or direct tasks)
 }
 
 // GroupIssueData holds data for rendering a group issue body
@@ -73,15 +72,8 @@ const parentIssueBodyTemplate = `## Summary
 {{end}}
 {{end}}
 ## Sub-Issues
-{{if .Children}}
+
 {{range .Children}}- [ ] #{{.IssueNumber}} - **{{.Title}}**{{if .IsGroup}} ({{.TaskCount}} tasks){{end}}
-{{end}}
-{{else}}
-{{range $groupIdx, $group := .GroupedTasks}}
-### Group {{add $groupIdx 1}}{{if eq $groupIdx 0}} (can start immediately){{else}} (depends on previous groups){{end}}
-{{range $group}}- [ ] #{{.IssueNumber}} - **{{.Title}}**
-{{end}}
-{{end}}
 {{end}}
 ## Execution Order
 
@@ -137,56 +129,6 @@ Estimated: **{{.Complexity}}**
 *Part of #{{.ParentIssueNumber}}*
 `
 
-// Template helper functions
-var templateFuncs = template.FuncMap{
-	"add": func(a, b int) int {
-		return a + b
-	},
-}
-
-// RenderParentIssueBody renders the parent issue body from plan data
-// This is the legacy version that creates flat task references (used when not using hierarchical groups)
-func RenderParentIssueBody(plan *orchestrator.PlanSpec, subIssueNumbers map[string]int) (string, error) {
-	// Build grouped tasks from execution order
-	groupedTasks := make([][]GroupedTask, len(plan.ExecutionOrder))
-	for groupIdx, group := range plan.ExecutionOrder {
-		groupedTasks[groupIdx] = make([]GroupedTask, 0, len(group))
-		for _, taskID := range group {
-			// Find the task
-			for _, task := range plan.Tasks {
-				if task.ID == taskID {
-					groupedTasks[groupIdx] = append(groupedTasks[groupIdx], GroupedTask{
-						TaskID:      taskID,
-						Title:       task.Title,
-						IssueNumber: subIssueNumbers[taskID],
-					})
-					break
-				}
-			}
-		}
-	}
-
-	data := ParentIssueData{
-		Objective:    plan.Objective,
-		Summary:      plan.Summary,
-		Insights:     plan.Insights,
-		Constraints:  plan.Constraints,
-		GroupedTasks: groupedTasks,
-	}
-
-	tmpl, err := template.New("parent-issue").Funcs(templateFuncs).Parse(parentIssueBodyTemplate)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse parent issue template: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("failed to render parent issue template: %w", err)
-	}
-
-	return buf.String(), nil
-}
-
 // RenderParentIssueBodyHierarchical renders the parent issue body with hierarchical children
 // Children can be either group issues (for groups with >1 task) or direct task issues (for single-task groups)
 func RenderParentIssueBodyHierarchical(plan *orchestrator.PlanSpec, children []ParentChild) (string, error) {
@@ -198,7 +140,7 @@ func RenderParentIssueBodyHierarchical(plan *orchestrator.PlanSpec, children []P
 		Children:    children,
 	}
 
-	tmpl, err := template.New("parent-issue").Funcs(templateFuncs).Parse(parentIssueBodyTemplate)
+	tmpl, err := template.New("parent-issue").Parse(parentIssueBodyTemplate)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse parent issue template: %w", err)
 	}

@@ -264,10 +264,10 @@ func TestManager_Reconnect_SessionNotFound(t *testing.T) {
 	}
 }
 
-func TestManager_SessionExists_NonExistent(t *testing.T) {
+func TestManager_SessionExistsWithSocket_NonExistent(t *testing.T) {
 	mgr := NewManager(nil)
-	if mgr.SessionExists("nonexistent-test-session-abc") {
-		t.Error("SessionExists should return false for non-existent session")
+	if mgr.SessionExistsWithSocket("nonexistent-test-session-abc", "test-socket") {
+		t.Error("SessionExistsWithSocket should return false for non-existent session")
 	}
 }
 

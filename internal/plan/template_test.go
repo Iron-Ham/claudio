@@ -67,77 +67,6 @@ func TestRenderSubIssueBodyWithDependencies(t *testing.T) {
 	}
 }
 
-func TestRenderParentIssueBody(t *testing.T) {
-	plan := &orchestrator.PlanSpec{
-		Objective: "Test objective",
-		Summary:   "Test summary for the parent issue",
-		Tasks: []orchestrator.PlannedTask{
-			{ID: "task-1", Title: "First Task"},
-			{ID: "task-2", Title: "Second Task", DependsOn: []string{"task-1"}},
-		},
-		ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
-		Insights:       []string{"Key insight about codebase"},
-		Constraints:    []string{"Important constraint"},
-	}
-
-	subIssueNumbers := map[string]int{
-		"task-1": 101,
-		"task-2": 102,
-	}
-
-	body, err := RenderParentIssueBody(plan, subIssueNumbers)
-	if err != nil {
-		t.Fatalf("RenderParentIssueBody() error = %v", err)
-	}
-
-	// Check required sections
-	if !strings.Contains(body, "Test summary for the parent issue") {
-		t.Error("Body missing summary")
-	}
-	if !strings.Contains(body, "Key insight about codebase") {
-		t.Error("Body missing insights")
-	}
-	if !strings.Contains(body, "Important constraint") {
-		t.Error("Body missing constraints")
-	}
-	if !strings.Contains(body, "#101") || !strings.Contains(body, "#102") {
-		t.Error("Body missing sub-issue references")
-	}
-	if !strings.Contains(body, "Group 1") {
-		t.Error("Body missing execution groups")
-	}
-	if !strings.Contains(body, "can start immediately") {
-		t.Error("Body missing group annotation")
-	}
-}
-
-func TestRenderParentIssueBodyEmptySections(t *testing.T) {
-	plan := &orchestrator.PlanSpec{
-		Objective: "Test objective",
-		Summary:   "Test summary",
-		Tasks: []orchestrator.PlannedTask{
-			{ID: "task-1", Title: "Only Task"},
-		},
-		ExecutionOrder: [][]string{{"task-1"}},
-		Insights:       nil,
-		Constraints:    nil,
-	}
-
-	subIssueNumbers := map[string]int{
-		"task-1": 101,
-	}
-
-	body, err := RenderParentIssueBody(plan, subIssueNumbers)
-	if err != nil {
-		t.Fatalf("RenderParentIssueBody() error = %v", err)
-	}
-
-	// Should still render without insights/constraints sections
-	if !strings.Contains(body, "Test summary") {
-		t.Error("Body missing summary")
-	}
-}
-
 func TestRenderParentIssueBodyHierarchical(t *testing.T) {
 	plan := &orchestrator.PlanSpec{
 		Objective:   "Test objective",
@@ -184,6 +113,32 @@ func TestRenderParentIssueBodyHierarchical(t *testing.T) {
 	}
 	if !strings.Contains(body, "Constraint 1") {
 		t.Error("Body missing constraints")
+	}
+}
+
+func TestRenderParentIssueBodyHierarchicalEmptySections(t *testing.T) {
+	plan := &orchestrator.PlanSpec{
+		Objective:   "Test objective",
+		Summary:     "Test summary",
+		Insights:    nil,
+		Constraints: nil,
+	}
+
+	children := []ParentChild{
+		{Title: "Only Task", IssueNumber: 101, IsGroup: false, TaskCount: 1},
+	}
+
+	body, err := RenderParentIssueBodyHierarchical(plan, children)
+	if err != nil {
+		t.Fatalf("RenderParentIssueBodyHierarchical() error = %v", err)
+	}
+
+	// Should still render without insights/constraints sections
+	if !strings.Contains(body, "Test summary") {
+		t.Error("Body missing summary")
+	}
+	if !strings.Contains(body, "#101") {
+		t.Error("Body missing child reference")
 	}
 }
 

@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deprecated GetTripleShotCoordinator** - Removed deprecated `GetTripleShotCoordinator()` method from `command.Dependencies` interface and `Model`. Use `GetTripleShotCoordinators()` which returns all active coordinators.
 - **Deprecated getHistorySize Function** - Removed the deprecated `getHistorySize` method from instance Manager. Use `getSessionStatus` for batched queries with reduced subprocess overhead.
 - **Unused Error Sentinels** - Removed unused error sentinels from `internal/orchestrator/prompt_adapter.go`: `ErrNilUltraPlanSession`, `ErrTaskNotFoundInPlan`, and `ErrNilGroupTracker`. These were leftover from the removed `PromptAdapter` struct.
+- **Unused Inline Plan Functions** - Removed unused integration stub functions from `internal/tui/inlineplan.go`: `handleInlinePlanCompletion`, `getPlanForInlineEditor`, `handleInlinePlanTaskDelete`, `handleInlinePlanTaskAdd`, `handleInlinePlanTaskReorder`, and duplicate `findInstanceIndex`. These were marked as pending integration but never completed. Code now uses `findInstanceIndexByID` for consistent instance lookup behavior.
+- **Deprecated SessionExists Method** - Removed the deprecated `SessionExists` method from `internal/instance/lifecycle/manager.go`. Use `SessionExistsWithSocket` for socket-specific session checks.
+- **Legacy RenderParentIssueBody Function** - Removed the unused `RenderParentIssueBody` function and `GroupedTasks` field from `internal/plan/template.go`. Production code exclusively uses `RenderParentIssueBodyHierarchical` which supports hierarchical children. The template was simplified to remove the legacy fallback path for grouped tasks.
+- **Unused Planning Orchestrator Method** - Removed unused `setInstanceID` method from `PlanningOrchestrator` in `internal/orchestrator/phase/planning.go`.
 
 ### Added
 

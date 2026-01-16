@@ -774,16 +774,10 @@ Complete each group before starting the next.
 }
 
 func TestParseParentIssueBody_RoundTrip(t *testing.T) {
-	// Create a plan and render it, then parse it back
+	// Create a plan and render it using hierarchical format, then parse it back
 	plan := &orchestrator.PlanSpec{
 		Objective: "Implement new authentication system",
 		Summary:   "Add OAuth2 support with multiple providers",
-		Tasks: []orchestrator.PlannedTask{
-			{ID: "task-1", Title: "Create auth models"},
-			{ID: "task-2", Title: "Implement token service"},
-			{ID: "task-3", Title: "Add OAuth endpoints", DependsOn: []string{"task-1", "task-2"}},
-		},
-		ExecutionOrder: [][]string{{"task-1", "task-2"}, {"task-3"}},
 		Insights: []string{
 			"Existing user table can be extended",
 			"JWT library already in dependencies",
@@ -793,16 +787,16 @@ func TestParseParentIssueBody_RoundTrip(t *testing.T) {
 		},
 	}
 
-	subIssueNumbers := map[string]int{
-		"task-1": 100,
-		"task-2": 101,
-		"task-3": 102,
+	children := []ParentChild{
+		{Title: "Create auth models", IssueNumber: 100, IsGroup: false, TaskCount: 1},
+		{Title: "Implement token service", IssueNumber: 101, IsGroup: false, TaskCount: 1},
+		{Title: "Add OAuth endpoints", IssueNumber: 102, IsGroup: false, TaskCount: 1},
 	}
 
-	// Render the body
-	body, err := RenderParentIssueBody(plan, subIssueNumbers)
+	// Render the body using hierarchical format
+	body, err := RenderParentIssueBodyHierarchical(plan, children)
 	if err != nil {
-		t.Fatalf("RenderParentIssueBody() error = %v", err)
+		t.Fatalf("RenderParentIssueBodyHierarchical() error = %v", err)
 	}
 
 	// Parse it back
@@ -824,8 +818,9 @@ func TestParseParentIssueBody_RoundTrip(t *testing.T) {
 		t.Errorf("Constraints = %v, want %v", content.Constraints, plan.Constraints)
 	}
 
-	// Verify execution groups match issue numbers
-	expectedGroups := [][]int{{100, 101}, {102}}
+	// Hierarchical format puts all children in one flat group
+	// Parser should extract issue numbers from the Sub-Issues section
+	expectedGroups := [][]int{{100, 101, 102}}
 	if !reflect.DeepEqual(content.ExecutionGroups, expectedGroups) {
 		t.Errorf("ExecutionGroups = %v, want %v", content.ExecutionGroups, expectedGroups)
 	}
