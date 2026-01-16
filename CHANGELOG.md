@@ -17,8 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Sidebar Keyboard Hint** - Changed sidebar help hint from `[j/k] scroll` to `[h/l] nav` since `h/l` navigates between instances which is more relevant when viewing the sidebar, while `j/k` scrolls the main content pane.
-
 - **Triple-Shot Judge Not Triggering** - Fixed a critical bug where the triple-shot judge would not start when the last attempt to complete had a parsing error. Previously, if the completion file for an attempt failed to parse (e.g., due to schema variations like `notes` being an array instead of a string), the error handling path would return early without checking if all attempts were complete. Now the judge-triggering check runs regardless of parsing errors, ensuring the judge starts as long as at least 2 attempts succeeded.
 
 - **Flexible Notes Field in Completion Files** - Changed the `Notes` field in `TripleShotCompletionFile` to use `FlexibleString` type (reusing the existing type from ultraplan.go), which accepts both string and array-of-strings JSON values. This prevents JSON parsing failures when Claude instances write completion files with `notes` as an array, which was causing attempts to be incorrectly marked as failed.
