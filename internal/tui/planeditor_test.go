@@ -1418,20 +1418,20 @@ func TestGetValidationMessagesForSelectedTask_NilState(t *testing.T) {
 
 // Tests for inline plan mode support
 
-func TestInlinePlanState_Initialization(t *testing.T) {
-	state := &InlinePlanState{
+func TestInlinePlanSession_Initialization(t *testing.T) {
+	session := &InlinePlanSession{
 		Objective:         "Test objective",
 		AwaitingObjective: true,
 		TaskToInstance:    make(map[string]string),
 	}
 
-	if state.Objective != "Test objective" {
-		t.Errorf("expected objective to be 'Test objective', got '%s'", state.Objective)
+	if session.Objective != "Test objective" {
+		t.Errorf("expected objective to be 'Test objective', got '%s'", session.Objective)
 	}
-	if !state.AwaitingObjective {
+	if !session.AwaitingObjective {
 		t.Error("expected AwaitingObjective to be true")
 	}
-	if state.TaskToInstance == nil {
+	if session.TaskToInstance == nil {
 		t.Error("expected TaskToInstance to be non-nil map")
 	}
 }
@@ -1461,14 +1461,18 @@ func TestPlanEditorState_InlineMode(t *testing.T) {
 func TestGetPlanForEditor_InlineMode(t *testing.T) {
 	plan := createTestPlanForTUI()
 
+	state := NewInlinePlanState()
+	session := &InlinePlanSession{
+		Plan: plan,
+	}
+	state.AddSession("test-group", session)
+
 	m := Model{
 		planEditor: &PlanEditorState{
 			active:     true,
 			inlineMode: true,
 		},
-		inlinePlan: &InlinePlanState{
-			Plan: plan,
-		},
+		inlinePlan: state,
 	}
 
 	result := m.getPlanForEditor()
@@ -1496,14 +1500,18 @@ func TestGetPlanForEditor_InlineModeNoPlan(t *testing.T) {
 }
 
 func TestGetPlanForEditor_InlineModePlanNil(t *testing.T) {
+	state := NewInlinePlanState()
+	session := &InlinePlanSession{
+		Plan: nil,
+	}
+	state.AddSession("test-group", session)
+
 	m := Model{
 		planEditor: &PlanEditorState{
 			active:     true,
 			inlineMode: true,
 		},
-		inlinePlan: &InlinePlanState{
-			Plan: nil,
-		},
+		inlinePlan: state,
 	}
 
 	result := m.getPlanForEditor()
@@ -1515,11 +1523,15 @@ func TestGetPlanForEditor_InlineModePlanNil(t *testing.T) {
 func TestEnterInlinePlanEditor(t *testing.T) {
 	plan := createTestPlanForTUI()
 
+	state := NewInlinePlanState()
+	session := &InlinePlanSession{
+		Plan:      plan,
+		Objective: "Test objective",
+	}
+	state.AddSession("test-group", session)
+
 	m := Model{
-		inlinePlan: &InlinePlanState{
-			Plan:      plan,
-			Objective: "Test objective",
-		},
+		inlinePlan:      state,
 		terminalManager: terminal.NewManager(),
 	}
 
@@ -1542,100 +1554,74 @@ func TestEnterInlinePlanEditor(t *testing.T) {
 func TestCanStartExecution_InlineMode(t *testing.T) {
 	plan := createTestPlanForTUI()
 
-	tests := []struct {
-		name     string
-		model    Model
-		expected bool
-	}{
-		{
-			name: "inline mode with valid plan",
-			model: Model{
-				planEditor: &PlanEditorState{
-					active:     true,
-					inlineMode: true,
-				},
-				inlinePlan: &InlinePlanState{
-					Plan: plan,
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "inline mode with nil plan",
-			model: Model{
-				planEditor: &PlanEditorState{
-					active:     true,
-					inlineMode: true,
-				},
-				inlinePlan: &InlinePlanState{
-					Plan: nil,
-				},
-			},
-			expected: false,
-		},
-		{
-			name: "inline mode with nil inlinePlan",
-			model: Model{
-				planEditor: &PlanEditorState{
-					active:     true,
-					inlineMode: true,
-				},
-				inlinePlan: nil,
-			},
-			expected: false,
-		},
-		{
-			name: "not inline mode (ultraplan), nil ultraplan",
-			model: Model{
-				planEditor: &PlanEditorState{
-					active:     true,
-					inlineMode: false,
-				},
-			},
-			expected: false,
-		},
-	}
+	t.Run("inline mode with valid plan", func(t *testing.T) {
+		state := NewInlinePlanState()
+		state.AddSession("test-group", &InlinePlanSession{Plan: plan})
+		m := Model{
+			planEditor: &PlanEditorState{active: true, inlineMode: true},
+			inlinePlan: state,
+		}
+		if !m.canStartExecution() {
+			t.Error("expected canStartExecution() = true")
+		}
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.model.canStartExecution()
-			if result != tt.expected {
-				t.Errorf("expected canStartExecution() = %v, got %v", tt.expected, result)
-			}
-		})
-	}
+	t.Run("inline mode with nil plan", func(t *testing.T) {
+		state := NewInlinePlanState()
+		state.AddSession("test-group", &InlinePlanSession{Plan: nil})
+		m := Model{
+			planEditor: &PlanEditorState{active: true, inlineMode: true},
+			inlinePlan: state,
+		}
+		if m.canStartExecution() {
+			t.Error("expected canStartExecution() = false")
+		}
+	})
+
+	t.Run("inline mode with nil inlinePlan", func(t *testing.T) {
+		m := Model{
+			planEditor: &PlanEditorState{active: true, inlineMode: true},
+			inlinePlan: nil,
+		}
+		if m.canStartExecution() {
+			t.Error("expected canStartExecution() = false")
+		}
+	})
+
+	t.Run("not inline mode (ultraplan), nil ultraplan", func(t *testing.T) {
+		m := Model{
+			planEditor: &PlanEditorState{active: true, inlineMode: false},
+		}
+		if m.canStartExecution() {
+			t.Error("expected canStartExecution() = false")
+		}
+	})
 }
 
 func TestIsInlinePlanMode(t *testing.T) {
-	tests := []struct {
-		name     string
-		model    Model
-		expected bool
-	}{
-		{
-			name: "inline plan mode active",
-			model: Model{
-				inlinePlan: &InlinePlanState{},
-			},
-			expected: true,
-		},
-		{
-			name: "inline plan mode not active",
-			model: Model{
-				inlinePlan: nil,
-			},
-			expected: false,
-		},
-	}
+	t.Run("inline plan mode active with session", func(t *testing.T) {
+		state := NewInlinePlanState()
+		state.AddSession("test-group", &InlinePlanSession{})
+		m := Model{inlinePlan: state}
+		if !m.IsInlinePlanMode() {
+			t.Error("expected IsInlinePlanMode() = true")
+		}
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := tt.model.IsInlinePlanMode()
-			if result != tt.expected {
-				t.Errorf("expected IsInlinePlanMode() = %v, got %v", tt.expected, result)
-			}
-		})
-	}
+	t.Run("inline plan mode not active (nil)", func(t *testing.T) {
+		m := Model{inlinePlan: nil}
+		if m.IsInlinePlanMode() {
+			t.Error("expected IsInlinePlanMode() = false")
+		}
+	})
+
+	t.Run("inline plan mode with empty state (no sessions)", func(t *testing.T) {
+		state := NewInlinePlanState()
+		m := Model{inlinePlan: state}
+		if m.IsInlinePlanMode() {
+			t.Error("expected IsInlinePlanMode() = false when no active sessions")
+		}
+	})
 }
 
 func TestIsPlanEditorInlineMode(t *testing.T) {
@@ -1686,14 +1672,15 @@ func TestIsPlanEditorInlineMode(t *testing.T) {
 func TestRenderPlanEditorView_InlineMode(t *testing.T) {
 	plan := createTestPlanForTUI()
 
+	state := NewInlinePlanState()
+	state.AddSession("test-group", &InlinePlanSession{Plan: plan})
+
 	m := Model{
 		planEditor: &PlanEditorState{
 			active:     true,
 			inlineMode: true,
 		},
-		inlinePlan: &InlinePlanState{
-			Plan: plan,
-		},
+		inlinePlan:      state,
 		terminalManager: terminal.NewManager(),
 	}
 
@@ -1723,6 +1710,9 @@ func TestRenderPlanEditorView_NoPlan(t *testing.T) {
 func TestGetValidationMessagesForSelectedTask_InlineMode(t *testing.T) {
 	plan := createTestPlanForTUI()
 
+	state := NewInlinePlanState()
+	state.AddSession("test-group", &InlinePlanSession{Plan: plan})
+
 	m := Model{
 		planEditor: &PlanEditorState{
 			active:          true,
@@ -1735,9 +1725,7 @@ func TestGetValidationMessagesForSelectedTask_InlineMode(t *testing.T) {
 				},
 			},
 		},
-		inlinePlan: &InlinePlanState{
-			Plan: plan,
-		},
+		inlinePlan: state,
 	}
 
 	messages := m.getValidationMessagesForSelectedTask()
@@ -1752,15 +1740,16 @@ func TestGetValidationMessagesForSelectedTask_InlineMode(t *testing.T) {
 func TestUpdateInlinePlanValidation(t *testing.T) {
 	plan := createTestPlanForTUI()
 
+	state := NewInlinePlanState()
+	state.AddSession("test-group", &InlinePlanSession{Plan: plan})
+
 	m := Model{
 		planEditor: &PlanEditorState{
 			active:       true,
 			inlineMode:   true,
 			tasksInCycle: make(map[string]bool),
 		},
-		inlinePlan: &InlinePlanState{
-			Plan: plan,
-		},
+		inlinePlan: state,
 	}
 
 	m.updateInlinePlanValidation()
@@ -1784,9 +1773,9 @@ func TestPendingConfirmDelete(t *testing.T) {
 
 // TestTruncateString tests are now in internal/util/strings_test.go
 
-func TestInlinePlanState_IsUltraPlan(t *testing.T) {
-	// Test regular plan state (not ultraplan)
-	regularPlan := &InlinePlanState{
+func TestInlinePlanSession_IsUltraPlan(t *testing.T) {
+	// Test regular plan session (not ultraplan)
+	regularPlan := &InlinePlanSession{
 		AwaitingObjective: true,
 		TaskToInstance:    make(map[string]string),
 		IsUltraPlan:       false,
@@ -1799,13 +1788,13 @@ func TestInlinePlanState_IsUltraPlan(t *testing.T) {
 		t.Error("expected UltraPlanConfig to be nil for regular plan")
 	}
 
-	// Test ultraplan state
+	// Test ultraplan session
 	cfg := &orchestrator.UltraPlanConfig{
 		AutoApprove: false,
 		Review:      true,
 		MultiPass:   true,
 	}
-	ultraPlan := &InlinePlanState{
+	ultraPlan := &InlinePlanSession{
 		AwaitingObjective: true,
 		TaskToInstance:    make(map[string]string),
 		IsUltraPlan:       true,
@@ -1823,16 +1812,16 @@ func TestInlinePlanState_IsUltraPlan(t *testing.T) {
 	}
 }
 
-func TestInlinePlanState_AwaitingObjective_Differentiation(t *testing.T) {
+func TestInlinePlanSession_AwaitingObjective_Differentiation(t *testing.T) {
 	tests := []struct {
 		name        string
-		state       *InlinePlanState
+		session     *InlinePlanSession
 		expectPlan  bool
 		expectUltra bool
 	}{
 		{
 			name: "regular plan awaiting objective",
-			state: &InlinePlanState{
+			session: &InlinePlanSession{
 				AwaitingObjective: true,
 				IsUltraPlan:       false,
 			},
@@ -1841,7 +1830,7 @@ func TestInlinePlanState_AwaitingObjective_Differentiation(t *testing.T) {
 		},
 		{
 			name: "ultraplan awaiting objective",
-			state: &InlinePlanState{
+			session: &InlinePlanSession{
 				AwaitingObjective: true,
 				IsUltraPlan:       true,
 				UltraPlanConfig:   &orchestrator.UltraPlanConfig{},
@@ -1851,7 +1840,7 @@ func TestInlinePlanState_AwaitingObjective_Differentiation(t *testing.T) {
 		},
 		{
 			name: "plan not awaiting objective",
-			state: &InlinePlanState{
+			session: &InlinePlanSession{
 				AwaitingObjective: false,
 				IsUltraPlan:       false,
 			},
@@ -1862,8 +1851,8 @@ func TestInlinePlanState_AwaitingObjective_Differentiation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			isAwaitingObjective := tt.state.AwaitingObjective
-			isUltraPlan := tt.state.IsUltraPlan
+			isAwaitingObjective := tt.session.AwaitingObjective
+			isUltraPlan := tt.session.IsUltraPlan
 
 			if isAwaitingObjective != tt.expectPlan {
 				t.Errorf("AwaitingObjective = %v, want %v", isAwaitingObjective, tt.expectPlan)

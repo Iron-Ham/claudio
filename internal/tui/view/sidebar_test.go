@@ -34,6 +34,8 @@ func (m *mockSidebarState) IntelligentNamingEnabled() bool     { return m.intell
 func (m *mockSidebarState) GroupViewState() *GroupViewState    { return m.groupViewState }
 func (m *mockSidebarState) SidebarMode() SidebarMode           { return m.sidebarMode }
 func (m *mockSidebarState) UltraPlanState() *UltraPlanState    { return nil }
+func (m *mockSidebarState) MultiPlanState() *MultiPlanState    { return nil }
+func (m *mockSidebarState) PlanStateData() *PlanState          { return nil }
 func (m *mockSidebarState) Orchestrator() *orchestrator.Orchestrator {
 	return nil
 }

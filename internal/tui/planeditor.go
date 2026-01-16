@@ -381,7 +381,10 @@ func (m Model) handlePlanEditorEditMode(msg tea.KeyMsg, plan *orchestrator.PlanS
 func (m Model) getPlanForEditor() *orchestrator.PlanSpec {
 	// Check inline plan mode first
 	if m.planEditor != nil && m.planEditor.inlineMode && m.inlinePlan != nil {
-		return m.inlinePlan.Plan
+		session := m.inlinePlan.GetCurrentSession()
+		if session != nil {
+			return session.Plan
+		}
 	}
 
 	// Fall back to ultra-plan mode
@@ -726,7 +729,8 @@ func (m *Model) savePlanToFile(plan *orchestrator.PlanSpec) error {
 func (m *Model) canStartExecution() bool {
 	// Inline plan mode - can always start if plan exists and valid
 	if m.planEditor != nil && m.planEditor.inlineMode {
-		return m.inlinePlan != nil && m.inlinePlan.Plan != nil
+		session := m.getCurrentPlanSession()
+		return session != nil && session.Plan != nil
 	}
 
 	// Ultra-plan mode
