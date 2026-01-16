@@ -239,6 +239,7 @@ func DefaultHelpSections() []HelpSection {
 			Items: []HelpItem{
 				{Key: ":h  :help", Description: "Toggle this help panel"},
 				{Key: ":q  :quit", Description: "Quit (instances continue in tmux)"},
+				{Key: ":q!  :quit!", Description: "Force quit: stop all, cleanup worktrees, exit"},
 				{Key: "?", Description: "Quick toggle help"},
 			},
 		},
