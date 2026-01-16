@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Sidebar Instance Status Alignment** - Status symbols (WORK, WAIT, DONE, etc.) in both the grouped sidebar view and tripleshot view are now displayed on a new line underneath each task name instead of trailing at the end of the line. This improves readability by aligning status indicators vertically.
+
 ## [0.9.0] - 2026-01-16
 
 This release brings **Sidebar Customization & Group Dismiss** - allowing users to configure the sidebar width for their workflow preferences and quickly dismiss entire instance groups with a single shortcut.

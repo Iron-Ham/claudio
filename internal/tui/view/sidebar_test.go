@@ -1604,11 +1604,20 @@ func TestSidebarView_GroupedModeNoHighlightWhenAddingTask(t *testing.T) {
 	activeRendered := RenderGroupedInstance(gi, true, false, 40)
 	inactiveRendered := RenderGroupedInstance(gi, false, false, 40)
 
-	if !strings.Contains(resultNotAddingTask, activeRendered) {
-		t.Errorf("when not adding task, expected Task 1 with active styling")
+	// RenderGroupedInstance returns two lines (name and status), so check each line
+	// is present in the sidebar output
+	activeLines := strings.Split(activeRendered, "\n")
+	inactiveLines := strings.Split(inactiveRendered, "\n")
+
+	for _, line := range activeLines {
+		if line != "" && !strings.Contains(resultNotAddingTask, line) {
+			t.Errorf("when not adding task, expected Task 1 with active styling, missing line: %q", line)
+		}
 	}
-	if !strings.Contains(resultAddingTask, inactiveRendered) {
-		t.Errorf("when adding task, expected Task 1 with inactive styling")
+	for _, line := range inactiveLines {
+		if line != "" && !strings.Contains(resultAddingTask, line) {
+			t.Errorf("when adding task, expected Task 1 with inactive styling, missing line: %q", line)
+		}
 	}
 }
 
