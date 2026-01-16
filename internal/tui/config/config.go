@@ -400,6 +400,34 @@ func New() Model {
 					Type:        "string",
 					Category:    "paths",
 				},
+				{
+					Key:         "paths.sparse_checkout.enabled",
+					Label:       "Sparse Checkout",
+					Description: "Enable sparse checkout for partial worktrees (requires directories configured in config.yaml)",
+					Type:        "bool",
+					Category:    "paths",
+				},
+				{
+					Key:         "paths.sparse_checkout.cone_mode",
+					Label:       "Sparse Cone Mode",
+					Description: "Use faster cone mode for sparse checkout (directory paths only, no wildcards)",
+					Type:        "bool",
+					Category:    "paths",
+				},
+				{
+					Key:         "paths.sparse_checkout.directories",
+					Label:       "Sparse Directories",
+					Description: "Directories to include in sparse checkout (edit config.yaml to modify array)",
+					Type:        "string",
+					Category:    "paths",
+				},
+				{
+					Key:         "paths.sparse_checkout.always_include",
+					Label:       "Sparse Always Include",
+					Description: "Directories always included in sparse checkout (edit config.yaml to modify array)",
+					Type:        "string",
+					Category:    "paths",
+				},
 			},
 		},
 		{
@@ -1136,7 +1164,11 @@ func (m *Model) resetCurrentToDefault() {
 		"plan.labels":        strings.Join(defaults.Plan.Labels, ","),
 		"plan.output_file":   defaults.Plan.OutputFile,
 		// Paths
-		"paths.worktree_dir": defaults.Paths.WorktreeDir,
+		"paths.worktree_dir":                   defaults.Paths.WorktreeDir,
+		"paths.sparse_checkout.enabled":        defaults.Paths.SparseCheckout.Enabled,
+		"paths.sparse_checkout.cone_mode":      defaults.Paths.SparseCheckout.ConeMode,
+		"paths.sparse_checkout.directories":    strings.Join(defaults.Paths.SparseCheckout.Directories, ","),
+		"paths.sparse_checkout.always_include": strings.Join(defaults.Paths.SparseCheckout.AlwaysInclude, ","),
 		// Logging
 		"logging.enabled":     defaults.Logging.Enabled,
 		"logging.level":       defaults.Logging.Level,

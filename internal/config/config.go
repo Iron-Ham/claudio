@@ -195,6 +195,65 @@ type PathsConfig struct {
 	// (e.g., on a faster drive or to avoid cluttering the project).
 	// Supports ~ for home directory expansion.
 	WorktreeDir string `mapstructure:"worktree_dir"`
+
+	// SparseCheckout configures partial worktree cloning.
+	// When enabled, only specified directories are checked out, reducing
+	// disk usage and improving performance for large monorepos.
+	SparseCheckout SparseCheckoutConfig `mapstructure:"sparse_checkout"`
+}
+
+// SparseCheckoutConfig controls partial worktree cloning using git sparse-checkout.
+// This is useful for large monorepos where you only need to work with specific directories.
+type SparseCheckoutConfig struct {
+	// Enabled controls whether sparse checkout is used for new worktrees.
+	// When false (default), full worktrees are created.
+	Enabled bool `mapstructure:"enabled"`
+
+	// Directories specifies which directories to include in worktrees.
+	// Each entry should be a path relative to the repository root.
+	// Examples: ["ios/", "shared/", "scripts/"]
+	Directories []string `mapstructure:"directories"`
+
+	// AlwaysInclude specifies directories that should always be included
+	// regardless of the main Directories setting. Useful for shared configs,
+	// build scripts, or common dependencies.
+	// Examples: [".github/", "scripts/", "shared/"]
+	AlwaysInclude []string `mapstructure:"always_include"`
+
+	// ConeMode enables git's cone mode for sparse checkout (default: true).
+	// Cone mode is faster and uses directory paths instead of gitignore patterns.
+	// Disable this only if you need gitignore-style pattern matching (e.g., "*.md").
+	ConeMode bool `mapstructure:"cone_mode"`
+}
+
+// GetSparseDirectories returns the combined list of directories for sparse checkout.
+// It merges Directories and AlwaysInclude, removing duplicates.
+func (s *SparseCheckoutConfig) GetSparseDirectories() []string {
+	if !s.Enabled {
+		return nil
+	}
+
+	// Use a map to deduplicate
+	seen := make(map[string]bool)
+	var result []string
+
+	// Add main directories first
+	for _, dir := range s.Directories {
+		if !seen[dir] {
+			seen[dir] = true
+			result = append(result, dir)
+		}
+	}
+
+	// Add always-include directories
+	for _, dir := range s.AlwaysInclude {
+		if !seen[dir] {
+			seen[dir] = true
+			result = append(result, dir)
+		}
+	}
+
+	return result
 }
 
 // ExperimentalConfig controls experimental features that may change or be removed
@@ -337,6 +396,12 @@ func Default() *Config {
 		},
 		Paths: PathsConfig{
 			WorktreeDir: "", // Empty means use default: .claudio/worktrees
+			SparseCheckout: SparseCheckoutConfig{
+				Enabled:       false,
+				Directories:   []string{},
+				AlwaysInclude: []string{},
+				ConeMode:      true, // Cone mode is faster and recommended
+			},
 		},
 		Experimental: ExperimentalConfig{
 			IntelligentNaming:   false, // Disabled by default until stable
@@ -439,6 +504,10 @@ func SetDefaults() {
 
 	// Paths defaults
 	viper.SetDefault("paths.worktree_dir", defaults.Paths.WorktreeDir)
+	viper.SetDefault("paths.sparse_checkout.enabled", defaults.Paths.SparseCheckout.Enabled)
+	viper.SetDefault("paths.sparse_checkout.directories", defaults.Paths.SparseCheckout.Directories)
+	viper.SetDefault("paths.sparse_checkout.always_include", defaults.Paths.SparseCheckout.AlwaysInclude)
+	viper.SetDefault("paths.sparse_checkout.cone_mode", defaults.Paths.SparseCheckout.ConeMode)
 
 	// Experimental defaults
 	viper.SetDefault("experimental.intelligent_naming", defaults.Experimental.IntelligentNaming)

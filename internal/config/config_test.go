@@ -514,3 +514,126 @@ func TestPathsConfig_ResolveWorktreeDir_ViperLoading(t *testing.T) {
 		t.Errorf("Paths.WorktreeDir = %q, want %q", cfg.Paths.WorktreeDir, "/custom/worktrees")
 	}
 }
+
+func TestSparseCheckoutConfig_GetSparseDirectories(t *testing.T) {
+	t.Run("returns nil when disabled", func(t *testing.T) {
+		cfg := SparseCheckoutConfig{
+			Enabled:       false,
+			Directories:   []string{"ios/", "android/"},
+			AlwaysInclude: []string{"shared/"},
+		}
+		result := cfg.GetSparseDirectories()
+		if result != nil {
+			t.Errorf("expected nil when disabled, got %v", result)
+		}
+	})
+
+	t.Run("returns combined directories when enabled", func(t *testing.T) {
+		cfg := SparseCheckoutConfig{
+			Enabled:       true,
+			Directories:   []string{"ios/", "android/"},
+			AlwaysInclude: []string{"shared/", "scripts/"},
+		}
+		result := cfg.GetSparseDirectories()
+		expected := []string{"ios/", "android/", "shared/", "scripts/"}
+		if len(result) != len(expected) {
+			t.Errorf("got %v, want %v", result, expected)
+			return
+		}
+		for i, v := range result {
+			if v != expected[i] {
+				t.Errorf("result[%d] = %q, want %q", i, v, expected[i])
+			}
+		}
+	})
+
+	t.Run("deduplicates between directories and always_include", func(t *testing.T) {
+		cfg := SparseCheckoutConfig{
+			Enabled:       true,
+			Directories:   []string{"ios/", "shared/"},
+			AlwaysInclude: []string{"shared/", "scripts/"},
+		}
+		result := cfg.GetSparseDirectories()
+		// "shared/" should appear only once
+		expected := []string{"ios/", "shared/", "scripts/"}
+		if len(result) != len(expected) {
+			t.Errorf("got %v, want %v", result, expected)
+			return
+		}
+		for i, v := range result {
+			if v != expected[i] {
+				t.Errorf("result[%d] = %q, want %q", i, v, expected[i])
+			}
+		}
+	})
+
+	t.Run("handles empty directories with always_include", func(t *testing.T) {
+		cfg := SparseCheckoutConfig{
+			Enabled:       true,
+			Directories:   []string{},
+			AlwaysInclude: []string{"shared/"},
+		}
+		result := cfg.GetSparseDirectories()
+		expected := []string{"shared/"}
+		if len(result) != len(expected) {
+			t.Errorf("got %v, want %v", result, expected)
+			return
+		}
+		if result[0] != expected[0] {
+			t.Errorf("result[0] = %q, want %q", result[0], expected[0])
+		}
+	})
+
+	t.Run("handles duplicate within directories", func(t *testing.T) {
+		cfg := SparseCheckoutConfig{
+			Enabled:       true,
+			Directories:   []string{"ios/", "ios/", "android/"},
+			AlwaysInclude: []string{},
+		}
+		result := cfg.GetSparseDirectories()
+		// GetSparseDirectories deduplicates (though validation also catches this)
+		expected := []string{"ios/", "android/"}
+		if len(result) != len(expected) {
+			t.Errorf("got %v, want %v", result, expected)
+			return
+		}
+		for i, v := range result {
+			if v != expected[i] {
+				t.Errorf("result[%d] = %q, want %q", i, v, expected[i])
+			}
+		}
+	})
+
+	t.Run("handles both lists empty when enabled", func(t *testing.T) {
+		cfg := SparseCheckoutConfig{
+			Enabled:       true,
+			Directories:   []string{},
+			AlwaysInclude: []string{},
+		}
+		result := cfg.GetSparseDirectories()
+		// When enabled but both lists are empty, result is nil (no allocations made)
+		// This is acceptable because len(nil) == 0 works correctly
+		if len(result) != 0 {
+			t.Errorf("expected empty/nil slice, got %v", result)
+		}
+	})
+
+	t.Run("preserves order directories then always_include", func(t *testing.T) {
+		cfg := SparseCheckoutConfig{
+			Enabled:       true,
+			Directories:   []string{"b/", "a/"},
+			AlwaysInclude: []string{"z/", "y/"},
+		}
+		result := cfg.GetSparseDirectories()
+		expected := []string{"b/", "a/", "z/", "y/"}
+		if len(result) != len(expected) {
+			t.Errorf("got %v, want %v", result, expected)
+			return
+		}
+		for i, v := range result {
+			if v != expected[i] {
+				t.Errorf("result[%d] = %q, want %q", i, v, expected[i])
+			}
+		}
+	})
+}

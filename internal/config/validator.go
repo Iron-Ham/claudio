@@ -457,5 +457,152 @@ func (c *Config) validatePaths() []ValidationError {
 		}
 	}
 
+	// Validate sparse checkout configuration
+	errors = append(errors, c.validateSparseCheckout()...)
+
+	return errors
+}
+
+// validateSparseCheckout validates the SparseCheckoutConfig
+func (c *Config) validateSparseCheckout() []ValidationError {
+	var errors []ValidationError
+
+	sc := c.Paths.SparseCheckout
+
+	// If enabled, at least one directory must be specified
+	if sc.Enabled && len(sc.Directories) == 0 {
+		errors = append(errors, ValidationError{
+			Field:   "paths.sparse_checkout.directories",
+			Value:   sc.Directories,
+			Message: "at least one directory is required when sparse checkout is enabled",
+		})
+	}
+
+	// Validate total number of paths (directories + always_include)
+	const maxPaths = 100
+	totalPaths := len(sc.Directories) + len(sc.AlwaysInclude)
+	if totalPaths > maxPaths {
+		errors = append(errors, ValidationError{
+			Field:   "paths.sparse_checkout",
+			Value:   totalPaths,
+			Message: fmt.Sprintf("total paths (directories + always_include) exceeds maximum of %d", maxPaths),
+		})
+	}
+
+	// Validate directories
+	errors = append(errors, validateDirectoryList(sc.Directories, "paths.sparse_checkout.directories", sc.ConeMode)...)
+
+	// Validate always_include
+	errors = append(errors, validateDirectoryList(sc.AlwaysInclude, "paths.sparse_checkout.always_include", sc.ConeMode)...)
+
+	// Check for duplicates between directories and always_include
+	errors = append(errors, checkDuplicateDirectories(sc.Directories, sc.AlwaysInclude)...)
+
+	return errors
+}
+
+// validateDirectoryList validates a list of directory paths for sparse checkout
+func validateDirectoryList(dirs []string, fieldPrefix string, coneMode bool) []ValidationError {
+	var errors []ValidationError
+
+	seen := make(map[string]bool)
+
+	for i, dir := range dirs {
+		fieldName := fmt.Sprintf("%s[%d]", fieldPrefix, i)
+
+		// Directory cannot be empty
+		if strings.TrimSpace(dir) == "" {
+			errors = append(errors, ValidationError{
+				Field:   fieldName,
+				Value:   dir,
+				Message: "directory path cannot be empty",
+			})
+			continue
+		}
+
+		// Check for null bytes
+		if strings.ContainsRune(dir, '\x00') {
+			errors = append(errors, ValidationError{
+				Field:   fieldName,
+				Value:   dir,
+				Message: "directory path contains invalid null character",
+			})
+		}
+
+		// Cannot be absolute path
+		if strings.HasPrefix(dir, "/") {
+			errors = append(errors, ValidationError{
+				Field:   fieldName,
+				Value:   dir,
+				Message: "must be a relative path (remove leading /)",
+			})
+		}
+
+		// Cannot contain parent directory references
+		if strings.Contains(dir, "..") {
+			errors = append(errors, ValidationError{
+				Field:   fieldName,
+				Value:   dir,
+				Message: "cannot contain parent directory references (..)",
+			})
+		}
+
+		// In cone mode, wildcards are not supported
+		if coneMode && strings.ContainsAny(dir, "*?[") {
+			errors = append(errors, ValidationError{
+				Field:   fieldName,
+				Value:   dir,
+				Message: "wildcards are not supported in cone mode; use directory paths like 'ios/' or 'src/web/'",
+			})
+		}
+
+		// Path length limit
+		const maxPathLength = 1024
+		if len(dir) > maxPathLength {
+			errors = append(errors, ValidationError{
+				Field:   fieldName,
+				Value:   dir,
+				Message: fmt.Sprintf("path exceeds maximum length of %d characters", maxPathLength),
+			})
+		}
+
+		// Check for duplicates within the same list (normalize trailing slashes)
+		normalized := strings.TrimSuffix(dir, "/")
+		if seen[normalized] {
+			errors = append(errors, ValidationError{
+				Field:   fieldName,
+				Value:   dir,
+				Message: "duplicate directory path",
+			})
+		}
+		seen[normalized] = true
+	}
+
+	return errors
+}
+
+// checkDuplicateDirectories checks for duplicates between directories and always_include
+func checkDuplicateDirectories(dirs, alwaysInclude []string) []ValidationError {
+	var errors []ValidationError
+
+	// Build set of normalized directory paths
+	dirSet := make(map[string]bool)
+	for _, d := range dirs {
+		normalized := strings.TrimSuffix(d, "/")
+		dirSet[normalized] = true
+	}
+
+	// Check always_include against directories
+	for i, d := range alwaysInclude {
+		normalized := strings.TrimSuffix(d, "/")
+		if dirSet[normalized] {
+			errors = append(errors, ValidationError{
+				Field:   fmt.Sprintf("paths.sparse_checkout.always_include[%d]", i),
+				Value:   d,
+				Message: "directory already specified in 'directories' list",
+			})
+		}
+	}
+
 	return errors
 }
