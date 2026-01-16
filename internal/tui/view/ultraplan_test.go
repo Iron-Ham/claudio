@@ -791,11 +791,11 @@ func TestFindInstanceIDForTask(t *testing.T) {
 				TaskToInstance: tt.taskToInstance,
 			}
 
-			v := &UltraplanView{
-				ctx: &RenderContext{
-					Session: &orchestrator.Session{},
-				},
+			ctx := &RenderContext{
+				Session:   &orchestrator.Session{},
+				UltraPlan: &UltraPlanState{},
 			}
+			v := NewUltraplanView(ctx)
 
 			got := v.findInstanceIDForTask(session, tt.taskID)
 			if got != tt.wantInstID {
