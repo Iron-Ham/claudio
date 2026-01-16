@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Coordinator Decomposition** - Extracted cohesive responsibilities from the monolithic `coordinator.go` (3,852 LOC) into focused, testable modules: `internal/orchestrator/callback/` for centralized event dispatch, `internal/orchestrator/restart/` for step restart operations, and `internal/orchestrator/consolidation/` for group consolidation management. All three modules are fully integrated with the coordinator, delegating notification methods, step info lookups, restart operations, and group consolidation flows. The coordinator now serves as a thin orchestration layer (3,696 lines, 156 lines smaller than the original) while the extracted modules provide independently testable implementations with clear interface-driven contracts. Added proper error logging for previously silent persistence and instance management failures.
+
 ## [0.9.0] - 2026-01-16
 
 This release brings **Sidebar Customization & Group Dismiss** - allowing users to configure the sidebar width for their workflow preferences and quickly dismiss entire instance groups with a single shortcut.

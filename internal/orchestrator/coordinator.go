@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/callback"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/consolidation"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/phase"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/restart"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/retry"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/verify"
 )
@@ -66,6 +69,11 @@ type Coordinator struct {
 	verifier     Verifier
 	retryManager *retry.Manager
 	groupTracker *group.Tracker
+
+	// Extracted components for better separation of concerns
+	dispatcher                *callback.Dispatcher        // Handles event notification dispatch
+	restartManager            *restart.Manager            // Handles step restart operations
+	groupConsolidationManager *consolidation.GroupManager // Handles group consolidation operations
 
 	// Phase orchestrators - each orchestrator owns one phase of ultra-plan execution
 	planningOrchestrator      *phase.PlanningOrchestrator
@@ -158,6 +166,686 @@ func (e *coordinatorEventEmitter) EmitFailure(taskID, reason string) {
 	})
 }
 
+// =============================================================================
+// Restart Manager Adapters
+// =============================================================================
+
+// restartSessionAdapter adapts UltraPlanSession to restart.SessionOperations.
+//
+// Threading model: The restart manager holds its own lock during RestartStep operations.
+// However, the session field modifications in this adapter are not individually locked
+// because restart operations are designed to be called when the coordinator is in a
+// stable state (e.g., user-triggered restarts from the TUI when no tasks are running).
+// The restart manager's RestartStep method checks runningCount before proceeding,
+// ensuring no concurrent task execution during restarts.
+type restartSessionAdapter struct {
+	c *Coordinator
+}
+
+func (a *restartSessionAdapter) GetCoordinatorID() string {
+	return a.c.Session().CoordinatorID
+}
+
+func (a *restartSessionAdapter) SetCoordinatorID(id string) {
+	a.c.Session().CoordinatorID = id
+}
+
+func (a *restartSessionAdapter) GetPlanCoordinatorIDs() []string {
+	return a.c.Session().PlanCoordinatorIDs
+}
+
+func (a *restartSessionAdapter) GetPlanManagerID() string {
+	return a.c.Session().PlanManagerID
+}
+
+func (a *restartSessionAdapter) SetPlanManagerID(id string) {
+	a.c.Session().PlanManagerID = id
+}
+
+func (a *restartSessionAdapter) GetTaskToInstance() map[string]string {
+	return a.c.Session().TaskToInstance
+}
+
+func (a *restartSessionAdapter) GetGroupConsolidatorIDs() []string {
+	return a.c.Session().GroupConsolidatorIDs
+}
+
+func (a *restartSessionAdapter) GetSynthesisID() string {
+	return a.c.Session().SynthesisID
+}
+
+func (a *restartSessionAdapter) SetSynthesisID(id string) {
+	a.c.Session().SynthesisID = id
+}
+
+func (a *restartSessionAdapter) GetRevisionID() string {
+	return a.c.Session().RevisionID
+}
+
+func (a *restartSessionAdapter) SetRevisionID(id string) {
+	a.c.Session().RevisionID = id
+}
+
+func (a *restartSessionAdapter) GetConsolidationID() string {
+	return a.c.Session().ConsolidationID
+}
+
+func (a *restartSessionAdapter) SetConsolidationID(id string) {
+	a.c.Session().ConsolidationID = id
+}
+
+func (a *restartSessionAdapter) GetPlan() any {
+	return a.c.Session().Plan
+}
+
+func (a *restartSessionAdapter) SetPlan(plan any) {
+	if plan == nil {
+		a.c.Session().Plan = nil
+	} else if p, ok := plan.(*PlanSpec); ok {
+		a.c.Session().Plan = p
+	}
+}
+
+func (a *restartSessionAdapter) GetPhase() restart.UltraPlanPhase {
+	return restart.UltraPlanPhase(a.c.Session().Phase)
+}
+
+func (a *restartSessionAdapter) SetPhase(phase restart.UltraPlanPhase) {
+	a.c.Session().Phase = UltraPlanPhase(phase)
+}
+
+func (a *restartSessionAdapter) IsMultiPass() bool {
+	return a.c.Session().Config.MultiPass
+}
+
+func (a *restartSessionAdapter) GetTask(taskID string) any {
+	return a.c.Session().GetTask(taskID)
+}
+
+func (a *restartSessionAdapter) ClearSynthesisState() {
+	session := a.c.Session()
+	session.SynthesisID = ""
+	session.RevisionID = ""
+	session.Revision = nil
+}
+
+func (a *restartSessionAdapter) GetRevision() any {
+	return a.c.Session().Revision
+}
+
+func (a *restartSessionAdapter) ClearConsolidationState() {
+	session := a.c.Session()
+	session.ConsolidationID = ""
+	session.Consolidation = nil
+}
+
+func (a *restartSessionAdapter) ClearPRUrls() {
+	a.c.Session().PRUrls = nil
+}
+
+func (a *restartSessionAdapter) GetExecutionOrder() [][]string {
+	if a.c.Session().Plan == nil {
+		return nil
+	}
+	return a.c.Session().Plan.ExecutionOrder
+}
+
+func (a *restartSessionAdapter) ClearGroupConsolidatorID(groupIndex int) {
+	session := a.c.Session()
+	if groupIndex < len(session.GroupConsolidatorIDs) {
+		session.GroupConsolidatorIDs[groupIndex] = ""
+	}
+}
+
+func (a *restartSessionAdapter) ClearGroupConsolidatedBranch(groupIndex int) {
+	session := a.c.Session()
+	if groupIndex < len(session.GroupConsolidatedBranches) {
+		session.GroupConsolidatedBranches[groupIndex] = ""
+	}
+}
+
+func (a *restartSessionAdapter) ClearGroupConsolidationContext(groupIndex int) {
+	session := a.c.Session()
+	if groupIndex < len(session.GroupConsolidationContexts) {
+		session.GroupConsolidationContexts[groupIndex] = nil
+	}
+}
+
+func (a *restartSessionAdapter) GetCompletedTasks() []string {
+	return a.c.Session().CompletedTasks
+}
+
+func (a *restartSessionAdapter) SetCompletedTasks(tasks []string) {
+	a.c.Session().CompletedTasks = tasks
+}
+
+func (a *restartSessionAdapter) GetFailedTasks() []string {
+	return a.c.Session().FailedTasks
+}
+
+func (a *restartSessionAdapter) SetFailedTasks(tasks []string) {
+	a.c.Session().FailedTasks = tasks
+}
+
+func (a *restartSessionAdapter) DeleteTaskFromInstance(taskID string) {
+	delete(a.c.Session().TaskToInstance, taskID)
+}
+
+func (a *restartSessionAdapter) DeleteTaskCommitCount(taskID string) {
+	delete(a.c.Session().TaskCommitCounts, taskID)
+}
+
+func (a *restartSessionAdapter) ClearGroupDecision() {
+	a.c.Session().GroupDecision = nil
+}
+
+func (a *restartSessionAdapter) GetMultiPassStrategyNames() []string {
+	return GetMultiPassStrategyNames()
+}
+
+func (a *restartSessionAdapter) GetTaskGroupIndex(taskID string) int {
+	return a.c.getTaskGroupIndex(taskID)
+}
+
+// restartRetryAdapter adapts retry.Manager to restart.RetryManagerOperations.
+type restartRetryAdapter struct {
+	c *Coordinator
+}
+
+func (a *restartRetryAdapter) Reset(taskID string) {
+	a.c.retryManager.Reset(taskID)
+}
+
+func (a *restartRetryAdapter) GetAllStates() map[string]any {
+	states := a.c.retryManager.GetAllStates()
+	result := make(map[string]any, len(states))
+	for k, v := range states {
+		result[k] = v
+	}
+	return result
+}
+
+// restartInstanceAdapter adapts Orchestrator to restart.InstanceOperations.
+type restartInstanceAdapter struct {
+	c *Coordinator
+}
+
+func (a *restartInstanceAdapter) GetInstance(id string) any {
+	return a.c.orch.GetInstance(id)
+}
+
+func (a *restartInstanceAdapter) StopInstance(inst any) error {
+	if i, ok := inst.(*Instance); ok {
+		return a.c.orch.StopInstance(i)
+	}
+	return fmt.Errorf("invalid instance type")
+}
+
+// restartPlanningAdapter adapts Coordinator to restart.PlanningOperations.
+type restartPlanningAdapter struct {
+	c *Coordinator
+}
+
+func (a *restartPlanningAdapter) RunPlanning() error {
+	return a.c.RunPlanning()
+}
+
+func (a *restartPlanningAdapter) RunPlanManager() error {
+	return a.c.RunPlanManager()
+}
+
+func (a *restartPlanningAdapter) ResetPlanningOrchestrator() {
+	if a.c.planningOrchestrator != nil {
+		a.c.planningOrchestrator.Reset()
+	}
+}
+
+// restartExecutionAdapter adapts Coordinator to restart.ExecutionOperations.
+type restartExecutionAdapter struct {
+	c *Coordinator
+}
+
+func (a *restartExecutionAdapter) StartTask(taskID string, completionChan chan<- any) error {
+	// Create an internal completion channel and forward any completions
+	internalChan := make(chan taskCompletion, 1)
+
+	// Start the task first - if it fails, we don't need the forwarding goroutine
+	if err := a.c.startTask(taskID, internalChan); err != nil {
+		return err
+	}
+
+	// Task started successfully, spawn forwarding goroutine
+	go func() {
+		select {
+		case completion := <-internalChan:
+			if completionChan != nil {
+				completionChan <- completion
+			}
+		case <-a.c.ctx.Done():
+			// Context cancelled, nothing to forward
+		}
+	}()
+	return nil
+}
+
+func (a *restartExecutionAdapter) ResetExecutionOrchestrator() {
+	if a.c.executionOrchestrator != nil {
+		a.c.executionOrchestrator.Reset()
+	}
+}
+
+func (a *restartExecutionAdapter) GetRunningCount() int {
+	return a.c.runningCount
+}
+
+// restartSynthesisAdapter adapts Coordinator to restart.SynthesisOperations.
+type restartSynthesisAdapter struct {
+	c *Coordinator
+}
+
+func (a *restartSynthesisAdapter) RunSynthesis() error {
+	return a.c.RunSynthesis()
+}
+
+func (a *restartSynthesisAdapter) StartRevision(issues []any) error {
+	// Convert []any to []RevisionIssue
+	revisionIssues := make([]RevisionIssue, 0, len(issues))
+	for _, issue := range issues {
+		if ri, ok := issue.(RevisionIssue); ok {
+			revisionIssues = append(revisionIssues, ri)
+		}
+	}
+	return a.c.StartRevision(revisionIssues)
+}
+
+func (a *restartSynthesisAdapter) ResetSynthesisOrchestrator() {
+	if a.c.synthesisOrchestrator != nil {
+		a.c.synthesisOrchestrator.Reset()
+	}
+}
+
+// restartConsolidationAdapter adapts Coordinator to restart.ConsolidationOperations.
+type restartConsolidationAdapter struct {
+	c *Coordinator
+}
+
+func (a *restartConsolidationAdapter) StartConsolidation() error {
+	return a.c.StartConsolidation()
+}
+
+func (a *restartConsolidationAdapter) StartGroupConsolidatorSession(groupIndex int) error {
+	return a.c.startGroupConsolidatorSession(groupIndex)
+}
+
+func (a *restartConsolidationAdapter) ResetConsolidationOrchestrator() {
+	if a.c.consolidationOrchestrator != nil {
+		a.c.consolidationOrchestrator.Reset()
+	}
+}
+
+// restartPersistenceAdapter adapts Orchestrator to restart.PersistenceOperations.
+type restartPersistenceAdapter struct {
+	c *Coordinator
+}
+
+func (a *restartPersistenceAdapter) SaveSession() error {
+	return a.c.orch.SaveSession()
+}
+
+func (a *restartPersistenceAdapter) SetTaskRetries(retries map[string]any) {
+	session := a.c.Session()
+	if session.TaskRetries == nil {
+		session.TaskRetries = make(map[string]*retry.TaskState)
+	}
+	for k, v := range retries {
+		if state, ok := v.(*retry.TaskState); ok {
+			session.TaskRetries[k] = state
+		}
+	}
+}
+
+// =============================================================================
+// Consolidation Manager Adapters
+// =============================================================================
+
+// consolidationSessionAdapter adapts UltraPlanSession to consolidation.SessionState.
+type consolidationSessionAdapter struct {
+	c *Coordinator
+}
+
+func (a *consolidationSessionAdapter) GetPlanSummary() string {
+	session := a.c.Session()
+	if session.Plan == nil {
+		return ""
+	}
+	return session.Plan.Summary
+}
+
+func (a *consolidationSessionAdapter) GetExecutionOrder() [][]string {
+	session := a.c.Session()
+	if session.Plan == nil {
+		return nil
+	}
+	return session.Plan.ExecutionOrder
+}
+
+func (a *consolidationSessionAdapter) GetTaskCommitCounts() map[string]int {
+	return a.c.Session().TaskCommitCounts
+}
+
+func (a *consolidationSessionAdapter) GetTask(taskID string) any {
+	return a.c.Session().GetTask(taskID)
+}
+
+func (a *consolidationSessionAdapter) GetGroupConsolidatorIDs() []string {
+	return a.c.Session().GroupConsolidatorIDs
+}
+
+func (a *consolidationSessionAdapter) SetGroupConsolidatorID(groupIndex int, instanceID string) {
+	session := a.c.Session()
+	// Ensure slice is large enough
+	for len(session.GroupConsolidatorIDs) <= groupIndex {
+		session.GroupConsolidatorIDs = append(session.GroupConsolidatorIDs, "")
+	}
+	session.GroupConsolidatorIDs[groupIndex] = instanceID
+}
+
+func (a *consolidationSessionAdapter) GetGroupConsolidatedBranches() []string {
+	return a.c.Session().GroupConsolidatedBranches
+}
+
+func (a *consolidationSessionAdapter) SetGroupConsolidatedBranch(groupIndex int, branchName string) {
+	session := a.c.Session()
+	// Ensure slice is large enough
+	for len(session.GroupConsolidatedBranches) <= groupIndex {
+		session.GroupConsolidatedBranches = append(session.GroupConsolidatedBranches, "")
+	}
+	session.GroupConsolidatedBranches[groupIndex] = branchName
+}
+
+func (a *consolidationSessionAdapter) GetGroupConsolidationContexts() []*consolidation.GroupConsolidationCompletion {
+	session := a.c.Session()
+	// Convert internal type to consolidation type
+	result := make([]*consolidation.GroupConsolidationCompletion, len(session.GroupConsolidationContexts))
+	for i, ctx := range session.GroupConsolidationContexts {
+		if ctx != nil {
+			result[i] = convertFileToConsolidationCompletion(ctx)
+		}
+	}
+	return result
+}
+
+func (a *consolidationSessionAdapter) SetGroupConsolidationContext(groupIndex int, context *consolidation.GroupConsolidationCompletion) {
+	session := a.c.Session()
+	// Ensure slice is large enough
+	for len(session.GroupConsolidationContexts) <= groupIndex {
+		session.GroupConsolidationContexts = append(session.GroupConsolidationContexts, nil)
+	}
+	if context != nil {
+		session.GroupConsolidationContexts[groupIndex] = convertConsolidationCompletionToFile(context)
+	} else {
+		session.GroupConsolidationContexts[groupIndex] = nil
+	}
+}
+
+func (a *consolidationSessionAdapter) GetBranchPrefix() string {
+	return a.c.Session().Config.BranchPrefix
+}
+
+func (a *consolidationSessionAdapter) GetSessionID() string {
+	return a.c.Session().ID
+}
+
+func (a *consolidationSessionAdapter) IsMultiPass() bool {
+	return a.c.Session().Config.MultiPass
+}
+
+// convertFileToConsolidationCompletion converts internal GroupConsolidationCompletionFile to consolidation package type.
+func convertFileToConsolidationCompletion(internal *GroupConsolidationCompletionFile) *consolidation.GroupConsolidationCompletion {
+	if internal == nil {
+		return nil
+	}
+	result := &consolidation.GroupConsolidationCompletion{
+		GroupIndex:         internal.GroupIndex,
+		Status:             internal.Status,
+		BranchName:         internal.BranchName,
+		TasksConsolidated:  internal.TasksConsolidated,
+		Notes:              internal.Notes,
+		IssuesForNextGroup: internal.IssuesForNextGroup,
+	}
+	// Convert ConflictsResolved
+	for _, cr := range internal.ConflictsResolved {
+		result.ConflictsResolved = append(result.ConflictsResolved, consolidation.ConflictResolution{
+			File:       cr.File,
+			Resolution: cr.Resolution,
+		})
+	}
+	// Convert Verification
+	result.Verification = consolidation.VerificationResult{
+		ProjectType:    internal.Verification.ProjectType,
+		OverallSuccess: internal.Verification.OverallSuccess,
+		Summary:        internal.Verification.Summary,
+	}
+	for _, cmd := range internal.Verification.CommandsRun {
+		result.Verification.CommandsRun = append(result.Verification.CommandsRun, consolidation.CommandResult{
+			Name:    cmd.Name,
+			Command: cmd.Command,
+			Success: cmd.Success,
+		})
+	}
+	return result
+}
+
+// convertConsolidationCompletionToFile converts consolidation package type to internal GroupConsolidationCompletionFile.
+func convertConsolidationCompletionToFile(external *consolidation.GroupConsolidationCompletion) *GroupConsolidationCompletionFile {
+	if external == nil {
+		return nil
+	}
+	result := &GroupConsolidationCompletionFile{
+		GroupIndex:         external.GroupIndex,
+		Status:             external.Status,
+		BranchName:         external.BranchName,
+		TasksConsolidated:  external.TasksConsolidated,
+		Notes:              external.Notes,
+		IssuesForNextGroup: external.IssuesForNextGroup,
+	}
+	// Convert ConflictsResolved
+	for _, cr := range external.ConflictsResolved {
+		result.ConflictsResolved = append(result.ConflictsResolved, ConflictResolution{
+			File:       cr.File,
+			Resolution: cr.Resolution,
+		})
+	}
+	// Convert Verification
+	result.Verification = VerificationResult{
+		ProjectType:    external.Verification.ProjectType,
+		OverallSuccess: external.Verification.OverallSuccess,
+		Summary:        external.Verification.Summary,
+	}
+	for _, cmd := range external.Verification.CommandsRun {
+		result.Verification.CommandsRun = append(result.Verification.CommandsRun, VerificationStep{
+			Name:    cmd.Name,
+			Command: cmd.Command,
+			Success: cmd.Success,
+		})
+	}
+	return result
+}
+
+// consolidationInstanceStoreAdapter adapts Orchestrator to consolidation.InstanceStore.
+type consolidationInstanceStoreAdapter struct {
+	c *Coordinator
+}
+
+func (a *consolidationInstanceStoreAdapter) GetInstances() []consolidation.InstanceInfo {
+	// Get instances from the base session
+	instances := a.c.baseSession.Instances
+	result := make([]consolidation.InstanceInfo, len(instances))
+	for i, inst := range instances {
+		result[i] = &consolidationInstanceInfoAdapter{inst: inst}
+	}
+	return result
+}
+
+// consolidationInstanceInfoAdapter adapts Instance to consolidation.InstanceInfo.
+type consolidationInstanceInfoAdapter struct {
+	inst *Instance
+}
+
+func (a *consolidationInstanceInfoAdapter) GetID() string {
+	return a.inst.ID
+}
+
+func (a *consolidationInstanceInfoAdapter) GetWorktreePath() string {
+	return a.inst.WorktreePath
+}
+
+func (a *consolidationInstanceInfoAdapter) GetBranch() string {
+	return a.inst.Branch
+}
+
+func (a *consolidationInstanceInfoAdapter) GetTask() string {
+	return a.inst.Task
+}
+
+// consolidationInstanceOpsAdapter adapts Orchestrator to consolidation.InstanceOperations.
+type consolidationInstanceOpsAdapter struct {
+	c *Coordinator
+}
+
+func (a *consolidationInstanceOpsAdapter) AddInstance(session any, task string) (any, error) {
+	if s, ok := session.(*Session); ok {
+		return a.c.orch.AddInstance(s, task)
+	}
+	return nil, fmt.Errorf("invalid session type")
+}
+
+func (a *consolidationInstanceOpsAdapter) AddInstanceFromBranch(session any, task string, baseBranch string) (any, error) {
+	if s, ok := session.(*Session); ok {
+		return a.c.orch.AddInstanceFromBranch(s, task, baseBranch)
+	}
+	return nil, fmt.Errorf("invalid session type")
+}
+
+func (a *consolidationInstanceOpsAdapter) StartInstance(inst any) error {
+	if i, ok := inst.(*Instance); ok {
+		return a.c.orch.StartInstance(i)
+	}
+	return fmt.Errorf("invalid instance type")
+}
+
+func (a *consolidationInstanceOpsAdapter) StopInstance(inst any) error {
+	if i, ok := inst.(*Instance); ok {
+		return a.c.orch.StopInstance(i)
+	}
+	return fmt.Errorf("invalid instance type")
+}
+
+func (a *consolidationInstanceOpsAdapter) GetInstance(id string) any {
+	return a.c.orch.GetInstance(id)
+}
+
+// consolidationWorktreeAdapter adapts worktree operations to consolidation.WorktreeOperations.
+type consolidationWorktreeAdapter struct {
+	c *Coordinator
+}
+
+func (a *consolidationWorktreeAdapter) FindMainBranch() string {
+	return a.c.orch.wt.FindMainBranch()
+}
+
+func (a *consolidationWorktreeAdapter) CreateBranchFrom(branchName, baseBranch string) error {
+	return a.c.orch.wt.CreateBranchFrom(branchName, baseBranch)
+}
+
+func (a *consolidationWorktreeAdapter) CreateWorktreeFromBranch(worktreePath, branchName string) error {
+	return a.c.orch.wt.CreateWorktreeFromBranch(worktreePath, branchName)
+}
+
+func (a *consolidationWorktreeAdapter) Remove(worktreePath string) error {
+	return a.c.orch.wt.Remove(worktreePath)
+}
+
+func (a *consolidationWorktreeAdapter) CherryPickBranch(worktreePath, sourceBranch string) error {
+	return a.c.orch.wt.CherryPickBranch(worktreePath, sourceBranch)
+}
+
+func (a *consolidationWorktreeAdapter) AbortCherryPick(worktreePath string) error {
+	return a.c.orch.wt.AbortCherryPick(worktreePath)
+}
+
+func (a *consolidationWorktreeAdapter) CountCommitsBetween(worktreePath, baseRef, headRef string) (int, error) {
+	return a.c.orch.wt.CountCommitsBetween(worktreePath, baseRef, headRef)
+}
+
+func (a *consolidationWorktreeAdapter) Push(worktreePath string, force bool) error {
+	return a.c.orch.wt.Push(worktreePath, force)
+}
+
+// consolidationCompletionParserAdapter adapts completion file parsing to consolidation.CompletionFileParser.
+type consolidationCompletionParserAdapter struct {
+	c *Coordinator
+}
+
+func (a *consolidationCompletionParserAdapter) ParseTaskCompletionFile(worktreePath string) (*consolidation.TaskCompletionData, error) {
+	completion, err := ParseTaskCompletionFile(worktreePath)
+	if err != nil {
+		return nil, err
+	}
+	return &consolidation.TaskCompletionData{
+		Summary:      completion.Summary,
+		Issues:       completion.Issues,
+		Suggestions:  completion.Suggestions,
+		Dependencies: completion.Dependencies,
+		Notes:        string(completion.Notes),
+	}, nil
+}
+
+func (a *consolidationCompletionParserAdapter) ParseGroupConsolidationCompletionFile(worktreePath string) (*consolidation.GroupConsolidationCompletion, error) {
+	completion, err := ParseGroupConsolidationCompletionFile(worktreePath)
+	if err != nil {
+		return nil, err
+	}
+	return convertFileToConsolidationCompletion(completion), nil
+}
+
+func (a *consolidationCompletionParserAdapter) GroupConsolidationCompletionFilePath(worktreePath string) string {
+	return GroupConsolidationCompletionFilePath(worktreePath)
+}
+
+// consolidationInstanceGroupsAdapter adapts instance group management to consolidation.InstanceGroupOperations.
+type consolidationInstanceGroupsAdapter struct {
+	c *Coordinator
+}
+
+func (a *consolidationInstanceGroupsAdapter) AddInstanceToGroup(instanceID string, isMultiPass bool) {
+	// The Coordinator handles instance grouping through its existing mechanisms.
+	// This interface method is called by the consolidation manager but the actual
+	// grouping is handled by the Coordinator's internal state management.
+	// No action needed here as instances are already added to groups during creation.
+}
+
+// consolidationPersistenceAdapter adapts Orchestrator to consolidation.PersistenceOperations.
+type consolidationPersistenceAdapter struct {
+	c *Coordinator
+}
+
+func (a *consolidationPersistenceAdapter) SaveSession() error {
+	return a.c.orch.SaveSession()
+}
+
+// consolidationEventEmitterAdapter adapts event emission to consolidation.EventEmitter.
+type consolidationEventEmitterAdapter struct {
+	c *Coordinator
+}
+
+func (a *consolidationEventEmitterAdapter) EmitEvent(eventType, message string) {
+	a.c.manager.emitEvent(CoordinatorEvent{
+		Type:    CoordinatorEventType(eventType),
+		Message: message,
+	})
+}
+
 // NewCoordinator creates a new coordinator for an ultra-plan session.
 // The logger parameter is optional; if nil, a no-op logger will be used.
 func NewCoordinator(orch *Orchestrator, baseSession *Session, ultraSession *UltraPlanSession, logger *logging.Logger) *Coordinator {
@@ -246,6 +934,36 @@ func NewCoordinator(orch *Orchestrator, baseSession *Session, ultraSession *Ultr
 		runningTasks: make(map[string]string),
 	}
 
+	// Initialize the callback dispatcher for centralized event notification
+	c.dispatcher = callback.NewDispatcher(orch, sessionLogger)
+
+	// Initialize the restart manager with adapter context
+	c.restartManager = restart.NewManager(&restart.Context{
+		Session:       &restartSessionAdapter{c: c},
+		RetryManager:  &restartRetryAdapter{c: c},
+		Instances:     &restartInstanceAdapter{c: c},
+		Planning:      &restartPlanningAdapter{c: c},
+		Execution:     &restartExecutionAdapter{c: c},
+		Synthesis:     &restartSynthesisAdapter{c: c},
+		Consolidation: &restartConsolidationAdapter{c: c},
+		Persistence:   &restartPersistenceAdapter{c: c},
+		Logger:        sessionLogger,
+	})
+
+	// Initialize the group consolidation manager with adapter context
+	c.groupConsolidationManager = consolidation.NewGroupManager(&consolidation.Context{
+		Session:          &consolidationSessionAdapter{c: c},
+		InstanceStore:    &consolidationInstanceStoreAdapter{c: c},
+		Instances:        &consolidationInstanceOpsAdapter{c: c},
+		Worktree:         &consolidationWorktreeAdapter{c: c},
+		CompletionParser: &consolidationCompletionParserAdapter{c: c},
+		InstanceGroups:   &consolidationInstanceGroupsAdapter{c: c},
+		Persistence:      &consolidationPersistenceAdapter{c: c},
+		EventEmitter:     &consolidationEventEmitterAdapter{c: c},
+		ClaudioDir:       orch.claudioDir,
+		Logger:           sessionLogger,
+	})
+
 	// Initialize the verifier with adapters that bridge to coordinator state
 	retryTracker := &coordinatorRetryTracker{c: c}
 	eventEmitter := &coordinatorEventEmitter{c: c}
@@ -280,6 +998,43 @@ func (c *Coordinator) SetCallbacks(cb *CoordinatorCallbacks) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.callbacks = cb
+
+	// Also update the dispatcher's callbacks with type-adapted wrappers
+	if c.dispatcher != nil {
+		c.dispatcher.SetCallbacks(adaptCallbacksForDispatcher(cb))
+	}
+}
+
+// adaptCallbacksForDispatcher converts CoordinatorCallbacks to callback.Callbacks
+// bridging the type boundary between packages.
+func adaptCallbacksForDispatcher(cb *CoordinatorCallbacks) *callback.Callbacks {
+	if cb == nil {
+		return nil
+	}
+	return &callback.Callbacks{
+		OnPhaseChange: func(phase callback.UltraPlanPhase) {
+			if cb.OnPhaseChange != nil {
+				cb.OnPhaseChange(UltraPlanPhase(phase))
+			}
+		},
+		OnTaskStart:     cb.OnTaskStart,
+		OnTaskComplete:  cb.OnTaskComplete,
+		OnTaskFailed:    cb.OnTaskFailed,
+		OnGroupComplete: cb.OnGroupComplete,
+		OnPlanReady: func(plan callback.PlanSpec) {
+			if cb.OnPlanReady != nil {
+				if p, ok := plan.(*PlanSpec); ok {
+					cb.OnPlanReady(p)
+				}
+			}
+		},
+		OnProgress: func(completed, total int, phase callback.UltraPlanPhase) {
+			if cb.OnProgress != nil {
+				cb.OnProgress(completed, total, UltraPlanPhase(phase))
+			}
+		},
+		OnComplete: cb.OnComplete,
+	}
 }
 
 // Manager returns the underlying ultra-plan manager
@@ -342,33 +1097,26 @@ func (c *Coordinator) notifyPhaseChange(phase UltraPlanPhase) {
 	// Get the previous phase for logging
 	session := c.Session()
 	fromPhase := PhasePlanning
+	sessionID := ""
 	if session != nil {
 		fromPhase = session.Phase
+		sessionID = session.ID
 	}
 
+	// Update manager state
 	c.manager.SetPhase(phase)
 
-	// Log the phase transition
-	c.logger.Info("phase changed",
-		"from_phase", string(fromPhase),
-		"to_phase", string(phase),
-		"session_id", session.ID,
+	// Delegate logging, persistence, and callback dispatch to the dispatcher
+	c.dispatcher.NotifyPhaseChange(
+		callback.UltraPlanPhase(fromPhase),
+		callback.UltraPlanPhase(phase),
+		sessionID,
 	)
-
-	// Persist the phase change
-	_ = c.orch.SaveSession()
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnPhaseChange != nil {
-		cb.OnPhaseChange(phase)
-	}
 }
 
 // notifyTaskStart notifies callbacks of task start
 func (c *Coordinator) notifyTaskStart(taskID, instanceID string) {
+	// Update manager state
 	c.manager.AssignTaskToInstance(taskID, instanceID)
 
 	// Get task title for logging
@@ -380,87 +1128,40 @@ func (c *Coordinator) notifyTaskStart(taskID, instanceID string) {
 		}
 	}
 
-	// Log task started
-	c.logger.Info("task started",
-		"task_id", taskID,
-		"instance_id", instanceID,
-		"task_title", taskTitle,
-	)
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnTaskStart != nil {
-		cb.OnTaskStart(taskID, instanceID)
-	}
+	// Delegate logging and callback dispatch to the dispatcher
+	c.dispatcher.NotifyTaskStart(taskID, instanceID, taskTitle)
 }
 
 // notifyTaskComplete notifies callbacks of task completion
 func (c *Coordinator) notifyTaskComplete(taskID string) {
+	// Update manager state
 	c.manager.MarkTaskComplete(taskID)
 
-	// Log task completed
-	// Note: duration tracking requires instance start time, which could be added in the future
-	c.logger.Info("task completed",
-		"task_id", taskID,
-	)
-
-	// Persist the task completion
-	_ = c.orch.SaveSession()
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnTaskComplete != nil {
-		cb.OnTaskComplete(taskID)
-	}
+	// Delegate logging, persistence, and callback dispatch to the dispatcher
+	c.dispatcher.NotifyTaskComplete(taskID)
 }
 
 // notifyTaskFailed notifies callbacks of task failure
 func (c *Coordinator) notifyTaskFailed(taskID, reason string) {
+	// Update manager state
 	c.manager.MarkTaskFailed(taskID, reason)
 
-	// Log task failed
-	c.logger.Info("task failed",
-		"task_id", taskID,
-		"reason", reason,
-	)
-
-	// Persist the task failure
-	_ = c.orch.SaveSession()
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnTaskFailed != nil {
-		cb.OnTaskFailed(taskID, reason)
-	}
+	// Delegate logging, persistence, and callback dispatch to the dispatcher
+	c.dispatcher.NotifyTaskFailed(taskID, reason)
 }
 
 // notifyPlanReady notifies callbacks that planning is complete
 func (c *Coordinator) notifyPlanReady(plan *PlanSpec) {
-	// Log plan ready
+	// Extract counts for logging
 	taskCount := 0
 	groupCount := 0
 	if plan != nil {
 		taskCount = len(plan.Tasks)
 		groupCount = len(plan.ExecutionOrder)
 	}
-	c.logger.Info("plan ready",
-		"task_count", taskCount,
-		"group_count", groupCount,
-	)
 
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnPlanReady != nil {
-		cb.OnPlanReady(plan)
-	}
+	// Delegate logging and callback dispatch to the dispatcher
+	c.dispatcher.NotifyPlanReady(plan, taskCount, groupCount)
 }
 
 // notifyProgress notifies callbacks of progress
@@ -473,37 +1174,14 @@ func (c *Coordinator) notifyProgress() {
 	completed := len(session.CompletedTasks)
 	total := len(session.Plan.Tasks)
 
-	// Log progress update at DEBUG level
-	c.logger.Debug("progress update",
-		"completed", completed,
-		"total", total,
-		"phase", string(session.Phase),
-	)
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnProgress != nil {
-		cb.OnProgress(completed, total, session.Phase)
-	}
+	// Delegate logging and callback dispatch to the dispatcher
+	c.dispatcher.NotifyProgress(completed, total, callback.UltraPlanPhase(session.Phase))
 }
 
 // notifyComplete notifies callbacks of completion
 func (c *Coordinator) notifyComplete(success bool, summary string) {
-	// Log coordinator complete
-	c.logger.Info("coordinator complete",
-		"success", success,
-		"summary", summary,
-	)
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnComplete != nil {
-		cb.OnComplete(success, summary)
-	}
+	// Delegate logging and callback dispatch to the dispatcher
+	c.dispatcher.NotifyComplete(success, summary)
 }
 
 // RunPlanning executes the planning phase
@@ -1402,27 +2080,15 @@ func (c *Coordinator) checkAndAdvanceGroup() {
 	session.CurrentGroup = nextGroup
 	c.mu.Unlock()
 
-	// Log group completion using GetGroupTasks for task count
+	// Get task count for logging
 	groupTasks := c.groupTracker.GetGroupTasks(currentGroup)
 	taskCount := 0
 	if groupTasks != nil {
 		taskCount = len(groupTasks)
 	}
-	c.logger.Info("group completed",
-		"group_index", currentGroup,
-		"task_count", taskCount,
-	)
 
-	// Call the callback
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-	if cb != nil && cb.OnGroupComplete != nil {
-		cb.OnGroupComplete(currentGroup)
-	}
-
-	// Persist the group advancement
-	_ = c.orch.SaveSession()
+	// Delegate logging, callback, and persistence to the dispatcher
+	c.dispatcher.NotifyGroupComplete(currentGroup, taskCount)
 }
 
 // finishExecution completes the execution phase
@@ -2686,21 +3352,37 @@ func (c *Coordinator) RetriggerGroup(targetGroup int) error {
 
 // GetStepInfo returns information about a step given its instance ID.
 // This is used by the TUI to determine what kind of step is selected for restart/input operations.
-// It queries both session state and phase orchestrators to ensure consistency.
+// It delegates to the restart manager for session state lookups and provides
+// orchestrator fallbacks for edge cases where session state hasn't been updated yet.
 func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
-	session := c.Session()
-	if session == nil || instanceID == "" {
+	if instanceID == "" {
 		return nil
 	}
 
-	// Check if it's the planning coordinator (session state)
-	if session.CoordinatorID == instanceID {
-		return &StepInfo{
-			Type:       StepTypePlanning,
-			InstanceID: instanceID,
-			GroupIndex: -1,
-			Label:      "Planning Coordinator",
+	// Delegate to restart manager for session state lookups
+	if c.restartManager != nil {
+		if restartInfo := c.restartManager.GetStepInfo(instanceID); restartInfo != nil {
+			// Convert restart.StepInfo to orchestrator.StepInfo
+			return &StepInfo{
+				Type:       StepType(restartInfo.Type),
+				InstanceID: restartInfo.InstanceID,
+				TaskID:     restartInfo.TaskID,
+				GroupIndex: restartInfo.GroupIndex,
+				Label:      restartInfo.Label,
+			}
 		}
+	}
+
+	// Orchestrator fallbacks for edge cases where session state lags behind orchestrator state
+	return c.getStepInfoFromOrchestrators(instanceID)
+}
+
+// getStepInfoFromOrchestrators checks phase orchestrators for step info.
+// This is a fallback for when session state hasn't been updated yet.
+func (c *Coordinator) getStepInfoFromOrchestrators(instanceID string) *StepInfo {
+	session := c.Session()
+	if session == nil {
+		return nil
 	}
 
 	// Check planning orchestrator state as fallback
@@ -2731,52 +3413,6 @@ func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
 		}
 	}
 
-	// Check multi-pass plan coordinators (session state)
-	for i, coordID := range session.PlanCoordinatorIDs {
-		if coordID == instanceID {
-			strategies := GetMultiPassStrategyNames()
-			label := fmt.Sprintf("Plan Coordinator %d", i+1)
-			if i < len(strategies) {
-				label = fmt.Sprintf("Plan Coordinator (%s)", strategies[i])
-			}
-			return &StepInfo{
-				Type:       StepTypePlanning,
-				InstanceID: instanceID,
-				GroupIndex: i,
-				Label:      label,
-			}
-		}
-	}
-
-	// Check if it's the plan manager
-	if session.PlanManagerID == instanceID {
-		return &StepInfo{
-			Type:       StepTypePlanManager,
-			InstanceID: instanceID,
-			GroupIndex: -1,
-			Label:      "Plan Manager",
-		}
-	}
-
-	// Check if it's a task instance (session state)
-	for taskID, instID := range session.TaskToInstance {
-		if instID == instanceID {
-			task := session.GetTask(taskID)
-			label := taskID
-			if task != nil {
-				label = task.Title
-			}
-			groupIdx := c.getTaskGroupIndex(taskID)
-			return &StepInfo{
-				Type:       StepTypeTask,
-				InstanceID: instanceID,
-				TaskID:     taskID,
-				GroupIndex: groupIdx,
-				Label:      label,
-			}
-		}
-	}
-
 	// Check execution orchestrator for running tasks as fallback
 	if execOrch := c.ExecutionOrchestrator(); execOrch != nil {
 		state := execOrch.State()
@@ -2799,28 +3435,6 @@ func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
 		}
 	}
 
-	// Check group consolidators (session state)
-	for i, consolidatorID := range session.GroupConsolidatorIDs {
-		if consolidatorID == instanceID {
-			return &StepInfo{
-				Type:       StepTypeGroupConsolidator,
-				InstanceID: instanceID,
-				GroupIndex: i,
-				Label:      fmt.Sprintf("Group %d Consolidator", i+1),
-			}
-		}
-	}
-
-	// Check if it's the synthesis instance (session state)
-	if session.SynthesisID == instanceID {
-		return &StepInfo{
-			Type:       StepTypeSynthesis,
-			InstanceID: instanceID,
-			GroupIndex: -1,
-			Label:      "Synthesis",
-		}
-	}
-
 	// Check synthesis orchestrator as fallback
 	if synthOrch := c.SynthesisOrchestrator(); synthOrch != nil {
 		if synthOrch.GetInstanceID() == instanceID {
@@ -2830,16 +3444,6 @@ func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
 				GroupIndex: -1,
 				Label:      "Synthesis",
 			}
-		}
-	}
-
-	// Check if it's the revision instance (session state)
-	if session.RevisionID == instanceID {
-		return &StepInfo{
-			Type:       StepTypeRevision,
-			InstanceID: instanceID,
-			GroupIndex: -1,
-			Label:      "Revision",
 		}
 	}
 
@@ -2855,16 +3459,6 @@ func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
 					Label:      "Revision",
 				}
 			}
-		}
-	}
-
-	// Check if it's the consolidation instance (session state)
-	if session.ConsolidationID == instanceID {
-		return &StepInfo{
-			Type:       StepTypeConsolidation,
-			InstanceID: instanceID,
-			GroupIndex: -1,
-			Label:      "Consolidation",
 		}
 	}
 
@@ -2885,484 +3479,49 @@ func (c *Coordinator) GetStepInfo(instanceID string) *StepInfo {
 
 // RestartStep restarts the specified step. This stops any existing instance for that step
 // and starts a fresh one. Returns the new instance ID or an error.
+// Delegates to the restart manager for actual restart logic.
 func (c *Coordinator) RestartStep(stepInfo *StepInfo) (string, error) {
 	if stepInfo == nil {
 		return "", fmt.Errorf("step info is nil")
 	}
 
-	session := c.Session()
-	if session == nil {
-		return "", fmt.Errorf("no session")
-	}
-
-	// Stop the existing instance if it exists (best-effort)
-	if stepInfo.InstanceID != "" {
-		inst := c.orch.GetInstance(stepInfo.InstanceID)
-		if inst != nil {
-			if err := c.orch.StopInstance(inst); err != nil {
-				c.logger.Warn("failed to stop existing instance before restart",
-					"instance_id", stepInfo.InstanceID,
-					"step_type", stepInfo.Type,
-					"error", err)
-				// Continue with restart - stopping is best-effort
-			}
+	// Handle case where restart manager is not initialized (e.g., in tests)
+	if c.restartManager == nil {
+		// Fall back to session check for backwards compatibility with tests
+		if c.Session() == nil {
+			return "", fmt.Errorf("no session")
 		}
+		return "", fmt.Errorf("restart manager not initialized")
 	}
 
-	switch stepInfo.Type {
-	case StepTypePlanning:
-		return c.restartPlanning()
-
-	case StepTypePlanManager:
-		return c.restartPlanManager()
-
-	case StepTypeTask:
-		return c.restartTask(stepInfo.TaskID)
-
-	case StepTypeSynthesis:
-		return c.restartSynthesis()
-
-	case StepTypeRevision:
-		return c.restartRevision()
-
-	case StepTypeConsolidation:
-		return c.restartConsolidation()
-
-	case StepTypeGroupConsolidator:
-		return c.restartGroupConsolidator(stepInfo.GroupIndex)
-
-	default:
-		return "", fmt.Errorf("unknown step type: %s", stepInfo.Type)
+	// Convert to restart package StepInfo type
+	restartStepInfo := &restart.StepInfo{
+		Type:       restart.StepType(stepInfo.Type),
+		InstanceID: stepInfo.InstanceID,
+		TaskID:     stepInfo.TaskID,
+		GroupIndex: stepInfo.GroupIndex,
+		Label:      stepInfo.Label,
 	}
+
+	return c.restartManager.RestartStep(restartStepInfo)
 }
 
-// restartPlanning restarts the planning phase
-func (c *Coordinator) restartPlanning() (string, error) {
-	session := c.Session()
-
-	// Reset planning orchestrator state first
-	if planOrch := c.PlanningOrchestrator(); planOrch != nil {
-		planOrch.Reset()
-	}
-
-	// Reset planning-related state in session
-	c.mu.Lock()
-	session.CoordinatorID = ""
-	session.Plan = nil
-	session.Phase = PhasePlanning
-	c.mu.Unlock()
-
-	// Run planning again
-	if err := c.RunPlanning(); err != nil {
-		return "", fmt.Errorf("failed to restart planning: %w", err)
-	}
-
-	return session.CoordinatorID, nil
-}
-
-// restartPlanManager restarts the plan manager in multi-pass mode
-func (c *Coordinator) restartPlanManager() (string, error) {
-	session := c.Session()
-	if !session.Config.MultiPass {
-		return "", fmt.Errorf("plan manager only exists in multi-pass mode")
-	}
-
-	// Reset planning orchestrator state (includes multi-pass coordinator IDs)
-	if planOrch := c.PlanningOrchestrator(); planOrch != nil {
-		planOrch.Reset()
-	}
-
-	// Reset plan manager state in session
-	c.mu.Lock()
-	session.PlanManagerID = ""
-	session.Plan = nil
-	session.Phase = PhasePlanSelection
-	c.mu.Unlock()
-
-	// Run plan manager again
-	if err := c.RunPlanManager(); err != nil {
-		return "", fmt.Errorf("failed to restart plan manager: %w", err)
-	}
-
-	return session.PlanManagerID, nil
-}
-
-// restartTask restarts a specific task
-// Note: This method bypasses the ExecutionOrchestrator's execute loop and starts
-// the task directly. The session state is the source of truth for task tracking.
-func (c *Coordinator) restartTask(taskID string) (string, error) {
-	session := c.Session()
-	if taskID == "" {
-		return "", fmt.Errorf("task ID is required")
-	}
-
-	task := session.GetTask(taskID)
-	if task == nil {
-		return "", fmt.Errorf("task %s not found", taskID)
-	}
-
-	// Check if any tasks are currently running
-	c.mu.RLock()
-	runningCount := c.runningCount
-	c.mu.RUnlock()
-
-	if runningCount > 0 {
-		return "", fmt.Errorf("cannot restart task while %d tasks are running", runningCount)
-	}
-
-	// Reset execution orchestrator state to clear ProcessedTasks and allow re-execution
-	// Since no tasks are running (verified above), clearing all state is safe
-	if execOrch := c.ExecutionOrchestrator(); execOrch != nil {
-		execOrch.Reset()
-	}
-
-	// Reset task state in session
-	c.mu.Lock()
-	// Remove from completed tasks
-	newCompleted := make([]string, 0, len(session.CompletedTasks))
-	for _, t := range session.CompletedTasks {
-		if t != taskID {
-			newCompleted = append(newCompleted, t)
-		}
-	}
-	session.CompletedTasks = newCompleted
-
-	// Remove from failed tasks
-	newFailed := make([]string, 0, len(session.FailedTasks))
-	for _, t := range session.FailedTasks {
-		if t != taskID {
-			newFailed = append(newFailed, t)
-		}
-	}
-	session.FailedTasks = newFailed
-
-	// Remove from TaskToInstance
-	delete(session.TaskToInstance, taskID)
-
-	// Reset retry state
-	c.retryManager.Reset(taskID)
-	session.TaskRetries = c.retryManager.GetAllStates()
-
-	// Reset commit count
-	delete(session.TaskCommitCounts, taskID)
-
-	// Ensure we're in executing phase
-	session.Phase = PhaseExecuting
-
-	// Clear any group decision state
-	session.GroupDecision = nil
-	c.mu.Unlock()
-
-	// Start the task
-	completionChan := make(chan taskCompletion, 1)
-	if err := c.startTask(taskID, completionChan); err != nil {
-		return "", fmt.Errorf("failed to restart task: %w", err)
-	}
-
-	// Get the new instance ID
-	c.mu.RLock()
-	newInstanceID := session.TaskToInstance[taskID]
-	c.mu.RUnlock()
-
-	// Start monitoring in the background
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		for completion := range completionChan {
-			c.handleTaskCompletion(completion)
-		}
-	}()
-
-	if err := c.orch.SaveSession(); err != nil {
-		c.logger.Error("failed to save session after task restart",
-			"task_id", taskID,
-			"new_instance_id", newInstanceID,
-			"error", err)
-	}
-
-	return newInstanceID, nil
-}
-
-// restartSynthesis restarts the synthesis phase
-func (c *Coordinator) restartSynthesis() (string, error) {
-	session := c.Session()
-
-	// Reset synthesis orchestrator state
-	if synthOrch := c.SynthesisOrchestrator(); synthOrch != nil {
-		synthOrch.Reset()
-	}
-
-	// Reset synthesis state in session
-	c.mu.Lock()
-	session.SynthesisID = ""
-	session.SynthesisCompletion = nil
-	session.SynthesisAwaitingApproval = false
-	session.Phase = PhaseSynthesis
-	c.mu.Unlock()
-
-	// Run synthesis again
-	if err := c.RunSynthesis(); err != nil {
-		return "", fmt.Errorf("failed to restart synthesis: %w", err)
-	}
-
-	return session.SynthesisID, nil
-}
-
-// restartRevision restarts the revision phase
-// Revision is a sub-phase of synthesis, so we reset the synthesis orchestrator's
-// revision-related state while preserving the identified issues.
-func (c *Coordinator) restartRevision() (string, error) {
-	session := c.Session()
-
-	if session.Revision == nil || len(session.Revision.Issues) == 0 {
-		return "", fmt.Errorf("no revision issues to address")
-	}
-
-	// Reset synthesis orchestrator state (which handles revision as a sub-phase)
-	// Note: Reset() clears all state including revision state, but the session's
-	// Revision.Issues are preserved below
-	if synthOrch := c.SynthesisOrchestrator(); synthOrch != nil {
-		synthOrch.Reset()
-	}
-
-	// Reset revision state in session (keep issues but reset progress)
-	c.mu.Lock()
-	session.RevisionID = ""
-	session.Phase = PhaseRevision
-	session.Revision.RevisedTasks = make([]string, 0)
-	session.Revision.TasksToRevise = extractTasksToRevise(session.Revision.Issues)
-	c.mu.Unlock()
-
-	// Run revision again
-	if err := c.StartRevision(session.Revision.Issues); err != nil {
-		return "", fmt.Errorf("failed to restart revision: %w", err)
-	}
-
-	return session.RevisionID, nil
-}
-
-// restartConsolidation restarts the consolidation phase
-func (c *Coordinator) restartConsolidation() (string, error) {
-	session := c.Session()
-
-	// Reset consolidation orchestrator state
-	if consolOrch := c.ConsolidationOrchestrator(); consolOrch != nil {
-		consolOrch.Reset()
-	}
-
-	// Reset consolidation state in session
-	c.mu.Lock()
-	session.ConsolidationID = ""
-	session.Consolidation = nil
-	session.PRUrls = nil
-	session.Phase = PhaseConsolidating
-	c.mu.Unlock()
-
-	// Start consolidation again
-	if err := c.StartConsolidation(); err != nil {
-		return "", fmt.Errorf("failed to restart consolidation: %w", err)
-	}
-
-	return session.ConsolidationID, nil
-}
-
-// restartGroupConsolidator restarts a specific group consolidator
-func (c *Coordinator) restartGroupConsolidator(groupIndex int) (string, error) {
-	session := c.Session()
-
-	if groupIndex < 0 || groupIndex >= len(session.Plan.ExecutionOrder) {
-		return "", fmt.Errorf("invalid group index: %d", groupIndex)
-	}
-
-	// Reset consolidation orchestrator state for restart
-	// This clears conflict-related state and instance tracking
-	if consolOrch := c.ConsolidationOrchestrator(); consolOrch != nil {
-		consolOrch.ClearStateForRestart()
-	}
-
-	// Reset group consolidator state in session
-	c.mu.Lock()
-	if groupIndex < len(session.GroupConsolidatorIDs) {
-		session.GroupConsolidatorIDs[groupIndex] = ""
-	}
-	if groupIndex < len(session.GroupConsolidatedBranches) {
-		session.GroupConsolidatedBranches[groupIndex] = ""
-	}
-	if groupIndex < len(session.GroupConsolidationContexts) {
-		session.GroupConsolidationContexts[groupIndex] = nil
-	}
-	c.mu.Unlock()
-
-	// Start group consolidation again
-	if err := c.startGroupConsolidatorSession(groupIndex); err != nil {
-		return "", fmt.Errorf("failed to restart group consolidator: %w", err)
-	}
-
-	// Get the new instance ID
-	c.mu.RLock()
-	var newInstanceID string
-	if groupIndex < len(session.GroupConsolidatorIDs) {
-		newInstanceID = session.GroupConsolidatorIDs[groupIndex]
-	}
-	c.mu.RUnlock()
-
-	if err := c.orch.SaveSession(); err != nil {
-		c.logger.Error("failed to save session after group consolidator restart",
-			"group_index", groupIndex,
-			"new_instance_id", newInstanceID,
-			"error", err)
-	}
-
-	return newInstanceID, nil
-}
-
-// consolidateGroupWithVerification consolidates a group and verifies commits exist
+// consolidateGroupWithVerification consolidates a group and verifies commits exist.
+// Delegates to the group consolidation manager.
 func (c *Coordinator) consolidateGroupWithVerification(groupIndex int) error {
-	session := c.Session()
-	if session == nil || session.Plan == nil {
-		return fmt.Errorf("no session or plan")
+	if c.groupConsolidationManager != nil {
+		return c.groupConsolidationManager.ConsolidateGroupWithVerification(groupIndex)
 	}
-
-	if groupIndex < 0 || groupIndex >= len(session.Plan.ExecutionOrder) {
-		return fmt.Errorf("invalid group index: %d", groupIndex)
-	}
-
-	taskIDs := session.Plan.ExecutionOrder[groupIndex]
-	if len(taskIDs) == 0 {
-		return nil // Empty group, nothing to consolidate
-	}
-
-	// Collect task branches for this group, filtering to only those with verified commits
-	var taskBranches []string
-	var activeTasks []string
-
-	for _, taskID := range taskIDs {
-		// Skip tasks that failed or have no commits
-		commitCount, ok := session.TaskCommitCounts[taskID]
-		if !ok || commitCount == 0 {
-			continue
-		}
-
-		task := session.GetTask(taskID)
-		if task == nil {
-			continue
-		}
-
-		// Find the instance that executed this task
-		for _, inst := range c.baseSession.Instances {
-			if strings.Contains(inst.Task, taskID) || strings.Contains(inst.Branch, slugify(task.Title)) {
-				taskBranches = append(taskBranches, inst.Branch)
-				activeTasks = append(activeTasks, taskID)
-				break
-			}
-		}
-	}
-
-	if len(taskBranches) == 0 {
-		// No branches with work - this is an error now, not silent success
-		return fmt.Errorf("no task branches with verified commits found for group %d", groupIndex)
-	}
-
-	// Generate consolidated branch name
-	branchPrefix := session.Config.BranchPrefix
-	if branchPrefix == "" {
-		branchPrefix = c.orch.config.Branch.Prefix
-	}
-	if branchPrefix == "" {
-		branchPrefix = "Iron-Ham"
-	}
-	planID := session.ID
-	if len(planID) > 8 {
-		planID = planID[:8]
-	}
-	consolidatedBranch := fmt.Sprintf("%s/ultraplan-%s-group-%d", branchPrefix, planID, groupIndex+1)
-
-	// Determine base branch
-	var baseBranch string
-	if groupIndex == 0 {
-		baseBranch = c.orch.wt.FindMainBranch()
-	} else if groupIndex-1 < len(session.GroupConsolidatedBranches) {
-		baseBranch = session.GroupConsolidatedBranches[groupIndex-1]
-	} else {
-		baseBranch = c.orch.wt.FindMainBranch()
-	}
-
-	// Create the consolidated branch from the base
-	if err := c.orch.wt.CreateBranchFrom(consolidatedBranch, baseBranch); err != nil {
-		return fmt.Errorf("failed to create consolidated branch %s: %w", consolidatedBranch, err)
-	}
-
-	// Create a temporary worktree for cherry-picking
-	worktreeBase := fmt.Sprintf("%s/consolidation-group-%d", c.orch.claudioDir, groupIndex)
-	if err := c.orch.wt.CreateWorktreeFromBranch(worktreeBase, consolidatedBranch); err != nil {
-		return fmt.Errorf("failed to create consolidation worktree: %w", err)
-	}
-	defer func() {
-		_ = c.orch.wt.Remove(worktreeBase)
-	}()
-
-	// Cherry-pick commits from each task branch - failures are now blocking
-	for i, branch := range taskBranches {
-		if err := c.orch.wt.CherryPickBranch(worktreeBase, branch); err != nil {
-			// Cherry-pick failed - this is now a blocking error
-			_ = c.orch.wt.AbortCherryPick(worktreeBase)
-			return fmt.Errorf("failed to cherry-pick task %s (branch %s): %w", activeTasks[i], branch, err)
-		}
-	}
-
-	// Verify the consolidated branch has commits
-	consolidatedCommitCount, err := c.orch.wt.CountCommitsBetween(worktreeBase, baseBranch, "HEAD")
-	if err != nil {
-		return fmt.Errorf("failed to verify consolidated branch commits: %w", err)
-	}
-
-	if consolidatedCommitCount == 0 {
-		return fmt.Errorf("consolidated branch has no commits after cherry-picking %d branches", len(taskBranches))
-	}
-
-	// Push the consolidated branch
-	if err := c.orch.wt.Push(worktreeBase, false); err != nil {
-		c.manager.emitEvent(CoordinatorEvent{
-			Type:    EventGroupComplete,
-			Message: fmt.Sprintf("Warning: failed to push consolidated branch %s: %v", consolidatedBranch, err),
-		})
-		// Not fatal - branch exists locally
-	}
-
-	// Store the consolidated branch
-	c.mu.Lock()
-	for len(session.GroupConsolidatedBranches) <= groupIndex {
-		session.GroupConsolidatedBranches = append(session.GroupConsolidatedBranches, "")
-	}
-	session.GroupConsolidatedBranches[groupIndex] = consolidatedBranch
-	c.mu.Unlock()
-
-	c.manager.emitEvent(CoordinatorEvent{
-		Type:    EventGroupComplete,
-		Message: fmt.Sprintf("Group %d consolidated into %s (%d commits from %d tasks)", groupIndex+1, consolidatedBranch, consolidatedCommitCount, len(taskBranches)),
-	})
-
-	return nil
+	return fmt.Errorf("group consolidation manager not initialized")
 }
 
 // getBaseBranchForGroup returns the base branch that new tasks in a group should use.
 // For group 0, this is the main branch. For other groups, it's the consolidated branch from the previous group.
+// Delegates to the group consolidation manager.
 func (c *Coordinator) getBaseBranchForGroup(groupIndex int) string {
-	session := c.Session()
-
-	if groupIndex == 0 {
-		return "" // Use default (HEAD/main)
+	if c.groupConsolidationManager != nil {
+		return c.groupConsolidationManager.GetBaseBranchForGroup(groupIndex)
 	}
-
-	// Check if we have a consolidated branch from the previous group
-	previousGroupIndex := groupIndex - 1
-	if session != nil && previousGroupIndex < len(session.GroupConsolidatedBranches) {
-		consolidatedBranch := session.GroupConsolidatedBranches[previousGroupIndex]
-		if consolidatedBranch != "" {
-			return consolidatedBranch
-		}
-	}
-
 	return "" // Use default
 }
 
@@ -3370,442 +3529,21 @@ func (c *Coordinator) getBaseBranchForGroup(groupIndex int) string {
 // Per-Group Consolidator Session Management
 // ============================================================================
 
-// gatherTaskCompletionContextForGroup reads completion files from all completed tasks in a group
-// and aggregates the context for the group consolidator
-func (c *Coordinator) gatherTaskCompletionContextForGroup(groupIndex int) *AggregatedTaskContext {
-	session := c.Session()
-	if session == nil || session.Plan == nil || groupIndex >= len(session.Plan.ExecutionOrder) {
-		return &AggregatedTaskContext{TaskSummaries: make(map[string]string)}
-	}
+// Note: gatherTaskCompletionContextForGroup, getTaskBranchesForGroup, and buildGroupConsolidatorPrompt
+// have been moved to the consolidation.GroupManager which handles them internally.
 
-	taskIDs := session.Plan.ExecutionOrder[groupIndex]
-	context := &AggregatedTaskContext{
-		TaskSummaries:  make(map[string]string),
-		AllIssues:      make([]string, 0),
-		AllSuggestions: make([]string, 0),
-		Dependencies:   make([]string, 0),
-		Notes:          make([]string, 0),
-	}
-
-	seenDeps := make(map[string]bool)
-
-	for _, taskID := range taskIDs {
-		// Find the instance for this task
-		var inst *Instance
-		for _, i := range c.baseSession.Instances {
-			if strings.Contains(i.Task, taskID) {
-				inst = i
-				break
-			}
-		}
-		if inst == nil || inst.WorktreePath == "" {
-			continue
-		}
-
-		// Try to read the completion file
-		completion, err := ParseTaskCompletionFile(inst.WorktreePath)
-		if err != nil {
-			continue // No completion file or invalid
-		}
-
-		// Store task summary
-		context.TaskSummaries[taskID] = completion.Summary
-
-		// Aggregate issues (prefix with task ID for context)
-		for _, issue := range completion.Issues {
-			if issue != "" {
-				context.AllIssues = append(context.AllIssues, fmt.Sprintf("[%s] %s", taskID, issue))
-			}
-		}
-
-		// Aggregate suggestions
-		for _, suggestion := range completion.Suggestions {
-			if suggestion != "" {
-				context.AllSuggestions = append(context.AllSuggestions, fmt.Sprintf("[%s] %s", taskID, suggestion))
-			}
-		}
-
-		// Aggregate dependencies (deduplicated)
-		for _, dep := range completion.Dependencies {
-			if dep != "" && !seenDeps[dep] {
-				seenDeps[dep] = true
-				context.Dependencies = append(context.Dependencies, dep)
-			}
-		}
-
-		// Collect notes
-		if completion.Notes != "" {
-			context.Notes = append(context.Notes, fmt.Sprintf("**%s**: %s", taskID, completion.Notes))
-		}
-	}
-
-	return context
-}
-
-// getTaskBranchesForGroup returns the branches and commit counts for all tasks in a group
-func (c *Coordinator) getTaskBranchesForGroup(groupIndex int) []TaskWorktreeInfo {
-	session := c.Session()
-	if session == nil || session.Plan == nil || groupIndex >= len(session.Plan.ExecutionOrder) {
-		return nil
-	}
-
-	taskIDs := session.Plan.ExecutionOrder[groupIndex]
-	var branches []TaskWorktreeInfo
-
-	for _, taskID := range taskIDs {
-		task := session.GetTask(taskID)
-		if task == nil {
-			continue
-		}
-
-		// Find the instance for this task
-		for _, inst := range c.baseSession.Instances {
-			if strings.Contains(inst.Task, taskID) {
-				branches = append(branches, TaskWorktreeInfo{
-					TaskID:       taskID,
-					TaskTitle:    task.Title,
-					WorktreePath: inst.WorktreePath,
-					Branch:       inst.Branch,
-				})
-				break
-			}
-		}
-	}
-
-	return branches
-}
-
-// buildGroupConsolidatorPrompt builds the prompt for a per-group consolidator session
-func (c *Coordinator) buildGroupConsolidatorPrompt(groupIndex int) string {
-	session := c.Session()
-	if session == nil || session.Plan == nil {
-		return ""
-	}
-
-	taskContext := c.gatherTaskCompletionContextForGroup(groupIndex)
-	taskBranches := c.getTaskBranchesForGroup(groupIndex)
-
-	// Determine base branch
-	var baseBranch string
-	if groupIndex == 0 {
-		baseBranch = c.orch.wt.FindMainBranch()
-	} else if groupIndex-1 < len(session.GroupConsolidatedBranches) {
-		baseBranch = session.GroupConsolidatedBranches[groupIndex-1]
-	} else {
-		baseBranch = c.orch.wt.FindMainBranch()
-	}
-
-	// Generate consolidated branch name
-	branchPrefix := session.Config.BranchPrefix
-	if branchPrefix == "" {
-		branchPrefix = c.orch.config.Branch.Prefix
-	}
-	if branchPrefix == "" {
-		branchPrefix = "Iron-Ham"
-	}
-	planID := session.ID
-	if len(planID) > 8 {
-		planID = planID[:8]
-	}
-	consolidatedBranch := fmt.Sprintf("%s/ultraplan-%s-group-%d", branchPrefix, planID, groupIndex+1)
-
-	var sb strings.Builder
-
-	sb.WriteString(fmt.Sprintf("# Group %d Consolidation\n\n", groupIndex+1))
-	sb.WriteString(fmt.Sprintf("## Part of Ultra-Plan: %s\n\n", session.Plan.Summary))
-
-	sb.WriteString("## Objective\n\n")
-	sb.WriteString("Consolidate all completed task branches from this group into a single stable branch.\n")
-	sb.WriteString("You must resolve any merge conflicts, verify the consolidated code works, and pass context to the next group.\n\n")
-
-	// Tasks completed in this group
-	sb.WriteString("## Tasks Completed in This Group\n\n")
-	for _, branch := range taskBranches {
-		sb.WriteString(fmt.Sprintf("### %s: %s\n", branch.TaskID, branch.TaskTitle))
-		sb.WriteString(fmt.Sprintf("- Branch: `%s`\n", branch.Branch))
-		sb.WriteString(fmt.Sprintf("- Worktree: `%s`\n", branch.WorktreePath))
-		if summary, ok := taskContext.TaskSummaries[branch.TaskID]; ok && summary != "" {
-			sb.WriteString(fmt.Sprintf("- Summary: %s\n", summary))
-		}
-		sb.WriteString("\n")
-	}
-
-	// Context from task completion files
-	if len(taskContext.Notes) > 0 {
-		sb.WriteString("## Implementation Notes from Tasks\n\n")
-		for _, note := range taskContext.Notes {
-			sb.WriteString(fmt.Sprintf("- %s\n", note))
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(taskContext.AllIssues) > 0 {
-		sb.WriteString("## Issues Raised by Tasks\n\n")
-		for _, issue := range taskContext.AllIssues {
-			sb.WriteString(fmt.Sprintf("- %s\n", issue))
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(taskContext.AllSuggestions) > 0 {
-		sb.WriteString("## Integration Suggestions from Tasks\n\n")
-		for _, suggestion := range taskContext.AllSuggestions {
-			sb.WriteString(fmt.Sprintf("- %s\n", suggestion))
-		}
-		sb.WriteString("\n")
-	}
-
-	// Context from previous group's consolidator
-	if groupIndex > 0 && groupIndex-1 < len(session.GroupConsolidationContexts) {
-		prevContext := session.GroupConsolidationContexts[groupIndex-1]
-		if prevContext != nil {
-			sb.WriteString("## Context from Previous Group's Consolidator\n\n")
-			if prevContext.Notes != "" {
-				sb.WriteString(fmt.Sprintf("**Notes**: %s\n\n", prevContext.Notes))
-			}
-			if len(prevContext.IssuesForNextGroup) > 0 {
-				sb.WriteString("**Issues/Warnings to Address**:\n")
-				for _, issue := range prevContext.IssuesForNextGroup {
-					sb.WriteString(fmt.Sprintf("- %s\n", issue))
-				}
-				sb.WriteString("\n")
-			}
-		}
-	}
-
-	// Branch configuration
-	sb.WriteString("## Branch Configuration\n\n")
-	sb.WriteString(fmt.Sprintf("- **Base branch**: `%s`\n", baseBranch))
-	sb.WriteString(fmt.Sprintf("- **Target consolidated branch**: `%s`\n", consolidatedBranch))
-	sb.WriteString(fmt.Sprintf("- **Task branches to consolidate**: %d\n\n", len(taskBranches)))
-
-	// Instructions
-	sb.WriteString("## Your Tasks\n\n")
-	sb.WriteString("1. **Create the consolidated branch** from the base branch:\n")
-	sb.WriteString(fmt.Sprintf("   ```bash\n   git checkout -b %s %s\n   ```\n\n", consolidatedBranch, baseBranch))
-
-	sb.WriteString("2. **Cherry-pick commits** from each task branch in order. For each branch:\n")
-	sb.WriteString("   - Review the commits on the branch\n")
-	sb.WriteString("   - Cherry-pick them onto the consolidated branch\n")
-	sb.WriteString("   - Resolve any conflicts intelligently using your understanding of the code\n\n")
-
-	sb.WriteString("3. **Run verification** to ensure the consolidated code is stable:\n")
-	sb.WriteString("   - Detect the project type (Go, Node, Python, iOS, etc.)\n")
-	sb.WriteString("   - Run appropriate build/compile commands\n")
-	sb.WriteString("   - Run linting if available\n")
-	sb.WriteString("   - Run tests if available\n")
-	sb.WriteString("   - Fix any issues that arise\n\n")
-
-	sb.WriteString("4. **Push the consolidated branch** to the remote\n\n")
-
-	sb.WriteString("5. **Write the completion file** to signal success\n\n")
-
-	// Conflict resolution guidelines
-	sb.WriteString("## Conflict Resolution Guidelines\n\n")
-	sb.WriteString("- Prefer changes that preserve functionality from all tasks\n")
-	sb.WriteString("- If there are conflicting approaches, choose the more robust one\n")
-	sb.WriteString("- Document your resolution reasoning in the completion file\n")
-	sb.WriteString("- If you cannot resolve a conflict, document it as an issue\n\n")
-
-	// Completion protocol
-	sb.WriteString("## Completion Protocol\n\n")
-	sb.WriteString("**CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.\n")
-	sb.WriteString("If you changed directories during the task, use an absolute path or navigate back to the root first.\n\n")
-	sb.WriteString(fmt.Sprintf("When consolidation is complete, write `%s` in your worktree root:\n\n", GroupConsolidationCompletionFileName))
-	sb.WriteString("```json\n")
-	sb.WriteString("{\n")
-	sb.WriteString(fmt.Sprintf("  \"group_index\": %d,\n", groupIndex))
-	sb.WriteString("  \"status\": \"complete\",\n")
-	sb.WriteString(fmt.Sprintf("  \"branch_name\": \"%s\",\n", consolidatedBranch))
-	sb.WriteString("  \"tasks_consolidated\": [\"task-id-1\", \"task-id-2\"],\n")
-	sb.WriteString("  \"conflicts_resolved\": [\n")
-	sb.WriteString("    {\"file\": \"path/to/file.go\", \"resolution\": \"Kept both changes, merged logic\"}\n")
-	sb.WriteString("  ],\n")
-	sb.WriteString("  \"verification\": {\n")
-	sb.WriteString("    \"project_type\": \"go\",\n")
-	sb.WriteString("    \"commands_run\": [\n")
-	sb.WriteString("      {\"name\": \"build\", \"command\": \"go build ./...\", \"success\": true},\n")
-	sb.WriteString("      {\"name\": \"lint\", \"command\": \"golangci-lint run\", \"success\": true},\n")
-	sb.WriteString("      {\"name\": \"test\", \"command\": \"go test ./...\", \"success\": true}\n")
-	sb.WriteString("    ],\n")
-	sb.WriteString("    \"overall_success\": true,\n")
-	sb.WriteString("    \"summary\": \"All checks passed\"\n")
-	sb.WriteString("  },\n")
-	sb.WriteString("  \"notes\": \"Any observations about the consolidated code\",\n")
-	sb.WriteString("  \"issues_for_next_group\": [\"Any warnings or concerns for the next group\"]\n")
-	sb.WriteString("}\n")
-	sb.WriteString("```\n\n")
-	sb.WriteString("Use status \"failed\" if consolidation cannot be completed.\n")
-
-	return sb.String()
-}
-
-// startGroupConsolidatorSession creates and starts a Claude session for consolidating a group
+// startGroupConsolidatorSession creates and starts a Claude session for consolidating a group.
+// Delegates to the group consolidation manager which handles prompt building,
+// instance creation, and completion monitoring internally.
 func (c *Coordinator) startGroupConsolidatorSession(groupIndex int) error {
-	session := c.Session()
-	if session == nil || session.Plan == nil {
-		return fmt.Errorf("no session or plan")
+	if c.groupConsolidationManager != nil {
+		return c.groupConsolidationManager.StartGroupConsolidatorSession(groupIndex, c.baseSession)
 	}
-
-	if groupIndex < 0 || groupIndex >= len(session.Plan.ExecutionOrder) {
-		return fmt.Errorf("invalid group index: %d", groupIndex)
-	}
-
-	taskIDs := session.Plan.ExecutionOrder[groupIndex]
-	if len(taskIDs) == 0 {
-		return nil // Empty group, nothing to consolidate
-	}
-
-	// Check if there are any tasks with verified commits
-	var activeTasks []string
-	for _, taskID := range taskIDs {
-		commitCount, ok := session.TaskCommitCounts[taskID]
-		if ok && commitCount > 0 {
-			activeTasks = append(activeTasks, taskID)
-		}
-	}
-
-	if len(activeTasks) == 0 {
-		return fmt.Errorf("no task branches with verified commits found for group %d", groupIndex)
-	}
-
-	// Build the consolidator prompt
-	prompt := c.buildGroupConsolidatorPrompt(groupIndex)
-
-	// Determine base branch for the consolidator's worktree
-	baseBranch := c.getBaseBranchForGroup(groupIndex)
-
-	// Create the consolidator instance
-	var inst *Instance
-	var err error
-	if baseBranch != "" {
-		inst, err = c.orch.AddInstanceFromBranch(c.baseSession, prompt, baseBranch)
-	} else {
-		inst, err = c.orch.AddInstance(c.baseSession, prompt)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to create group consolidator instance: %w", err)
-	}
-
-	// Add consolidator instance to the ultraplan group for sidebar display
-	sessionType := SessionTypeUltraPlan
-	if session.Config.MultiPass {
-		sessionType = SessionTypePlanMulti
-	}
-	if ultraGroup := c.baseSession.GetGroupBySessionType(sessionType); ultraGroup != nil {
-		ultraGroup.AddInstance(inst.ID)
-	}
-
-	// Store the consolidator instance ID
-	c.mu.Lock()
-	for len(session.GroupConsolidatorIDs) <= groupIndex {
-		session.GroupConsolidatorIDs = append(session.GroupConsolidatorIDs, "")
-	}
-	session.GroupConsolidatorIDs[groupIndex] = inst.ID
-	c.mu.Unlock()
-
-	// Save state
-	_ = c.orch.SaveSession()
-
-	// Emit event
-	c.manager.emitEvent(CoordinatorEvent{
-		Type:    EventGroupComplete,
-		Message: fmt.Sprintf("Starting group %d consolidator session", groupIndex+1),
-	})
-
-	// Start the instance
-	if err := c.orch.StartInstance(inst); err != nil {
-		return fmt.Errorf("failed to start group consolidator instance: %w", err)
-	}
-
-	// Monitor the consolidator synchronously (blocks until completion)
-	return c.monitorGroupConsolidator(groupIndex, inst.ID)
+	return fmt.Errorf("group consolidation manager not initialized")
 }
 
-// monitorGroupConsolidator monitors the group consolidator instance and waits for completion
-func (c *Coordinator) monitorGroupConsolidator(groupIndex int, instanceID string) error {
-	session := c.Session()
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-c.ctx.Done():
-			return fmt.Errorf("context cancelled")
-
-		case <-ticker.C:
-			inst := c.orch.GetInstance(instanceID)
-			if inst == nil {
-				return fmt.Errorf("consolidator instance not found")
-			}
-
-			// Check for the completion file
-			if inst.WorktreePath != "" {
-				completionPath := GroupConsolidationCompletionFilePath(inst.WorktreePath)
-				if _, err := os.Stat(completionPath); err == nil {
-					// Parse the completion file
-					completion, err := ParseGroupConsolidationCompletionFile(inst.WorktreePath)
-					if err != nil {
-						// File exists but is invalid/incomplete - might still be writing
-						// Continue monitoring and try again on next tick
-						continue
-					}
-
-					// Check status
-					if completion.Status == "failed" {
-						// Stop the consolidator instance even on failure
-						_ = c.orch.StopInstance(inst)
-						return fmt.Errorf("group %d consolidation failed: %s", groupIndex+1, completion.Notes)
-					}
-
-					// Store the consolidated branch
-					c.mu.Lock()
-					for len(session.GroupConsolidatedBranches) <= groupIndex {
-						session.GroupConsolidatedBranches = append(session.GroupConsolidatedBranches, "")
-					}
-					session.GroupConsolidatedBranches[groupIndex] = completion.BranchName
-
-					// Store the consolidation context for the next group
-					for len(session.GroupConsolidationContexts) <= groupIndex {
-						session.GroupConsolidationContexts = append(session.GroupConsolidationContexts, nil)
-					}
-					session.GroupConsolidationContexts[groupIndex] = completion
-					c.mu.Unlock()
-
-					// Persist state
-					_ = c.orch.SaveSession()
-
-					// Stop the consolidator instance to free up resources
-					_ = c.orch.StopInstance(inst)
-
-					// Emit success event
-					c.manager.emitEvent(CoordinatorEvent{
-						Type:    EventGroupComplete,
-						Message: fmt.Sprintf("Group %d consolidated into %s (verification: %v)", groupIndex+1, completion.BranchName, completion.Verification.OverallSuccess),
-					})
-
-					return nil
-				}
-			}
-
-			// Check if instance has failed/exited without completion file
-			switch inst.Status {
-			case StatusError:
-				return fmt.Errorf("consolidator instance failed with error")
-			case StatusCompleted:
-				// Check if tmux session still exists
-				mgr := c.orch.GetInstanceManager(instanceID)
-				if mgr != nil && mgr.TmuxSessionExists() {
-					// Still running, keep monitoring
-					continue
-				}
-				// Instance completed without writing completion file
-				return fmt.Errorf("consolidator completed without writing completion file")
-			}
-		}
-	}
-}
+// monitorGroupConsolidator is no longer needed - monitoring is handled by the group
+// consolidation manager internally when StartGroupConsolidatorSession is called.
 
 // formatCandidatePlansForManager formats candidate plans for the PlanManagerPromptTemplate.
 // Each plan is formatted with its strategy name (from MultiPassPlanningPrompts) and full JSON content.
