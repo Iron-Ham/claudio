@@ -348,6 +348,88 @@ func TestParseTaskCompletionFile_FileNotFound(t *testing.T) {
 	}
 }
 
+func TestFindAndParseTaskCompletionFile_AtRoot(t *testing.T) {
+	tempDir := t.TempDir()
+
+	expected := TaskCompletionFile{
+		TaskID:  "task-root",
+		Status:  "complete",
+		Summary: "File at root",
+	}
+
+	data, _ := json.Marshal(expected)
+	err := os.WriteFile(filepath.Join(tempDir, TaskCompletionFileName), data, 0644)
+	if err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	v := NewTaskVerifier(&mockWorktreeOps{}, newMockRetryTracker(), newMockEventEmitter())
+
+	result, err := v.FindAndParseTaskCompletionFile(tempDir)
+	if err != nil {
+		t.Fatalf("FindAndParseTaskCompletionFile failed: %v", err)
+	}
+
+	if result.TaskID != expected.TaskID {
+		t.Errorf("TaskID mismatch: got %q, want %q", result.TaskID, expected.TaskID)
+	}
+	if result.Status != expected.Status {
+		t.Errorf("Status mismatch: got %q, want %q", result.Status, expected.Status)
+	}
+}
+
+func TestFindAndParseTaskCompletionFile_InSubdirectory(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create a subdirectory to simulate Claude changing directories
+	subDir := filepath.Join(tempDir, "project", "src")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	expected := TaskCompletionFile{
+		TaskID:  "task-subdir",
+		Status:  "complete",
+		Summary: "File in subdirectory",
+	}
+
+	// Write completion file in subdirectory (simulating Claude wrote it after cd project/src)
+	data, _ := json.Marshal(expected)
+	err := os.WriteFile(filepath.Join(subDir, TaskCompletionFileName), data, 0644)
+	if err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	v := NewTaskVerifier(&mockWorktreeOps{}, newMockRetryTracker(), newMockEventEmitter())
+
+	// Search from root should find file in subdirectory
+	result, err := v.FindAndParseTaskCompletionFile(tempDir)
+	if err != nil {
+		t.Fatalf("FindAndParseTaskCompletionFile failed: %v", err)
+	}
+
+	if result.TaskID != expected.TaskID {
+		t.Errorf("TaskID mismatch: got %q, want %q", result.TaskID, expected.TaskID)
+	}
+	if result.Status != expected.Status {
+		t.Errorf("Status mismatch: got %q, want %q", result.Status, expected.Status)
+	}
+}
+
+func TestFindAndParseTaskCompletionFile_FileNotFound(t *testing.T) {
+	tempDir := t.TempDir()
+
+	v := NewTaskVerifier(&mockWorktreeOps{}, newMockRetryTracker(), newMockEventEmitter())
+
+	_, err := v.FindAndParseTaskCompletionFile(tempDir)
+	if err == nil {
+		t.Error("expected error when file does not exist")
+	}
+	if !os.IsNotExist(err) {
+		t.Errorf("expected os.ErrNotExist, got %v", err)
+	}
+}
+
 func TestParseRevisionCompletionFile(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -698,6 +780,49 @@ func TestVerifyTaskWork_CompletionFileOverride_NoCommits(t *testing.T) {
 
 	if !result.Success {
 		t.Error("expected success when completion file has status='complete'")
+	}
+	if result.NeedsRetry {
+		t.Error("expected no retry when completion file indicates success")
+	}
+	if len(events.retries) != 0 {
+		t.Errorf("expected 0 retry events, got %d", len(events.retries))
+	}
+}
+
+func TestVerifyTaskWork_CompletionFileInSubdirectory_NoCommits(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create a subdirectory to simulate Claude changing directories
+	subDir := filepath.Join(tempDir, "project", "src")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	wt := &mockWorktreeOps{commitCount: 0} // No commits
+	rt := newMockRetryTracker()
+	rt.maxRetries["task-1"] = 3
+	events := newMockEventEmitter()
+
+	cfg := Config{RequireVerifiedCommits: true, MaxTaskRetries: 3}
+	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
+
+	// Write a completion file in subdirectory (simulating Claude wrote it after cd project/src)
+	completion := TaskCompletionFile{
+		TaskID:  "task-1",
+		Status:  "complete",
+		Summary: "Verification task completed - file in subdirectory",
+	}
+	data, _ := json.Marshal(completion)
+	// Write to subdirectory, NOT root
+	if err := os.WriteFile(filepath.Join(subDir, TaskCompletionFileName), data, 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	// Should succeed because FindAndParseTaskCompletionFile uses recursive search
+	result := v.VerifyTaskWork("task-1", "inst-1", tempDir, "main", nil)
+
+	if !result.Success {
+		t.Error("expected success when completion file with status='complete' is in subdirectory")
 	}
 	if result.NeedsRetry {
 		t.Error("expected no retry when completion file indicates success")

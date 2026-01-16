@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Completion File in Subdirectory Detection** - Fixed a bug where tasks that completed their work but wrote the completion file in a subdirectory (e.g., after `cd project/`) would be incorrectly marked as failed. The `CheckCompletionFile` function used recursive search to detect completion, but `VerifyTaskWork` only checked the worktree root when parsing the file. Now `VerifyTaskWork` uses `FindAndParseTaskCompletionFile` which searches subdirectories, ensuring completion files are found regardless of where Claude wrote them.
 - **Tmux Panel Width Not Using Configured Sidebar** - Fixed an issue where the tmux panel width was not respecting the user-configured sidebar width (`tui.sidebar_width`). When resizing the terminal, the content area calculation now uses the configured sidebar width instead of the default, ensuring tmux panels are correctly sized to match the visible sidebar. Also removed dead code from `view/dashboard.go` that contained an outdated hardcoded sidebar width constant.
 
 ## [0.9.0] - 2026-01-16
