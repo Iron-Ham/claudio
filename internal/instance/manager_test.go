@@ -10,6 +10,25 @@ import (
 	"github.com/Iron-Ham/claudio/internal/instance/state"
 )
 
+// newTestManager creates a Manager for testing with minimal configuration.
+func newTestManager(id, workdir, task string) *Manager {
+	return NewManagerWithDeps(ManagerOptions{
+		ID:      id,
+		WorkDir: workdir,
+		Task:    task,
+	})
+}
+
+// newTestManagerWithConfig creates a Manager for testing with custom config.
+func newTestManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager {
+	return NewManagerWithDeps(ManagerOptions{
+		ID:      id,
+		WorkDir: workdir,
+		Task:    task,
+		Config:  cfg,
+	})
+}
+
 func TestExtractInstanceIDFromSession(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -58,7 +77,7 @@ func TestExtractInstanceIDFromSession(t *testing.T) {
 	}
 }
 
-func TestNewManagerWithConfig(t *testing.T) {
+func TestNewManagerWithDeps_CustomConfig(t *testing.T) {
 	cfg := ManagerConfig{
 		OutputBufferSize:  1000,
 		CaptureIntervalMs: 50,
@@ -66,10 +85,10 @@ func TestNewManagerWithConfig(t *testing.T) {
 		TmuxHeight:        30,
 	}
 
-	mgr := NewManagerWithConfig("test-id", "/tmp/test", "test task", cfg)
+	mgr := newTestManagerWithConfig("test-id", "/tmp/test", "test task", cfg)
 
 	if mgr == nil {
-		t.Fatal("NewManagerWithConfig returned nil")
+		t.Fatal("newTestManagerWithConfig returned nil")
 	}
 
 	if mgr.id != "test-id" {
@@ -98,11 +117,11 @@ func TestNewManagerWithConfig(t *testing.T) {
 	}
 }
 
-func TestNewManager(t *testing.T) {
-	mgr := NewManager("test-id", "/tmp/test", "test task")
+func TestNewManagerWithDeps_DefaultConfig(t *testing.T) {
+	mgr := newTestManager("test-id", "/tmp/test", "test task")
 
 	if mgr == nil {
-		t.Fatal("NewManager returned nil")
+		t.Fatal("newTestManager returned nil")
 	}
 
 	// Should use default config
@@ -224,7 +243,7 @@ func TestNewManagerWithDeps_PreservesCustomConfig(t *testing.T) {
 }
 
 func TestManager_SessionName(t *testing.T) {
-	mgr := NewManager("abc123", "/tmp", "task")
+	mgr := newTestManager("abc123", "/tmp", "task")
 	expected := "claudio-abc123"
 	if mgr.SessionName() != expected {
 		t.Errorf("SessionName() = %q, want %q", mgr.SessionName(), expected)
@@ -232,14 +251,14 @@ func TestManager_SessionName(t *testing.T) {
 }
 
 func TestManager_ID(t *testing.T) {
-	mgr := NewManager("test-id-123", "/tmp", "task")
+	mgr := newTestManager("test-id-123", "/tmp", "task")
 	if mgr.ID() != "test-id-123" {
 		t.Errorf("ID() = %q, want %q", mgr.ID(), "test-id-123")
 	}
 }
 
 func TestManager_AttachCommand(t *testing.T) {
-	mgr := NewManager("abc123", "/tmp", "task")
+	mgr := newTestManager("abc123", "/tmp", "task")
 	cmd := mgr.AttachCommand()
 
 	if !strings.Contains(cmd, "tmux") || !strings.Contains(cmd, "attach") {
@@ -256,7 +275,7 @@ func TestManager_AttachCommand(t *testing.T) {
 }
 
 func TestManager_Running_NotStarted(t *testing.T) {
-	mgr := NewManager("test", "/tmp", "task")
+	mgr := newTestManager("test", "/tmp", "task")
 
 	if mgr.Running() {
 		t.Error("Running() should be false before Start()")
@@ -264,7 +283,7 @@ func TestManager_Running_NotStarted(t *testing.T) {
 }
 
 func TestManager_Paused_NotStarted(t *testing.T) {
-	mgr := NewManager("test", "/tmp", "task")
+	mgr := newTestManager("test", "/tmp", "task")
 
 	if mgr.Paused() {
 		t.Error("Paused() should be false before Start()")
@@ -272,7 +291,7 @@ func TestManager_Paused_NotStarted(t *testing.T) {
 }
 
 func TestManager_GetOutput_Empty(t *testing.T) {
-	mgr := NewManager("test", "/tmp", "task")
+	mgr := newTestManager("test", "/tmp", "task")
 
 	output := mgr.GetOutput()
 	if len(output) != 0 {
@@ -281,7 +300,7 @@ func TestManager_GetOutput_Empty(t *testing.T) {
 }
 
 func TestManager_CurrentState_Initial(t *testing.T) {
-	mgr := NewManager("test", "/tmp", "task")
+	mgr := newTestManager("test", "/tmp", "task")
 
 	if mgr.CurrentState() != detect.StateWorking {
 		t.Errorf("CurrentState() should be detect.StateWorking initially, got %v", mgr.CurrentState())
@@ -289,7 +308,7 @@ func TestManager_CurrentState_Initial(t *testing.T) {
 }
 
 func TestManager_TmuxSessionExists_NotCreated(t *testing.T) {
-	mgr := NewManager("nonexistent-session-id-12345", "/tmp", "task")
+	mgr := newTestManager("nonexistent-session-id-12345", "/tmp", "task")
 
 	// This session shouldn't exist since we never created it
 	if mgr.TmuxSessionExists() {
@@ -298,7 +317,7 @@ func TestManager_TmuxSessionExists_NotCreated(t *testing.T) {
 }
 
 func TestManager_Reconnect_NoSession(t *testing.T) {
-	mgr := NewManager("nonexistent-reconnect-test", "/tmp", "task")
+	mgr := newTestManager("nonexistent-reconnect-test", "/tmp", "task")
 
 	err := mgr.Reconnect()
 	if err == nil {
@@ -311,7 +330,7 @@ func TestManager_Reconnect_NoSession(t *testing.T) {
 }
 
 func TestManager_Stop_NotRunning(t *testing.T) {
-	mgr := NewManager("test", "/tmp", "task")
+	mgr := newTestManager("test", "/tmp", "task")
 
 	// Stop should not error when not running
 	err := mgr.Stop()
@@ -321,7 +340,7 @@ func TestManager_Stop_NotRunning(t *testing.T) {
 }
 
 func TestManager_Pause_NotRunning(t *testing.T) {
-	mgr := NewManager("test", "/tmp", "task")
+	mgr := newTestManager("test", "/tmp", "task")
 
 	// Pause should not error when not running
 	err := mgr.Pause()
@@ -331,7 +350,7 @@ func TestManager_Pause_NotRunning(t *testing.T) {
 }
 
 func TestManager_Resume_NotRunning(t *testing.T) {
-	mgr := NewManager("test", "/tmp", "task")
+	mgr := newTestManager("test", "/tmp", "task")
 
 	// Resume should not error when not running
 	err := mgr.Resume()
@@ -365,7 +384,7 @@ func TestDefaultManagerConfig(t *testing.T) {
 }
 
 func TestManager_DifferentialCaptureFieldsInitialized(t *testing.T) {
-	mgr := NewManager("test-diff-capture", "/tmp", "task")
+	mgr := newTestManager("test-diff-capture", "/tmp", "task")
 
 	// Verify differential capture fields are initialized to zero values
 	if mgr.lastHistorySize != 0 {
@@ -377,18 +396,8 @@ func TestManager_DifferentialCaptureFieldsInitialized(t *testing.T) {
 	}
 }
 
-func TestManager_GetHistorySize_NoSession(t *testing.T) {
-	mgr := NewManager("nonexistent-hist-test", "/tmp", "task")
-
-	// getHistorySize should return -1 for a non-existent session
-	size := mgr.getHistorySize("nonexistent-session-xyz")
-	if size != -1 {
-		t.Errorf("getHistorySize for non-existent session should return -1, got %d", size)
-	}
-}
-
 func TestManager_GetSessionStatus_NoSession(t *testing.T) {
-	mgr := NewManager("nonexistent-status-test", "/tmp", "task")
+	mgr := newTestManager("nonexistent-status-test", "/tmp", "task")
 
 	// getSessionStatus should indicate session doesn't exist for a non-existent session
 	status := mgr.getSessionStatus("nonexistent-session-xyz")
@@ -529,7 +538,7 @@ func TestParseSessionStatusOutput(t *testing.T) {
 }
 
 func TestManager_CheckSessionExists_NoSession(t *testing.T) {
-	mgr := NewManager("nonexistent-check-test", "/tmp", "task")
+	mgr := newTestManager("nonexistent-check-test", "/tmp", "task")
 
 	// checkSessionExists should return false for a non-existent session
 	exists := mgr.checkSessionExists("nonexistent-session-xyz")
@@ -559,14 +568,14 @@ func TestListClaudioTmuxSessions_NoTmuxServer(t *testing.T) {
 // Tests for lifecycle.Instance interface implementation
 
 func TestManager_WorkDir(t *testing.T) {
-	mgr := NewManager("test-id", "/custom/workdir", "task")
+	mgr := newTestManager("test-id", "/custom/workdir", "task")
 	if mgr.WorkDir() != "/custom/workdir" {
 		t.Errorf("WorkDir() = %q, want %q", mgr.WorkDir(), "/custom/workdir")
 	}
 }
 
 func TestManager_Task(t *testing.T) {
-	mgr := NewManager("test-id", "/tmp", "custom task prompt")
+	mgr := newTestManager("test-id", "/tmp", "custom task prompt")
 	if mgr.Task() != "custom task prompt" {
 		t.Errorf("Task() = %q, want %q", mgr.Task(), "custom task prompt")
 	}
@@ -577,7 +586,7 @@ func TestManager_Config_ReturnsLifecycleConfig(t *testing.T) {
 		TmuxWidth:  150,
 		TmuxHeight: 40,
 	}
-	mgr := NewManagerWithConfig("test", "/tmp", "task", cfg)
+	mgr := newTestManagerWithConfig("test", "/tmp", "task", cfg)
 
 	lcConfig := mgr.Config()
 	if lcConfig.TmuxWidth != 150 {
@@ -589,7 +598,7 @@ func TestManager_Config_ReturnsLifecycleConfig(t *testing.T) {
 }
 
 func TestManager_SetRunning(t *testing.T) {
-	mgr := NewManager("test", "/tmp", "task")
+	mgr := newTestManager("test", "/tmp", "task")
 
 	if mgr.Running() {
 		t.Error("Running() should initially be false")
@@ -607,7 +616,7 @@ func TestManager_SetRunning(t *testing.T) {
 }
 
 func TestManager_IsRunning(t *testing.T) {
-	mgr := NewManager("test", "/tmp", "task")
+	mgr := newTestManager("test", "/tmp", "task")
 
 	// IsRunning and Running should return the same value
 	if mgr.IsRunning() != mgr.Running() {
@@ -621,7 +630,7 @@ func TestManager_IsRunning(t *testing.T) {
 }
 
 func TestManager_SetStartTime(t *testing.T) {
-	mgr := NewManager("test", "/tmp", "task")
+	mgr := newTestManager("test", "/tmp", "task")
 
 	if mgr.StartTime() != nil {
 		t.Error("StartTime() should be nil initially")
@@ -640,7 +649,7 @@ func TestManager_SetStartTime(t *testing.T) {
 }
 
 func TestManager_SetLifecycleManager(t *testing.T) {
-	mgr := NewManager("test", "/tmp", "task")
+	mgr := newTestManager("test", "/tmp", "task")
 
 	if mgr.LifecycleManager() != nil {
 		t.Error("LifecycleManager() should initially be nil")
@@ -670,7 +679,7 @@ func TestManager_LifecycleConfig(t *testing.T) {
 		TmuxHeight:        25,
 		TmuxHistoryLimit:  75000,
 	}
-	mgr := NewManagerWithConfig("test", "/tmp", "task", cfg)
+	mgr := newTestManagerWithConfig("test", "/tmp", "task", cfg)
 
 	lcConfig := mgr.LifecycleConfig()
 	if lcConfig.TmuxWidth != 180 {
@@ -704,7 +713,7 @@ func TestManager_SocketName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mgr := NewManager(tt.instanceID, "/tmp", "test task")
+			mgr := newTestManager(tt.instanceID, "/tmp", "test task")
 			got := mgr.SocketName()
 			if got != tt.wantSocket {
 				t.Errorf("SocketName() = %q, want %q", got, tt.wantSocket)

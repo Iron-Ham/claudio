@@ -35,7 +35,6 @@ type Dependencies interface {
 	IsUltraPlanMode() bool
 	IsTripleShotMode() bool
 	GetUltraPlanCoordinator() *orchestrator.Coordinator
-	GetTripleShotCoordinator() *orchestrator.TripleShotCoordinator    // Deprecated: use GetTripleShotCoordinators
 	GetTripleShotCoordinators() []*orchestrator.TripleShotCoordinator // Returns all active tripleshot coordinators
 
 	// Logger access

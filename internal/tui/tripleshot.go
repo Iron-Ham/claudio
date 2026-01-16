@@ -36,27 +36,6 @@ func (m *Model) dispatchTripleShotCompletionChecks() []tea.Cmd {
 		}
 	}
 
-	// Also check the deprecated single Coordinator for backward compatibility
-	if m.tripleShot.Coordinator != nil {
-		// Only process if it's not already in Coordinators map
-		alreadyProcessed := false
-		for _, coord := range m.tripleShot.Coordinators {
-			if coord == m.tripleShot.Coordinator {
-				alreadyProcessed = true
-				break
-			}
-		}
-		if !alreadyProcessed {
-			session := m.tripleShot.Coordinator.Session()
-			if session != nil {
-				switch session.Phase {
-				case orchestrator.PhaseTripleShotWorking, orchestrator.PhaseTripleShotEvaluating:
-					cmds = append(cmds, tuimsg.CheckTripleShotCompletionAsync(m.tripleShot.Coordinator, ""))
-				}
-			}
-		}
-	}
-
 	return cmds
 }
 
@@ -68,13 +47,7 @@ func (m *Model) handleTripleShotCheckResult(msg tuimsg.TripleShotCheckResultMsg)
 	}
 
 	// Find the coordinator for this result
-	var coordinator *orchestrator.TripleShotCoordinator
-	if msg.GroupID != "" {
-		coordinator = m.tripleShot.Coordinators[msg.GroupID]
-	} else {
-		coordinator = m.tripleShot.Coordinator
-	}
-
+	coordinator := m.tripleShot.GetCoordinatorForGroup(msg.GroupID)
 	if coordinator == nil {
 		if m.logger != nil {
 			m.logger.Warn("tripleshot check result for unknown coordinator",
@@ -154,13 +127,7 @@ func (m *Model) handleTripleShotAttemptProcessed(msg tuimsg.TripleShotAttemptPro
 	}
 
 	// Find the coordinator for this result
-	var coordinator *orchestrator.TripleShotCoordinator
-	if msg.GroupID != "" {
-		coordinator = m.tripleShot.Coordinators[msg.GroupID]
-	} else {
-		coordinator = m.tripleShot.Coordinator
-	}
-
+	coordinator := m.tripleShot.GetCoordinatorForGroup(msg.GroupID)
 	if coordinator == nil {
 		return m, nil
 	}
@@ -257,22 +224,10 @@ func (m *Model) handleTripleShotJudgeStopped(judgeID string) {
 	}
 
 	if coordinatorToStop == nil {
-		// Check deprecated single coordinator
-		if m.tripleShot.Coordinator != nil {
-			session := m.tripleShot.Coordinator.Session()
-			if session != nil && session.JudgeID == judgeID {
-				coordinatorToStop = m.tripleShot.Coordinator
-				m.tripleShot.Coordinator = nil
-			}
-		}
-	}
-
-	if coordinatorToStop == nil {
 		if m.logger != nil {
 			m.logger.Warn("triple-shot judge stop requested but no matching coordinator found",
 				"judge_id", judgeID,
 				"coordinators_count", len(m.tripleShot.Coordinators),
-				"has_deprecated_coordinator", m.tripleShot.Coordinator != nil,
 			)
 		}
 		return
@@ -300,7 +255,6 @@ func (m *Model) handleTripleShotJudgeStopped(judgeID string) {
 }
 
 // cleanupTripleShot stops all tripleshot coordinators and clears the tripleshot state.
-// This handles both the Coordinators map and the deprecated single Coordinator field.
 func (m *Model) cleanupTripleShot() {
 	if m.tripleShot == nil {
 		return
@@ -313,26 +267,11 @@ func (m *Model) cleanupTripleShot() {
 		}
 	}
 
-	// Stop the deprecated single coordinator if not already in the map
-	if m.tripleShot.Coordinator != nil {
-		alreadyStopped := false
-		for _, coord := range m.tripleShot.Coordinators {
-			if coord == m.tripleShot.Coordinator {
-				alreadyStopped = true
-				break
-			}
-		}
-		if !alreadyStopped {
-			m.tripleShot.Coordinator.Stop()
-		}
-	}
-
 	// Clear TUI-level state
 	m.tripleShot = nil
 
 	// Clear session-level tripleshot state
 	if m.session != nil {
-		m.session.TripleShot = nil
 		m.session.TripleShots = nil
 	}
 }

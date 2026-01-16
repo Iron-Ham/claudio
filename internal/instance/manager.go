@@ -163,62 +163,6 @@ type Manager struct {
 	stateMonitor *state.Monitor
 }
 
-// NewManager creates a new instance manager with default configuration.
-//
-// Deprecated: Use NewManagerWithDeps for explicit dependency injection.
-// This constructor creates an internal state.Monitor for backwards compatibility.
-func NewManager(id, workdir, task string) *Manager {
-	return NewManagerWithConfig(id, workdir, task, DefaultManagerConfig())
-}
-
-// NewManagerWithConfig creates a new instance manager with the given configuration.
-// Uses legacy tmux naming (claudio-{instanceID}) for backwards compatibility.
-//
-// Deprecated: Use NewManagerWithDeps for explicit dependency injection.
-// This constructor creates an internal state.Monitor for backwards compatibility.
-func NewManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Manager {
-	// Create internal state monitor from manager config
-	monitorCfg := state.MonitorConfig{
-		ActivityTimeoutMinutes:   cfg.ActivityTimeoutMinutes,
-		CompletionTimeoutMinutes: cfg.CompletionTimeoutMinutes,
-		StaleDetection:           cfg.StaleDetection,
-	}
-	monitor := state.NewMonitor(monitorCfg)
-
-	return NewManagerWithDeps(ManagerOptions{
-		ID:           id,
-		WorkDir:      workdir,
-		Task:         task,
-		Config:       cfg,
-		StateMonitor: monitor,
-	})
-}
-
-// NewManagerWithSession creates a new instance manager with session-scoped tmux naming.
-// The tmux session will be named claudio-{sessionID}-{instanceID} to prevent collisions
-// when multiple Claudio sessions are running simultaneously.
-//
-// Deprecated: Use NewManagerWithDeps for explicit dependency injection.
-// This constructor creates an internal state.Monitor for backwards compatibility.
-func NewManagerWithSession(sessionID, id, workdir, task string, cfg ManagerConfig) *Manager {
-	// Create internal state monitor from manager config
-	monitorCfg := state.MonitorConfig{
-		ActivityTimeoutMinutes:   cfg.ActivityTimeoutMinutes,
-		CompletionTimeoutMinutes: cfg.CompletionTimeoutMinutes,
-		StaleDetection:           cfg.StaleDetection,
-	}
-	monitor := state.NewMonitor(monitorCfg)
-
-	return NewManagerWithDeps(ManagerOptions{
-		ID:           id,
-		SessionID:    sessionID,
-		WorkDir:      workdir,
-		Task:         task,
-		Config:       cfg,
-		StateMonitor: monitor,
-	})
-}
-
 // NewManagerWithDeps creates a new instance manager with explicit dependencies.
 // This is the preferred constructor for new code, enabling proper dependency injection.
 //
@@ -322,30 +266,6 @@ func (m *Manager) SetLogger(logger *logging.Logger) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.logger = logger
-}
-
-// SetStateMonitor replaces the state monitor for centralized state tracking.
-// This allows multiple managers to share a single monitor for coordinated state management.
-//
-// Note: A state monitor is always set (either provided via NewManagerWithDeps or created
-// internally). This method allows replacing it with a shared monitor after construction.
-//
-// Deprecated: Prefer using NewManagerWithDeps with a shared StateMonitor instead.
-func (m *Manager) SetStateMonitor(monitor *state.Monitor) {
-	if monitor == nil {
-		// Log warning since nil is likely a bug in calling code
-		m.mu.RLock()
-		logger := m.logger
-		m.mu.RUnlock()
-		if logger != nil {
-			logger.Warn("SetStateMonitor called with nil, ignoring - state monitor is required",
-				"instance_id", m.id)
-		}
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.stateMonitor = monitor
 }
 
 // StateMonitor returns the configured state monitor.
@@ -922,49 +842,6 @@ func (m *Manager) checkSessionExists(sessionName string) bool {
 	}
 
 	return true
-}
-
-// getHistorySize queries the current tmux pane history size.
-// Returns -1 if the query fails (indicates session may not exist or tmux error).
-// Note: Called without lock since it's a tmux query, and lastHistorySize is only
-// modified within the captureLoop goroutine.
-// Deprecated: Use getSessionStatus for batched queries to reduce subprocess overhead.
-func (m *Manager) getHistorySize(sessionName string) int {
-	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
-	defer cancel()
-	cmd := m.tmuxCmdCtx(ctx, "display-message", "-t", sessionName, "-p", "#{history_size}")
-	output, err := cmd.Output()
-	if err != nil {
-		// Session not found is expected when session ends - don't log
-		// Other errors (tmux crash, etc.) are worth logging at debug level
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			stderr := string(exitErr.Stderr)
-			if !strings.Contains(stderr, "can't find") && !strings.Contains(stderr, "no server running") {
-				m.mu.RLock()
-				logger := m.logger
-				m.mu.RUnlock()
-				if logger != nil {
-					logger.Debug("getHistorySize failed", "session_name", sessionName, "error", err.Error())
-				}
-			}
-		}
-		return -1
-	}
-	var size int
-	_, err = fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &size)
-	if err != nil {
-		m.mu.RLock()
-		logger := m.logger
-		m.mu.RUnlock()
-		if logger != nil {
-			logger.Debug("getHistorySize parse failed",
-				"session_name", sessionName,
-				"output", strings.TrimSpace(string(output)),
-				"error", err.Error())
-		}
-		return -1
-	}
-	return size
 }
 
 // captureVisiblePane captures only the visible pane content (no scrollback history).

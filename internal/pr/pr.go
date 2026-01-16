@@ -172,26 +172,6 @@ func Create(opts PROptions) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-// CreatePR creates a GitHub PR using the gh CLI (legacy wrapper)
-func CreatePR(title, body, branch string) (string, error) {
-	return Create(PROptions{
-		Title:  title,
-		Body:   body,
-		Branch: branch,
-		Draft:  false,
-	})
-}
-
-// CreatePRDraft creates a draft GitHub PR using the gh CLI (legacy wrapper)
-func CreatePRDraft(title, body, branch string) (string, error) {
-	return Create(PROptions{
-		Title:  title,
-		Body:   body,
-		Branch: branch,
-		Draft:  true,
-	})
-}
-
 // CreateStackedPR creates a GitHub PR with a specific base branch (for stacked PRs)
 // This allows creating PRs that target a branch other than the repository default
 func CreateStackedPR(opts PROptions, baseBranch string) (string, error) {
