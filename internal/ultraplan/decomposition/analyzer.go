@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/ultraplan"
+	"github.com/Iron-Ham/claudio/internal/worktree"
 )
 
 // Analyzer performs code structure analysis to enhance task decomposition.
@@ -140,6 +141,11 @@ func (a *Analyzer) buildPackageGraph() error {
 		name := info.Name()
 		if info.IsDir() {
 			if strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			// Skip git submodule directories to avoid errors when walking
+			// uninitialized or partially initialized submodules
+			if worktree.IsSubmoduleDir(path) {
 				return filepath.SkipDir
 			}
 			return nil

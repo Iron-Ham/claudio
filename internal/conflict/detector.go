@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/worktree"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -146,6 +147,19 @@ func (d *Detector) watchDirRecursive(root string) error {
 			}
 		}
 
+		// Skip submodule directories - they have their own .git reference
+		// and watching inside them can cause errors or duplicate events
+		if info.IsDir() && path != root {
+			if worktree.IsSubmoduleDir(path) {
+				if d.logger != nil {
+					d.logger.Debug("skipping submodule directory",
+						"path", path,
+					)
+				}
+				return filepath.SkipDir
+			}
+		}
+
 		// We can only watch directories with fsnotify
 		if info.IsDir() {
 			_ = d.watcher.Add(path)
@@ -279,6 +293,11 @@ func (d *Detector) handleFileEvent(event fsnotify.Event) {
 			filepath.Base(path) == ignore {
 			return
 		}
+	}
+
+	// Skip paths inside submodules by checking for .git file in parent directories
+	if isInsideSubmodule(path) {
+		return
 	}
 
 	// Find which instance this file belongs to
@@ -422,4 +441,42 @@ func (d *Detector) ConflictCount() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return len(d.conflicts)
+}
+
+// isInsideSubmodule checks if a file path is inside a git submodule.
+// It walks up the directory tree looking for a .git file (not directory)
+// that indicates a submodule root.
+func isInsideSubmodule(path string) bool {
+	// Start from the directory containing the file
+	dir := filepath.Dir(path)
+
+	// Walk up the tree until we find either:
+	// 1. A .git file (submodule) - return true
+	// 2. A .git directory (normal repo root) - return false
+	// 3. Root of filesystem - return false
+	for {
+		gitPath := filepath.Join(dir, ".git")
+		info, err := os.Stat(gitPath)
+		if err == nil {
+			if info.Mode().IsRegular() {
+				// Found a .git file - this is a submodule
+				return worktree.IsSubmoduleDir(dir)
+			}
+			// Found a .git directory - this is a normal repo root
+			return false
+		}
+		// Only continue if the error is "file not found" - for other errors
+		// (permission denied, etc.), we can't determine submodule status
+		// so assume it's not a submodule to be safe
+		if !os.IsNotExist(err) {
+			return false
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			// Reached root without finding .git
+			return false
+		}
+		dir = parent
+	}
 }

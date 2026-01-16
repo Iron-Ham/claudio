@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/worktree"
 )
 
 // TaskCompletionFileName is the sentinel file that tasks write when complete.
@@ -258,6 +259,12 @@ func (v *TaskVerifier) findCompletionFile(worktreePath, filename string) string 
 
 		// Skip known large/irrelevant directories
 		if d.IsDir() && skippedDirectories[d.Name()] {
+			return fs.SkipDir
+		}
+
+		// Skip git submodule directories to avoid errors when traversing
+		// uninitialized or partially initialized submodules
+		if d.IsDir() && worktree.IsSubmoduleDir(path) {
 			return fs.SkipDir
 		}
 
