@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -888,6 +889,365 @@ func TestConfig_Validate_Paths(t *testing.T) {
 		}
 		if !found {
 			t.Error("expected error for excessively long path")
+		}
+	})
+}
+
+func TestConfig_Validate_SparseCheckout(t *testing.T) {
+	t.Run("disabled sparse checkout with no directories is valid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = false
+		cfg.Paths.SparseCheckout.Directories = []string{}
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout") {
+				t.Errorf("disabled sparse checkout should be valid: %v", err)
+			}
+		}
+	})
+
+	t.Run("enabled sparse checkout requires directories", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.Directories = []string{}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "paths.sparse_checkout.directories" && strings.Contains(err.Message, "at least one directory") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for enabled sparse checkout without directories")
+		}
+	})
+
+	t.Run("enabled sparse checkout with valid directories", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.Directories = []string{"ios/", "shared/", "packages/common/"}
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout") {
+				t.Errorf("valid sparse checkout config should not error: %v", err)
+			}
+		}
+	})
+
+	t.Run("directories without trailing slash are valid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.Directories = []string{"ios", "android", "web"}
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout") {
+				t.Errorf("directories without trailing slash should be valid: %v", err)
+			}
+		}
+	})
+
+	t.Run("empty directory is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.Directories = []string{"ios/", "", "web/"}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.directories[") && strings.Contains(err.Message, "cannot be empty") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for empty directory")
+		}
+	})
+
+	t.Run("directory with null byte is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.Directories = []string{"ios/\x00bad"}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.directories[") && strings.Contains(err.Message, "null") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for directory with null byte")
+		}
+	})
+
+	t.Run("absolute path directory is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.Directories = []string{"/ios/"}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.directories[") && strings.Contains(err.Message, "relative path") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for absolute path directory")
+		}
+	})
+
+	t.Run("directory with parent reference is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.Directories = []string{"ios/../android/"}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.directories[") && strings.Contains(err.Message, "parent directory") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for directory with parent reference")
+		}
+	})
+
+	t.Run("wildcard in cone mode is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.ConeMode = true
+		cfg.Paths.SparseCheckout.Directories = []string{"ios/*.swift"}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.directories[") && strings.Contains(err.Message, "wildcards") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for wildcard in cone mode")
+		}
+	})
+
+	t.Run("wildcard without cone mode is valid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.ConeMode = false
+		cfg.Paths.SparseCheckout.Directories = []string{"ios/*.swift"}
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.directories[") && strings.Contains(err.Message, "wildcards") {
+				t.Errorf("wildcard without cone mode should be valid: %v", err)
+			}
+		}
+	})
+
+	t.Run("excessively long directory is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.Directories = []string{strings.Repeat("a/", 600)}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.directories[") && strings.Contains(err.Message, "length") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for excessively long directory")
+		}
+	})
+
+	t.Run("duplicate directories are detected", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.Directories = []string{"ios/", "android/", "ios"}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.directories[") && strings.Contains(err.Message, "duplicate") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for duplicate directories")
+		}
+	})
+
+	t.Run("too many paths is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		// Create 101 directories to exceed the 100 max (use unique names)
+		dirs := make([]string, 101)
+		for i := range dirs {
+			dirs[i] = fmt.Sprintf("dir%d/", i)
+		}
+		cfg.Paths.SparseCheckout.Directories = dirs
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "paths.sparse_checkout" && strings.Contains(err.Message, "exceeds maximum") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for too many paths")
+		}
+	})
+
+	t.Run("combined directories and always_include exceeding limit", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		// 60 directories + 50 always_include = 110 > 100
+		dirs := make([]string, 60)
+		for i := range dirs {
+			dirs[i] = fmt.Sprintf("dir%d/", i)
+		}
+		alwaysInclude := make([]string, 50)
+		for i := range alwaysInclude {
+			alwaysInclude[i] = fmt.Sprintf("always%d/", i)
+		}
+		cfg.Paths.SparseCheckout.Directories = dirs
+		cfg.Paths.SparseCheckout.AlwaysInclude = alwaysInclude
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "paths.sparse_checkout" && strings.Contains(err.Message, "exceeds maximum") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for combined paths exceeding maximum")
+		}
+	})
+
+	t.Run("whitespace-only directory is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.Directories = []string{"ios/", "   ", "web/"}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.directories[") && strings.Contains(err.Message, "cannot be empty") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for whitespace-only directory")
+		}
+	})
+
+	t.Run("question mark wildcard in cone mode is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.ConeMode = true
+		cfg.Paths.SparseCheckout.Directories = []string{"ios/?.txt"}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.directories[") && strings.Contains(err.Message, "wildcards") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for question mark wildcard in cone mode")
+		}
+	})
+
+	t.Run("bracket pattern in cone mode is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.ConeMode = true
+		cfg.Paths.SparseCheckout.Directories = []string{"src/[abc]/"}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.directories[") && strings.Contains(err.Message, "wildcards") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for bracket pattern in cone mode")
+		}
+	})
+
+	t.Run("always_include directories are validated", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.Directories = []string{"ios/"}
+		cfg.Paths.SparseCheckout.AlwaysInclude = []string{"/invalid"}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.always_include[") && strings.Contains(err.Message, "relative path") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for invalid always_include directory")
+		}
+	})
+
+	t.Run("duplicate between directories and always_include is detected", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = true
+		cfg.Paths.SparseCheckout.Directories = []string{"ios/", "android/"}
+		cfg.Paths.SparseCheckout.AlwaysInclude = []string{"ios"}
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout.always_include[") && strings.Contains(err.Message, "already specified") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for duplicate between directories and always_include")
+		}
+	})
+
+	t.Run("disabled with directories is valid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Paths.SparseCheckout.Enabled = false
+		cfg.Paths.SparseCheckout.Directories = []string{"ios/", "android/"}
+		errs := cfg.Validate()
+
+		// Still validates directories even when disabled, but doesn't require at least one
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "paths.sparse_checkout") && strings.Contains(err.Message, "at least one directory") {
+				t.Errorf("disabled sparse checkout with directories should not require directories: %v", err)
+			}
 		}
 	})
 }

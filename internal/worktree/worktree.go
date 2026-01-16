@@ -12,14 +12,25 @@ import (
 
 // Manager handles git worktree operations
 type Manager struct {
-	repoDir string
-	logger  *logging.Logger
+	repoDir            string
+	logger             *logging.Logger
+	sparseCheckoutDirs []string // Directories to include in sparse checkout (nil = disabled)
+	coneMode           bool     // Whether to use cone mode for sparse checkout
 }
 
 // SetLogger sets the logger for the worktree manager.
 // If not set, the manager will operate without logging.
 func (m *Manager) SetLogger(logger *logging.Logger) {
 	m.logger = logger
+}
+
+// SetSparseCheckoutConfig configures sparse checkout for new worktrees.
+// When directories is non-empty, sparse checkout will be applied automatically
+// when creating worktrees. Pass nil or empty to disable sparse checkout.
+// If coneMode is true, git's faster cone mode is used (recommended).
+func (m *Manager) SetSparseCheckoutConfig(directories []string, coneMode bool) {
+	m.sparseCheckoutDirs = directories
+	m.coneMode = coneMode
 }
 
 // truncateOutput truncates a string to maxLen characters, adding "..." if truncated.
@@ -98,6 +109,9 @@ func (m *Manager) Create(path, branch string) error {
 		}
 	}
 
+	// Apply sparse checkout if configured
+	m.applySparseCheckout(path)
+
 	return nil
 }
 
@@ -135,6 +149,9 @@ func (m *Manager) CreateFromBranch(path, newBranch, baseBranch string) error {
 				"error", err)
 		}
 	}
+
+	// Apply sparse checkout if configured
+	m.applySparseCheckout(path)
 
 	return nil
 }
@@ -764,6 +781,170 @@ func (m *Manager) IsCherryPickInProgress(path string) bool {
 	cherryPickHead := filepath.Join(path, ".git", "CHERRY_PICK_HEAD")
 	_, err := os.Stat(cherryPickHead)
 	return err == nil
+}
+
+// EnableSparseCheckout configures sparse checkout for an existing worktree.
+// This must be called after the worktree is created.
+// If coneMode is true, git's cone mode is used (faster, uses directory paths).
+// If coneMode is false, gitignore-style patterns are used.
+func (m *Manager) EnableSparseCheckout(path string, directories []string, coneMode bool) error {
+	if len(directories) == 0 {
+		return fmt.Errorf("at least one directory is required for sparse checkout")
+	}
+
+	// Initialize sparse checkout
+	var initArgs []string
+	if coneMode {
+		initArgs = []string{"sparse-checkout", "init", "--cone"}
+	} else {
+		initArgs = []string{"sparse-checkout", "init"}
+	}
+
+	initCmd := exec.Command("git", initArgs...)
+	initCmd.Dir = path
+
+	output, err := initCmd.CombinedOutput()
+	if m.logger != nil {
+		m.logger.Debug("git command", "args", initArgs, "output", truncateOutput(string(output), 500))
+	}
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("git sparse-checkout init failed", "args", initArgs, "error", err, "stderr", string(output))
+		}
+		return fmt.Errorf("failed to initialize sparse checkout: %w\n%s", err, string(output))
+	}
+
+	// Set the sparse checkout directories
+	setArgs := append([]string{"sparse-checkout", "set"}, directories...)
+	setCmd := exec.Command("git", setArgs...)
+	setCmd.Dir = path
+
+	output, err = setCmd.CombinedOutput()
+	if m.logger != nil {
+		m.logger.Debug("git command", "args", setArgs, "output", truncateOutput(string(output), 500))
+	}
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("git sparse-checkout set failed", "args", setArgs, "error", err, "stderr", string(output))
+		}
+		return fmt.Errorf("failed to set sparse checkout directories: %w\n%s", err, string(output))
+	}
+
+	if m.logger != nil {
+		m.logger.Info("sparse checkout enabled", "path", path, "directories", directories, "cone_mode", coneMode)
+	}
+
+	return nil
+}
+
+// DisableSparseCheckout disables sparse checkout for a worktree, restoring full checkout.
+func (m *Manager) DisableSparseCheckout(path string) error {
+	args := []string{"sparse-checkout", "disable"}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = path
+
+	output, err := cmd.CombinedOutput()
+	if m.logger != nil {
+		m.logger.Debug("git command", "args", args, "output", truncateOutput(string(output), 500))
+	}
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Error("git sparse-checkout disable failed", "args", args, "error", err, "stderr", string(output))
+		}
+		return fmt.Errorf("failed to disable sparse checkout: %w\n%s", err, string(output))
+	}
+
+	if m.logger != nil {
+		m.logger.Info("sparse checkout disabled", "path", path)
+	}
+
+	return nil
+}
+
+// IsSparseCheckoutEnabled checks if sparse checkout is enabled for a worktree.
+func (m *Manager) IsSparseCheckoutEnabled(path string) (bool, error) {
+	// With extensions.worktreeConfig=true (used when sparse-checkout is initialized with --cone),
+	// the config is stored in the worktree-specific config file.
+	// We need to use --worktree flag to check the correct config location.
+	args := []string{"config", "--worktree", "--get", "core.sparseCheckout"}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = path
+
+	output, err := cmd.Output()
+	if err != nil {
+		// Try fallback to --local if --worktree fails
+		// (older git versions or repos without worktreeConfig extension)
+		args = []string{"config", "--local", "--get", "core.sparseCheckout"}
+		cmd = exec.Command("git", args...)
+		cmd.Dir = path
+		output, err = cmd.Output()
+		if err != nil {
+			// Config key doesn't exist means sparse checkout is not enabled
+			return false, nil
+		}
+	}
+
+	value := strings.TrimSpace(string(output))
+	return value == "true", nil
+}
+
+// GetSparseCheckoutPatterns returns the current sparse checkout patterns for a worktree.
+// Returns an empty slice if sparse checkout is not enabled.
+func (m *Manager) GetSparseCheckoutPatterns(path string) ([]string, error) {
+	args := []string{"sparse-checkout", "list"}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = path
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// If sparse-checkout is not enabled, the command may fail or return empty
+		// This is not an error condition - just means no sparse checkout
+		if m.logger != nil {
+			m.logger.Debug("sparse-checkout list returned error (may not be enabled)", "error", err)
+		}
+		return []string{}, nil
+	}
+
+	lines := strings.TrimSpace(string(output))
+	if lines == "" {
+		return []string{}, nil
+	}
+
+	return strings.Split(lines, "\n"), nil
+}
+
+// applySparseCheckout applies sparse checkout to a worktree if configured.
+// This is called automatically after worktree creation when sparse checkout is configured.
+//
+// IMPORTANT: Failures are logged but do not cause an error - sparse checkout is treated
+// as an optimization, not a requirement. If sparse checkout fails:
+//   - The worktree is still fully functional with ALL files checked out
+//   - A warning is logged (if logger is configured)
+//   - Users who explicitly configured sparse checkout should check logs if disk usage
+//     is higher than expected
+//
+// This design choice prioritizes worktree usability over strict sparse checkout enforcement.
+// For critical sparse checkout requirements, callers should use EnableSparseCheckout directly
+// and handle errors appropriately.
+func (m *Manager) applySparseCheckout(path string) {
+	if len(m.sparseCheckoutDirs) == 0 {
+		return
+	}
+
+	if err := m.EnableSparseCheckout(path, m.sparseCheckoutDirs, m.coneMode); err != nil {
+		// Always log the failure - this is an important operational warning
+		// Users who configured sparse checkout expect it to work
+		if m.logger != nil {
+			m.logger.Warn("sparse checkout failed - worktree created with full checkout instead",
+				"path", path,
+				"configured_directories", m.sparseCheckoutDirs,
+				"cone_mode", m.coneMode,
+				"error", err,
+			)
+		}
+		// We don't return an error - sparse checkout is an optimization
+		// The worktree is still fully functional, just with all files
+	}
 }
 
 // localClaudeFiles lists the gitignored Claude configuration files that should be

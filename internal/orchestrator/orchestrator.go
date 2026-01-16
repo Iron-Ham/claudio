@@ -94,6 +94,14 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		return nil, fmt.Errorf("failed to create worktree manager: %w", err)
 	}
 
+	// Configure sparse checkout if enabled
+	if cfg.Paths.SparseCheckout.Enabled {
+		dirs := cfg.Paths.SparseCheckout.GetSparseDirectories()
+		if len(dirs) > 0 {
+			wt.SetSparseCheckoutConfig(dirs, cfg.Paths.SparseCheckout.ConeMode)
+		}
+	}
+
 	// Create conflict detector
 	detector, err := conflict.New()
 	if err != nil {
@@ -174,6 +182,14 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 	wt, err := worktree.New(baseDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create worktree manager: %w", err)
+	}
+
+	// Configure sparse checkout if enabled
+	if cfg.Paths.SparseCheckout.Enabled {
+		dirs := cfg.Paths.SparseCheckout.GetSparseDirectories()
+		if len(dirs) > 0 {
+			wt.SetSparseCheckoutConfig(dirs, cfg.Paths.SparseCheckout.ConeMode)
+		}
 	}
 
 	// Create conflict detector
