@@ -278,7 +278,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 
 		// Calculate the content area dimensions and resize tmux sessions
-		contentWidth, contentHeight := CalculateContentDimensions(m.terminalManager.Width(), m.terminalManager.Height())
+		// Use the configured sidebar width to ensure tmux panels match the UI layout
+		cfg := config.Get()
+		contentWidth, contentHeight := CalculateContentDimensionsWithSidebarWidth(
+			m.terminalManager.Width(), m.terminalManager.Height(), cfg.TUI.SidebarWidth)
 		if m.orchestrator != nil && contentWidth > 0 && contentHeight > 0 {
 			m.orchestrator.ResizeAllInstances(contentWidth, contentHeight)
 		}
