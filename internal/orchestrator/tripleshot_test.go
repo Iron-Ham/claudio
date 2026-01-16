@@ -877,8 +877,158 @@ func TestTripleShotCoordinator_CheckJudgeCompletion(t *testing.T) {
 			}
 
 			if complete != tt.wantComplete {
-				t.Errorf("complete = %v, want %v", complete, tt.wantComplete)
+				t.Errorf("CheckJudgeCompletion() complete = %v, want %v", complete, tt.wantComplete)
 			}
 		})
+	}
+}
+
+// TestParseTripleShotCompletionFile_FlexibleNotes tests that the completion file parser
+// handles the Notes field flexibly, accepting both string and array of strings.
+// This regression test ensures we don't reintroduce the bug where array-valued notes
+// caused JSON parsing to fail, preventing the judge from being triggered.
+func TestParseTripleShotCompletionFile_FlexibleNotes(t *testing.T) {
+	tests := []struct {
+		name          string
+		jsonContent   string
+		expectedNotes string
+		wantErr       bool
+	}{
+		{
+			name: "notes as string",
+			jsonContent: `{
+				"attempt_index": 0,
+				"status": "complete",
+				"summary": "Test summary",
+				"files_modified": ["file1.go"],
+				"approach": "Test approach",
+				"notes": "Single string note"
+			}`,
+			expectedNotes: "Single string note",
+			wantErr:       false,
+		},
+		{
+			name: "notes as array of strings",
+			jsonContent: `{
+				"attempt_index": 1,
+				"status": "complete",
+				"summary": "Test summary",
+				"files_modified": ["file1.go"],
+				"approach": "Test approach",
+				"notes": ["Note line 1", "Note line 2", "Note line 3"]
+			}`,
+			expectedNotes: "Note line 1\nNote line 2\nNote line 3",
+			wantErr:       false,
+		},
+		{
+			name: "notes empty string",
+			jsonContent: `{
+				"attempt_index": 2,
+				"status": "complete",
+				"summary": "Test summary",
+				"files_modified": [],
+				"approach": "Test approach",
+				"notes": ""
+			}`,
+			expectedNotes: "",
+			wantErr:       false,
+		},
+		{
+			name: "notes empty array",
+			jsonContent: `{
+				"attempt_index": 0,
+				"status": "complete",
+				"summary": "Test summary",
+				"files_modified": [],
+				"approach": "Test approach",
+				"notes": []
+			}`,
+			expectedNotes: "",
+			wantErr:       false,
+		},
+		{
+			name: "notes omitted",
+			jsonContent: `{
+				"attempt_index": 0,
+				"status": "complete",
+				"summary": "Test summary",
+				"files_modified": [],
+				"approach": "Test approach"
+			}`,
+			expectedNotes: "",
+			wantErr:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp directory and file
+			tmpDir := t.TempDir()
+			completionPath := filepath.Join(tmpDir, TripleShotCompletionFileName)
+			if err := os.WriteFile(completionPath, []byte(tt.jsonContent), 0o644); err != nil {
+				t.Fatalf("failed to write test file: %v", err)
+			}
+
+			// Parse the file
+			completion, err := ParseTripleShotCompletionFile(tmpDir)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if string(completion.Notes) != tt.expectedNotes {
+				t.Errorf("Notes = %q, want %q", completion.Notes, tt.expectedNotes)
+			}
+		})
+	}
+}
+
+// TestParseTripleShotCompletionFile_ExtraFields tests that the completion file parser
+// ignores extra fields that may be written by Claude instances beyond the defined schema.
+func TestParseTripleShotCompletionFile_ExtraFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	completionPath := filepath.Join(tmpDir, TripleShotCompletionFileName)
+
+	// JSON with many extra fields beyond the schema
+	jsonData := `{
+		"attempt_index": 0,
+		"status": "complete",
+		"summary": "Test summary",
+		"files_modified": ["file1.go"],
+		"approach": "Test approach",
+		"notes": "Notes here",
+		"extra_field_1": "should be ignored",
+		"files_created": ["new.go"],
+		"files_deleted": ["old.go"],
+		"tests_passed": true,
+		"build_passed": true,
+		"changes": ["change 1", "change 2"]
+	}`
+
+	if err := os.WriteFile(completionPath, []byte(jsonData), 0o644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	completion, err := ParseTripleShotCompletionFile(tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify core fields are parsed correctly
+	if completion.AttemptIndex != 0 {
+		t.Errorf("AttemptIndex = %d, want 0", completion.AttemptIndex)
+	}
+	if completion.Status != "complete" {
+		t.Errorf("Status = %q, want %q", completion.Status, "complete")
+	}
+	if completion.Summary != "Test summary" {
+		t.Errorf("Summary = %q, want %q", completion.Summary, "Test summary")
 	}
 }
