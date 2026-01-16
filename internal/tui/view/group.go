@@ -674,6 +674,8 @@ func countVisibleInstancesRecursive(group *orchestrator.InstanceGroup, session *
 
 // GetGroupIDs returns all group IDs in display order (for J/K navigation).
 // This function is thread-safe with respect to session.Groups access.
+// Note: This returns ALL groups including hidden subgroups. For navigation
+// that respects collapse state, use GetVisibleGroupIDs instead.
 func GetGroupIDs(session *orchestrator.Session) []string {
 	if session == nil || !session.HasGroups() {
 		return nil
@@ -691,6 +693,35 @@ func getGroupIDsRecursive(group *orchestrator.InstanceGroup) []string {
 	for _, subGroup := range group.SubGroups {
 		ids = append(ids, getGroupIDsRecursive(subGroup)...)
 	}
+	return ids
+}
+
+// GetVisibleGroupIDs returns group IDs that are currently visible in the UI.
+// A group is visible if all of its ancestor groups are expanded (not collapsed).
+// This respects the collapse state and should be used for navigation.
+func GetVisibleGroupIDs(session *orchestrator.Session, state *GroupViewState) []string {
+	if session == nil || !session.HasGroups() || state == nil {
+		return nil
+	}
+
+	var ids []string
+	for _, group := range session.GetGroups() {
+		ids = append(ids, getVisibleGroupIDsRecursive(group, state)...)
+	}
+	return ids
+}
+
+func getVisibleGroupIDsRecursive(group *orchestrator.InstanceGroup, state *GroupViewState) []string {
+	// Always include the current group (it's visible if we got here)
+	ids := []string{group.ID}
+
+	// Only include subgroups if this group is expanded
+	if !state.IsCollapsed(group.ID) {
+		for _, subGroup := range group.SubGroups {
+			ids = append(ids, getVisibleGroupIDsRecursive(subGroup, state)...)
+		}
+	}
+
 	return ids
 }
 
