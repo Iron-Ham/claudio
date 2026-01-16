@@ -393,9 +393,8 @@ func (m Model) handleGroupCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Apply result actions based on the Action type
 		switch result.Action {
 		case GroupActionToggleCollapse:
-			if result.GroupID != "" {
-				m.groupViewState.ToggleCollapse(result.GroupID)
-			}
+			// Toggle already performed by GroupKeyHandler.handleToggleCollapse()
+			// No additional action needed here
 		case GroupActionCollapseAll:
 			// Get a thread-safe snapshot of groups
 			groups := m.session.GetGroups()
