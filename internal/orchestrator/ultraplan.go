@@ -76,6 +76,34 @@ type PlannedTask struct {
 	NoCode        bool           `json:"no_code,omitempty"`   // Task doesn't require code changes (verification/testing tasks)
 }
 
+// GetID returns the task's unique identifier.
+// This method enables PlannedTask to satisfy the prompt.PlannedTaskLike interface.
+func (t *PlannedTask) GetID() string { return t.ID }
+
+// GetTitle returns the task's short title.
+// This method enables PlannedTask to satisfy the prompt.PlannedTaskLike interface.
+func (t *PlannedTask) GetTitle() string { return t.Title }
+
+// GetDescription returns the detailed task instructions.
+// This method enables PlannedTask to satisfy the prompt.PlannedTaskLike interface.
+func (t *PlannedTask) GetDescription() string { return t.Description }
+
+// GetFiles returns the list of files this task is expected to modify.
+// This method enables PlannedTask to satisfy the prompt.PlannedTaskLike interface.
+func (t *PlannedTask) GetFiles() []string { return t.Files }
+
+// GetDependsOn returns the IDs of tasks this task depends on.
+// This method enables PlannedTask to satisfy the prompt.PlannedTaskLike interface.
+func (t *PlannedTask) GetDependsOn() []string { return t.DependsOn }
+
+// GetPriority returns the task's execution priority (lower = earlier).
+// This method enables PlannedTask to satisfy the prompt.PlannedTaskLike interface.
+func (t *PlannedTask) GetPriority() int { return t.Priority }
+
+// GetEstComplexity returns the estimated complexity as a string.
+// This method enables PlannedTask to satisfy the prompt.PlannedTaskLike interface.
+func (t *PlannedTask) GetEstComplexity() string { return string(t.EstComplexity) }
+
 // PlanSpec represents the output of the planning phase
 type PlanSpec struct {
 	ID              string              `json:"id"`
@@ -88,6 +116,46 @@ type PlanSpec struct {
 	Constraints     []string            `json:"constraints"`      // Identified constraints/risks
 	CreatedAt       time.Time           `json:"created_at"`
 }
+
+// PlannedTaskLike is an interface that PlannedTask satisfies.
+// This enables the prompt package to work with tasks via interface without
+// creating an import cycle. The prompt package can define its own compatible
+// interface and use these getter methods.
+type PlannedTaskLike interface {
+	GetID() string
+	GetTitle() string
+	GetDescription() string
+	GetFiles() []string
+	GetDependsOn() []string
+	GetPriority() int
+	GetEstComplexity() string
+}
+
+// GetSummary returns the executive summary of the plan.
+// This method enables PlanSpec to satisfy prompt.PlanLike interface.
+func (p *PlanSpec) GetSummary() string { return p.Summary }
+
+// GetTasks returns the planned tasks as a slice of PlannedTaskLike interfaces.
+// This method enables PlanSpec to satisfy prompt.PlanLike interface.
+func (p *PlanSpec) GetTasks() []PlannedTaskLike {
+	result := make([]PlannedTaskLike, len(p.Tasks))
+	for i := range p.Tasks {
+		result[i] = &p.Tasks[i]
+	}
+	return result
+}
+
+// GetExecutionOrder returns the groups of parallelizable task IDs.
+// This method enables PlanSpec to satisfy prompt.PlanLike interface.
+func (p *PlanSpec) GetExecutionOrder() [][]string { return p.ExecutionOrder }
+
+// GetInsights returns key findings from codebase exploration.
+// This method enables PlanSpec to satisfy prompt.PlanLike interface.
+func (p *PlanSpec) GetInsights() []string { return p.Insights }
+
+// GetConstraints returns identified constraints and risks.
+// This method enables PlanSpec to satisfy prompt.PlanLike interface.
+func (p *PlanSpec) GetConstraints() []string { return p.Constraints }
 
 // UltraPlanConfig holds configuration for an ultra-plan session
 type UltraPlanConfig struct {
@@ -1414,6 +1482,22 @@ type GroupConsolidationCompletionFile struct {
 	AggregatedContext  *AggregatedTaskContext `json:"aggregated_context,omitempty"`
 	Notes              string                 `json:"notes,omitempty"`                 // Consolidator's observations
 	IssuesForNextGroup []string               `json:"issues_for_next_group,omitempty"` // Warnings/concerns to pass forward
+}
+
+// GetNotes returns the consolidator's observations about the consolidated code.
+// This method enables GroupConsolidationCompletionFile to satisfy prompt.GroupContextLike interface.
+func (g *GroupConsolidationCompletionFile) GetNotes() string { return g.Notes }
+
+// GetIssuesForNextGroup returns warnings or concerns to pass to the next group.
+// This method enables GroupConsolidationCompletionFile to satisfy prompt.GroupContextLike interface.
+func (g *GroupConsolidationCompletionFile) GetIssuesForNextGroup() []string {
+	return g.IssuesForNextGroup
+}
+
+// IsVerificationSuccess returns true if the verification (build/lint/tests) passed.
+// This method enables GroupConsolidationCompletionFile to satisfy prompt.GroupContextLike interface.
+func (g *GroupConsolidationCompletionFile) IsVerificationSuccess() bool {
+	return g.Verification.OverallSuccess
 }
 
 // GroupConsolidationCompletionFilePath returns the full path to the group consolidation completion file

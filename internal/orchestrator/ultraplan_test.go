@@ -934,3 +934,241 @@ That concludes my evaluation.`,
 		})
 	}
 }
+
+func TestPlannedTask_Getters(t *testing.T) {
+	task := &PlannedTask{
+		ID:            "task-123",
+		Title:         "Test Task",
+		Description:   "A detailed description of the test task",
+		Files:         []string{"file1.go", "file2.go"},
+		DependsOn:     []string{"task-1", "task-2"},
+		Priority:      5,
+		EstComplexity: ComplexityMedium,
+	}
+
+	// Test each getter method
+	if got := task.GetID(); got != "task-123" {
+		t.Errorf("GetID() = %q, want %q", got, "task-123")
+	}
+	if got := task.GetTitle(); got != "Test Task" {
+		t.Errorf("GetTitle() = %q, want %q", got, "Test Task")
+	}
+	if got := task.GetDescription(); got != "A detailed description of the test task" {
+		t.Errorf("GetDescription() = %q, want %q", got, "A detailed description of the test task")
+	}
+	if got := task.GetFiles(); len(got) != 2 || got[0] != "file1.go" || got[1] != "file2.go" {
+		t.Errorf("GetFiles() = %v, want %v", got, []string{"file1.go", "file2.go"})
+	}
+	if got := task.GetDependsOn(); len(got) != 2 || got[0] != "task-1" || got[1] != "task-2" {
+		t.Errorf("GetDependsOn() = %v, want %v", got, []string{"task-1", "task-2"})
+	}
+	if got := task.GetPriority(); got != 5 {
+		t.Errorf("GetPriority() = %d, want %d", got, 5)
+	}
+	if got := task.GetEstComplexity(); got != "medium" {
+		t.Errorf("GetEstComplexity() = %q, want %q", got, "medium")
+	}
+}
+
+func TestPlannedTask_Getters_EmptyFields(t *testing.T) {
+	// Test with empty/nil fields to ensure no panics
+	task := &PlannedTask{}
+
+	if got := task.GetID(); got != "" {
+		t.Errorf("GetID() = %q, want empty string", got)
+	}
+	if got := task.GetTitle(); got != "" {
+		t.Errorf("GetTitle() = %q, want empty string", got)
+	}
+	if got := task.GetDescription(); got != "" {
+		t.Errorf("GetDescription() = %q, want empty string", got)
+	}
+	if got := task.GetFiles(); got != nil {
+		t.Errorf("GetFiles() = %v, want nil", got)
+	}
+	if got := task.GetDependsOn(); got != nil {
+		t.Errorf("GetDependsOn() = %v, want nil", got)
+	}
+	if got := task.GetPriority(); got != 0 {
+		t.Errorf("GetPriority() = %d, want 0", got)
+	}
+	if got := task.GetEstComplexity(); got != "" {
+		t.Errorf("GetEstComplexity() = %q, want empty string", got)
+	}
+}
+
+func TestPlanSpec_Getters(t *testing.T) {
+	plan := &PlanSpec{
+		Summary: "Test plan summary",
+		Tasks: []PlannedTask{
+			{ID: "task-1", Title: "Task 1"},
+			{ID: "task-2", Title: "Task 2"},
+		},
+		ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
+		Insights:       []string{"insight 1", "insight 2"},
+		Constraints:    []string{"constraint 1"},
+	}
+
+	// Test GetSummary
+	if got := plan.GetSummary(); got != "Test plan summary" {
+		t.Errorf("GetSummary() = %q, want %q", got, "Test plan summary")
+	}
+
+	// Test GetTasks
+	tasks := plan.GetTasks()
+	if len(tasks) != 2 {
+		t.Errorf("GetTasks() returned %d tasks, want 2", len(tasks))
+	}
+	if tasks[0].GetID() != "task-1" {
+		t.Errorf("GetTasks()[0].GetID() = %q, want %q", tasks[0].GetID(), "task-1")
+	}
+	if tasks[1].GetID() != "task-2" {
+		t.Errorf("GetTasks()[1].GetID() = %q, want %q", tasks[1].GetID(), "task-2")
+	}
+
+	// Test GetExecutionOrder
+	order := plan.GetExecutionOrder()
+	if len(order) != 2 {
+		t.Errorf("GetExecutionOrder() returned %d groups, want 2", len(order))
+	}
+	if len(order[0]) != 1 || order[0][0] != "task-1" {
+		t.Errorf("GetExecutionOrder()[0] = %v, want %v", order[0], []string{"task-1"})
+	}
+
+	// Test GetInsights
+	insights := plan.GetInsights()
+	if len(insights) != 2 || insights[0] != "insight 1" {
+		t.Errorf("GetInsights() = %v, want %v", insights, []string{"insight 1", "insight 2"})
+	}
+
+	// Test GetConstraints
+	constraints := plan.GetConstraints()
+	if len(constraints) != 1 || constraints[0] != "constraint 1" {
+		t.Errorf("GetConstraints() = %v, want %v", constraints, []string{"constraint 1"})
+	}
+}
+
+func TestPlanSpec_Getters_EmptyFields(t *testing.T) {
+	// Test with empty plan
+	plan := &PlanSpec{}
+
+	if got := plan.GetSummary(); got != "" {
+		t.Errorf("GetSummary() = %q, want empty string", got)
+	}
+
+	tasks := plan.GetTasks()
+	if len(tasks) != 0 {
+		t.Errorf("GetTasks() returned %d tasks, want 0", len(tasks))
+	}
+
+	if got := plan.GetExecutionOrder(); got != nil {
+		t.Errorf("GetExecutionOrder() = %v, want nil", got)
+	}
+	if got := plan.GetInsights(); got != nil {
+		t.Errorf("GetInsights() = %v, want nil", got)
+	}
+	if got := plan.GetConstraints(); got != nil {
+		t.Errorf("GetConstraints() = %v, want nil", got)
+	}
+}
+
+func TestPlanSpec_GetTasks_InterfaceSatisfaction(t *testing.T) {
+	// Test that returned tasks satisfy PlannedTaskLike interface
+	plan := &PlanSpec{
+		Tasks: []PlannedTask{
+			{
+				ID:            "task-1",
+				Title:         "Test Task",
+				Description:   "Description",
+				Files:         []string{"file.go"},
+				DependsOn:     []string{},
+				Priority:      1,
+				EstComplexity: ComplexityLow,
+			},
+		},
+	}
+
+	tasks := plan.GetTasks()
+	if len(tasks) != 1 {
+		t.Fatalf("GetTasks() returned %d tasks, want 1", len(tasks))
+	}
+
+	// Verify the returned interface has all expected methods
+	task := tasks[0]
+	if task.GetID() != "task-1" {
+		t.Errorf("task.GetID() = %q, want %q", task.GetID(), "task-1")
+	}
+	if task.GetTitle() != "Test Task" {
+		t.Errorf("task.GetTitle() = %q, want %q", task.GetTitle(), "Test Task")
+	}
+	if task.GetDescription() != "Description" {
+		t.Errorf("task.GetDescription() = %q, want %q", task.GetDescription(), "Description")
+	}
+	if got := task.GetFiles(); len(got) != 1 || got[0] != "file.go" {
+		t.Errorf("task.GetFiles() = %v, want %v", got, []string{"file.go"})
+	}
+	if got := task.GetDependsOn(); len(got) != 0 {
+		t.Errorf("task.GetDependsOn() = %v, want empty slice", got)
+	}
+	if task.GetPriority() != 1 {
+		t.Errorf("task.GetPriority() = %d, want 1", task.GetPriority())
+	}
+	if task.GetEstComplexity() != "low" {
+		t.Errorf("task.GetEstComplexity() = %q, want %q", task.GetEstComplexity(), "low")
+	}
+}
+
+func TestGroupConsolidationCompletionFile_Getters(t *testing.T) {
+	completion := &GroupConsolidationCompletionFile{
+		Notes:              "Consolidation went smoothly",
+		IssuesForNextGroup: []string{"Watch out for API changes", "New dependency added"},
+		Verification: VerificationResult{
+			OverallSuccess: true,
+		},
+	}
+
+	// Test GetNotes
+	if got := completion.GetNotes(); got != "Consolidation went smoothly" {
+		t.Errorf("GetNotes() = %q, want %q", got, "Consolidation went smoothly")
+	}
+
+	// Test GetIssuesForNextGroup
+	issues := completion.GetIssuesForNextGroup()
+	if len(issues) != 2 || issues[0] != "Watch out for API changes" {
+		t.Errorf("GetIssuesForNextGroup() = %v, want %v", issues, []string{"Watch out for API changes", "New dependency added"})
+	}
+
+	// Test IsVerificationSuccess
+	if !completion.IsVerificationSuccess() {
+		t.Error("IsVerificationSuccess() = false, want true")
+	}
+}
+
+func TestGroupConsolidationCompletionFile_Getters_VerificationFailed(t *testing.T) {
+	completion := &GroupConsolidationCompletionFile{
+		Notes: "Consolidation had issues",
+		Verification: VerificationResult{
+			OverallSuccess: false,
+		},
+	}
+
+	if completion.IsVerificationSuccess() {
+		t.Error("IsVerificationSuccess() = true, want false")
+	}
+}
+
+func TestGroupConsolidationCompletionFile_Getters_EmptyFields(t *testing.T) {
+	// Test with empty/default fields
+	completion := &GroupConsolidationCompletionFile{}
+
+	if got := completion.GetNotes(); got != "" {
+		t.Errorf("GetNotes() = %q, want empty string", got)
+	}
+	if got := completion.GetIssuesForNextGroup(); got != nil {
+		t.Errorf("GetIssuesForNextGroup() = %v, want nil", got)
+	}
+	// Default VerificationResult has OverallSuccess = false
+	if completion.IsVerificationSuccess() {
+		t.Error("IsVerificationSuccess() = true, want false for default")
+	}
+}
