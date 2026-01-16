@@ -233,11 +233,11 @@ func TestSidebarView_GroupNavHints(t *testing.T) {
 	result := sv.RenderSidebar(state, 50, 25)
 
 	// Should contain group navigation hints
-	if !strings.Contains(result, "[J/K]") {
-		t.Errorf("should show [J/K] hint for group navigation, got:\n%s", result)
+	if !strings.Contains(result, "[gn/gp]") {
+		t.Errorf("should show [gn/gp] hint for group navigation, got:\n%s", result)
 	}
-	if !strings.Contains(result, "[Space]") || !strings.Contains(result, "toggle") {
-		t.Errorf("should show [Space] toggle hint, got:\n%s", result)
+	if !strings.Contains(result, "[gc]") || !strings.Contains(result, "toggle") {
+		t.Errorf("should show [gc] toggle hint, got:\n%s", result)
 	}
 }
 

@@ -188,9 +188,9 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 	// Help hints
 	if len(items) > 0 {
 		hintStyle := styles.Muted
-		helpHint := hintStyle.Render("[j/k]") + " " + hintStyle.Render("nav") + "  " +
-			hintStyle.Render("[J/K]") + " " + hintStyle.Render("groups") + "  " +
-			hintStyle.Render("[Space]") + " " + hintStyle.Render("toggle")
+		helpHint := hintStyle.Render("[j/k]") + " " + hintStyle.Render("scroll") + "  " +
+			hintStyle.Render("[gn/gp]") + " " + hintStyle.Render("groups") + "  " +
+			hintStyle.Render("[gc]") + " " + hintStyle.Render("toggle")
 		b.WriteString(helpHint)
 	} else {
 		addHint := styles.Muted.Render("[:a]") + " " + styles.Muted.Render("Add new")
@@ -260,7 +260,7 @@ func NewGroupNavigator(session *orchestrator.Session, groupState *GroupViewState
 	}
 }
 
-// MoveToNextGroup moves selection to the next group (Shift+J).
+// MoveToNextGroup moves selection to the next group (gn).
 // Returns the new selected group ID.
 func (n *GroupNavigator) MoveToNextGroup() string {
 	if n.session == nil || !n.session.HasGroups() {
@@ -297,7 +297,7 @@ func (n *GroupNavigator) MoveToNextGroup() string {
 	return groupIDs[0]
 }
 
-// MoveToPrevGroup moves selection to the previous group (Shift+K).
+// MoveToPrevGroup moves selection to the previous group (gp).
 // Returns the new selected group ID.
 func (n *GroupNavigator) MoveToPrevGroup() string {
 	if n.session == nil || !n.session.HasGroups() {
