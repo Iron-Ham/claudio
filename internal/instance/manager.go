@@ -545,6 +545,10 @@ func (m *Manager) StartWithResume() error {
 
 // captureLoop periodically captures output from the tmux session.
 // All state detection, timeout checking, and bell detection is delegated to stateMonitor.
+//
+// IMPORTANT: Output capture continues even after timeouts (activity, completion, or stale)
+// are detected. This ensures the TUI always displays up-to-date output. Only state detection
+// and timeout checking are skipped after a timeout, not the actual capture.
 func (m *Manager) captureLoop() {
 	// Track last output hash to detect changes
 	var lastOutput string
@@ -596,11 +600,9 @@ func (m *Manager) captureLoop() {
 				continue
 			}
 
-			// Skip processing if already timed out
+			// Check if already timed out - we still capture output for display,
+			// but skip state detection and timeout checking to avoid redundant work.
 			timedOut, _ := m.stateMonitor.GetTimedOut(instanceID)
-			if timedOut {
-				continue
-			}
 
 			// Batched tmux query: get history_size, bell_flag, and session existence
 			// in a single subprocess call to reduce overhead (was 4 calls, now 2).
@@ -708,18 +710,23 @@ func (m *Manager) captureLoop() {
 				lastOutput = currentOutput
 			}
 
-			// Process output through state monitor for state detection and activity tracking.
-			// Always call this even if output hasn't changed (for stale detection).
-			m.stateMonitor.ProcessOutput(instanceID, output, currentOutput)
+			// Skip state detection and timeout checks if already timed out.
+			// We still captured output above so the display stays up-to-date,
+			// but there's no need to re-detect state or check timeouts again.
+			if !timedOut {
+				// Process output through state monitor for state detection and activity tracking.
+				// Always call this even if output hasn't changed (for stale detection).
+				m.stateMonitor.ProcessOutput(instanceID, output, currentOutput)
 
-			// Parse metrics from output (separate from state detection)
-			m.parseAndNotifyMetrics(output)
+				// Parse metrics from output (separate from state detection)
+				m.parseAndNotifyMetrics(output)
 
-			// Check for timeout conditions
-			m.stateMonitor.CheckTimeouts(instanceID)
+				// Check for timeout conditions
+				m.stateMonitor.CheckTimeouts(instanceID)
 
-			// Forward bell state from batched query
-			m.stateMonitor.CheckBell(instanceID, status.bellActive)
+				// Forward bell state from batched query
+				m.stateMonitor.CheckBell(instanceID, status.bellActive)
+			}
 		}
 	}
 }
