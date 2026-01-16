@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-01-16
+
+This release focuses on **Multi-Session Support & Deprecation Cleanup** - enabling multiple concurrent `:plan` and `:multiplan` sessions, adding sparse checkout for monorepo support, improved mode visibility, and removing deprecated APIs to streamline the codebase.
+
 ### Changed
 
 - **Instance Header Simplified** - Removed the truncated task/prompt text from the instance detail view header. The header now shows only the branch name, reducing visual noise and giving more space to the output area.
@@ -449,6 +453,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.8.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.8.0
 [0.7.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.7.0
 [0.6.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.6.1
