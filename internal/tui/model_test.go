@@ -6,6 +6,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/tui/view"
 	"github.com/spf13/viper"
 )
 
@@ -672,6 +673,350 @@ func TestResumeActiveInstance_NilOrchestrator(t *testing.T) {
 
 	// Should not panic when orchestrator is nil
 	m.resumeActiveInstance()
+}
+
+func TestGetInstanceDisplayOrder_FlatMode(t *testing.T) {
+	tests := []struct {
+		name        string
+		instances   []*orchestrator.Instance
+		expectedIDs []string
+	}{
+		{
+			name:        "nil session returns nil",
+			instances:   nil,
+			expectedIDs: nil,
+		},
+		{
+			name:        "empty instances returns nil",
+			instances:   []*orchestrator.Instance{},
+			expectedIDs: nil,
+		},
+		{
+			name: "returns instances in creation order",
+			instances: []*orchestrator.Instance{
+				{ID: "inst-1"},
+				{ID: "inst-2"},
+				{ID: "inst-3"},
+			},
+			expectedIDs: []string{"inst-1", "inst-2", "inst-3"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var session *orchestrator.Session
+			if tt.instances != nil {
+				session = &orchestrator.Session{Instances: tt.instances}
+			}
+
+			m := Model{
+				session:     session,
+				sidebarMode: view.SidebarModeFlat,
+			}
+
+			got := m.getInstanceDisplayOrder()
+			if len(got) != len(tt.expectedIDs) {
+				t.Fatalf("getInstanceDisplayOrder() returned %d IDs, want %d", len(got), len(tt.expectedIDs))
+			}
+			for i, id := range got {
+				if id != tt.expectedIDs[i] {
+					t.Errorf("getInstanceDisplayOrder()[%d] = %q, want %q", i, id, tt.expectedIDs[i])
+				}
+			}
+		})
+	}
+}
+
+func TestFindInstanceIndexByID(t *testing.T) {
+	instances := []*orchestrator.Instance{
+		{ID: "inst-a"},
+		{ID: "inst-b"},
+		{ID: "inst-c"},
+	}
+
+	tests := []struct {
+		name          string
+		session       *orchestrator.Session
+		searchID      string
+		expectedIndex int
+	}{
+		{
+			name:          "nil session returns -1",
+			session:       nil,
+			searchID:      "inst-a",
+			expectedIndex: -1,
+		},
+		{
+			name:          "finds first instance",
+			session:       &orchestrator.Session{Instances: instances},
+			searchID:      "inst-a",
+			expectedIndex: 0,
+		},
+		{
+			name:          "finds middle instance",
+			session:       &orchestrator.Session{Instances: instances},
+			searchID:      "inst-b",
+			expectedIndex: 1,
+		},
+		{
+			name:          "finds last instance",
+			session:       &orchestrator.Session{Instances: instances},
+			searchID:      "inst-c",
+			expectedIndex: 2,
+		},
+		{
+			name:          "not found returns -1",
+			session:       &orchestrator.Session{Instances: instances},
+			searchID:      "inst-nonexistent",
+			expectedIndex: -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{session: tt.session}
+			got := m.findInstanceIndexByID(tt.searchID)
+			if got != tt.expectedIndex {
+				t.Errorf("findInstanceIndexByID(%q) = %d, want %d", tt.searchID, got, tt.expectedIndex)
+			}
+		})
+	}
+}
+
+func TestIsGroupedSidebarMode(t *testing.T) {
+	tests := []struct {
+		name           string
+		sidebarMode    view.SidebarMode
+		session        *orchestrator.Session
+		groupViewState *view.GroupViewState
+		expected       bool
+	}{
+		{
+			name:           "flat mode returns false",
+			sidebarMode:    view.SidebarModeFlat,
+			session:        &orchestrator.Session{},
+			groupViewState: view.NewGroupViewState(),
+			expected:       false,
+		},
+		{
+			name:           "grouped mode without groups returns false",
+			sidebarMode:    view.SidebarModeGrouped,
+			session:        &orchestrator.Session{Instances: []*orchestrator.Instance{{ID: "inst-1"}}},
+			groupViewState: view.NewGroupViewState(),
+			expected:       false,
+		},
+		{
+			name:        "grouped mode with groups returns true",
+			sidebarMode: view.SidebarModeGrouped,
+			session: &orchestrator.Session{
+				Instances: []*orchestrator.Instance{{ID: "inst-1"}},
+				Groups:    []*orchestrator.InstanceGroup{{ID: "group-1", Instances: []string{"inst-1"}}},
+			},
+			groupViewState: view.NewGroupViewState(),
+			expected:       true,
+		},
+		{
+			name:           "nil session returns false",
+			sidebarMode:    view.SidebarModeGrouped,
+			session:        nil,
+			groupViewState: view.NewGroupViewState(),
+			expected:       false,
+		},
+		{
+			name:        "nil groupViewState returns false",
+			sidebarMode: view.SidebarModeGrouped,
+			session: &orchestrator.Session{
+				Instances: []*orchestrator.Instance{{ID: "inst-1"}},
+				Groups:    []*orchestrator.InstanceGroup{{ID: "group-1", Instances: []string{"inst-1"}}},
+			},
+			groupViewState: nil,
+			expected:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				sidebarMode:    tt.sidebarMode,
+				session:        tt.session,
+				groupViewState: tt.groupViewState,
+			}
+			got := m.isGroupedSidebarMode()
+			if got != tt.expected {
+				t.Errorf("isGroupedSidebarMode() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGetInstanceDisplayOrder_GroupedMode(t *testing.T) {
+	// Create a session where creation order differs from display order
+	// Creation order: inst-1, inst-2, inst-3, inst-4
+	// Group contains: inst-1, inst-3
+	// Display order: ungrouped first (inst-2, inst-4), then grouped (inst-1, inst-3)
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Grouped 1"},
+			{ID: "inst-2", Task: "Ungrouped 1"},
+			{ID: "inst-3", Task: "Grouped 2"},
+			{ID: "inst-4", Task: "Ungrouped 2"},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Name:      "Test Group",
+				Instances: []string{"inst-1", "inst-3"},
+			},
+		},
+	}
+
+	m := Model{
+		session:        session,
+		sidebarMode:    view.SidebarModeGrouped,
+		groupViewState: view.NewGroupViewState(),
+	}
+
+	got := m.getInstanceDisplayOrder()
+
+	// Expected display order: ungrouped first, then grouped
+	expected := []string{"inst-2", "inst-4", "inst-1", "inst-3"}
+
+	if len(got) != len(expected) {
+		t.Fatalf("getInstanceDisplayOrder() returned %d IDs, want %d", len(got), len(expected))
+	}
+
+	for i, id := range got {
+		if id != expected[i] {
+			t.Errorf("getInstanceDisplayOrder()[%d] = %q, want %q", i, id, expected[i])
+		}
+	}
+}
+
+func TestGetInstanceDisplayOrder_CollapsedGroup(t *testing.T) {
+	// When a group is collapsed, its instances should NOT appear in display order
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Grouped"},
+			{ID: "inst-2", Task: "Ungrouped"},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Name:      "Test Group",
+				Instances: []string{"inst-1"},
+			},
+		},
+	}
+
+	state := view.NewGroupViewState()
+	state.ToggleCollapse("group-1") // Collapse the group
+
+	m := Model{
+		session:        session,
+		sidebarMode:    view.SidebarModeGrouped,
+		groupViewState: state,
+	}
+
+	got := m.getInstanceDisplayOrder()
+
+	// Only ungrouped instance should be visible
+	expected := []string{"inst-2"}
+
+	if len(got) != len(expected) {
+		t.Fatalf("getInstanceDisplayOrder() with collapsed group returned %d IDs, want %d", len(got), len(expected))
+	}
+
+	if got[0] != expected[0] {
+		t.Errorf("getInstanceDisplayOrder()[0] = %q, want %q", got[0], expected[0])
+	}
+}
+
+func TestNavigationCycle_GroupedMode(t *testing.T) {
+	// This test simulates pressing tab multiple times and verifies
+	// navigation follows display order, not creation order
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Task 1"}, // array index 0
+			{ID: "inst-2", Task: "Task 2"}, // array index 1
+			{ID: "inst-3", Task: "Task 3"}, // array index 2
+			{ID: "inst-4", Task: "Task 4"}, // array index 3
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Name:      "Group 1",
+				Instances: []string{"inst-1", "inst-3"},
+			},
+		},
+	}
+
+	m := Model{
+		session:        session,
+		sidebarMode:    view.SidebarModeGrouped,
+		groupViewState: view.NewGroupViewState(),
+		activeTab:      0, // Start at inst-1 (array index 0)
+	}
+
+	// Get display order
+	displayOrder := m.getInstanceDisplayOrder()
+
+	// Expected display order: inst-2, inst-4, inst-1, inst-3
+	expectedOrder := []string{"inst-2", "inst-4", "inst-1", "inst-3"}
+
+	if len(displayOrder) != len(expectedOrder) {
+		t.Fatalf("display order has %d items, want %d", len(displayOrder), len(expectedOrder))
+	}
+
+	for i, id := range displayOrder {
+		if id != expectedOrder[i] {
+			t.Errorf("displayOrder[%d] = %q, want %q", i, id, expectedOrder[i])
+		}
+	}
+
+	// Simulate navigation starting from inst-1 (activeTab=0)
+	// inst-1 is at display position 2 (third in display order)
+	// After pressing "next", should go to display position 3 (inst-3)
+	currentInst := session.Instances[m.activeTab]
+	if currentInst.ID != "inst-1" {
+		t.Fatalf("starting instance should be inst-1, got %s", currentInst.ID)
+	}
+
+	// Find current position in display order
+	currentDisplayIdx := -1
+	for i, id := range displayOrder {
+		if id == currentInst.ID {
+			currentDisplayIdx = i
+			break
+		}
+	}
+
+	if currentDisplayIdx != 2 {
+		t.Errorf("inst-1 should be at display index 2, got %d", currentDisplayIdx)
+	}
+
+	// Next in display order (simulating tab press)
+	nextDisplayIdx := (currentDisplayIdx + 1) % len(displayOrder)
+	nextID := displayOrder[nextDisplayIdx]
+
+	if nextID != "inst-3" {
+		t.Errorf("next instance should be inst-3, got %s", nextID)
+	}
+
+	// Previous in display order (simulating shift-tab press)
+	prevDisplayIdx := (currentDisplayIdx - 1 + len(displayOrder)) % len(displayOrder)
+	prevID := displayOrder[prevDisplayIdx]
+
+	if prevID != "inst-4" {
+		t.Errorf("previous instance should be inst-4, got %s", prevID)
+	}
+
+	// Verify wrap-around: from last display item, next should go to first
+	lastDisplayIdx := len(displayOrder) - 1 // inst-3
+	wrapNextIdx := (lastDisplayIdx + 1) % len(displayOrder)
+
+	if displayOrder[wrapNextIdx] != "inst-2" {
+		t.Errorf("wrap-around should go to inst-2, got %s", displayOrder[wrapNextIdx])
+	}
 }
 
 func TestAutoDismissMessages(t *testing.T) {

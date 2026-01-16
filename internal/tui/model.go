@@ -667,6 +667,66 @@ func (m Model) instanceCount() int {
 	return len(m.session.Instances)
 }
 
+// isGroupedSidebarMode returns true if the sidebar is in grouped mode with groups present.
+// This is used to determine whether navigation should follow display order or creation order.
+func (m Model) isGroupedSidebarMode() bool {
+	return m.sidebarMode == view.SidebarModeGrouped &&
+		m.groupViewState != nil &&
+		m.session != nil &&
+		m.session.HasGroups()
+}
+
+// getInstanceDisplayOrder returns instance IDs in the order they appear in the sidebar.
+// This accounts for grouped mode where ungrouped instances appear first, followed by
+// instances organized by group hierarchy. In flat mode, returns instances in their
+// original session.Instances order.
+func (m Model) getInstanceDisplayOrder() []string {
+	if m.session == nil || len(m.session.Instances) == 0 {
+		return nil
+	}
+
+	// In flat mode or when there are no groups, use session.Instances order directly
+	if !m.isGroupedSidebarMode() {
+		ids := make([]string, len(m.session.Instances))
+		for i, inst := range m.session.Instances {
+			ids[i] = inst.ID
+		}
+		return ids
+	}
+
+	// In grouped mode, get the flattened display order
+	// Use the same logic as the sidebar rendering
+	var ultraPlanGroupID string
+	if m.ultraPlan != nil && m.ultraPlan.Coordinator != nil {
+		if upSession := m.ultraPlan.Coordinator.Session(); upSession != nil {
+			ultraPlanGroupID = upSession.GroupID
+		}
+	}
+
+	items := view.FlattenGroupsForDisplayWithUltraPlan(m.session, m.groupViewState, ultraPlanGroupID, m.ultraPlan)
+	ids := make([]string, 0, len(m.session.Instances))
+	for _, item := range items {
+		if gi, ok := item.(view.GroupedInstance); ok {
+			ids = append(ids, gi.Instance.ID)
+		}
+	}
+	return ids
+}
+
+// findInstanceIndexByID returns the index of an instance in session.Instances by ID.
+// Returns -1 if not found.
+func (m Model) findInstanceIndexByID(id string) int {
+	if m.session == nil {
+		return -1
+	}
+	for i, inst := range m.session.Instances {
+		if inst.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
 // ensureActiveVisible adjusts sidebarScrollOffset to keep activeTab visible
 func (m *Model) ensureActiveVisible() {
 	// Calculate visible slots (same calculation as in renderSidebar)
