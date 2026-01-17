@@ -38,6 +38,7 @@ type mockDeps struct {
 	diffContent           string
 	ultraPlanMode         bool
 	tripleShotMode        bool
+	adversarialMode       bool
 	ultraCoordinator      *orchestrator.Coordinator
 	tripleShotCoordinator *orchestrator.TripleShotCoordinator
 	logger                *logging.Logger
@@ -55,6 +56,7 @@ func (m *mockDeps) IsDiffVisible() bool                         { return m.diffV
 func (m *mockDeps) GetDiffContent() string                      { return m.diffContent }
 func (m *mockDeps) IsUltraPlanMode() bool                       { return m.ultraPlanMode }
 func (m *mockDeps) IsTripleShotMode() bool                      { return m.tripleShotMode }
+func (m *mockDeps) IsAdversarialMode() bool                     { return m.adversarialMode }
 func (m *mockDeps) GetUltraPlanCoordinator() *orchestrator.Coordinator {
 	return m.ultraCoordinator
 }
@@ -1028,6 +1030,8 @@ func TestAllCommandsRecognized(t *testing.T) {
 		"cancel",
 		// Plan mode
 		"plan",
+		// Adversarial mode
+		"adversarial", "adv",
 		// Ultraplan arg commands (need viper config)
 		// "ultraplan", "up", // These are arg commands, tested separately
 		// Help and quit
@@ -1336,6 +1340,75 @@ func TestTripleShotCommand(t *testing.T) {
 			if result.StartTripleShot == nil || !*result.StartTripleShot {
 				t.Errorf("alias %q should start triple-shot mode", alias)
 			}
+		}
+	})
+}
+
+// TestAdversarialCommand tests the adversarial command
+func TestAdversarialCommand(t *testing.T) {
+	t.Run("starts adversarial mode", func(t *testing.T) {
+		viper.Reset()
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("adversarial", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartAdversarial == nil || !*result.StartAdversarial {
+			t.Error("expected StartAdversarial to be true")
+		}
+		if result.InfoMessage != "Enter a task for adversarial mode (implementer + reviewer)" {
+			t.Errorf("unexpected info message: %q", result.InfoMessage)
+		}
+	})
+
+	t.Run("blocked in ultraplan mode", func(t *testing.T) {
+		viper.Reset()
+
+		h := New()
+		deps := newMockDeps()
+		deps.ultraPlanMode = true
+
+		result := h.Execute("adversarial", deps)
+
+		if result.ErrorMessage != "Cannot start adversarial mode while in ultraplan mode" {
+			t.Errorf("expected ultraplan mode error, got: %q", result.ErrorMessage)
+		}
+	})
+
+	t.Run("allowed when already in adversarial mode (multiple sessions)", func(t *testing.T) {
+		viper.Reset()
+
+		h := New()
+		deps := newMockDeps()
+		deps.adversarialMode = true
+
+		result := h.Execute("adversarial", deps)
+
+		// Multiple adversarial sessions are allowed
+		if result.ErrorMessage != "" {
+			t.Errorf("expected no error, got: %q", result.ErrorMessage)
+		}
+		if result.StartAdversarial == nil || !*result.StartAdversarial {
+			t.Error("should start additional adversarial session")
+		}
+		if result.InfoMessage != "Enter a task for additional adversarial session" {
+			t.Errorf("expected additional task prompt, got: %q", result.InfoMessage)
+		}
+	})
+
+	t.Run("adv alias works", func(t *testing.T) {
+		viper.Reset()
+
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("adv", deps)
+		if result.StartAdversarial == nil || !*result.StartAdversarial {
+			t.Error("adv alias should start adversarial mode")
 		}
 	})
 }

@@ -18,7 +18,7 @@ func TestHelpPanel_Render(t *testing.T) {
 			name: "renders with default sections",
 			state: &RenderState{
 				Width:  80,
-				Height: 100, // Large enough to show all sections
+				Height: 120, // Large enough to show all sections (increased for Adversarial Mode)
 			},
 			contains: []string{
 				"Claudio Help",
@@ -26,6 +26,7 @@ func TestHelpPanel_Render(t *testing.T) {
 				"Navigation",
 				"Instance Control",
 				"Instance Management",
+				"Adversarial Mode",
 				"View Commands",
 				"Terminal Pane",
 				"Input Mode",
@@ -188,6 +189,7 @@ func TestDefaultHelpSections(t *testing.T) {
 		"Instance Control",
 		"Instance Management",
 		"Triple-Shot Mode",
+		"Adversarial Mode",
 		"Planning Modes (experimental)",
 		"Group Management",
 		"View Commands",

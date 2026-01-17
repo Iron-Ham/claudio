@@ -179,6 +179,12 @@ func DefaultHelpSections() []HelpSection {
 			},
 		},
 		{
+			Title: "Adversarial Mode",
+			Items: []HelpItem{
+				{Key: ":adversarial  :adv", Description: "Start implementer + reviewer feedback loop"},
+			},
+		},
+		{
 			Title: "Planning Modes (experimental)",
 			Items: []HelpItem{
 				{Key: ":plan", Description: "Start inline plan mode"},

@@ -139,6 +139,10 @@ type Session struct {
 	// Each tripleshot has its own group and coordinator.
 	TripleShots []*TripleShotSession `json:"triple_shots,omitempty"`
 
+	// AdversarialSessions holds multiple concurrent adversarial review sessions.
+	// Each adversarial session has its own group and coordinator.
+	AdversarialSessions []*AdversarialSession `json:"adversarial_sessions,omitempty"`
+
 	// Recovery state tracking - helps detect and recover interrupted sessions
 	RecoveryState   RecoveryState `json:"recovery_state,omitempty"`   // Current recovery state
 	LastActiveAt    *time.Time    `json:"last_active_at,omitempty"`   // Last time any instance had activity
