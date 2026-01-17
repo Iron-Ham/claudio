@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **TripleShot Mode Graduated** - TripleShot is now a permanent feature. The `experimental.triple_shot` configuration option has been removed; the `:tripleshot` command is always available.
+
 - **Documentation Overhaul** - Comprehensive update to all documentation to reflect current features and capabilities:
   - Added task chaining (`--depends-on`) documentation to README, CLI reference, and new dedicated guide
   - Added planning commands (`plan`, `ultraplan`, `tripleshot`) to CLI reference

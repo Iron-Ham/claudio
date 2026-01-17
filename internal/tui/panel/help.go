@@ -172,15 +172,20 @@ func DefaultHelpSections() []HelpSection {
 			},
 		},
 		{
-			Title: "Inline Planning (experimental)",
+			Title: "Triple-Shot Mode",
+			Items: []HelpItem{
+				{Key: ":tripleshot", Description: "Run 3 parallel attempts + judge"},
+				{Key: ":accept", Description: "Accept winning triple-shot solution"},
+			},
+		},
+		{
+			Title: "Planning Modes (experimental)",
 			Items: []HelpItem{
 				{Key: ":plan", Description: "Start inline plan mode"},
 				{Key: ":multiplan  :mp", Description: "Start multi-pass plan (3 planners + assessor)"},
 				{Key: ":ultraplan  :up", Description: "Start ultraplan mode"},
 				{Key: ":up --multi-pass", Description: "Ultraplan with multi-pass planning (3 strategies)"},
 				{Key: ":up --plan <file>", Description: "Load ultraplan from existing plan file"},
-				{Key: ":tripleshot", Description: "Run 3 parallel attempts + judge"},
-				{Key: ":accept", Description: "Accept winning triple-shot solution"},
 				{Key: ":cancel", Description: "Cancel ultraplan execution"},
 			},
 		},
