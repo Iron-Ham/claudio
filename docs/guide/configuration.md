@@ -112,7 +112,15 @@ instance:
   # tmux pane dimensions
   tmux_width: 200
   tmux_height: 50
+
+  # Timeout settings (in minutes)
+  activity_timeout_minutes: 30    # Mark stale after this duration of no output
+  completion_timeout_minutes: 60  # Max wait for completion detection
 ```
+
+**Timeout Notes:**
+- `activity_timeout_minutes`: Helps detect instances that are stuck or unresponsive
+- `completion_timeout_minutes`: How long to wait for the `.claudio-task-complete.json` sentinel file
 
 ### Branch Settings
 
@@ -310,6 +318,79 @@ pr:
 2. Each file is matched against patterns
 3. Matching reviewers are added (deduplicated)
 4. Default reviewers are always added
+
+### Logging Settings
+
+Control debug logging behavior.
+
+```yaml
+logging:
+  enabled: true        # Enable/disable logging
+  level: info          # debug, info, warn, error
+  max_size_mb: 10      # Max file size before rotation
+  max_backups: 3       # Number of backup files to keep
+```
+
+**Log Location:** `.claudio/sessions/<session-id>/debug.log`
+
+**Viewing Logs:**
+```bash
+claudio logs                     # Recent logs
+claudio logs -f                  # Follow in real-time
+claudio logs --level warn        # Filter by level
+claudio logs --grep "conflict"   # Search pattern
+```
+
+### UltraPlan Settings
+
+Control UltraPlan mode behavior.
+
+```yaml
+ultraplan:
+  # Maximum concurrent child sessions
+  # Lower values reduce API costs and conflict risk
+  max_parallel: 3
+
+  # Desktop notifications
+  notifications:
+    enabled: true     # Notify when user input needed
+    use_sound: false  # macOS system sound
+    sound_path: ""    # Custom sound file path
+```
+
+### Experimental Features
+
+Enable experimental features (disabled by default).
+
+```yaml
+experimental:
+  # Use Claude to generate descriptive instance names
+  intelligent_naming: false
+
+  # Spawn 3 parallel attempts, judge selects best
+  triple_shot: false
+
+  # Enable :multiplan command in TUI
+  inline_plan: false
+
+  # Enable :ultraplan command in TUI
+  inline_ultraplan: false
+
+  # Visual group organization in sidebar
+  grouped_instance_view: false
+```
+
+**Feature Descriptions:**
+
+| Feature | Description |
+|---------|-------------|
+| `intelligent_naming` | Claude generates short names for instances based on task and output |
+| `triple_shot` | Three parallel attempts per task with judge selection |
+| `inline_plan` | Enables `:multiplan` command (`:plan` always available) |
+| `inline_ultraplan` | Enables `:ultraplan` command in standard TUI |
+| `grouped_instance_view` | Organizes instances by group in sidebar |
+
+---
 
 ## Example Configurations
 

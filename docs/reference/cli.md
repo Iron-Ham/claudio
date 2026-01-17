@@ -81,6 +81,7 @@ claudio add [task description] [flags]
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--start` | `-s` | Automatically start the instance after adding |
+| `--depends-on` | `-d` | Comma-separated list of instance IDs or task names this task depends on |
 
 **Examples:**
 ```bash
@@ -92,7 +93,27 @@ claudio add "Write unit tests for auth module"
 
 # Quote complex tasks
 claudio add "Refactor the User model to include email validation and password hashing"
+
+# Task chaining - add with dependencies
+claudio add "Write unit tests" --depends-on "abc123"
+claudio add "Deploy to staging" -d "tests,build"
+
+# Multiple dependencies
+claudio add "Integration tests" --depends-on "unit-tests,api-setup"
 ```
+
+**Task Chaining:**
+
+When you specify `--depends-on`, the instance will wait in `pending` state until all its dependencies have completed. This enables:
+
+- Sequential execution where order matters
+- Building complex workflows with parallel and serial phases
+- Ensuring prerequisites are met before dependent tasks start
+
+Dependencies can be specified by:
+- Instance ID (e.g., `abc123`)
+- Task name substring (e.g., `tests` matches "Write unit tests")
+- Comma-separated list for multiple dependencies
 
 ---
 
@@ -396,6 +417,178 @@ Reconnects to running tmux sessions and restores the TUI.
 Clean up stale session data.
 ```bash
 claudio sessions clean
+```
+
+---
+
+### claudio plan
+
+Generate a structured task plan from an objective.
+
+```bash
+claudio plan [objective] [flags]
+```
+
+**Arguments:**
+| Argument | Description |
+|----------|-------------|
+| `objective` | The goal or feature to plan (optional, can be interactive) |
+
+**Flags:**
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Show the plan without executing |
+| `--output-format` | Output format: `json`, `issues`, or `both` |
+| `--multi-pass` | Use 3 independent strategies to generate plans |
+
+**Examples:**
+```bash
+# Basic planning
+claudio plan "Add user authentication"
+
+# Dry run to review plan
+claudio plan --dry-run "Refactor the API layer"
+
+# Output as GitHub issues
+claudio plan --output-format issues "Implement caching"
+
+# Multi-pass planning for complex tasks
+claudio plan --multi-pass "Redesign the data model"
+```
+
+**Output Formats:**
+- `json` - Outputs a structured JSON plan file
+- `issues` - Creates GitHub issues for each task
+- `both` - Creates both JSON file and GitHub issues
+
+---
+
+### claudio ultraplan
+
+Intelligent hierarchical planning with 4-phase parallel execution.
+
+```bash
+claudio ultraplan [objective] [flags]
+```
+
+**Arguments:**
+| Argument | Description |
+|----------|-------------|
+| `objective` | The goal or feature to implement |
+
+**Flags:**
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--plan` | Use existing plan file instead of planning phase | - |
+| `--max-parallel` | Maximum concurrent child sessions (0 = unlimited) | 3 |
+| `--dry-run` | Run planning only, output plan without executing | false |
+| `--no-synthesis` | Skip synthesis phase after execution | false |
+| `--auto-approve` | Auto-approve spawned tasks without confirmation | false |
+| `--multi-pass` | Use 3 competing strategies, then select best | false |
+| `--review` | Always open plan editor before execution | false |
+
+**Examples:**
+```bash
+# Basic ultraplan
+claudio ultraplan "Implement OAuth2 authentication"
+
+# Increase parallelism
+claudio ultraplan --max-parallel 5 "Add comprehensive tests"
+
+# Dry run to review plan
+claudio ultraplan --dry-run "Refactor to microservices"
+
+# Use existing plan file
+claudio ultraplan --plan my-plan.json
+
+# Multi-pass for complex architecture
+claudio ultraplan --multi-pass "Redesign the authentication system"
+
+# Skip synthesis for manual review
+claudio ultraplan --no-synthesis "Update deprecated APIs"
+```
+
+**Phases:**
+1. **Planning** - Claude explores codebase and generates structured plan
+2. **Context Refresh** - Review and approve the generated plan
+3. **Execution** - Child instances execute tasks in parallel (respecting dependencies)
+4. **Synthesis** - Coordinator reviews all outputs and identifies integration issues
+
+See [Ultra-Plan Guide](../guide/ultra-plan.md) for detailed documentation.
+
+---
+
+### claudio tripleshot
+
+Execute a task with 3 parallel attempts, then judge selects the best (experimental).
+
+```bash
+claudio tripleshot [task] [flags]
+```
+
+**Arguments:**
+| Argument | Description |
+|----------|-------------|
+| `task` | The task to execute with multiple attempts |
+
+**Flags:**
+| Flag | Description |
+|------|-------------|
+| `--multi-pass` | Use different strategies for each attempt |
+
+**Examples:**
+```bash
+# Basic tripleshot
+claudio tripleshot "Optimize the database query in users.go"
+
+# With different strategies
+claudio tripleshot --multi-pass "Implement caching layer"
+```
+
+**How it works:**
+1. Three parallel instances work on the same task with variant instructions
+2. A judge instance evaluates all three completions
+3. The best solution is selected based on quality criteria
+4. Optional revision phase if the judge identifies improvements
+
+> **Note:** This is an experimental feature. Enable with `experimental.triple_shot: true` in your config.
+
+---
+
+### claudio logs
+
+View and filter session logs.
+
+```bash
+claudio logs [flags]
+```
+
+**Flags:**
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--session` | `-s` | Session ID (default: most recent) |
+| `--tail` | `-n` | Number of lines to show, 0 for all (default: 50) |
+| `--follow` | `-f` | Follow log output in real-time |
+| `--level` | | Minimum level to show (debug/info/warn/error) |
+| `--since` | | Show logs since duration (e.g., 1h, 30m) |
+| `--grep` | | Filter by regex pattern |
+
+**Examples:**
+```bash
+# Show last 50 lines
+claudio logs
+
+# Show all logs
+claudio logs -n 0
+
+# Follow logs in real-time
+claudio logs -f
+
+# Filter by level and pattern
+claudio logs --level warn --grep "conflict"
+
+# Logs from specific session
+claudio logs -s abc123 --since 1h
 ```
 
 ---

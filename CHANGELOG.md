@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Documentation Overhaul** - Comprehensive update to all documentation to reflect current features and capabilities:
+  - Added task chaining (`--depends-on`) documentation to README, CLI reference, and new dedicated guide
+  - Added planning commands (`plan`, `ultraplan`, `tripleshot`) to CLI reference
+  - Added command mode documentation to TUI navigation guide with all `:` commands
+  - Added logging configuration section to configuration guides
+  - Added sparse checkout documentation for monorepo support
+  - Added instance timeout settings (`activity_timeout_minutes`, `completion_timeout_minutes`)
+  - Added UltraPlan and experimental features sections to configuration guide
+  - Created new Task Chaining guide (`docs/guide/task-chaining.md`)
+  - Updated keyboard shortcuts reference with command mode
+  - Updated feature lists in README and docs homepage to include all planning modes
+
 ## [0.9.2] - 2026-01-16
 
 This patch release focuses on **Critical Stability Fix** - resolving a bug that could cause the TUI to display frozen/stale output when tmux is under heavy load.

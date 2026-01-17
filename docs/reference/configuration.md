@@ -68,6 +68,8 @@ Controls instance process behavior.
 | `instance.capture_interval_ms` | int | `100` | tmux capture interval in milliseconds |
 | `instance.tmux_width` | int | `200` | tmux pane width |
 | `instance.tmux_height` | int | `50` | tmux pane height |
+| `instance.activity_timeout_minutes` | int | `30` | Minutes of inactivity before marking stale |
+| `instance.completion_timeout_minutes` | int | `60` | Minutes to wait for completion detection |
 
 ```yaml
 instance:
@@ -75,7 +77,13 @@ instance:
   capture_interval_ms: 100
   tmux_width: 200
   tmux_height: 50
+  activity_timeout_minutes: 30
+  completion_timeout_minutes: 60
 ```
+
+**Timeout Behavior:**
+- **activity_timeout**: If an instance produces no output for this duration, it may be marked as stale
+- **completion_timeout**: Maximum time to wait for the `.claudio-task-complete.json` sentinel file
 
 ---
 
@@ -177,6 +185,10 @@ Controls where Claudio stores data.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `paths.worktree_dir` | string | `""` | Directory for git worktrees |
+| `paths.sparse_checkout.enabled` | bool | `false` | Enable sparse checkout for monorepos |
+| `paths.sparse_checkout.directories` | []string | `[]` | Directories to include in worktrees |
+| `paths.sparse_checkout.always_include` | []string | `[]` | Files/dirs to always include |
+| `paths.sparse_checkout.cone_mode` | bool | `true` | Use git sparse-checkout cone mode (faster) |
 
 **worktree_dir behavior:**
 - Empty string (default): Uses `.claudio/worktrees` relative to repository root
@@ -198,6 +210,80 @@ paths:
   # worktree_dir: ~/claudio-worktrees
   # worktree_dir: /fast-ssd/worktrees
   # worktree_dir: .worktrees
+```
+
+#### Sparse Checkout (Monorepos)
+
+For large monorepos, sparse checkout creates partial worktrees containing only specified directories:
+
+```yaml
+paths:
+  sparse_checkout:
+    enabled: true
+    directories:
+      - "services/api/"
+      - "shared/utils/"
+      - "packages/common/"
+    always_include:
+      - ".github/"
+      - "scripts/"
+      - "Makefile"
+    cone_mode: true
+```
+
+**Benefits:**
+- Faster worktree creation
+- Less disk space usage
+- Claude only sees relevant code
+
+**cone_mode:**
+- `true` (default): Uses git's cone mode for faster sparse-checkout operations
+- `false`: Uses non-cone mode for complex patterns (slower but more flexible)
+
+---
+
+### logging
+
+Controls debug logging behavior.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `logging.enabled` | bool | `true` | Enable/disable logging |
+| `logging.level` | string | `"info"` | Minimum log level (debug/info/warn/error) |
+| `logging.max_size_mb` | int | `10` | Max file size before rotation |
+| `logging.max_backups` | int | `3` | Number of backup files to keep |
+
+```yaml
+logging:
+  enabled: true
+  level: info
+  max_size_mb: 10
+  max_backups: 3
+```
+
+**Log Levels:**
+| Level | Description |
+|-------|-------------|
+| `debug` | Verbose output for detailed troubleshooting |
+| `info` | General operational messages (default) |
+| `warn` | Warning conditions that may need attention |
+| `error` | Error conditions that affect functionality |
+
+**Log Location:** `.claudio/sessions/<session-id>/debug.log`
+
+**Viewing Logs:**
+```bash
+# Recent logs
+claudio logs
+
+# Follow in real-time
+claudio logs -f
+
+# Filter by level
+claudio logs --level warn
+
+# Search pattern
+claudio logs --grep "conflict"
 ```
 
 ---
