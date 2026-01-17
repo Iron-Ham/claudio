@@ -145,3 +145,33 @@ type InlineMultiPlanFileCheckResultMsg struct {
 	StrategyName string
 	GroupID      string // Session group ID for matching to correct session
 }
+
+// RalphWiggumInitMsg signals that Ralph Wiggum mode should initialize and start the first iteration.
+type RalphWiggumInitMsg struct{}
+
+// RalphWiggumIterationStartedMsg indicates a new iteration has started.
+type RalphWiggumIterationStartedMsg struct {
+	GroupID   string
+	Iteration int
+}
+
+// RalphWiggumIterationCompleteMsg indicates an iteration has completed.
+type RalphWiggumIterationCompleteMsg struct {
+	GroupID      string
+	Iteration    int
+	PromiseFound bool
+}
+
+// RalphWiggumErrorMsg indicates an error during Ralph Wiggum operation.
+type RalphWiggumErrorMsg struct {
+	GroupID string
+	Err     error
+}
+
+// RalphWiggumCheckResultMsg contains results from async output checking.
+type RalphWiggumCheckResultMsg struct {
+	GroupID          string
+	InstanceComplete bool
+	PromiseFound     bool
+	Err              error
+}

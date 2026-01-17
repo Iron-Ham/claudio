@@ -149,6 +149,39 @@ func NewWithTripleShots(orch *orchestrator.Orchestrator, session *orchestrator.S
 	}
 }
 
+// NewWithRalphWiggum creates a new TUI application in Ralph Wiggum mode
+func NewWithRalphWiggum(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.RalphWiggumCoordinator, logger *logging.Logger) *App {
+	model := NewModel(orch, session, logger)
+	model.ralphWiggum = &RalphWiggumState{
+		Coordinators: make(map[string]*orchestrator.RalphWiggumCoordinator),
+	}
+	// Add the coordinator to the map keyed by its group ID for multiple ralph wiggum support
+	if coordinator != nil {
+		ralphSession := coordinator.Session()
+		if ralphSession != nil {
+			// Create a group if one doesn't exist (CLI-started sessions)
+			if ralphSession.GroupID == "" {
+				ralphGroup := orchestrator.NewInstanceGroupWithType(
+					util.TruncateString(ralphSession.Task, 30),
+					orchestrator.SessionTypeRalphWiggum,
+					ralphSession.Task,
+				)
+				session.AddGroup(ralphGroup)
+				ralphSession.GroupID = ralphGroup.ID
+
+				// Auto-enable grouped sidebar mode
+				model.autoEnableGroupedMode()
+			}
+			model.ralphWiggum.Coordinators[ralphSession.GroupID] = coordinator
+		}
+	}
+	return &App{
+		model:        model,
+		orchestrator: orch,
+		session:      session,
+	}
+}
+
 // Run starts the TUI application
 func (a *App) Run() error {
 	// Ensure session lock is released when TUI exits (both normal and signal-based)
@@ -263,6 +296,19 @@ func (m Model) Init() tea.Cmd {
 		}
 	}
 
+	// Schedule Ralph Wiggum initialization if needed
+	if m.ralphWiggum != nil {
+		for _, coord := range m.ralphWiggum.GetAllCoordinators() {
+			if coord != nil {
+				session := coord.Session()
+				if session != nil && session.Phase == orchestrator.PhaseRalphWiggumIterating && session.InstanceID == "" {
+					cmds = append(cmds, func() tea.Msg { return tuimsg.RalphWiggumInitMsg{} })
+					break // Only need one init message
+				}
+			}
+		}
+	}
+
 	return tea.Batch(cmds...)
 }
 
@@ -329,6 +375,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Dispatch async commands to check tripleshot completion files
 		// This avoids blocking the UI with file I/O
 		cmds = append(cmds, m.dispatchTripleShotCompletionChecks()...)
+
+		// Dispatch async commands to check Ralph Wiggum instance completion
+		cmds = append(cmds, m.dispatchRalphWiggumCompletionChecks()...)
 
 		// Dispatch async commands to check ultraplan files
 		// This avoids blocking the UI with file I/O during planning phases
@@ -468,6 +517,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuimsg.InlineMultiPlanFileCheckResultMsg:
 		// Handle async inline multiplan file check result
 		return m.handleInlineMultiPlanFileCheckResult(msg)
+
+	case tuimsg.RalphWiggumInitMsg:
+		// Initialize Ralph Wiggum mode by starting the first iteration
+		return m.handleRalphWiggumInit()
+
+	case tuimsg.RalphWiggumIterationStartedMsg:
+		// Ralph Wiggum iteration started
+		m.infoMessage = fmt.Sprintf("Ralph Wiggum iteration %d started", msg.Iteration)
+		return m, nil
+
+	case tuimsg.RalphWiggumIterationCompleteMsg:
+		// Handle iteration completion
+		return m.handleRalphWiggumIterationComplete(msg)
+
+	case tuimsg.RalphWiggumErrorMsg:
+		// Ralph Wiggum error
+		m.errorMessage = fmt.Sprintf("Ralph Wiggum error: %v", msg.Err)
+		return m, nil
+
+	case tuimsg.RalphWiggumCheckResultMsg:
+		// Handle async check result
+		return m.handleRalphWiggumCheckResult(msg)
 	}
 
 	return m, nil
@@ -833,6 +904,8 @@ func (m Model) View() string {
 		header = m.renderUltraPlanHeader()
 	} else if m.IsTripleShotMode() {
 		header = m.renderTripleShotHeader()
+	} else if m.IsRalphWiggumMode() {
+		header = m.renderRalphWiggumHeader()
 	} else {
 		header = m.renderHeader()
 	}
@@ -917,6 +990,8 @@ func (m Model) View() string {
 		b.WriteString(m.renderUltraPlanHelp())
 	} else if m.IsTripleShotMode() {
 		b.WriteString(m.renderTripleShotHelp())
+	} else if m.IsRalphWiggumMode() {
+		b.WriteString(m.renderRalphWiggumHelp())
 	} else {
 		b.WriteString(m.renderHelp())
 	}
@@ -1342,6 +1417,25 @@ func (m Model) renderTripleShotSidebar(width, height int) string {
 // Delegates to view.RenderTripleShotHelp for the actual rendering.
 func (m Model) renderTripleShotHelp() string {
 	return view.RenderTripleShotHelp(m.buildHelpBarState())
+}
+
+// renderRalphWiggumHeader renders the header for Ralph Wiggum mode
+func (m Model) renderRalphWiggumHeader() string {
+	ctx := view.RalphWiggumRenderContext{
+		Orchestrator: m.orchestrator,
+		Session:      m.session,
+		RalphWiggum:  m.ralphWiggum,
+		ActiveTab:    m.activeTab,
+		Width:        m.terminalManager.Width(),
+		Height:       m.terminalManager.Height(),
+	}
+	return view.RenderRalphWiggumHeader(ctx)
+}
+
+// renderRalphWiggumHelp renders the help bar for Ralph Wiggum mode.
+// Delegates to view.RenderRalphWiggumHelp for the actual rendering.
+func (m Model) renderRalphWiggumHelp() string {
+	return view.RenderRalphWiggumHelp(m.buildHelpBarState())
 }
 
 // initiateTripleShotMode creates and starts a triple-shot session.

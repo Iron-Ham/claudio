@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ralph Wiggum Mode (Experimental)** - Implements continuous self-referential feedback loops for iterative task completion. Claude works on a task and when it completes an iteration, the same prompt is fed back, allowing iterative improvement until a completion promise (e.g., `<promise>DONE</promise>`) is signaled. Useful for tasks with clear verification criteria like making tests pass. Enable with `experimental.ralph_wiggum: true` and use via `claudio ralph [task]`.
+
 - **Task Chaining by Sidebar Number** - The `:chain`, `:dep`, and `:depends` commands now accept an optional sidebar number argument to specify which instance to chain from (e.g., `:chain 2` or `:chain #2`). This is more user-friendly than using instance IDs, which aren't prominently displayed.
 
 ### Changed

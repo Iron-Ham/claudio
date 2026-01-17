@@ -9,4 +9,5 @@ func Register(parent *cobra.Command) {
 	RegisterPlanCmd(parent)
 	RegisterUltraplanCmd(parent)
 	RegisterTripleshotCmd(parent)
+	RegisterRalphWiggumCmd(parent)
 }

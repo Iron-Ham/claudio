@@ -300,8 +300,9 @@ func TestTUIConfigCoversAllConfigFields(t *testing.T) {
 	// KEEP THIS LIST MINIMAL - only truly uneditable types belong here.
 	excludedKeys := map[string]string{
 		// Complex types that cannot be edited with the simple TUI editor
-		"pr.template":          "multi-line template requires a full text editor",
-		"pr.reviewers.by_path": "nested map type requires structured editor",
+		"pr.template":               "multi-line template requires a full text editor",
+		"pr.reviewers.by_path":      "nested map type requires structured editor",
+		"experimental.ralph_wiggum": "experimental feature that is CLI-only for now",
 	}
 
 	// Get all keys from the TUI config

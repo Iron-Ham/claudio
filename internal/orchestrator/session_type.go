@@ -19,6 +19,9 @@ const (
 
 	// SessionTypeTripleShot represents a :tripleshot competing solutions session.
 	SessionTypeTripleShot SessionType = "tripleshot"
+
+	// SessionTypeRalphWiggum represents a :ralph iterative loop session.
+	SessionTypeRalphWiggum SessionType = "ralphwiggum"
 )
 
 // Icon returns the display icon for this session type.
@@ -32,6 +35,8 @@ func (t SessionType) Icon() string {
 		return "\u26a1" // ⚡ lightning
 	case SessionTypeTripleShot:
 		return "\u25b3" // △ triangle
+	case SessionTypeRalphWiggum:
+		return "\u221e" // ∞ infinity (represents iterative loop)
 	default:
 		return "\u25cf" // ● filled circle (standard)
 	}
@@ -46,7 +51,7 @@ func (t SessionType) GroupingMode() string {
 	switch t {
 	case SessionTypePlan:
 		return "shared"
-	case SessionTypePlanMulti, SessionTypeUltraPlan, SessionTypeTripleShot:
+	case SessionTypePlanMulti, SessionTypeUltraPlan, SessionTypeTripleShot, SessionTypeRalphWiggum:
 		return "own"
 	default:
 		return "none"

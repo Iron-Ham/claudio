@@ -282,6 +282,12 @@ type ExperimentalConfig struct {
 	// in the TUI sidebar. Related tasks are organized together, with sub-groups
 	// for dependency chains. (default: false)
 	GroupedInstanceView bool `mapstructure:"grouped_instance_view"`
+
+	// RalphWiggum enables the Ralph Wiggum mode which implements continuous
+	// self-referential feedback loops. Claude works on a task and when it tries
+	// to exit, the same prompt is fed back, allowing iterative improvement until
+	// a completion promise is signaled. (default: false)
+	RalphWiggum bool `mapstructure:"ralph_wiggum"`
 }
 
 // ResolveWorktreeDir returns the resolved worktree directory path.
@@ -407,6 +413,7 @@ func Default() *Config {
 			InlinePlan:          false, // Controls :multiplan only; :plan is always available
 			InlineUltraPlan:     false, // Disabled by default until stable
 			GroupedInstanceView: false, // Disabled by default until stable
+			RalphWiggum:         false, // Disabled by default until stable
 		},
 	}
 }
@@ -513,6 +520,7 @@ func SetDefaults() {
 	viper.SetDefault("experimental.inline_plan", defaults.Experimental.InlinePlan)
 	viper.SetDefault("experimental.inline_ultraplan", defaults.Experimental.InlineUltraPlan)
 	viper.SetDefault("experimental.grouped_instance_view", defaults.Experimental.GroupedInstanceView)
+	viper.SetDefault("experimental.ralph_wiggum", defaults.Experimental.RalphWiggum)
 }
 
 // Load reads the configuration from viper into a Config struct and validates it

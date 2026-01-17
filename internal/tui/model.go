@@ -227,6 +227,9 @@ func (s *InlinePlanState) GetPlanGroupIDs() []string {
 	return ids
 }
 
+// RalphWiggumState is an alias to the view package type for convenience
+type RalphWiggumState = view.RalphWiggumState
+
 // Model holds the TUI application state
 type Model struct {
 	// Core components
@@ -247,6 +250,9 @@ type Model struct {
 
 	// Triple-shot mode (nil if not in triple-shot mode)
 	tripleShot *TripleShotState
+
+	// Ralph Wiggum mode (nil if not in ralph wiggum mode)
+	ralphWiggum *RalphWiggumState
 
 	// Plan editor mode (nil if not in plan editor mode)
 	planEditor *PlanEditorState
@@ -348,6 +354,11 @@ func (m Model) IsUltraPlanMode() bool {
 // IsTripleShotMode returns true if there are any active tripleshot sessions.
 func (m Model) IsTripleShotMode() bool {
 	return m.tripleShot != nil && m.tripleShot.HasActiveCoordinators()
+}
+
+// IsRalphWiggumMode returns true if there are any active Ralph Wiggum sessions.
+func (m Model) IsRalphWiggumMode() bool {
+	return m.ralphWiggum != nil && m.ralphWiggum.HasActiveCoordinators()
 }
 
 // IsInlinePlanMode returns true if there are any active inline plan sessions.
