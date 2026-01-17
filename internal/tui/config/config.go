@@ -482,13 +482,6 @@ func New() Model {
 					Category:    "experimental",
 				},
 				{
-					Key:         "experimental.triple_shot",
-					Label:       "Triple-Shot Mode",
-					Description: "Enable :tripleshot command to spawn 3 parallel attempts with a judge evaluator",
-					Type:        "bool",
-					Category:    "experimental",
-				},
-				{
 					Key:         "experimental.terminal_support",
 					Label:       "Terminal Support",
 					Description: "Enable embedded terminal pane (:term, :t, :termdir commands)",
@@ -1184,7 +1177,6 @@ func (m *Model) resetCurrentToDefault() {
 		"logging.max_backups": defaults.Logging.MaxBackups,
 		// Experimental
 		"experimental.intelligent_naming":    defaults.Experimental.IntelligentNaming,
-		"experimental.triple_shot":           defaults.Experimental.TripleShot,
 		"experimental.terminal_support":      defaults.Experimental.TerminalSupport,
 		"experimental.inline_plan":           defaults.Experimental.InlinePlan,
 		"experimental.inline_ultraplan":      defaults.Experimental.InlineUltraPlan,

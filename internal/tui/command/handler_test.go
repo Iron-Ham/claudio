@@ -1079,32 +1079,11 @@ func TestClearCompletedNoOrchestrator(t *testing.T) {
 	})
 }
 
-// TestTripleShotCommand tests the tripleshot command with config check
+// TestTripleShotCommand tests the tripleshot command (now enabled by default)
 func TestTripleShotCommand(t *testing.T) {
-	t.Run("disabled by default", func(t *testing.T) {
-		// Reset viper to ensure clean state
+	t.Run("enabled by default", func(t *testing.T) {
+		// Reset viper to ensure clean state - tripleshot is enabled by default
 		viper.Reset()
-
-		h := New()
-		deps := newMockDeps()
-
-		result := h.Execute("tripleshot", deps)
-
-		if result.ErrorMessage == "" {
-			t.Error("expected error when triple-shot is disabled")
-		}
-		if result.ErrorMessage != "Triple-shot mode is disabled. Enable it in :config under Experimental" {
-			t.Errorf("unexpected error message: %q", result.ErrorMessage)
-		}
-		if result.StartTripleShot != nil {
-			t.Error("StartTripleShot should be nil when disabled")
-		}
-	})
-
-	t.Run("enabled via config", func(t *testing.T) {
-		// Reset and enable triple-shot
-		viper.Reset()
-		viper.Set("experimental.triple_shot", true)
 
 		h := New()
 		deps := newMockDeps()
@@ -1120,14 +1099,10 @@ func TestTripleShotCommand(t *testing.T) {
 		if result.InfoMessage != "Enter a task for triple-shot mode" {
 			t.Errorf("unexpected info message: %q", result.InfoMessage)
 		}
-
-		// Clean up
-		viper.Reset()
 	})
 
 	t.Run("blocked in ultraplan mode", func(t *testing.T) {
 		viper.Reset()
-		viper.Set("experimental.triple_shot", true)
 
 		h := New()
 		deps := newMockDeps()
@@ -1138,13 +1113,10 @@ func TestTripleShotCommand(t *testing.T) {
 		if result.ErrorMessage != "Cannot start triple-shot while in ultraplan mode" {
 			t.Errorf("expected ultraplan mode error, got: %q", result.ErrorMessage)
 		}
-
-		viper.Reset()
 	})
 
 	t.Run("allowed when already in triple-shot mode (multiple tripleshots)", func(t *testing.T) {
 		viper.Reset()
-		viper.Set("experimental.triple_shot", true)
 
 		h := New()
 		deps := newMockDeps()
@@ -1162,13 +1134,10 @@ func TestTripleShotCommand(t *testing.T) {
 		if result.InfoMessage != "Enter a task for additional triple-shot" {
 			t.Errorf("expected additional task prompt, got: %q", result.InfoMessage)
 		}
-
-		viper.Reset()
 	})
 
 	t.Run("aliases work", func(t *testing.T) {
 		viper.Reset()
-		viper.Set("experimental.triple_shot", true)
 
 		h := New()
 		deps := newMockDeps()
@@ -1180,8 +1149,6 @@ func TestTripleShotCommand(t *testing.T) {
 				t.Errorf("alias %q should start triple-shot mode", alias)
 			}
 		}
-
-		viper.Reset()
 	})
 }
 

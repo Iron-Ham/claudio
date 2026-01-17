@@ -34,7 +34,7 @@ Claudio enables parallel AI-assisted development by orchestrating multiple Claud
 - **Plan Mode** - Have Claude analyze your codebase and generate a structured task plan
 - **UltraPlan Mode** - Hierarchical 4-phase planning with automatic parallel execution
 - **Multi-Pass Planning** - Three competing strategies evaluate and select the best approach
-- **TripleShot Mode** - Spawn 3 parallel attempts per task, then judge selects the best (experimental)
+- **TripleShot Mode** - Spawn 3 parallel attempts per task, then judge selects the best
 
 ### Workflow Automation
 - **PR Automation** - AI-generated pull requests with smart reviewer assignment
@@ -145,7 +145,7 @@ Press `:` to enter command mode for advanced operations:
 | `:plan "objective"` | Start inline plan generation |
 | `:ultraplan "objective"` | Start inline ultraplan workflow |
 | `:multiplan "objective"` | Multi-pass planning (requires experimental flag) |
-| `:tripleshot "task"` | Start tripleshot execution (experimental) |
+| `:tripleshot "task"` | Start tripleshot execution |
 | `:group create [name]` | Create a new instance group |
 | `:group add <instance> <group>` | Add instance to a group |
 | `:q!` or `:quit!` | Force quit with cleanup |

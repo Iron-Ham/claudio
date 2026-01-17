@@ -998,11 +998,6 @@ func cmdUltraPlanCancel(deps Dependencies) Result {
 }
 
 func cmdTripleShot(deps Dependencies) Result {
-	// Check if triple-shot is enabled in config
-	if !viper.GetBool("experimental.triple_shot") {
-		return Result{ErrorMessage: "Triple-shot mode is disabled. Enable it in :config under Experimental"}
-	}
-
 	// Don't allow starting triple-shot if in ultraplan mode
 	if deps.IsUltraPlanMode() {
 		return Result{ErrorMessage: "Cannot start triple-shot while in ultraplan mode"}
