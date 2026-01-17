@@ -436,6 +436,194 @@ func TestChainCommand(t *testing.T) {
 			t.Error("expected error when no instance is selected")
 		}
 	})
+
+	// Tests for sidebar number argument support
+	t.Run("chain with sidebar number 1", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		// Create a session with multiple instances
+		session := orchestrator.NewSession("test", "/repo")
+		inst1 := orchestrator.NewInstance("First task")
+		inst1.ID = "inst-1"
+		inst2 := orchestrator.NewInstance("Second task")
+		inst2.ID = "inst-2"
+		inst3 := orchestrator.NewInstance("Third task")
+		inst3.ID = "inst-3"
+		session.Instances = []*orchestrator.Instance{inst1, inst2, inst3}
+		deps.session = session
+		// Need orchestrator for ResolveInstanceReference
+		deps.orchestrator = &orchestrator.Orchestrator{}
+
+		result := h.Execute("chain 1", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.AddingDependentTask == nil || !*result.AddingDependentTask {
+			t.Error("expected AddingDependentTask to be set to true")
+		}
+		if result.DependentOnInstanceID == nil || *result.DependentOnInstanceID != "inst-1" {
+			t.Errorf("expected DependentOnInstanceID to be 'inst-1', got %v", result.DependentOnInstanceID)
+		}
+	})
+
+	t.Run("chain with sidebar number 3", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		session := orchestrator.NewSession("test", "/repo")
+		inst1 := orchestrator.NewInstance("First task")
+		inst1.ID = "inst-1"
+		inst2 := orchestrator.NewInstance("Second task")
+		inst2.ID = "inst-2"
+		inst3 := orchestrator.NewInstance("Third task")
+		inst3.ID = "inst-3"
+		session.Instances = []*orchestrator.Instance{inst1, inst2, inst3}
+		deps.session = session
+		deps.orchestrator = &orchestrator.Orchestrator{}
+
+		result := h.Execute("chain 3", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.DependentOnInstanceID == nil || *result.DependentOnInstanceID != "inst-3" {
+			t.Errorf("expected DependentOnInstanceID to be 'inst-3', got %v", result.DependentOnInstanceID)
+		}
+	})
+
+	t.Run("chain with hash-prefixed sidebar number", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		session := orchestrator.NewSession("test", "/repo")
+		inst1 := orchestrator.NewInstance("First task")
+		inst1.ID = "inst-1"
+		inst2 := orchestrator.NewInstance("Second task")
+		inst2.ID = "inst-2"
+		session.Instances = []*orchestrator.Instance{inst1, inst2}
+		deps.session = session
+		deps.orchestrator = &orchestrator.Orchestrator{}
+
+		result := h.Execute("chain #2", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.DependentOnInstanceID == nil || *result.DependentOnInstanceID != "inst-2" {
+			t.Errorf("expected DependentOnInstanceID to be 'inst-2', got %v", result.DependentOnInstanceID)
+		}
+	})
+
+	t.Run("chain with out of range number returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		session := orchestrator.NewSession("test", "/repo")
+		inst1 := orchestrator.NewInstance("First task")
+		inst1.ID = "inst-1"
+		session.Instances = []*orchestrator.Instance{inst1}
+		deps.session = session
+		deps.orchestrator = &orchestrator.Orchestrator{}
+
+		result := h.Execute("chain 5", deps)
+		if result.ErrorMessage == "" {
+			t.Error("expected error for out of range sidebar number")
+		}
+	})
+
+	t.Run("chain with number 0 returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		session := orchestrator.NewSession("test", "/repo")
+		inst1 := orchestrator.NewInstance("First task")
+		inst1.ID = "inst-1"
+		session.Instances = []*orchestrator.Instance{inst1}
+		deps.session = session
+		deps.orchestrator = &orchestrator.Orchestrator{}
+
+		result := h.Execute("chain 0", deps)
+		if result.ErrorMessage == "" {
+			t.Error("expected error for sidebar number 0")
+		}
+	})
+
+	t.Run("dep alias with sidebar number", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		session := orchestrator.NewSession("test", "/repo")
+		inst1 := orchestrator.NewInstance("First task")
+		inst1.ID = "inst-1"
+		inst2 := orchestrator.NewInstance("Second task")
+		inst2.ID = "inst-2"
+		session.Instances = []*orchestrator.Instance{inst1, inst2}
+		deps.session = session
+		deps.orchestrator = &orchestrator.Orchestrator{}
+
+		result := h.Execute("dep 2", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.DependentOnInstanceID == nil || *result.DependentOnInstanceID != "inst-2" {
+			t.Errorf("expected DependentOnInstanceID to be 'inst-2', got %v", result.DependentOnInstanceID)
+		}
+	})
+
+	t.Run("chain without session returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.session = nil
+
+		result := h.Execute("chain 1", deps)
+		if result.ErrorMessage == "" {
+			t.Error("expected error when session is nil")
+		}
+	})
+
+	t.Run("chain without orchestrator returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		session := orchestrator.NewSession("test", "/repo")
+		deps.session = session
+		deps.orchestrator = nil
+
+		result := h.Execute("chain 1", deps)
+		if result.ErrorMessage == "" {
+			t.Error("expected error when orchestrator is nil")
+		}
+	})
+
+	t.Run("depends alias with sidebar number", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		session := orchestrator.NewSession("test", "/repo")
+		inst1 := orchestrator.NewInstance("First task")
+		inst1.ID = "inst-1"
+		session.Instances = []*orchestrator.Instance{inst1}
+		deps.session = session
+		deps.orchestrator = &orchestrator.Orchestrator{}
+
+		result := h.Execute("depends 1", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.DependentOnInstanceID == nil || *result.DependentOnInstanceID != "inst-1" {
+			t.Errorf("expected DependentOnInstanceID to be 'inst-1', got %v", result.DependentOnInstanceID)
+		}
+	})
+
+	t.Run("chain with instance ID", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		session := orchestrator.NewSession("test", "/repo")
+		inst1 := orchestrator.NewInstance("First task")
+		inst1.ID = "abc12345"
+		session.Instances = []*orchestrator.Instance{inst1}
+		deps.session = session
+		deps.orchestrator = &orchestrator.Orchestrator{}
+
+		result := h.Execute("chain abc12345", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.DependentOnInstanceID == nil || *result.DependentOnInstanceID != "abc12345" {
+			t.Errorf("expected DependentOnInstanceID to be 'abc12345', got %v", result.DependentOnInstanceID)
+		}
+	})
 }
 
 func TestStatsCommand(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -659,7 +660,7 @@ func (o *Orchestrator) AddInstanceWithDependencies(session *Session, task string
 	// Resolve dependency references to instance IDs
 	resolvedDeps := make([]string, 0, len(dependsOn))
 	for _, depRef := range dependsOn {
-		depInst, err := o.resolveInstanceReference(session, depRef)
+		depInst, err := o.ResolveInstanceReference(session, depRef)
 		if err != nil {
 			return nil, fmt.Errorf("invalid dependency %q: %w", depRef, err)
 		}
@@ -718,10 +719,26 @@ func (o *Orchestrator) AddInstanceWithDependencies(session *Session, task string
 	return inst, nil
 }
 
-// resolveInstanceReference finds an instance by ID or task name substring.
+// ResolveInstanceReference finds an instance by sidebar number, ID, or task name substring.
+// Sidebar numbers can use "#N" or plain "N" format (1-indexed).
 // Returns an error if no match is found or if multiple instances match a task substring.
-func (o *Orchestrator) resolveInstanceReference(session *Session, ref string) (*Instance, error) {
-	// First try exact ID match (unambiguous)
+func (o *Orchestrator) ResolveInstanceReference(session *Session, ref string) (*Instance, error) {
+	// First, check for sidebar number reference (format: #N or just N)
+	// This allows users to reference instances by their visible sidebar numbers
+	inst, wasNumeric, err := o.resolveByNumber(session, ref)
+	if err != nil {
+		return nil, err
+	}
+	if inst != nil {
+		return inst, nil
+	}
+	if wasNumeric {
+		// It was a numeric reference but didn't match - don't fall through to task name search
+		// (This case shouldn't happen since resolveByNumber returns error for out-of-range)
+		return nil, fmt.Errorf("no instance found at sidebar position %s", ref)
+	}
+
+	// Try exact ID match (unambiguous)
 	for _, inst := range session.Instances {
 		if inst.ID == ref {
 			return inst, nil
@@ -747,11 +764,43 @@ func (o *Orchestrator) resolveInstanceReference(session *Session, ref string) (*
 		for _, m := range matches {
 			matchDescs = append(matchDescs, fmt.Sprintf("%s (%s)", m.ID, util.TruncateString(m.Task, 30)))
 		}
-		return nil, fmt.Errorf("ambiguous reference %q matches %d instances: %s (use instance ID for exact match)",
+		return nil, fmt.Errorf("ambiguous reference %q matches %d instances: %s (use instance ID or sidebar number for exact match)",
 			ref, len(matches), strings.Join(matchDescs, ", "))
 	}
 
 	return matches[0], nil
+}
+
+// resolveByNumber resolves an instance reference by sidebar number.
+// Accepts "#N" (explicit) or "N" (plain number) where N is the 1-indexed sidebar position.
+// Returns (instance, true, nil) if successful.
+// Returns (nil, true, error) if it looked like a number but was invalid/out of range.
+// Returns (nil, false, nil) if not a numeric reference (caller should try other methods).
+func (o *Orchestrator) resolveByNumber(session *Session, ref string) (*Instance, bool, error) {
+	// Support both "#1" and "1" syntax for sidebar numbers
+	numStr, hadHashPrefix := strings.CutPrefix(ref, "#")
+
+	// Try to parse as a number
+	num, err := strconv.Atoi(numStr)
+	if err != nil {
+		if hadHashPrefix {
+			// User explicitly used # prefix but with non-numeric suffix (e.g., "#abc")
+			return nil, true, fmt.Errorf("invalid sidebar number: %q", ref)
+		}
+		return nil, false, nil // Not a number, fall through to other resolution methods
+	}
+
+	// If we get here, the user provided a numeric reference
+	idx := num - 1
+	if idx < 0 || idx >= len(session.Instances) {
+		maxNum := len(session.Instances)
+		if maxNum == 0 {
+			return nil, true, fmt.Errorf("sidebar number %d is invalid: no instances exist", num)
+		}
+		return nil, true, fmt.Errorf("sidebar number %d is out of range (valid: 1-%d)", num, maxNum)
+	}
+
+	return session.Instances[idx], true, nil
 }
 
 // AddInstanceToWorktree adds a new instance that uses an existing worktree

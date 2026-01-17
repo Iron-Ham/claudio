@@ -228,9 +228,9 @@ func (h *Handler) registerCommands() {
 	// Instance management commands
 	h.commands["a"] = cmdAdd
 	h.commands["add"] = cmdAdd
-	h.commands["chain"] = cmdChain
-	h.commands["dep"] = cmdChain
-	h.commands["depends"] = cmdChain
+	h.argCommands["chain"] = cmdChain
+	h.argCommands["dep"] = cmdChain
+	h.argCommands["depends"] = cmdChain
 	h.commands["D"] = cmdRemove
 	h.commands["remove"] = cmdRemove
 	h.commands["kill"] = cmdKill
@@ -604,10 +604,33 @@ func cmdAdd(_ Dependencies) Result {
 	return Result{AddingTask: &addingTask}
 }
 
-func cmdChain(deps Dependencies) Result {
-	inst := deps.ActiveInstance()
-	if inst == nil {
-		return Result{ErrorMessage: "No instance selected. Select an instance first, then use :chain to add a dependent task."}
+func cmdChain(deps Dependencies, args string) Result {
+	var inst *orchestrator.Instance
+
+	args = strings.TrimSpace(args)
+	if args == "" {
+		// No argument - use currently selected instance
+		inst = deps.ActiveInstance()
+		if inst == nil {
+			return Result{ErrorMessage: "No instance selected. Select an instance first, or specify an instance number (e.g., :chain 2)."}
+		}
+	} else {
+		// Resolve instance by sidebar number, ID, or task name
+		session := deps.GetSession()
+		if session == nil {
+			return Result{ErrorMessage: "No session available"}
+		}
+
+		orch := deps.GetOrchestrator()
+		if orch == nil {
+			return Result{ErrorMessage: "No orchestrator available"}
+		}
+
+		resolved, err := orch.ResolveInstanceReference(session, args)
+		if err != nil {
+			return Result{ErrorMessage: fmt.Sprintf("Cannot find instance: %v", err)}
+		}
+		inst = resolved
 	}
 
 	addingDepTask := true
