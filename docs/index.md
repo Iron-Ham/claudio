@@ -6,12 +6,25 @@ Claudio enables parallel AI-assisted development by running multiple Claude Code
 
 ## Features
 
+### Core Orchestration
 - **Parallel Instances** - Run multiple Claude Code processes simultaneously
 - **Worktree Isolation** - Each instance works in its own Git worktree and branch
 - **TUI Dashboard** - Real-time view of all instances with output streaming
 - **Shared Context** - Instances can see what others are working on
 - **Conflict Detection** - Detect when instances modify the same files
+- **Task Chaining** - Define dependencies between tasks with `--depends-on`
+
+### Planning Modes
+- **Plan Mode** - Claude analyzes your codebase and generates structured task plans
+- **UltraPlan Mode** - 4-phase hierarchical planning with automatic parallel execution
+- **Multi-Pass Planning** - Three competing strategies evaluate and select the best approach
+- **TripleShot Mode** - Spawn 3 parallel attempts per task, judge selects the best (experimental)
+
+### Workflow Automation
 - **PR Automation** - AI-generated pull requests with smart reviewer assignment
+- **Cost Tracking** - Monitor token usage with configurable limits
+- **Session Recovery** - Resume sessions after disconnection
+- **Structured Logging** - JSON logs with filtering, rotation, and export
 
 ## Quick Start
 
@@ -40,6 +53,9 @@ Comprehensive documentation covering concepts, workflows, and configuration.
 - [TUI Navigation](guide/tui-navigation.md) - Keyboard shortcuts and views
 - [Configuration](guide/configuration.md) - Customize Claudio
 - [PR Creation](guide/pr-creation.md) - Pull request workflow
+- [Task Chaining](guide/task-chaining.md) - Dependencies between tasks
+- [Ultra-Plan Mode](guide/ultra-plan.md) - Intelligent hierarchical planning
+- [Inline Planning](guide/inline-planning.md) - TUI-integrated planning workflows
 
 ### [Tutorials](tutorials/index.md)
 Step-by-step guides for common workflows.

@@ -21,15 +21,26 @@ Claudio enables parallel AI-assisted development by orchestrating multiple Claud
 
 ## Features
 
+### Core Orchestration
 - **Parallel Instances** - Run multiple Claude Code processes simultaneously
 - **Worktree Isolation** - Each instance works in its own git worktree/branch
 - **TUI Dashboard** - Real-time view of all instances with output streaming
 - **Shared Context** - Instances can see what others are working on via auto-generated context files
 - **Process Control** - Start, pause, resume, and stop instances
 - **Conflict Detection** - Detect when instances modify the same files
+- **Task Chaining** - Define dependencies between tasks with `--depends-on`
+
+### Planning Modes
+- **Plan Mode** - Have Claude analyze your codebase and generate a structured task plan
+- **UltraPlan Mode** - Hierarchical 4-phase planning with automatic parallel execution
+- **Multi-Pass Planning** - Three competing strategies evaluate and select the best approach
+- **TripleShot Mode** - Spawn 3 parallel attempts per task, then judge selects the best (experimental)
+
+### Workflow Automation
 - **PR Automation** - AI-generated pull requests with smart reviewer assignment
-- **Cost Tracking** - Monitor token usage and API costs
+- **Cost Tracking** - Monitor token usage and API costs with configurable limits
 - **Session Recovery** - Resume sessions after disconnection
+- **Structured Logging** - JSON logs with filtering, rotation, and export capabilities
 
 ## Requirements
 
@@ -86,16 +97,27 @@ claudio add "Update API documentation"
 
 ## Usage
 
-### Commands
+### Core Commands
 
 | Command | Description |
 |---------|-------------|
 | `claudio init` | Initialize Claudio in the current git repository |
 | `claudio start [name]` | Start a new session and launch the TUI |
 | `claudio add "task"` | Add a new Claude instance with the given task |
+| `claudio add "task" -d "dep1,dep2"` | Add instance with dependencies (task chaining) |
 | `claudio status` | Show current session status |
 | `claudio stop` | Stop all instances and end the session |
-| `claudio stop -f` | Force stop without prompts |
+| `claudio pr <instance-id>` | Create a pull request for an instance |
+| `claudio cleanup` | Clean up stale worktrees, branches, and tmux sessions |
+
+### Planning Commands
+
+| Command | Description |
+|---------|-------------|
+| `claudio plan "objective"` | Generate a structured task plan from an objective |
+| `claudio ultraplan "objective"` | 4-phase hierarchical planning with parallel execution |
+| `claudio ultraplan --multi-pass "objective"` | Use 3 competing strategies to find the best plan |
+| `claudio tripleshot "task"` | Execute with 3 parallel attempts and judge selection |
 
 ### TUI Keyboard Shortcuts
 
@@ -107,9 +129,26 @@ claudio add "Update API documentation"
 | `s` | Start selected instance |
 | `p` | Pause/resume instance |
 | `x` | Stop instance |
+| `d` | Toggle diff view |
+| `c` | Toggle conflict view |
+| `/` | Search output |
 | `Enter` | Focus instance for input |
 | `?` | Toggle help |
 | `q` | Quit |
+
+### TUI Command Mode
+
+Press `:` to enter command mode for advanced operations:
+
+| Command | Description |
+|---------|-------------|
+| `:plan "objective"` | Start inline plan generation |
+| `:ultraplan "objective"` | Start inline ultraplan workflow |
+| `:multiplan "objective"` | Multi-pass planning (requires experimental flag) |
+| `:tripleshot "task"` | Start tripleshot execution (experimental) |
+| `:group create [name]` | Create a new instance group |
+| `:group add <instance> <group>` | Add instance to a group |
+| `:q!` or `:quit!` | Force quit with cleanup |
 
 ## How It Works
 
@@ -208,30 +247,49 @@ completion:
 
 # TUI (terminal user interface) settings
 tui:
-  # Automatically focus new instances for input
   auto_focus_on_input: true
-  # Maximum number of output lines to display per instance
   max_output_lines: 1000
+  sidebar_width: 30
 
-# Instance settings (advanced)
+# Instance settings
 instance:
-  # Output buffer size in bytes (default: 100KB)
   output_buffer_size: 100000
-  # How often to capture output from tmux in milliseconds
   capture_interval_ms: 100
-  # tmux pane dimensions
   tmux_width: 200
   tmux_height: 50
+  # Timeout settings (minutes)
+  activity_timeout_minutes: 30
+  completion_timeout_minutes: 60
 
 # Branch naming convention
 branch:
-  # Prefix for branch names (default: "claudio")
-  # Examples: "claudio", "Iron-Ham", "feature"
   prefix: claudio
-  # Include instance ID in branch names (default: true)
-  # When true: <prefix>/<id>-<slug> (e.g., claudio/abc123-fix-bug)
-  # When false: <prefix>/<slug> (e.g., claudio/fix-bug)
   include_id: true
+
+# Pull request settings
+pr:
+  draft: false
+  auto_rebase: true
+  use_ai: true
+  auto_pr_on_stop: false
+
+# Resource limits
+resources:
+  cost_warning_threshold: 5.00
+  cost_limit: 0  # 0 = no limit
+  show_metrics_in_sidebar: true
+
+# UltraPlan settings
+ultraplan:
+  max_parallel: 3
+
+# Experimental features
+experimental:
+  intelligent_naming: false
+  triple_shot: false
+  inline_plan: false
+  inline_ultraplan: false
+  grouped_instance_view: false
 ```
 
 ### Environment Variables

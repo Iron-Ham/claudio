@@ -23,6 +23,9 @@ Customize Claudio's behavior through config files and environment variables. Set
 ### [PR Creation](pr-creation.md)
 Create polished pull requests with AI-generated descriptions, automatic rebasing, and smart reviewer assignment.
 
+### [Task Chaining](task-chaining.md)
+Define dependencies between tasks to control execution order. Build complex workflows with parallel and sequential phases.
+
 ### [Ultra-Plan Mode](ultra-plan.md)
 Orchestrate complex tasks with intelligent planning. Let Claude analyze your codebase, create an execution plan, and coordinate parallel task execution automatically.
 

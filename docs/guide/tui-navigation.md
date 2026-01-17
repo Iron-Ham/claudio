@@ -150,6 +150,54 @@ The input field supports editing:
 | `Ctrl+u` | Delete to beginning |
 | `Backspace` | Delete character |
 
+## Command Mode
+
+Press `:` to enter command mode for advanced operations. Type a command and press `Enter` to execute.
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `:plan "objective"` | Start inline plan generation |
+| `:ultraplan "objective"` | Start inline UltraPlan workflow |
+| `:multiplan "objective"` | Multi-pass planning (requires `experimental.inline_plan`) |
+| `:tripleshot "task"` | Start TripleShot execution (requires `experimental.triple_shot`) |
+| `:group create [name]` | Create a new instance group |
+| `:group add <instance> <group>` | Add instance to a group |
+| `:group remove <instance>` | Remove instance from its group |
+| `:group move <instance> <group>` | Move instance to a different group |
+| `:group order <g1,g2,g3>` | Reorder group execution sequence |
+| `:group delete [name]` | Delete an empty group |
+| `:group show` | Toggle grouped view on/off |
+| `:q!` or `:quit!` | Force quit with cleanup |
+
+### Example Workflow
+
+```
+:plan "Implement user authentication with OAuth2"
+```
+
+This starts the inline planning workflow:
+1. Claude analyzes the objective
+2. A structured plan is generated
+3. You review and edit tasks in the plan editor
+4. Confirm to spawn instances organized by groups
+
+### Enabling Experimental Commands
+
+Some commands require experimental flags in your config:
+
+```yaml
+# ~/.config/claudio/config.yaml
+experimental:
+  inline_plan: true       # Enables :multiplan
+  inline_ultraplan: true  # Enables :ultraplan
+  triple_shot: true       # Enables :tripleshot
+  grouped_instance_view: true  # Enables :group commands
+```
+
+---
+
 ## Adding Instances
 
 Press `a` to add a new instance:

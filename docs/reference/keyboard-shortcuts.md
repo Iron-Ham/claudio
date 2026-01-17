@@ -85,6 +85,23 @@ These shortcuts use a vim-style `g` prefix. Press `g` first, then the action key
 |-----|--------|
 | `q` | Quit Claudio |
 | `?` | Toggle help |
+| `:` | Enter command mode |
+| `Esc` | Exit command mode / close dialogs |
+
+## Command Mode
+
+Press `:` to enter command mode, then type a command:
+
+| Command | Action |
+|---------|--------|
+| `:plan "..."` | Inline plan generation |
+| `:ultraplan "..."` | Inline UltraPlan workflow |
+| `:multiplan "..."` | Multi-pass planning |
+| `:tripleshot "..."` | TripleShot execution |
+| `:group create` | Create new group |
+| `:group add` | Add instance to group |
+| `:group show` | Toggle grouped view |
+| `:q!` | Force quit with cleanup |
 
 ## Status Indicators
 
