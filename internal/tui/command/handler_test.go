@@ -44,6 +44,8 @@ type mockDeps struct {
 	logger                *logging.Logger
 	startTime             time.Time
 	isTripleShotJudge     bool
+	ralphMode             bool
+	ralphCoordinators     []*orchestrator.RalphCoordinator
 }
 
 func (m *mockDeps) GetOrchestrator() *orchestrator.Orchestrator { return m.orchestrator }
@@ -69,6 +71,10 @@ func (m *mockDeps) GetTripleShotCoordinators() []*orchestrator.TripleShotCoordin
 func (m *mockDeps) GetLogger() *logging.Logger            { return m.logger }
 func (m *mockDeps) GetStartTime() time.Time               { return m.startTime }
 func (m *mockDeps) IsInstanceTripleShotJudge(string) bool { return m.isTripleShotJudge }
+func (m *mockDeps) IsRalphMode() bool                     { return m.ralphMode }
+func (m *mockDeps) GetRalphCoordinators() []*orchestrator.RalphCoordinator {
+	return m.ralphCoordinators
+}
 
 func newMockDeps() *mockDeps {
 	return &mockDeps{
@@ -1409,6 +1415,161 @@ func TestAdversarialCommand(t *testing.T) {
 		result := h.Execute("adv", deps)
 		if result.StartAdversarial == nil || !*result.StartAdversarial {
 			t.Error("adv alias should start adversarial mode")
+		}
+	})
+}
+
+// TestRalphCommand tests the ralph command
+func TestRalphCommand(t *testing.T) {
+	t.Run("no args prompts for task", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("ralph", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartRalphLoop == nil || !*result.StartRalphLoop {
+			t.Error("expected StartRalphLoop to be true")
+		}
+		if result.InfoMessage != "Enter a prompt for ralph loop" {
+			t.Errorf("unexpected info message: %q", result.InfoMessage)
+		}
+	})
+
+	t.Run("ralph-loop alias works", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("ralph-loop", deps)
+
+		if result.StartRalphLoop == nil || !*result.StartRalphLoop {
+			t.Error("ralph-loop alias should start ralph mode")
+		}
+	})
+
+	t.Run("blocked in ultraplan mode", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.ultraPlanMode = true
+
+		result := h.Execute("ralph", deps)
+
+		if result.ErrorMessage != "Cannot start ralph loop while in ultraplan mode" {
+			t.Errorf("expected ultraplan mode error, got: %q", result.ErrorMessage)
+		}
+	})
+
+	t.Run("with completion promise", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute(`ralph "test prompt" --completion-promise "DONE"`, deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.StartRalphLoop == nil || !*result.StartRalphLoop {
+			t.Error("expected StartRalphLoop to be true")
+		}
+		if result.RalphPrompt == nil || *result.RalphPrompt != "test prompt" {
+			t.Errorf("expected RalphPrompt to be 'test prompt', got: %v", result.RalphPrompt)
+		}
+		if result.RalphCompletionPromise == nil || *result.RalphCompletionPromise != "DONE" {
+			t.Errorf("expected RalphCompletionPromise to be 'DONE', got: %v", result.RalphCompletionPromise)
+		}
+	})
+
+	t.Run("with max iterations", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute(`ralph "test" --max-iterations 5 --completion-promise "DONE"`, deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.RalphMaxIterations == nil || *result.RalphMaxIterations != 5 {
+			t.Errorf("expected RalphMaxIterations to be 5, got: %v", result.RalphMaxIterations)
+		}
+	})
+
+	t.Run("missing completion promise returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute(`ralph "test prompt"`, deps)
+
+		if result.ErrorMessage != "Ralph loop requires --completion-promise to know when to stop" {
+			t.Errorf("expected completion promise error, got: %q", result.ErrorMessage)
+		}
+	})
+
+	t.Run("invalid max-iterations returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute(`ralph "test" --max-iterations abc --completion-promise "DONE"`, deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error for invalid max-iterations")
+		}
+	})
+
+	t.Run("max-iterations without value returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute(`ralph "test" --max-iterations --completion-promise "DONE"`, deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error for max-iterations without value")
+		}
+	})
+}
+
+// TestCancelRalphCommand tests the cancel-ralph command
+func TestCancelRalphCommand(t *testing.T) {
+	t.Run("error when not in ralph mode", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.ralphMode = false
+
+		result := h.Execute("cancel-ralph", deps)
+
+		if result.ErrorMessage != "Not in ralph loop mode" {
+			t.Errorf("expected 'Not in ralph loop mode', got: %q", result.ErrorMessage)
+		}
+	})
+
+	t.Run("ralph-cancel alias", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.ralphMode = false
+
+		result := h.Execute("ralph-cancel", deps)
+
+		if result.ErrorMessage != "Not in ralph loop mode" {
+			t.Errorf("expected 'Not in ralph loop mode', got: %q", result.ErrorMessage)
+		}
+	})
+
+	t.Run("cancels when in ralph mode", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.ralphMode = true
+
+		result := h.Execute("cancel-ralph", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.CancelRalphLoop == nil || !*result.CancelRalphLoop {
+			t.Error("expected CancelRalphLoop to be true")
+		}
+		if result.InfoMessage != "Ralph loop cancelled" {
+			t.Errorf("expected 'Ralph loop cancelled' info, got: %q", result.InfoMessage)
 		}
 	})
 }

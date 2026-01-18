@@ -192,3 +192,24 @@ type AdversarialReviewProcessedMsg struct {
 	Score    int
 	Err      error
 }
+
+// RalphIterationStartedMsg indicates a new ralph iteration has started.
+type RalphIterationStartedMsg struct {
+	GroupID   string
+	Iteration int
+}
+
+// RalphErrorMsg indicates an error during ralph loop operation.
+type RalphErrorMsg struct {
+	Err     error
+	GroupID string
+}
+
+// RalphCompletionProcessedMsg contains the result of processing a ralph iteration completion.
+// This is returned after checking the instance completion and output.
+type RalphCompletionProcessedMsg struct {
+	GroupID      string
+	Iteration    int
+	ContinueLoop bool // True if another iteration should be started
+	Err          error
+}

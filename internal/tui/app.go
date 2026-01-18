@@ -385,6 +385,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// This avoids blocking the UI with file I/O
 		cmds = append(cmds, m.dispatchAdversarialCompletionChecks()...)
 
+		// Dispatch async commands to check ralph loop completions
+		// This avoids blocking the UI with file I/O
+		cmds = append(cmds, m.dispatchRalphCompletionChecks()...)
+
 		// Dispatch async commands to check ultraplan files
 		// This avoids blocking the UI with file I/O during planning phases
 		cmds = append(cmds, m.dispatchUltraPlanFileChecks()...)
@@ -402,6 +406,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check if adversarial needs user notification
 		if m.adversarial != nil && m.adversarial.NeedsNotification {
 			m.adversarial.NeedsNotification = false
+			cmds = append(cmds, tuimsg.NotifyUser())
+		}
+
+		// Check if ralph needs user notification
+		if m.ralph != nil && m.ralph.NeedsNotification {
+			m.ralph.NeedsNotification = false
 			cmds = append(cmds, tuimsg.NotifyUser())
 		}
 
@@ -555,6 +565,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuimsg.AdversarialReviewProcessedMsg:
 		// Handle async review file processing result
 		return m.handleAdversarialReviewProcessed(msg)
+
+	// Ralph loop message handlers
+	case tuimsg.RalphIterationStartedMsg:
+		return m.handleRalphIterationStarted(msg)
+
+	case tuimsg.RalphErrorMsg:
+		return m.handleRalphError(msg)
+
+	case tuimsg.RalphCompletionProcessedMsg:
+		return m.handleRalphCompletionProcessed(msg)
 	}
 
 	return m, nil
@@ -711,6 +731,31 @@ func (m *Model) applyCommandResult(result command.Result) {
 		m.addingTask = true
 		m.taskInput = ""
 		m.taskInputCursor = 0
+	}
+
+	// Handle ralph loop start
+	if result.StartRalphLoop != nil && *result.StartRalphLoop {
+		// If we have prompt and completion promise, start immediately
+		if result.RalphPrompt != nil && result.RalphCompletionPromise != nil {
+			maxIter := 50 // Default
+			if result.RalphMaxIterations != nil {
+				maxIter = *result.RalphMaxIterations
+			}
+			*m, _ = m.initiateRalphMode(*result.RalphPrompt, maxIter, *result.RalphCompletionPromise)
+		}
+		// Otherwise, the model will show a prompt for user input (not implemented yet)
+	}
+
+	// Handle ralph loop cancel
+	if result.CancelRalphLoop != nil && *result.CancelRalphLoop {
+		if m.ralph != nil {
+			for _, coordinator := range m.ralph.Coordinators {
+				if coordinator != nil {
+					coordinator.Cancel()
+				}
+			}
+			m.infoMessage = "All ralph loops cancelled"
+		}
 	}
 
 	// Handle triple-shot judge stopped - clean up the entire triple-shot session

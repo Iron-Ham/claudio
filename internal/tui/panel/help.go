@@ -185,6 +185,15 @@ func DefaultHelpSections() []HelpSection {
 			},
 		},
 		{
+			Title: "Ralph Wiggum Loop",
+			Items: []HelpItem{
+				{Key: ":ralph", Description: "Start iterative loop until completion promise found"},
+				{Key: ":ralph --completion-promise <text>", Description: "Set phrase that signals completion"},
+				{Key: ":ralph --max-iterations <n>", Description: "Set max iterations (default: 50)"},
+				{Key: ":cancel-ralph", Description: "Cancel active ralph loop"},
+			},
+		},
+		{
 			Title: "Planning Modes (experimental)",
 			Items: []HelpItem{
 				{Key: ":plan", Description: "Start inline plan mode"},
