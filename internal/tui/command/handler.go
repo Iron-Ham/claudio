@@ -603,12 +603,12 @@ func cmdRestart(deps Dependencies) Result {
 			}
 			// Fall through to regular restart
 		} else {
-			stepInfo := coordinator.GetStepInfo(inst.ID)
+			stepInfo := orchestrator.GetStepInfo(coordinator, inst.ID)
 			if stepInfo == nil {
 				// Instance doesn't match any ultraplan step - inform user and fall through
 				return Result{InfoMessage: "Instance is not an ultraplan step. Using regular restart."}
 			}
-			newInstID, err := coordinator.RestartStep(stepInfo)
+			newInstID, err := orchestrator.RestartStep(coordinator, stepInfo)
 			if err != nil {
 				return Result{ErrorMessage: fmt.Sprintf("Failed to restart %s: %v", stepInfo.Label, err)}
 			}

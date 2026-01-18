@@ -7,7 +7,6 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
-	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
 // TestGetMultiPassStrategyNames verifies that we have the expected strategies
@@ -105,139 +104,6 @@ func TestGetMultiPassPlanningPrompt(t *testing.T) {
 	}
 }
 
-// TestFormatCandidatePlansForManager tests the formatting of candidate plans
-func TestFormatCandidatePlansForManager(t *testing.T) {
-	tests := []struct {
-		name      string
-		plans     []*PlanSpec
-		wantParts []string
-	}{
-		{
-			name:      "empty plans",
-			plans:     []*PlanSpec{},
-			wantParts: []string{"No candidate plans available"},
-		},
-		{
-			name:  "nil plan in list",
-			plans: []*PlanSpec{nil},
-			wantParts: []string{
-				"### Plan 1: maximize-parallelism",
-				"<plan>",
-				"null",
-				"</plan>",
-			},
-		},
-		{
-			name: "single valid plan",
-			plans: []*PlanSpec{
-				{
-					Summary: "Test plan summary",
-					Tasks: []PlannedTask{
-						{ID: "task-1", Title: "First task", EstComplexity: ComplexityLow},
-						{ID: "task-2", Title: "Second task", DependsOn: []string{"task-1"}, EstComplexity: ComplexityMedium},
-					},
-					ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
-				},
-			},
-			wantParts: []string{
-				"### Plan 1: maximize-parallelism",
-				"<plan>",
-				"Test plan summary",
-				"task-1",
-				"First task",
-				"task-2",
-				"Second task",
-				"</plan>",
-			},
-		},
-		{
-			name: "multiple plans with different strategies",
-			plans: []*PlanSpec{
-				{
-					Summary: "Parallel plan",
-					Tasks:   []PlannedTask{{ID: "t1", Title: "Task 1", EstComplexity: ComplexityLow}},
-				},
-				{
-					Summary: "Simple plan",
-					Tasks:   []PlannedTask{{ID: "t2", Title: "Task 2", EstComplexity: ComplexityMedium}},
-				},
-				{
-					Summary: "Balanced plan",
-					Tasks:   []PlannedTask{{ID: "t3", Title: "Task 3", EstComplexity: ComplexityHigh}},
-				},
-			},
-			wantParts: []string{
-				"### Plan 1: maximize-parallelism",
-				"Parallel plan",
-				"### Plan 2: minimize-complexity",
-				"Simple plan",
-				"### Plan 3: balanced-approach",
-				"Balanced plan",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := formatCandidatePlansForManager(tt.plans)
-
-			for _, part := range tt.wantParts {
-				if !strings.Contains(result, part) {
-					t.Errorf("formatCandidatePlansForManager() output missing: %q\nGot:\n%s", part, result)
-				}
-			}
-		})
-	}
-}
-
-// TestFormatCandidatePlansForManager_JSONValidity ensures plans are valid JSON
-func TestFormatCandidatePlansForManager_JSONValidity(t *testing.T) {
-	plan := &PlanSpec{
-		ID:        "plan-1",
-		Objective: "Test objective",
-		Summary:   "Test summary",
-		Tasks: []PlannedTask{
-			{
-				ID:            "task-1",
-				Title:         "Test task",
-				Description:   "Description here",
-				Files:         []string{"file1.go", "file2.go"},
-				DependsOn:     []string{},
-				Priority:      1,
-				EstComplexity: ComplexityLow,
-			},
-		},
-		ExecutionOrder: [][]string{{"task-1"}},
-		Insights:       []string{"Insight 1"},
-		Constraints:    []string{"Constraint 1"},
-	}
-
-	result := formatCandidatePlansForManager([]*PlanSpec{plan})
-
-	// Extract the JSON between <plan> tags
-	startIdx := strings.Index(result, "<plan>")
-	endIdx := strings.Index(result, "</plan>")
-	if startIdx == -1 || endIdx == -1 {
-		t.Fatal("missing <plan> tags in output")
-	}
-
-	jsonStr := strings.TrimSpace(result[startIdx+len("<plan>") : endIdx])
-
-	// Verify it's valid JSON
-	var parsed PlanSpec
-	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
-		t.Errorf("plan JSON is invalid: %v\nJSON:\n%s", err, jsonStr)
-	}
-
-	// Verify content is preserved
-	if parsed.Summary != plan.Summary {
-		t.Errorf("parsed summary = %q, want %q", parsed.Summary, plan.Summary)
-	}
-	if len(parsed.Tasks) != len(plan.Tasks) {
-		t.Errorf("parsed has %d tasks, want %d", len(parsed.Tasks), len(plan.Tasks))
-	}
-}
-
 // TestBuildPlanManagerPrompt_Integration tests the buildPlanManagerPrompt method
 // This test verifies the integration between the coordinator and plan formatting
 func TestBuildPlanManagerPrompt_Integration(t *testing.T) {
@@ -282,7 +148,7 @@ func TestBuildPlanManagerPrompt_Integration(t *testing.T) {
 	manager := &UltraPlanManager{session: session}
 	coord := &Coordinator{manager: manager}
 
-	prompt := coord.buildPlanManagerPrompt()
+	prompt := BuildPlanManagerPrompt(coord)
 
 	// Verify the prompt contains the objective
 	if !strings.Contains(prompt, "Implement feature X") {
@@ -343,7 +209,7 @@ func TestBuildPlanComparisonSection(t *testing.T) {
 	manager := &UltraPlanManager{session: session}
 	coord := &Coordinator{manager: manager}
 
-	result := coord.buildPlanComparisonSection()
+	result := BuildPlanComparisonSection(coord)
 
 	// Check that plan 1 is formatted correctly
 	expectedParts := []string{
@@ -729,7 +595,7 @@ func TestBuildPlanManagerPrompt_ExecutionOrderFormatting(t *testing.T) {
 	manager := &UltraPlanManager{session: session}
 	coord := &Coordinator{manager: manager}
 
-	prompt := coord.buildPlanManagerPrompt()
+	prompt := BuildPlanManagerPrompt(coord)
 
 	// Verify execution groups are properly formatted
 	expectedParts := []string{
@@ -766,7 +632,7 @@ func TestBuildPlanManagerPrompt_DependencyFormatting(t *testing.T) {
 	manager := &UltraPlanManager{session: session}
 	coord := &Coordinator{manager: manager}
 
-	prompt := coord.buildPlanManagerPrompt()
+	prompt := BuildPlanManagerPrompt(coord)
 
 	// Verify dependencies are shown
 	if !strings.Contains(prompt, "depends: none") {
@@ -840,13 +706,13 @@ func TestGetStepInfo_Nil(t *testing.T) {
 	}
 
 	// Test with empty instance ID
-	info := coord.GetStepInfo("")
+	info := GetStepInfo(coord, "")
 	if info != nil {
 		t.Errorf("GetStepInfo(\"\") = %v, want nil", info)
 	}
 
 	// Test with unknown instance ID
-	info = coord.GetStepInfo("unknown-instance")
+	info = GetStepInfo(coord, "unknown-instance")
 	if info != nil {
 		t.Errorf("GetStepInfo(\"unknown-instance\") = %v, want nil", info)
 	}
@@ -862,7 +728,7 @@ func TestGetStepInfo_Planning(t *testing.T) {
 		manager: manager,
 	}
 
-	info := coord.GetStepInfo("plan-coord-123")
+	info := GetStepInfo(coord, "plan-coord-123")
 	if info == nil {
 		t.Fatal("GetStepInfo returned nil for planning coordinator")
 	}
@@ -894,7 +760,7 @@ func TestGetStepInfo_MultiPassCoordinators(t *testing.T) {
 
 	for i, coordID := range session.PlanCoordinatorIDs {
 		t.Run(coordID, func(t *testing.T) {
-			info := coord.GetStepInfo(coordID)
+			info := GetStepInfo(coord, coordID)
 			if info == nil {
 				t.Fatalf("GetStepInfo returned nil for coordinator %s", coordID)
 			}
@@ -925,7 +791,7 @@ func TestGetStepInfo_PlanManager(t *testing.T) {
 		manager: manager,
 	}
 
-	info := coord.GetStepInfo("plan-manager-123")
+	info := GetStepInfo(coord, "plan-manager-123")
 	if info == nil {
 		t.Fatal("GetStepInfo returned nil for plan manager")
 	}
@@ -981,7 +847,7 @@ func TestGetStepInfo_Task(t *testing.T) {
 		groupTracker: groupTracker,
 	}
 
-	info := coord.GetStepInfo("task-inst-123")
+	info := GetStepInfo(coord, "task-inst-123")
 	if info == nil {
 		t.Fatal("GetStepInfo returned nil for task instance")
 	}
@@ -1012,7 +878,7 @@ func TestGetStepInfo_Synthesis(t *testing.T) {
 		manager: manager,
 	}
 
-	info := coord.GetStepInfo("synth-123")
+	info := GetStepInfo(coord, "synth-123")
 	if info == nil {
 		t.Fatal("GetStepInfo returned nil for synthesis instance")
 	}
@@ -1037,7 +903,7 @@ func TestGetStepInfo_Revision(t *testing.T) {
 		manager: manager,
 	}
 
-	info := coord.GetStepInfo("rev-123")
+	info := GetStepInfo(coord, "rev-123")
 	if info == nil {
 		t.Fatal("GetStepInfo returned nil for revision instance")
 	}
@@ -1062,7 +928,7 @@ func TestGetStepInfo_Consolidation(t *testing.T) {
 		manager: manager,
 	}
 
-	info := coord.GetStepInfo("consol-123")
+	info := GetStepInfo(coord, "consol-123")
 	if info == nil {
 		t.Fatal("GetStepInfo returned nil for consolidation instance")
 	}
@@ -1089,7 +955,7 @@ func TestGetStepInfo_GroupConsolidator(t *testing.T) {
 
 	for i, consolidatorID := range session.GroupConsolidatorIDs {
 		t.Run(consolidatorID, func(t *testing.T) {
-			info := coord.GetStepInfo(consolidatorID)
+			info := GetStepInfo(coord, consolidatorID)
 			if info == nil {
 				t.Fatalf("GetStepInfo returned nil for group consolidator %s", consolidatorID)
 			}
@@ -1118,7 +984,7 @@ func TestRestartStep_NilInput(t *testing.T) {
 		manager: manager,
 	}
 
-	_, err := coord.RestartStep(nil)
+	_, err := RestartStep(coord, nil)
 	if err == nil {
 		t.Error("RestartStep(nil) should return an error")
 	}
@@ -1139,7 +1005,7 @@ func TestRestartStep_NilSession(t *testing.T) {
 		Type: StepTypeSynthesis,
 	}
 
-	_, err := coord.RestartStep(stepInfo)
+	_, err := RestartStep(coord, stepInfo)
 	if err == nil {
 		t.Error("RestartStep with nil session should return an error")
 	}
@@ -1161,7 +1027,7 @@ func TestRestartStep_UnknownType(t *testing.T) {
 		Type: StepType("unknown_type"),
 	}
 
-	_, err := coord.RestartStep(stepInfo)
+	_, err := RestartStep(coord, stepInfo)
 	if err == nil {
 		t.Error("RestartStep with unknown type should return an error")
 	}
@@ -1495,7 +1361,7 @@ func TestGetStepInfo_SessionStatePriority(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.description, func(t *testing.T) {
-			info := coord.GetStepInfo(tt.instanceID)
+			info := GetStepInfo(coord, tt.instanceID)
 			if info == nil {
 				t.Fatalf("GetStepInfo(%q) returned nil", tt.instanceID)
 			}
@@ -1527,7 +1393,7 @@ func TestGetStepInfo_MultiPassCoordinatorsByIndex(t *testing.T) {
 
 	// Verify each coordinator is found with correct index and label
 	for i, coordID := range session.PlanCoordinatorIDs {
-		info := coord.GetStepInfo(coordID)
+		info := GetStepInfo(coord, coordID)
 		if info == nil {
 			t.Errorf("GetStepInfo(%q) returned nil", coordID)
 			continue
@@ -1560,7 +1426,7 @@ func TestGetStepInfo_GroupConsolidatorsByIndex(t *testing.T) {
 	coord := &Coordinator{manager: manager}
 
 	for i, consolidatorID := range session.GroupConsolidatorIDs {
-		info := coord.GetStepInfo(consolidatorID)
+		info := GetStepInfo(coord, consolidatorID)
 		if info == nil {
 			t.Errorf("GetStepInfo(%q) returned nil", consolidatorID)
 			continue
@@ -1596,7 +1462,7 @@ func TestRestartStep_TypeRouting(t *testing.T) {
 			Type: StepType("invalid_step_type"),
 		}
 
-		_, err := coord.RestartStep(stepInfo)
+		_, err := RestartStep(coord, stepInfo)
 
 		if err == nil {
 			t.Error("RestartStep with unknown type should return an error")
@@ -1612,7 +1478,7 @@ func TestRestartStep_TypeRouting(t *testing.T) {
 			Type: StepType(""),
 		}
 
-		_, err := coord.RestartStep(stepInfo)
+		_, err := RestartStep(coord, stepInfo)
 
 		if err == nil {
 			t.Error("RestartStep with empty type should return an error")
@@ -1684,7 +1550,7 @@ func TestRestartStep_SessionStatePrerequisites(t *testing.T) {
 				logger:  logging.NopLogger(),
 			}
 
-			_, err := coord.RestartStep(tt.stepInfo)
+			_, err := RestartStep(coord, tt.stepInfo)
 
 			if tt.wantErr {
 				if err == nil {
@@ -1787,29 +1653,29 @@ func TestPublicAPI_CandidatePlanMethods(t *testing.T) {
 	}
 
 	// Initially should have 0 non-nil plans
-	if coord.CountCandidatePlans() != 0 {
-		t.Errorf("CountCandidatePlans() = %d, want 0", coord.CountCandidatePlans())
+	if coord.Manager().CountCandidatePlans() != 0 {
+		t.Errorf("CountCandidatePlans() = %d, want 0", coord.Manager().CountCandidatePlans())
 	}
 
 	// Store a plan at index 0
 	plan0 := &PlanSpec{Summary: "Plan 0"}
-	count := coord.StoreCandidatePlan(0, plan0)
+	count := coord.Manager().StoreCandidatePlan(0, plan0)
 	if count != 1 {
 		t.Errorf("StoreCandidatePlan returned %d, want 1", count)
 	}
 
 	// Verify count is now 1
-	if coord.CountCandidatePlans() != 1 {
-		t.Errorf("CountCandidatePlans() = %d, want 1", coord.CountCandidatePlans())
+	if coord.Manager().CountCandidatePlans() != 1 {
+		t.Errorf("CountCandidatePlans() = %d, want 1", coord.Manager().CountCandidatePlans())
 	}
 
 	// Store remaining plans
-	coord.StoreCandidatePlan(1, &PlanSpec{Summary: "Plan 1"})
-	coord.StoreCandidatePlan(2, &PlanSpec{Summary: "Plan 2"})
+	coord.Manager().StoreCandidatePlan(1, &PlanSpec{Summary: "Plan 1"})
+	coord.Manager().StoreCandidatePlan(2, &PlanSpec{Summary: "Plan 2"})
 
 	// Verify count is now 3
-	if coord.CountCandidatePlans() != 3 {
-		t.Errorf("CountCandidatePlans() = %d, want 3", coord.CountCandidatePlans())
+	if coord.Manager().CountCandidatePlans() != 3 {
+		t.Errorf("CountCandidatePlans() = %d, want 3", coord.Manager().CountCandidatePlans())
 	}
 }
 
@@ -1890,7 +1756,7 @@ func TestGetStepInfo_AllStepTypes_Comprehensive(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.description, func(t *testing.T) {
-			info := coord.GetStepInfo(tt.instanceID)
+			info := GetStepInfo(coord, tt.instanceID)
 			if info == nil {
 				t.Fatalf("GetStepInfo(%q) returned nil", tt.instanceID)
 			}
@@ -1915,7 +1781,7 @@ func TestGetStepInfo_AllStepTypes_Comprehensive(t *testing.T) {
 	}
 
 	// Test unknown instance ID returns nil
-	info := coord.GetStepInfo("unknown-instance-id")
+	info := GetStepInfo(coord, "unknown-instance-id")
 	if info != nil {
 		t.Errorf("GetStepInfo(\"unknown-instance-id\") = %v, want nil", info)
 	}
@@ -2000,172 +1866,10 @@ func TestCoordinator_RetryManager(t *testing.T) {
 // output equivalent to the original implementation. They test structural
 // elements rather than exact string matches to be resilient to minor
 // formatting changes while ensuring essential content is preserved.
-
-// TestBuildTaskPrompt_RegressionStructure verifies that buildTaskPrompt produces
-// all expected structural elements after the refactoring to use prompt.TaskBuilder.
-func TestBuildTaskPrompt_RegressionStructure(t *testing.T) {
-	session := NewUltraPlanSession("Build a new feature", DefaultUltraPlanConfig())
-	session.Plan = &PlanSpec{
-		Summary: "Implement authentication system with OAuth support",
-		Tasks: []PlannedTask{
-			{
-				ID:            "task-1",
-				Title:         "Setup database schema",
-				Description:   "Create the user table with OAuth fields",
-				Files:         []string{"migrations/001_users.sql", "models/user.go"},
-				DependsOn:     []string{},
-				Priority:      1,
-				EstComplexity: ComplexityLow,
-			},
-		},
-		ExecutionOrder: [][]string{{"task-1"}},
-	}
-	session.TaskToInstance = map[string]string{"task-1": "inst-1"}
-
-	manager := &UltraPlanManager{session: session}
-
-	// Create group tracker
-	sessionAdapter := group.NewSessionAdapter(
-		func() group.PlanData {
-			return group.NewPlanAdapter(
-				func() [][]string { return session.Plan.ExecutionOrder },
-				func(taskID string) *group.Task {
-					task := session.GetTask(taskID)
-					if task == nil {
-						return nil
-					}
-					return &group.Task{ID: task.ID, Title: task.Title}
-				},
-			)
-		},
-		func() []string { return session.CompletedTasks },
-		func() []string { return session.FailedTasks },
-		func() map[string]int { return session.TaskCommitCounts },
-		func() int { return session.CurrentGroup },
-	)
-	groupTracker := group.NewTracker(sessionAdapter)
-
-	coord := &Coordinator{
-		manager:      manager,
-		groupTracker: groupTracker,
-	}
-
-	// Get the task and build the prompt
-	task := session.GetTask("task-1")
-	if task == nil {
-		t.Fatal("task-1 not found in session")
-	}
-	prompt := coord.buildTaskPrompt(task)
-
-	// Verify essential structural elements are present
-	requiredElements := []struct {
-		name     string
-		expected string
-	}{
-		{"task header", "# Task: Setup database schema"},
-		{"ultra-plan reference", "Part of Ultra-Plan"},
-		{"plan summary", "authentication system"},
-		{"your task section", "## Your Task"},
-		{"task description", "Create the user table with OAuth fields"},
-		{"expected files section", "## Expected Files"},
-		{"first expected file", "migrations/001_users.sql"},
-		{"second expected file", "models/user.go"},
-		{"guidelines section", "## Guidelines"},
-		{"focus instruction", "Focus only on this specific task"},
-		{"commit instruction", "Commit your changes"},
-		{"completion protocol section", "## Completion Protocol"},
-		{"completion file instruction", ".claudio-task-complete.json"},
-		{"task_id in JSON example", "task-1"},
-		{"status field", "\"status\""},
-		{"summary field", "\"summary\""},
-		{"files_modified field", "files_modified"},
-	}
-
-	for _, elem := range requiredElements {
-		if !strings.Contains(prompt, elem.expected) {
-			t.Errorf("buildTaskPrompt missing %s: expected to contain %q\nGot:\n%s",
-				elem.name, elem.expected, prompt)
-		}
-	}
-}
-
-// TestBuildTaskPrompt_RegressionPreviousGroupContext verifies that buildTaskPrompt
-// correctly includes previous group context for tasks in later groups.
-func TestBuildTaskPrompt_RegressionPreviousGroupContext(t *testing.T) {
-	session := NewUltraPlanSession("Multi-group project", DefaultUltraPlanConfig())
-	session.Plan = &PlanSpec{
-		Summary: "Complex multi-phase implementation",
-		Tasks: []PlannedTask{
-			{ID: "task-1", Title: "Foundation", Description: "Setup base"},
-			{ID: "task-2", Title: "Feature", Description: "Add feature", DependsOn: []string{"task-1"}},
-		},
-		ExecutionOrder: [][]string{{"task-1"}, {"task-2"}},
-	}
-	session.TaskToInstance = map[string]string{
-		"task-1": "inst-1",
-		"task-2": "inst-2",
-	}
-	// Add group consolidation context from group 0
-	session.GroupConsolidationContexts = []*types.GroupConsolidationCompletionFile{
-		{
-			Notes:              "Group 1 completed with auth module setup",
-			IssuesForNextGroup: []string{"Ensure API compatibility", "Update documentation"},
-			Verification:       types.VerificationResult{OverallSuccess: true},
-		},
-	}
-
-	manager := &UltraPlanManager{session: session}
-
-	// Create group tracker
-	sessionAdapter := group.NewSessionAdapter(
-		func() group.PlanData {
-			return group.NewPlanAdapter(
-				func() [][]string { return session.Plan.ExecutionOrder },
-				func(taskID string) *group.Task {
-					task := session.GetTask(taskID)
-					if task == nil {
-						return nil
-					}
-					return &group.Task{ID: task.ID, Title: task.Title}
-				},
-			)
-		},
-		func() []string { return session.CompletedTasks },
-		func() []string { return session.FailedTasks },
-		func() map[string]int { return session.TaskCommitCounts },
-		func() int { return session.CurrentGroup },
-	)
-	groupTracker := group.NewTracker(sessionAdapter)
-
-	coord := &Coordinator{
-		manager:      manager,
-		groupTracker: groupTracker,
-	}
-
-	// Build prompt for task-2 which is in group 1 (index 1)
-	task := session.GetTask("task-2")
-	if task == nil {
-		t.Fatal("task-2 not found in session")
-	}
-	prompt := coord.buildTaskPrompt(task)
-
-	// Verify previous group context is included
-	contextElements := []string{
-		"Context from Previous Group",
-		"Group 1",
-		"Group 1 completed with auth module setup",
-		"Ensure API compatibility",
-		"Update documentation",
-		"verified (build/lint/tests passed)",
-	}
-
-	for _, elem := range contextElements {
-		if !strings.Contains(prompt, elem) {
-			t.Errorf("buildTaskPrompt for task in group 1 missing previous group context element: %q\nGot:\n%s",
-				elem, prompt)
-		}
-	}
-}
+//
+// Note: Tests for buildTaskPrompt were removed during the coordinator refactoring
+// as that method was moved to the prompt package. See prompt/task_test.go for
+// comprehensive task prompt testing.
 
 // TestBuildPlanManagerPrompt_RegressionStructure verifies that buildPlanManagerPrompt
 // produces all expected structural elements after refactoring to use prompt.PlanningBuilder.
@@ -2208,7 +1912,7 @@ func TestBuildPlanManagerPrompt_RegressionStructure(t *testing.T) {
 	manager := &UltraPlanManager{session: session}
 	coord := &Coordinator{manager: manager}
 
-	prompt := coord.buildPlanManagerPrompt()
+	prompt := BuildPlanManagerPrompt(coord)
 
 	// Verify essential structural elements from PlanManagerPromptTemplate
 	requiredElements := []struct {
@@ -2268,7 +1972,7 @@ func TestBuildPlanManagerPrompt_RegressionTaskDetails(t *testing.T) {
 	manager := &UltraPlanManager{session: session}
 	coord := &Coordinator{manager: manager}
 
-	prompt := coord.buildPlanManagerPrompt()
+	prompt := BuildPlanManagerPrompt(coord)
 
 	// Verify task details are present
 	taskDetails := []string{
@@ -2310,7 +2014,7 @@ func TestBuildPlanComparisonSection_RegressionStructure(t *testing.T) {
 	manager := &UltraPlanManager{session: session}
 	coord := &Coordinator{manager: manager}
 
-	result := coord.buildPlanComparisonSection()
+	result := BuildPlanComparisonSection(coord)
 
 	// Verify detailed format elements
 	requiredElements := []struct {
@@ -2362,7 +2066,7 @@ func TestBuildPlanComparisonSection_RegressionNilPlanHandling(t *testing.T) {
 	manager := &UltraPlanManager{session: session}
 	coord := &Coordinator{manager: manager}
 
-	result := coord.buildPlanComparisonSection()
+	result := BuildPlanComparisonSection(coord)
 
 	// Should have Plan 1 (index 0)
 	if !strings.Contains(result, "Plan 1") {
@@ -2394,7 +2098,7 @@ func TestBuildPlanComparisonSection_RegressionEmptyPlans(t *testing.T) {
 	manager := &UltraPlanManager{session: session}
 	coord := &Coordinator{manager: manager}
 
-	result := coord.buildPlanComparisonSection()
+	result := BuildPlanComparisonSection(coord)
 
 	// Empty input should produce empty output
 	if result != "" {
@@ -2408,150 +2112,10 @@ func TestBuildPlanComparisonSection_RegressionEmptyPlans(t *testing.T) {
 // These tests verify the end-to-end integration of the prompt-building methods
 // with coordinator session state, ensuring that data flows correctly through
 // the prompt.TaskBuilder and prompt.PlanningBuilder.
-
-// TestBuildTaskPrompt_IntegrationWithFullSession tests buildTaskPrompt with a
-// realistically configured session to verify integration with all dependencies.
-func TestBuildTaskPrompt_IntegrationWithFullSession(t *testing.T) {
-	// Create a realistic session with multiple tasks and groups
-	session := NewUltraPlanSession("Implement user authentication system", DefaultUltraPlanConfig())
-	session.Plan = &PlanSpec{
-		ID:      "plan-auth",
-		Summary: "Authentication system with OAuth2 and JWT",
-		Tasks: []PlannedTask{
-			{
-				ID:            "task-1-schema",
-				Title:         "Database Schema Setup",
-				Description:   "Create users table with OAuth provider fields and JWT refresh tokens",
-				Files:         []string{"migrations/001_create_users.sql", "migrations/002_add_oauth.sql"},
-				DependsOn:     []string{},
-				Priority:      1,
-				EstComplexity: ComplexityLow,
-			},
-			{
-				ID:            "task-2-models",
-				Title:         "User Model Implementation",
-				Description:   "Implement User model with CRUD operations",
-				Files:         []string{"internal/models/user.go", "internal/models/user_test.go"},
-				DependsOn:     []string{"task-1-schema"},
-				Priority:      1,
-				EstComplexity: ComplexityMedium,
-			},
-			{
-				ID:            "task-3-oauth",
-				Title:         "OAuth2 Integration",
-				Description:   "Integrate Google and GitHub OAuth providers",
-				Files:         []string{"internal/auth/oauth.go", "internal/auth/providers/"},
-				DependsOn:     []string{"task-2-models"},
-				Priority:      2,
-				EstComplexity: ComplexityHigh,
-			},
-		},
-		ExecutionOrder: [][]string{{"task-1-schema"}, {"task-2-models"}, {"task-3-oauth"}},
-		Insights:       []string{"Existing auth middleware can be extended"},
-		Constraints:    []string{"Must support existing session tokens during migration"},
-	}
-	session.TaskToInstance = map[string]string{
-		"task-1-schema": "inst-1",
-		"task-2-models": "inst-2",
-		"task-3-oauth":  "inst-3",
-	}
-
-	manager := &UltraPlanManager{session: session}
-
-	// Create group tracker for realistic integration
-	sessionAdapter := group.NewSessionAdapter(
-		func() group.PlanData {
-			return group.NewPlanAdapter(
-				func() [][]string { return session.Plan.ExecutionOrder },
-				func(taskID string) *group.Task {
-					task := session.GetTask(taskID)
-					if task == nil {
-						return nil
-					}
-					return &group.Task{ID: task.ID, Title: task.Title, DependsOn: task.DependsOn}
-				},
-			)
-		},
-		func() []string { return session.CompletedTasks },
-		func() []string { return session.FailedTasks },
-		func() map[string]int { return session.TaskCommitCounts },
-		func() int { return session.CurrentGroup },
-	)
-	groupTracker := group.NewTracker(sessionAdapter)
-
-	coord := &Coordinator{
-		manager:      manager,
-		groupTracker: groupTracker,
-	}
-
-	// Test prompt generation for each task
-	tests := []struct {
-		taskID            string
-		expectedTitle     string
-		expectedFiles     []string
-		expectedInPrompt  []string
-		notExpectedPrompt []string
-	}{
-		{
-			taskID:        "task-1-schema",
-			expectedTitle: "Database Schema Setup",
-			expectedFiles: []string{"migrations/001_create_users.sql", "migrations/002_add_oauth.sql"},
-			expectedInPrompt: []string{
-				"# Task: Database Schema Setup",
-				"Create users table with OAuth provider fields",
-				"## Expected Files",
-				"## Guidelines",
-				"## Completion Protocol",
-				"task-1-schema",
-			},
-			notExpectedPrompt: []string{
-				"Context from Previous Group", // First task shouldn't have previous context
-			},
-		},
-		{
-			taskID:        "task-2-models",
-			expectedTitle: "User Model Implementation",
-			expectedFiles: []string{"internal/models/user.go", "internal/models/user_test.go"},
-			expectedInPrompt: []string{
-				"# Task: User Model Implementation",
-				"Implement User model with CRUD operations",
-				"task-2-models",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.taskID, func(t *testing.T) {
-			task := session.GetTask(tt.taskID)
-			if task == nil {
-				t.Fatalf("task %s not found", tt.taskID)
-			}
-
-			prompt := coord.buildTaskPrompt(task)
-
-			// Verify expected elements are present
-			for _, expected := range tt.expectedInPrompt {
-				if !strings.Contains(prompt, expected) {
-					t.Errorf("prompt for %s missing: %q", tt.taskID, expected)
-				}
-			}
-
-			// Verify expected files are listed
-			for _, file := range tt.expectedFiles {
-				if !strings.Contains(prompt, file) {
-					t.Errorf("prompt for %s missing expected file: %q", tt.taskID, file)
-				}
-			}
-
-			// Verify unexpected elements are absent
-			for _, notExpected := range tt.notExpectedPrompt {
-				if strings.Contains(prompt, notExpected) {
-					t.Errorf("prompt for %s should not contain: %q", tt.taskID, notExpected)
-				}
-			}
-		})
-	}
-}
+//
+// Note: TestBuildTaskPrompt_IntegrationWithFullSession was removed during the
+// coordinator refactoring as buildTaskPrompt was moved to the prompt package.
+// See prompt/task_test.go for comprehensive task prompt testing.
 
 // TestBuildPlanManagerPrompt_IntegrationWithMultiPass tests buildPlanManagerPrompt
 // with a realistic multi-pass planning session.
@@ -2606,7 +2170,7 @@ func TestBuildPlanManagerPrompt_IntegrationWithMultiPass(t *testing.T) {
 	manager := &UltraPlanManager{session: session}
 	coord := &Coordinator{manager: manager}
 
-	prompt := coord.buildPlanManagerPrompt()
+	prompt := BuildPlanManagerPrompt(coord)
 
 	// Verify the prompt integrates all three plans correctly
 	integrationChecks := []struct {

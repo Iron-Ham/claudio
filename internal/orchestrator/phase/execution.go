@@ -211,6 +211,16 @@ type ExecutionCoordinatorInterface interface {
 
 	// StartExecutionLoop restarts the execution loop (used by RetriggerGroup).
 	StartExecutionLoop()
+
+	// ResetStateForRetrigger resets all session state for groups >= targetGroup.
+	// This clears CompletedTasks, FailedTasks, TaskToInstance, TaskCommitCounts,
+	// GroupConsolidatedBranches, GroupConsolidatorIDs, GroupConsolidationContexts,
+	// TaskRetries for affected tasks, and synthesis/revision/consolidation state.
+	ResetStateForRetrigger(targetGroup int, tasksToReset map[string]bool)
+
+	// ResetStateForRetry resets state for retrying failed tasks in the current group.
+	// This resets retry counters and removes tasks from failed/completed lists.
+	ResetStateForRetry(failedTasks []string, groupIdx int)
 }
 
 // RetryManagerInterface defines the methods needed for retry state management.
@@ -1920,17 +1930,9 @@ func (e *ExecutionOrchestrator) RetryFailedTasks() error {
 	e.execCtx.Coordinator.EmitEvent("group_complete",
 		fmt.Sprintf("Retrying %d failed tasks in group %d", len(failedTasks), groupIdx+1))
 
-	// Delegate actual retry state management to coordinator
-	// The coordinator will:
-	// - Reset retry counters via RetryManager
-	// - Remove from session.FailedTasks and session.CompletedTasks
-	// - Remove from session.TaskToInstance
-	// - Persist state
-
-	// Clear task mappings so execution loop picks them up
-	for _, taskID := range failedTasks {
-		e.execCtx.Coordinator.ClearTaskFromInstance(taskID)
-	}
+	// Reset session state for retry via coordinator
+	// This clears FailedTasks, CompletedTasks, TaskToInstance, and retry state
+	e.execCtx.Coordinator.ResetStateForRetry(failedTasks, groupIdx)
 
 	_ = e.execCtx.Coordinator.SaveSession()
 
@@ -2017,8 +2019,10 @@ func (e *ExecutionOrchestrator) RetriggerGroup(targetGroup int) error {
 	e.state.FailedCount = 0
 	e.mu.Unlock()
 
-	// Set phase back to executing
-	e.phaseCtx.Manager.SetPhase(PhaseExecuting)
+	// Reset session state via coordinator
+	// This clears CompletedTasks, FailedTasks, TaskToInstance, TaskCommitCounts,
+	// group-level slices, synthesis/revision/consolidation state, and phase orchestrators
+	e.execCtx.Coordinator.ResetStateForRetrigger(targetGroup, tasksToReset)
 
 	// Emit event
 	e.execCtx.Coordinator.EmitEvent("phase_change",

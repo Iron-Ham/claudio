@@ -5,6 +5,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/phase"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/verify"
 )
 
 // coordinatorManagerAdapter adapts UltraPlanManager to the phase.UltraPlanManagerInterface.
@@ -695,14 +696,14 @@ func (c *Coordinator) GetVerifier() Verifier {
 	return c.verifier
 }
 
-// GetBaseBranchForGroup returns the base branch that tasks in the given group
+// GetBaseBranchForGroupIndex returns the base branch that tasks in the given group
 // should be created from. For group 0, this returns empty (use HEAD/main).
 // For later groups, returns the consolidated branch from the previous group.
-func (c *Coordinator) GetBaseBranchForGroup(groupIndex int) string {
+func (c *Coordinator) GetBaseBranchForGroupIndex(groupIndex int) string {
 	if c == nil {
 		return ""
 	}
-	return c.getBaseBranchForGroup(groupIndex)
+	return GetBaseBranchForGroup(c, groupIndex)
 }
 
 // AddRunningTask registers a task as running with the given instance ID.
@@ -940,7 +941,7 @@ func (a *executionCoordinatorAdapter) GetBaseBranchForGroup(groupIndex int) stri
 	if a.c == nil {
 		return ""
 	}
-	return a.c.getBaseBranchForGroup(groupIndex)
+	return GetBaseBranchForGroup(a.c, groupIndex)
 }
 
 // AddRunningTask registers a task as running with the given instance ID.
@@ -992,6 +993,7 @@ func (a *executionCoordinatorAdapter) GetTaskGroupIndex(taskID string) int {
 }
 
 // VerifyTaskWork checks if a task produced actual commits.
+// This delegates to the verifier directly rather than going through coordinator methods.
 func (a *executionCoordinatorAdapter) VerifyTaskWork(taskID string, inst any) phase.TaskCompletion {
 	if a.c == nil {
 		return phase.TaskCompletion{TaskID: taskID, Success: false, Error: "nil coordinator"}
@@ -1000,73 +1002,93 @@ func (a *executionCoordinatorAdapter) VerifyTaskWork(taskID string, inst any) ph
 	if !ok {
 		return phase.TaskCompletion{TaskID: taskID, Success: false, Error: "invalid instance type"}
 	}
-	result := a.c.verifyTaskWork(taskID, instance)
+
+	session := a.c.Session()
+	if session == nil {
+		return phase.TaskCompletion{TaskID: taskID, Success: false, Error: "no session"}
+	}
+
+	// Determine the base branch for this task
+	baseBranch := GetBaseBranchForGroup(a.c, session.CurrentGroup)
+
+	// Build verification options from task metadata
+	var opts *verify.TaskVerifyOptions
+	if task := session.GetTask(taskID); task != nil && task.NoCode {
+		opts = &verify.TaskVerifyOptions{NoCode: true}
+	}
+
+	// Delegate to the verifier for the core verification logic
+	verifyResult := a.c.verifier.VerifyTaskWork(taskID, instance.ID, instance.WorktreePath, baseBranch, opts)
+
+	// Store commit count for all successful tasks
+	if verifyResult.Success {
+		a.c.mu.Lock()
+		if session.TaskCommitCounts == nil {
+			session.TaskCommitCounts = make(map[string]int)
+		}
+		session.TaskCommitCounts[taskID] = verifyResult.CommitCount
+		a.c.mu.Unlock()
+	}
+
+	// Sync retry state back to session for persistence after verification
+	a.c.syncRetryState()
+
 	return phase.TaskCompletion{
-		TaskID:      result.taskID,
-		InstanceID:  result.instanceID,
-		Success:     result.success,
-		Error:       result.error,
-		NeedsRetry:  result.needsRetry,
-		CommitCount: result.commitCount,
+		TaskID:      verifyResult.TaskID,
+		InstanceID:  verifyResult.InstanceID,
+		Success:     verifyResult.Success,
+		Error:       verifyResult.Error,
+		NeedsRetry:  verifyResult.NeedsRetry,
+		CommitCount: verifyResult.CommitCount,
 	}
 }
 
 // CheckForTaskCompletionFile checks if the task has written its completion sentinel file.
+// This delegates to the verifier directly rather than going through coordinator methods.
 func (a *executionCoordinatorAdapter) CheckForTaskCompletionFile(inst any) bool {
 	if a.c == nil {
 		return false
 	}
-	if instance, ok := inst.(*Instance); ok {
-		return a.c.checkForTaskCompletionFile(instance)
+	instance, ok := inst.(*Instance)
+	if !ok {
+		return false
 	}
-	return false
+	found, err := a.c.verifier.CheckCompletionFile(instance.WorktreePath)
+	if err != nil {
+		a.c.logger.Debug("error checking completion file",
+			"instance_id", instance.ID,
+			"worktree", instance.WorktreePath,
+			"error", err)
+	}
+	return found
 }
 
 // HandleTaskCompletion processes a task completion notification.
+// This is called by ExecutionOrchestrator for session state updates.
 func (a *executionCoordinatorAdapter) HandleTaskCompletion(completion phase.TaskCompletion) {
 	if a.c == nil {
 		return
 	}
-	a.c.handleTaskCompletion(taskCompletion{
-		taskID:      completion.TaskID,
-		instanceID:  completion.InstanceID,
-		success:     completion.Success,
-		error:       completion.Error,
-		needsRetry:  completion.NeedsRetry,
-		commitCount: completion.CommitCount,
-	})
+
+	// Handle retry case - just skip, ExecutionOrchestrator handles retry logic
+	if completion.NeedsRetry {
+		return
+	}
+
+	// Notify callbacks of task completion/failure
+	if completion.Success {
+		a.c.notifyTaskComplete(completion.TaskID)
+	} else {
+		a.c.notifyTaskFailed(completion.TaskID, completion.Error)
+	}
 }
 
 // PollTaskCompletions checks for task completions that monitoring goroutines may have missed.
-// It polls synchronously and forwards any found completions to the provided channel.
+// This is a no-op as ExecutionOrchestrator has its own polling implementation.
 func (a *executionCoordinatorAdapter) PollTaskCompletions(completionChan chan<- phase.TaskCompletion) {
-	if a.c == nil {
-		return
-	}
-	// Create a local channel to receive completions
-	localChan := make(chan taskCompletion, 100)
-
-	// Start a goroutine that polls and then closes the channel when done.
-	// This ensures the forwarding goroutine below won't block forever.
-	go func() {
-		a.c.pollTaskCompletions(localChan)
-		close(localChan) // Signal that no more completions will be sent
-	}()
-
-	// Forward any completions to the phase completion channel.
-	// This goroutine will exit when localChan is closed.
-	go func() {
-		for tc := range localChan {
-			completionChan <- phase.TaskCompletion{
-				TaskID:      tc.taskID,
-				InstanceID:  tc.instanceID,
-				Success:     tc.success,
-				Error:       tc.error,
-				NeedsRetry:  tc.needsRetry,
-				CommitCount: tc.commitCount,
-			}
-		}
-	}()
+	// ExecutionOrchestrator implements polling via pollTaskCompletions method.
+	// This adapter method is no longer needed as the logic has been consolidated
+	// in the ExecutionOrchestrator.
 }
 
 // NotifyTaskStart notifies callbacks that a task has started.
@@ -1094,11 +1116,14 @@ func (a *executionCoordinatorAdapter) NotifyProgress() {
 }
 
 // FinishExecution performs cleanup after execution completes.
+// The actual finish logic is now in ExecutionOrchestrator.finishExecution().
+// This adapter method is called for any additional coordinator-level cleanup.
 func (a *executionCoordinatorAdapter) FinishExecution() {
-	if a.c == nil {
-		return
-	}
-	a.c.finishExecution()
+	// ExecutionOrchestrator now handles finish logic directly via:
+	// - SetSessionPhase/SetSessionError for state updates
+	// - SaveSession for persistence
+	// - RunSynthesis or NotifyComplete for phase transitions
+	// This method is kept for interface compatibility but is a no-op.
 }
 
 // AddInstanceToGroup adds an instance to the appropriate ultra-plan group.
@@ -1120,15 +1145,65 @@ func (a *executionCoordinatorAdapter) StartGroupConsolidation(groupIndex int) er
 	if a.c == nil {
 		return fmt.Errorf("nil coordinator")
 	}
-	return a.c.startGroupConsolidatorSession(groupIndex)
+	return StartGroupConsolidatorSession(a.c, groupIndex)
 }
 
 // HandlePartialGroupFailure handles a group with mixed success/failure.
+// This sets up the GroupDecision state and pauses execution for user decision.
 func (a *executionCoordinatorAdapter) HandlePartialGroupFailure(groupIndex int) {
 	if a.c == nil {
 		return
 	}
-	a.c.handlePartialGroupFailure(groupIndex)
+	session := a.c.Session()
+	if session == nil || session.Plan == nil {
+		return
+	}
+
+	taskIDs := session.Plan.ExecutionOrder[groupIndex]
+	var succeeded, failed []string
+
+	for _, taskID := range taskIDs {
+		isCompleted := false
+		for _, ct := range session.CompletedTasks {
+			if ct == taskID {
+				isCompleted = true
+				break
+			}
+		}
+
+		if isCompleted {
+			// Task is successful if it has a verified commit count entry.
+			if _, ok := session.TaskCommitCounts[taskID]; ok {
+				succeeded = append(succeeded, taskID)
+			} else {
+				failed = append(failed, taskID)
+			}
+		} else {
+			// Check if failed
+			for _, ft := range session.FailedTasks {
+				if ft == taskID {
+					failed = append(failed, taskID)
+					break
+				}
+			}
+		}
+	}
+
+	a.c.mu.Lock()
+	session.GroupDecision = &GroupDecisionState{
+		GroupIndex:       groupIndex,
+		SucceededTasks:   succeeded,
+		FailedTasks:      failed,
+		AwaitingDecision: true,
+	}
+	a.c.mu.Unlock()
+
+	a.c.manager.emitEvent(CoordinatorEvent{
+		Type:    EventGroupComplete,
+		Message: fmt.Sprintf("Group %d has partial success (%d/%d tasks succeeded). Awaiting user decision.", groupIndex+1, len(succeeded), len(taskIDs)),
+	})
+
+	_ = a.c.orch.SaveSession()
 }
 
 // ClearTaskFromInstance removes the task-to-instance mapping for retry.
@@ -1227,7 +1302,7 @@ func (a *executionCoordinatorAdapter) ConsolidateGroupWithVerification(groupInde
 	if a.c == nil {
 		return fmt.Errorf("nil coordinator")
 	}
-	return a.c.consolidateGroupWithVerification(groupIndex)
+	return ConsolidateGroupWithVerification(a.c, groupIndex)
 }
 
 // EmitEvent emits a coordinator event for UI notification.
@@ -1255,6 +1330,148 @@ func (a *executionCoordinatorAdapter) StartExecutionLoop() {
 		return
 	}
 	eo.RestartLoop()
+}
+
+// ResetStateForRetrigger resets all session state for groups >= targetGroup.
+// This is called by ExecutionOrchestrator.RetriggerGroup to reset the session.
+func (a *executionCoordinatorAdapter) ResetStateForRetrigger(targetGroup int, tasksToReset map[string]bool) {
+	if a.c == nil {
+		return
+	}
+	session := a.c.Session()
+	if session == nil {
+		return
+	}
+
+	a.c.mu.Lock()
+	defer a.c.mu.Unlock()
+
+	// Clear completed tasks for affected groups
+	var newCompleted []string
+	for _, t := range session.CompletedTasks {
+		if !tasksToReset[t] {
+			newCompleted = append(newCompleted, t)
+		}
+	}
+	session.CompletedTasks = newCompleted
+
+	// Clear failed tasks for affected groups
+	var newFailed []string
+	for _, t := range session.FailedTasks {
+		if !tasksToReset[t] {
+			newFailed = append(newFailed, t)
+		}
+	}
+	session.FailedTasks = newFailed
+
+	// Clear task mappings for affected groups
+	for t := range tasksToReset {
+		delete(session.TaskToInstance, t)
+		delete(session.TaskCommitCounts, t)
+	}
+
+	// Reset retry state for affected tasks
+	if a.c.retryManager != nil {
+		for t := range tasksToReset {
+			a.c.retryManager.Reset(t)
+		}
+	}
+
+	// Truncate group-level slices
+	if targetGroup < len(session.GroupConsolidatedBranches) {
+		session.GroupConsolidatedBranches = session.GroupConsolidatedBranches[:targetGroup]
+	}
+	if targetGroup < len(session.GroupConsolidatorIDs) {
+		session.GroupConsolidatorIDs = session.GroupConsolidatorIDs[:targetGroup]
+	}
+	if targetGroup < len(session.GroupConsolidationContexts) {
+		session.GroupConsolidationContexts = session.GroupConsolidationContexts[:targetGroup]
+	}
+
+	// Reset session progress state
+	session.CurrentGroup = targetGroup
+	session.Phase = PhaseExecuting
+	session.GroupDecision = nil
+	session.Error = ""
+
+	// Clear synthesis/revision/consolidation state
+	session.SynthesisID = ""
+	session.SynthesisCompletion = nil
+	session.SynthesisAwaitingApproval = false
+	session.Revision = nil
+
+	// Clear consolidation state
+	session.Consolidation = nil
+	session.ConsolidationID = ""
+	session.PRUrls = nil
+
+	// Reset all phase orchestrators
+	if a.c.planningOrchestrator != nil {
+		a.c.planningOrchestrator.Reset()
+	}
+	if a.c.executionOrchestrator != nil {
+		a.c.executionOrchestrator.Reset()
+	}
+	if a.c.synthesisOrchestrator != nil {
+		a.c.synthesisOrchestrator.Reset()
+	}
+	if a.c.consolidationOrchestrator != nil {
+		a.c.consolidationOrchestrator.Reset()
+	}
+}
+
+// ResetStateForRetry resets state for retrying failed tasks in the current group.
+// This is called by ExecutionOrchestrator.RetryFailedTasks.
+func (a *executionCoordinatorAdapter) ResetStateForRetry(failedTasks []string, groupIdx int) {
+	if a.c == nil {
+		return
+	}
+	session := a.c.Session()
+	if session == nil {
+		return
+	}
+
+	a.c.mu.Lock()
+	defer a.c.mu.Unlock()
+
+	failedSet := make(map[string]bool)
+	for _, t := range failedTasks {
+		failedSet[t] = true
+	}
+
+	// Clear failed tasks for the current group
+	var newFailed []string
+	for _, t := range session.FailedTasks {
+		if !failedSet[t] {
+			newFailed = append(newFailed, t)
+		}
+	}
+	session.FailedTasks = newFailed
+
+	// Also remove from completed (in case they were marked complete but failed verification)
+	var newCompleted []string
+	for _, t := range session.CompletedTasks {
+		if !failedSet[t] {
+			newCompleted = append(newCompleted, t)
+		}
+	}
+	session.CompletedTasks = newCompleted
+
+	// Clear task mappings
+	for t := range failedSet {
+		delete(session.TaskToInstance, t)
+	}
+
+	// Reset retry state for these tasks
+	if a.c.retryManager != nil {
+		for t := range failedSet {
+			a.c.retryManager.Reset(t)
+		}
+	}
+
+	// Clear group decision state
+	session.GroupDecision = nil
+	session.Phase = PhaseExecuting
 }
 
 // BuildExecutionContext creates an ExecutionContext for the ExecutionOrchestrator.
