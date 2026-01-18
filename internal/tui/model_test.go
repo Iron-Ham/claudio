@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -546,6 +547,101 @@ func TestRenderAddTaskCursorBounds(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRenderAddTaskTitles(t *testing.T) {
+	// Tests that renderAddTask sets appropriate titles and subtitles for each mode
+	tests := []struct {
+		name             string
+		tripleShot       bool
+		adversarial      bool
+		dependentTask    bool
+		dependentOnID    string
+		instances        []*orchestrator.Instance
+		expectedTitle    string
+		expectedSubtitle string
+	}{
+		{
+			name:          "default new task mode",
+			expectedTitle: "New Task",
+		},
+		{
+			name:             "triple-shot mode",
+			tripleShot:       true,
+			expectedTitle:    "Triple-Shot",
+			expectedSubtitle: "Three instances will compete to solve your task:",
+		},
+		{
+			name:             "adversarial mode",
+			adversarial:      true,
+			expectedTitle:    "Adversarial Review",
+			expectedSubtitle: "Implementer and reviewer iterate until approved:",
+		},
+		{
+			name:          "chain task mode",
+			dependentTask: true,
+			dependentOnID: "parent-123",
+			instances: []*orchestrator.Instance{
+				{ID: "parent-123", Task: "Parent task description"},
+			},
+			expectedTitle:    "Chain Task",
+			expectedSubtitle: "This task will auto-start when \"Parent task description\" completes:",
+		},
+		{
+			name:          "chain task mode with long parent task",
+			dependentTask: true,
+			dependentOnID: "parent-456",
+			instances: []*orchestrator.Instance{
+				{ID: "parent-456", Task: "This is a very long task description that exceeds fifty characters limit"},
+			},
+			expectedTitle: "Chain Task",
+			// Verify the truncation: first 50 chars + "..."
+			// Input is 73 chars; after truncation, "fifty" should NOT appear but "exceeds ..." should
+			// This is tested explicitly in the test loop below for this case
+			expectedSubtitle: "exceeds ...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				startingTripleShot:    tt.tripleShot,
+				startingAdversarial:   tt.adversarial,
+				addingDependentTask:   tt.dependentTask,
+				dependentOnInstanceID: tt.dependentOnID,
+				session:               &orchestrator.Session{Instances: tt.instances},
+			}
+
+			result := m.renderAddTask(80)
+
+			if tt.expectedTitle != "" && !containsString(result, tt.expectedTitle) {
+				t.Errorf("renderAddTask() output should contain title %q\nGot output:\n%s", tt.expectedTitle, result)
+			}
+			if tt.expectedSubtitle != "" && !containsString(result, tt.expectedSubtitle) {
+				t.Errorf("renderAddTask() output should contain subtitle %q\nGot output:\n%s", tt.expectedSubtitle, result)
+			}
+
+			// Additional verification for long parent task truncation:
+			// Ensure text beyond position 50 is properly truncated
+			if tt.name == "chain task mode with long parent task" {
+				// "fifty" appears at position 51+ in the original, so it should be truncated away
+				if containsString(result, "fifty") {
+					t.Errorf("renderAddTask() should truncate long parent task - 'fifty' should not appear in output\nGot output:\n%s", result)
+				}
+				// Verify ellipsis is present (confirms truncation happened)
+				if !containsString(result, "...") {
+					t.Errorf("renderAddTask() should show ellipsis for truncated task\nGot output:\n%s", result)
+				}
+			}
+		})
+	}
+}
+
+// containsString checks if the output contains the expected string
+// (accounts for ANSI escape codes in styled output)
+func containsString(output, expected string) bool {
+	// Simple substring check - the styled output will contain the text
+	return strings.Contains(output, expected)
 }
 
 func TestCalculateExtraFooterLines(t *testing.T) {
