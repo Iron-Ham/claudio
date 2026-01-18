@@ -100,14 +100,40 @@ func TestNewInstanceGroupWithType(t *testing.T) {
 	if group.Name != "Test Group" {
 		t.Errorf("Name = %q, want %q", group.Name, "Test Group")
 	}
-	if group.SessionType != SessionTypeUltraPlan {
-		t.Errorf("SessionType = %q, want %q", group.SessionType, SessionTypeUltraPlan)
+	if GetSessionType(group) != SessionTypeUltraPlan {
+		t.Errorf("SessionType = %q, want %q", GetSessionType(group), SessionTypeUltraPlan)
 	}
 	if group.Objective != "Test objective" {
 		t.Errorf("Objective = %q, want %q", group.Objective, "Test objective")
 	}
 	if group.Phase != GroupPhasePending {
 		t.Errorf("Phase = %q, want %q", group.Phase, GroupPhasePending)
+	}
+}
+
+func TestSetSessionType(t *testing.T) {
+	group := NewInstanceGroup("Test Group")
+
+	// Initially should have no session type
+	if GetSessionType(group) != "" {
+		t.Errorf("Expected empty SessionType initially, got %q", GetSessionType(group))
+	}
+
+	// Set to TripleShot
+	SetSessionType(group, SessionTypeTripleShot)
+	if GetSessionType(group) != SessionTypeTripleShot {
+		t.Errorf("SessionType = %q, want %q", GetSessionType(group), SessionTypeTripleShot)
+	}
+
+	// Change to UltraPlan
+	SetSessionType(group, SessionTypeUltraPlan)
+	if GetSessionType(group) != SessionTypeUltraPlan {
+		t.Errorf("SessionType = %q, want %q", GetSessionType(group), SessionTypeUltraPlan)
+	}
+
+	// Verify the underlying string value is correct
+	if group.SessionType != string(SessionTypeUltraPlan) {
+		t.Errorf("Underlying SessionType = %q, want %q", group.SessionType, string(SessionTypeUltraPlan))
 	}
 }
 
@@ -123,8 +149,8 @@ func TestSession_GetOrCreateSharedGroup(t *testing.T) {
 		if group == nil {
 			t.Fatal("Expected group to be created")
 		}
-		if group.SessionType != SessionTypePlan {
-			t.Errorf("SessionType = %q, want %q", group.SessionType, SessionTypePlan)
+		if GetSessionType(group) != SessionTypePlan {
+			t.Errorf("SessionType = %q, want %q", GetSessionType(group), SessionTypePlan)
 		}
 		if group.Name != "Plans" {
 			t.Errorf("Name = %q, want %q", group.Name, "Plans")

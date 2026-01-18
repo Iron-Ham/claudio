@@ -23,13 +23,16 @@ import (
 // StateChangeCallback is called when the detected waiting state changes
 type StateChangeCallback func(instanceID string, state detect.WaitingState)
 
-// TimeoutType represents the type of timeout that occurred
-type TimeoutType int
+// TimeoutType is an alias for detect.TimeoutType for backwards compatibility.
+// New code should import detect.TimeoutType directly.
+type TimeoutType = detect.TimeoutType
 
+// Re-export timeout type constants for backwards compatibility.
+// New code should import these from detect package directly.
 const (
-	TimeoutActivity   TimeoutType = iota // No activity for configured period
-	TimeoutCompletion                    // Total runtime exceeded limit
-	TimeoutStale                         // Repeated output detected (stuck in loop)
+	TimeoutActivity   = detect.TimeoutActivity
+	TimeoutCompletion = detect.TimeoutCompletion
+	TimeoutStale      = detect.TimeoutStale
 )
 
 // fullRefreshInterval is the number of capture ticks between full scrollback captures.
@@ -44,20 +47,6 @@ const pausedHeartbeatInterval = 50
 // tmuxCommandTimeout is the maximum time to wait for tmux subprocess commands.
 // This prevents the capture loop from hanging indefinitely if tmux becomes unresponsive.
 const tmuxCommandTimeout = 2 * time.Second
-
-// String returns a human-readable name for a timeout type
-func (t TimeoutType) String() string {
-	switch t {
-	case TimeoutActivity:
-		return "activity"
-	case TimeoutCompletion:
-		return "completion"
-	case TimeoutStale:
-		return "stale"
-	default:
-		return "unknown"
-	}
-}
 
 // TimeoutCallback is called when a timeout condition is detected
 type TimeoutCallback func(instanceID string, timeoutType TimeoutType)
@@ -300,8 +289,8 @@ func (m *Manager) CurrentState() detect.WaitingState {
 // Delegates to the StateMonitor for centralized timeout tracking.
 func (m *Manager) TimedOut() (bool, TimeoutType) {
 	timedOut, timeoutType := m.stateMonitor.GetTimedOut(m.id)
-	// Convert state.TimeoutType to instance.TimeoutType
-	return timedOut, TimeoutType(timeoutType)
+	// state.TimeoutType and instance.TimeoutType are both aliases for detect.TimeoutType
+	return timedOut, timeoutType
 }
 
 // LastActivityTime returns when the instance last had output activity.

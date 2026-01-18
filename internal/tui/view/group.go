@@ -159,16 +159,17 @@ func RenderGroupHeaderWrapped(group *orchestrator.InstanceGroup, progress GroupP
 		collapseChar = styles.IconGroupCollapse // right-pointing triangle (collapsed)
 	}
 
-	// Session type icon
-	sessionIcon := group.SessionType.Icon()
-	hasIcon := group.SessionType != "" && group.SessionType != orchestrator.SessionTypeStandard
+	// Session type icon - use GetSessionType to get the typed SessionType with methods
+	sessionType := orchestrator.GetSessionType(group)
+	sessionIcon := sessionType.Icon()
+	hasIcon := group.SessionType != "" && sessionType != orchestrator.SessionTypeStandard
 
 	// Phase styling
 	phaseColor := PhaseColor(group.Phase)
 	phaseIndicator := PhaseIndicator(group.Phase)
 
 	// Session type color (use for the icon)
-	sessionColor := styles.SessionTypeColor(string(group.SessionType))
+	sessionColor := styles.SessionTypeColor(group.SessionType)
 
 	// Build the header components
 	progressStr := fmt.Sprintf("[%d/%d]", progress.Completed, progress.Total)

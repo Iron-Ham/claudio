@@ -48,8 +48,8 @@ func TestUltraplanCoexistenceWithStandardInstances(t *testing.T) {
 	if len(data.Groups) != 1 {
 		t.Errorf("Expected 1 group (ultraplan), got %d", len(data.Groups))
 	}
-	if data.Groups[0].SessionType != orchestrator.SessionTypeUltraPlan {
-		t.Errorf("Expected ultraplan group, got %s", data.Groups[0].SessionType)
+	if orchestrator.GetSessionType(data.Groups[0]) != orchestrator.SessionTypeUltraPlan {
+		t.Errorf("Expected ultraplan group, got %s", orchestrator.GetSessionType(data.Groups[0]))
 	}
 
 	// Test FlattenGroupsForDisplay

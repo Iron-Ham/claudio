@@ -332,7 +332,7 @@ func (c *TripleShotCoordinator) StartJudge() error {
 	if tripleGroup != nil {
 		// Create a sub-group for the implementers
 		implementersGroup := NewInstanceGroup("Implementers")
-		implementersGroup.SessionType = SessionTypeTripleShot
+		SetSessionType(implementersGroup, SessionTypeTripleShot)
 
 		// Move existing instances (the 3 implementers) to the sub-group
 		for _, instID := range tripleGroup.Instances {

@@ -4,7 +4,14 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/orchestrator/grouptypes"
 )
+
+// InstanceGroup is a type alias to the canonical definition in grouptypes.
+// This enables the session package to work directly with the same type used
+// by the orchestrator and group packages, eliminating type conversion overhead.
+type InstanceGroup = grouptypes.InstanceGroup
 
 // SessionData represents the serializable session state for persistence.
 // This type is designed to be independent of the orchestrator's runtime Session type,
@@ -20,7 +27,7 @@ type SessionData struct {
 	// When GroupedInstanceView is enabled, instances are organized into groups
 	// rather than displayed as a flat list. Groups can have sub-groups for
 	// representing nested dependencies (e.g., in Plan/UltraPlan workflows).
-	Groups []*GroupData `json:"groups,omitempty"`
+	Groups []*InstanceGroup `json:"groups,omitempty"`
 
 	// UltraPlan holds the ultra-plan session state (nil for regular sessions)
 	UltraPlan any `json:"ultra_plan,omitempty"`
@@ -100,53 +107,22 @@ func GenerateID() string {
 	return generateID()
 }
 
-// GroupData represents an instance group for persistence.
-// This mirrors orchestrator.InstanceGroup to avoid import cycles.
-type GroupData struct {
-	ID             string       `json:"id"`
-	Name           string       `json:"name"`
-	Phase          string       `json:"phase"`
-	Instances      []string     `json:"instances"`
-	SubGroups      []*GroupData `json:"sub_groups,omitempty"`
-	ParentID       string       `json:"parent_id,omitempty"`
-	ExecutionOrder int          `json:"execution_order"`
-	DependsOn      []string     `json:"depends_on,omitempty"`
-	Created        time.Time    `json:"created"`
-}
+// GroupData is kept as a type alias for backwards compatibility.
+// New code should use InstanceGroup directly.
+type GroupData = InstanceGroup
 
 // NewGroupData creates a new GroupData with a generated ID.
 func NewGroupData(name string) *GroupData {
-	return &GroupData{
-		ID:        generateID(),
-		Name:      name,
-		Phase:     "pending",
-		Instances: make([]string, 0),
-		SubGroups: make([]*GroupData, 0),
-		DependsOn: make([]string, 0),
-		Created:   time.Now(),
-	}
+	return grouptypes.NewInstanceGroup(generateID(), name)
 }
 
 // GetGroup finds a group by ID within the session's groups (including sub-groups).
-func (s *SessionData) GetGroup(id string) *GroupData {
+func (s *SessionData) GetGroup(id string) *InstanceGroup {
 	for _, g := range s.Groups {
 		if g.ID == id {
 			return g
 		}
-		if found := findGroupDataRecursive(g, id); found != nil {
-			return found
-		}
-	}
-	return nil
-}
-
-// findGroupDataRecursive searches for a group by ID in sub-groups.
-func findGroupDataRecursive(group *GroupData, id string) *GroupData {
-	for _, sg := range group.SubGroups {
-		if sg.ID == id {
-			return sg
-		}
-		if found := findGroupDataRecursive(sg, id); found != nil {
+		if found := g.FindGroup(id); found != nil {
 			return found
 		}
 	}
@@ -157,7 +133,7 @@ func findGroupDataRecursive(group *GroupData, id string) *GroupData {
 // It removes references to instances that don't exist in the session and
 // removes empty groups that have no instances and no sub-groups.
 // It also validates that all group dependencies reference existing groups.
-func (s *SessionData) ValidateGroups() []*GroupData {
+func (s *SessionData) ValidateGroups() []*InstanceGroup {
 	if len(s.Groups) == 0 {
 		return nil
 	}
@@ -177,7 +153,7 @@ func (s *SessionData) ValidateGroups() []*GroupData {
 }
 
 // collectGroupIDs recursively collects all group IDs.
-func collectGroupIDs(groups []*GroupData, ids map[string]bool) {
+func collectGroupIDs(groups []*InstanceGroup, ids map[string]bool) {
 	for _, g := range groups {
 		ids[g.ID] = true
 		collectGroupIDs(g.SubGroups, ids)
@@ -185,8 +161,8 @@ func collectGroupIDs(groups []*GroupData, ids map[string]bool) {
 }
 
 // validateGroupsRecursive validates groups and returns cleaned copies.
-func validateGroupsRecursive(groups []*GroupData, validInstances, validGroups map[string]bool) []*GroupData {
-	var result []*GroupData
+func validateGroupsRecursive(groups []*InstanceGroup, validInstances, validGroups map[string]bool) []*InstanceGroup {
+	var result []*InstanceGroup
 
 	for _, g := range groups {
 		// Filter instances to only include valid ones
@@ -210,17 +186,10 @@ func validateGroupsRecursive(groups []*GroupData, validInstances, validGroups ma
 
 		// Only include group if it has instances or sub-groups
 		if len(validInsts) > 0 || len(validSubGroups) > 0 {
-			cleaned := &GroupData{
-				ID:             g.ID,
-				Name:           g.Name,
-				Phase:          g.Phase,
-				Instances:      validInsts,
-				SubGroups:      validSubGroups,
-				ParentID:       g.ParentID,
-				ExecutionOrder: g.ExecutionOrder,
-				DependsOn:      validDeps,
-				Created:        g.Created,
-			}
+			cleaned := g.Clone()
+			cleaned.Instances = validInsts
+			cleaned.SubGroups = validSubGroups
+			cleaned.DependsOn = validDeps
 			result = append(result, cleaned)
 		}
 	}
@@ -230,12 +199,12 @@ func validateGroupsRecursive(groups []*GroupData, validInstances, validGroups ma
 
 // GetGroups returns the current list of top-level groups.
 // Implements group.ManagerSessionData interface.
-func (s *SessionData) GetGroups() []*GroupData {
+func (s *SessionData) GetGroups() []*InstanceGroup {
 	return s.Groups
 }
 
 // SetGroups replaces the current list of top-level groups.
 // Implements group.ManagerSessionData interface.
-func (s *SessionData) SetGroups(groups []*GroupData) {
+func (s *SessionData) SetGroups(groups []*InstanceGroup) {
 	s.Groups = groups
 }

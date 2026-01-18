@@ -1432,21 +1432,10 @@ func (o *Orchestrator) wireStateMonitorCallbacks() {
 		}
 	})
 
-	// Wire timeout callback - converts state.TimeoutType to instance.TimeoutType
+	// Wire timeout callback - state.TimeoutType is an alias for detect.TimeoutType,
+	// same as instance.TimeoutType, so no conversion needed.
 	o.stateMonitor.OnTimeout(func(instanceID string, timeoutType instancestate.TimeoutType) {
-		// Convert state.TimeoutType to instance.TimeoutType
-		var instTimeoutType instance.TimeoutType
-		switch timeoutType {
-		case instancestate.TimeoutActivity:
-			instTimeoutType = instance.TimeoutActivity
-		case instancestate.TimeoutCompletion:
-			instTimeoutType = instance.TimeoutCompletion
-		case instancestate.TimeoutStale:
-			instTimeoutType = instance.TimeoutStale
-		default:
-			instTimeoutType = instance.TimeoutActivity
-		}
-		o.handleInstanceTimeout(instanceID, instTimeoutType)
+		o.handleInstanceTimeout(instanceID, timeoutType)
 	})
 
 	// Wire bell callback - forwards bell events directly

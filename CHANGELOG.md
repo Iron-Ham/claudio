@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Unified Group Types** - Refactored the `group`, `orchestrator`, and `session` packages to use a shared `grouptypes.InstanceGroup` type, eliminating type duplication and ~80 lines of conversion code. This also prevents data loss (SessionType and Objective fields) when using the group manager.
+
+- **TimeoutType Consolidation** - Made `state.TimeoutType` and `instance.TimeoutType` type aliases for `detect.TimeoutType`, eliminating duplicate type definitions and removing unnecessary type conversion code in the orchestrator.
+
 - **TripleShot Mode Graduated** - TripleShot is now a permanent feature. The `experimental.triple_shot` configuration option has been removed; the `:tripleshot` command is always available.
 
 - **Documentation Overhaul** - Comprehensive update to all documentation to reflect current features and capabilities:

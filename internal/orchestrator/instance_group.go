@@ -1,138 +1,47 @@
 package orchestrator
 
-import "time"
+import (
+	"github.com/Iron-Ham/claudio/internal/orchestrator/grouptypes"
+)
 
-// GroupPhase represents the current phase of an instance group
-type GroupPhase string
+// GroupPhase represents the current phase of an instance group.
+// This is a type alias to the canonical definition in grouptypes.
+type GroupPhase = grouptypes.GroupPhase
 
+// Phase constants re-exported from grouptypes for backwards compatibility.
 const (
-	GroupPhasePending   GroupPhase = "pending"
-	GroupPhaseExecuting GroupPhase = "executing"
-	GroupPhaseCompleted GroupPhase = "completed"
-	GroupPhaseFailed    GroupPhase = "failed"
+	GroupPhasePending   = grouptypes.GroupPhasePending
+	GroupPhaseExecuting = grouptypes.GroupPhaseExecuting
+	GroupPhaseCompleted = grouptypes.GroupPhaseCompleted
+	GroupPhaseFailed    = grouptypes.GroupPhaseFailed
 )
 
 // InstanceGroup represents a visual grouping of instances in the TUI.
-// Groups enable users to organize related tasks together, particularly useful
-// for Plan and UltraPlan workflows where tasks have natural dependencies.
-type InstanceGroup struct {
-	ID             string           `json:"id"`
-	Name           string           `json:"name"`            // e.g., "Group 1: Foundation" or auto-generated
-	Phase          GroupPhase       `json:"phase"`           // Current group status
-	Instances      []string         `json:"instances"`       // Instance IDs in this group
-	SubGroups      []*InstanceGroup `json:"sub_groups"`      // For nested dependencies
-	ParentID       string           `json:"parent_id"`       // If this is a sub-group
-	ExecutionOrder int              `json:"execution_order"` // Order of execution (0 = first)
-	DependsOn      []string         `json:"depends_on"`      // Group IDs this group depends on
-	Created        time.Time        `json:"created"`
+// This is a type alias to the canonical definition in grouptypes.
+// The SessionType field is stored as a string; use GetSessionType() for typed access.
+type InstanceGroup = grouptypes.InstanceGroup
 
-	// SessionType identifies the type of session that created this group.
-	// Used for displaying appropriate icons and determining grouping behavior.
-	SessionType SessionType `json:"session_type,omitempty"`
-
-	// Objective is the original user prompt/objective for this group.
-	// Used for LLM-based name generation and display purposes.
-	Objective string `json:"objective,omitempty"`
-}
-
-// NewInstanceGroup creates a new instance group with a generated ID
+// NewInstanceGroup creates a new instance group with a generated ID.
 func NewInstanceGroup(name string) *InstanceGroup {
-	return &InstanceGroup{
-		ID:        generateID(),
-		Name:      name,
-		Phase:     GroupPhasePending,
-		Instances: make([]string, 0),
-		SubGroups: make([]*InstanceGroup, 0),
-		DependsOn: make([]string, 0),
-		Created:   time.Now(),
-	}
+	return grouptypes.NewInstanceGroup(generateID(), name)
 }
 
 // NewInstanceGroupWithType creates a new instance group with a session type and objective.
 // The objective is used for LLM-based name generation.
 func NewInstanceGroupWithType(name string, sessionType SessionType, objective string) *InstanceGroup {
-	return &InstanceGroup{
-		ID:          generateID(),
-		Name:        name,
-		Phase:       GroupPhasePending,
-		Instances:   make([]string, 0),
-		SubGroups:   make([]*InstanceGroup, 0),
-		DependsOn:   make([]string, 0),
-		Created:     time.Now(),
-		SessionType: sessionType,
-		Objective:   objective,
-	}
+	return grouptypes.NewInstanceGroupWithType(generateID(), name, string(sessionType), objective)
 }
 
-// AddInstance adds an instance ID to the group
-func (g *InstanceGroup) AddInstance(instanceID string) {
-	g.Instances = append(g.Instances, instanceID)
+// GetSessionType returns the typed SessionType for the group.
+// Use this instead of accessing g.SessionType directly when you need typed access.
+func GetSessionType(g *InstanceGroup) SessionType {
+	return SessionType(g.SessionType)
 }
 
-// RemoveInstance removes an instance ID from the group
-func (g *InstanceGroup) RemoveInstance(instanceID string) {
-	for i, id := range g.Instances {
-		if id == instanceID {
-			g.Instances = append(g.Instances[:i], g.Instances[i+1:]...)
-			return
-		}
-	}
-}
-
-// HasInstance checks if an instance ID is in this group
-func (g *InstanceGroup) HasInstance(instanceID string) bool {
-	for _, id := range g.Instances {
-		if id == instanceID {
-			return true
-		}
-	}
-	return false
-}
-
-// AddSubGroup adds a sub-group to this group
-func (g *InstanceGroup) AddSubGroup(subGroup *InstanceGroup) {
-	subGroup.ParentID = g.ID
-	g.SubGroups = append(g.SubGroups, subGroup)
-}
-
-// GetSubGroup returns a sub-group by ID
-func (g *InstanceGroup) GetSubGroup(id string) *InstanceGroup {
-	for _, sg := range g.SubGroups {
-		if sg.ID == id {
-			return sg
-		}
-	}
-	return nil
-}
-
-// AllInstanceIDs returns all instance IDs in this group and all sub-groups (recursively)
-func (g *InstanceGroup) AllInstanceIDs() []string {
-	ids := make([]string, len(g.Instances))
-	copy(ids, g.Instances)
-
-	for _, sg := range g.SubGroups {
-		ids = append(ids, sg.AllInstanceIDs()...)
-	}
-	return ids
-}
-
-// InstanceCount returns the total number of instances in this group and all sub-groups
-func (g *InstanceGroup) InstanceCount() int {
-	count := len(g.Instances)
-	for _, sg := range g.SubGroups {
-		count += sg.InstanceCount()
-	}
-	return count
-}
-
-// IsEmpty returns true if this group has no instances and no sub-groups with instances
-func (g *InstanceGroup) IsEmpty() bool {
-	return g.InstanceCount() == 0
-}
-
-// IsTopLevel returns true if this group has no parent (is not a sub-group)
-func (g *InstanceGroup) IsTopLevel() bool {
-	return g.ParentID == ""
+// SetSessionType sets the SessionType on the group.
+// Use this instead of assigning g.SessionType directly for type safety.
+func SetSessionType(g *InstanceGroup, st SessionType) {
+	g.SessionType = string(st)
 }
 
 // GetGroups returns a snapshot copy of the session's groups slice.
@@ -335,7 +244,7 @@ func (s *Session) GetGroupBySessionType(sessionType SessionType) *InstanceGroup 
 	s.groupsMu.RLock()
 	defer s.groupsMu.RUnlock()
 	for _, g := range s.Groups {
-		if g.SessionType == sessionType {
+		if GetSessionType(g) == sessionType {
 			return g
 		}
 	}
@@ -356,7 +265,7 @@ func (s *Session) GetOrCreateSharedGroup(sessionType SessionType) *InstanceGroup
 
 	// Look for existing group
 	for _, g := range s.Groups {
-		if g.SessionType == sessionType {
+		if GetSessionType(g) == sessionType {
 			return g
 		}
 	}
