@@ -133,8 +133,8 @@ func TestNewInstanceGroupWithType_CreatesCorrectSessionType(t *testing.T) {
 				tt.objective,
 			)
 
-			if group.SessionType != tt.wantType {
-				t.Errorf("SessionType = %v, want %v", group.SessionType, tt.wantType)
+			if orchestrator.GetSessionType(group) != tt.wantType {
+				t.Errorf("SessionType = %v, want %v", orchestrator.GetSessionType(group), tt.wantType)
 			}
 			if group.Objective != tt.objective {
 				t.Errorf("Objective = %q, want %q", group.Objective, tt.objective)
@@ -217,7 +217,7 @@ func TestUltraPlanGroupID_MustBeSetOnCreation(t *testing.T) {
 	if retrievedGroup == nil {
 		t.Fatal("session.GetGroup(ultraSession.GroupID) should return the group")
 	}
-	if retrievedGroup.SessionType != orchestrator.SessionTypeUltraPlan {
-		t.Errorf("group.SessionType = %v, want %v", retrievedGroup.SessionType, orchestrator.SessionTypeUltraPlan)
+	if orchestrator.GetSessionType(retrievedGroup) != orchestrator.SessionTypeUltraPlan {
+		t.Errorf("group.SessionType = %v, want %v", orchestrator.GetSessionType(retrievedGroup), orchestrator.SessionTypeUltraPlan)
 	}
 }

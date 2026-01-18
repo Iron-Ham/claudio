@@ -38,31 +38,17 @@ func DefaultMonitorConfig() MonitorConfig {
 	}
 }
 
-// TimeoutType represents the type of timeout that occurred.
-type TimeoutType int
+// TimeoutType is an alias for detect.TimeoutType for backwards compatibility.
+// New code should import detect.TimeoutType directly.
+type TimeoutType = detect.TimeoutType
 
+// Re-export timeout type constants for backwards compatibility.
+// New code should import these from detect package directly.
 const (
-	// TimeoutActivity indicates no output activity for the configured period.
-	TimeoutActivity TimeoutType = iota
-	// TimeoutCompletion indicates total runtime exceeded the configured limit.
-	TimeoutCompletion
-	// TimeoutStale indicates repeated identical output (stuck in a loop).
-	TimeoutStale
+	TimeoutActivity   = detect.TimeoutActivity
+	TimeoutCompletion = detect.TimeoutCompletion
+	TimeoutStale      = detect.TimeoutStale
 )
-
-// String returns a human-readable name for the timeout type.
-func (t TimeoutType) String() string {
-	switch t {
-	case TimeoutActivity:
-		return "activity"
-	case TimeoutCompletion:
-		return "completion"
-	case TimeoutStale:
-		return "stale"
-	default:
-		return "unknown"
-	}
-}
 
 // StateChangeCallback is called when an instance's detected state changes.
 type StateChangeCallback func(instanceID string, oldState, newState detect.WaitingState)

@@ -312,7 +312,7 @@ func (m *Model) handleInlinePlanObjectiveSubmit(objective string) {
 
 		// Set session type on the group for proper icon display
 		if orchGroup := m.session.GetGroup(planGroup.ID); orchGroup != nil {
-			orchGroup.SessionType = orchestrator.SessionTypePlan
+			orchestrator.SetSessionType(orchGroup, orchestrator.SessionTypePlan)
 			orchGroup.Objective = objective
 			// Add the planning instance to the group for sidebar display
 			orchGroup.AddInstance(inst.ID)
@@ -404,7 +404,7 @@ func (m *Model) handleMultiPlanObjectiveSubmit(objective string) {
 
 		// Set session type on the group for proper icon display (use multi-pass icon)
 		if orchGroup := m.session.GetGroup(planGroup.ID); orchGroup != nil {
-			orchGroup.SessionType = orchestrator.SessionTypePlanMulti
+			orchestrator.SetSessionType(orchGroup, orchestrator.SessionTypePlanMulti)
 			orchGroup.Objective = objective
 		}
 
@@ -841,94 +841,35 @@ func (m *Model) getGroupManager() *group.Manager {
 	if m.session == nil {
 		return nil
 	}
-	// Create adapter that implements ManagerSessionData
+	// Create adapter that implements ManagerSessionData.
+	// Since orchestrator.InstanceGroup and group.InstanceGroup are both type aliases
+	// to grouptypes.InstanceGroup, no conversion is needed - they're the same type.
 	adapter := &sessionGroupAdapter{session: m.session}
 	return group.NewManager(adapter)
 }
 
-// sessionGroupAdapter adapts orchestrator.Session to group.ManagerSessionData
+// sessionGroupAdapter adapts orchestrator.Session to group.ManagerSessionData.
+// No type conversion is needed since both packages use grouptypes.InstanceGroup.
 type sessionGroupAdapter struct {
 	session *orchestrator.Session
 }
 
 func (a *sessionGroupAdapter) GetGroups() []*group.InstanceGroup {
-	if a.session == nil || a.session.Groups == nil {
+	if a.session == nil {
 		return nil
 	}
-	// Convert orchestrator.InstanceGroup to group.InstanceGroup
-	result := make([]*group.InstanceGroup, len(a.session.Groups))
-	for i, g := range a.session.Groups {
-		result[i] = convertOrchestratorGroupToGroup(g)
-	}
-	return result
+	return a.session.GetGroups()
 }
 
 func (a *sessionGroupAdapter) SetGroups(groups []*group.InstanceGroup) {
 	if a.session == nil {
 		return
 	}
-	// Convert back to orchestrator.InstanceGroup
-	result := make([]*orchestrator.InstanceGroup, len(groups))
-	for i, g := range groups {
-		result[i] = convertGroupToOrchestratorGroup(g)
-	}
-	a.session.Groups = result
+	a.session.SetGroups(groups)
 }
 
 func (a *sessionGroupAdapter) GenerateID() string {
 	return orchestrator.GenerateID()
-}
-
-// convertOrchestratorGroupToGroup converts orchestrator.InstanceGroup to group.InstanceGroup
-func convertOrchestratorGroupToGroup(og *orchestrator.InstanceGroup) *group.InstanceGroup {
-	if og == nil {
-		return nil
-	}
-	g := &group.InstanceGroup{
-		ID:             og.ID,
-		Name:           og.Name,
-		Phase:          group.GroupPhase(og.Phase),
-		Instances:      make([]string, len(og.Instances)),
-		ParentID:       og.ParentID,
-		ExecutionOrder: og.ExecutionOrder,
-		DependsOn:      make([]string, len(og.DependsOn)),
-		Created:        og.Created,
-	}
-	copy(g.Instances, og.Instances)
-	copy(g.DependsOn, og.DependsOn)
-
-	// Convert sub-groups recursively
-	g.SubGroups = make([]*group.InstanceGroup, len(og.SubGroups))
-	for i, sg := range og.SubGroups {
-		g.SubGroups[i] = convertOrchestratorGroupToGroup(sg)
-	}
-	return g
-}
-
-// convertGroupToOrchestratorGroup converts group.InstanceGroup to orchestrator.InstanceGroup
-func convertGroupToOrchestratorGroup(g *group.InstanceGroup) *orchestrator.InstanceGroup {
-	if g == nil {
-		return nil
-	}
-	og := &orchestrator.InstanceGroup{
-		ID:             g.ID,
-		Name:           g.Name,
-		Phase:          orchestrator.GroupPhase(g.Phase),
-		Instances:      make([]string, len(g.Instances)),
-		ParentID:       g.ParentID,
-		ExecutionOrder: g.ExecutionOrder,
-		DependsOn:      make([]string, len(g.DependsOn)),
-		Created:        g.Created,
-	}
-	copy(og.Instances, g.Instances)
-	copy(og.DependsOn, g.DependsOn)
-
-	// Convert sub-groups recursively
-	og.SubGroups = make([]*orchestrator.InstanceGroup, len(g.SubGroups))
-	for i, sg := range g.SubGroups {
-		og.SubGroups[i] = convertGroupToOrchestratorGroup(sg)
-	}
-	return og
 }
 
 // expandTildePath expands a tilde prefix (~/) to the user's home directory.

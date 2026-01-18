@@ -72,16 +72,16 @@ func TestBuildGroupedSidebarData_WithGroups(t *testing.T) {
 	if len(data.Groups) != 1 {
 		t.Errorf("Expected 1 own group, got %d", len(data.Groups))
 	}
-	if data.Groups[0].SessionType != orchestrator.SessionTypeUltraPlan {
-		t.Errorf("Expected SessionTypeUltraPlan, got %s", data.Groups[0].SessionType)
+	if orchestrator.GetSessionType(data.Groups[0]) != orchestrator.SessionTypeUltraPlan {
+		t.Errorf("Expected SessionTypeUltraPlan, got %s", orchestrator.GetSessionType(data.Groups[0]))
 	}
 
 	// plan should be in SharedGroups (shared type)
 	if len(data.SharedGroups) != 1 {
 		t.Errorf("Expected 1 shared group, got %d", len(data.SharedGroups))
 	}
-	if data.SharedGroups[0].SessionType != orchestrator.SessionTypePlan {
-		t.Errorf("Expected SessionTypePlan, got %s", data.SharedGroups[0].SessionType)
+	if orchestrator.GetSessionType(data.SharedGroups[0]) != orchestrator.SessionTypePlan {
+		t.Errorf("Expected SessionTypePlan, got %s", orchestrator.GetSessionType(data.SharedGroups[0]))
 	}
 }
 

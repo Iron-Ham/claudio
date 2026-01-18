@@ -1462,7 +1462,7 @@ func TestSidebarView_GroupedModeShowsUngroupedInstances(t *testing.T) {
 				ID:          "tripleshot-group",
 				Name:        "Tripleshot",
 				Phase:       orchestrator.GroupPhaseExecuting,
-				SessionType: orchestrator.SessionTypeTripleShot,
+				SessionType: string(orchestrator.SessionTypeTripleShot),
 				Instances:   []string{"inst-1", "inst-2"},
 			},
 		},

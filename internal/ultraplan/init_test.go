@@ -318,8 +318,8 @@ func TestCreateUltraPlanGroup(t *testing.T) {
 				t.Fatal("CreateUltraPlanGroup returned nil")
 			}
 
-			if group.SessionType != tt.wantSessionType {
-				t.Errorf("SessionType = %v, want %v", group.SessionType, tt.wantSessionType)
+			if orchestrator.GetSessionType(group) != tt.wantSessionType {
+				t.Errorf("SessionType = %v, want %v", orchestrator.GetSessionType(group), tt.wantSessionType)
 			}
 
 			if len(group.Name) > tt.wantNameMaxLen {
@@ -399,8 +399,8 @@ func TestCreateAndLinkUltraPlanGroup(t *testing.T) {
 			}
 
 			// Verify session type is correct
-			if group.SessionType != tt.wantSessionType {
-				t.Errorf("SessionType = %v, want %v", group.SessionType, tt.wantSessionType)
+			if orchestrator.GetSessionType(group) != tt.wantSessionType {
+				t.Errorf("SessionType = %v, want %v", orchestrator.GetSessionType(group), tt.wantSessionType)
 			}
 		})
 	}
@@ -757,8 +757,8 @@ func TestInit_GroupCreation(t *testing.T) {
 				if group == nil {
 					t.Fatal("expected group to be created")
 				}
-				if group.SessionType != tt.wantType {
-					t.Errorf("SessionType = %v, want %v", group.SessionType, tt.wantType)
+				if orchestrator.GetSessionType(group) != tt.wantType {
+					t.Errorf("SessionType = %v, want %v", orchestrator.GetSessionType(group), tt.wantType)
 				}
 				if ultraSession.GroupID != group.ID {
 					t.Errorf("GroupID = %q, want %q", ultraSession.GroupID, group.ID)

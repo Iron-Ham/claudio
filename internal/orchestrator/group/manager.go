@@ -4,33 +4,25 @@ package group
 import (
 	"slices"
 	"sync"
-	"time"
+
+	"github.com/Iron-Ham/claudio/internal/orchestrator/grouptypes"
 )
 
 // GroupPhase represents the current phase of an instance group.
-// This mirrors orchestrator.GroupPhase but is defined here to avoid import cycles.
-type GroupPhase string
+// This is a type alias to the canonical definition in grouptypes.
+type GroupPhase = grouptypes.GroupPhase
 
+// Phase constants re-exported from grouptypes for backwards compatibility.
 const (
-	GroupPhasePending   GroupPhase = "pending"
-	GroupPhaseExecuting GroupPhase = "executing"
-	GroupPhaseCompleted GroupPhase = "completed"
-	GroupPhaseFailed    GroupPhase = "failed"
+	GroupPhasePending   = grouptypes.GroupPhasePending
+	GroupPhaseExecuting = grouptypes.GroupPhaseExecuting
+	GroupPhaseCompleted = grouptypes.GroupPhaseCompleted
+	GroupPhaseFailed    = grouptypes.GroupPhaseFailed
 )
 
 // InstanceGroup represents a visual grouping of instances.
-// This mirrors the orchestrator.InstanceGroup type for use within the group package.
-type InstanceGroup struct {
-	ID             string           `json:"id"`
-	Name           string           `json:"name"`
-	Phase          GroupPhase       `json:"phase"`
-	Instances      []string         `json:"instances"`
-	SubGroups      []*InstanceGroup `json:"sub_groups"`
-	ParentID       string           `json:"parent_id"`
-	ExecutionOrder int              `json:"execution_order"`
-	DependsOn      []string         `json:"depends_on"`
-	Created        time.Time        `json:"created"`
-}
+// This is a type alias to the canonical definition in grouptypes.
+type InstanceGroup = grouptypes.InstanceGroup
 
 // ManagerSessionData provides the session data interface needed by Manager.
 // This is a minimal interface to avoid coupling with the full Session type.
@@ -83,16 +75,9 @@ func (m *Manager) CreateGroup(name string, instanceIDs []string) *InstanceGroup 
 		}
 	}
 
-	group := &InstanceGroup{
-		ID:             m.session.GenerateID(),
-		Name:           name,
-		Phase:          GroupPhasePending,
-		Instances:      make([]string, len(instanceIDs)),
-		SubGroups:      make([]*InstanceGroup, 0),
-		DependsOn:      make([]string, 0),
-		ExecutionOrder: executionOrder,
-		Created:        time.Now(),
-	}
+	group := grouptypes.NewInstanceGroup(m.session.GenerateID(), name)
+	group.ExecutionOrder = executionOrder
+	group.Instances = make([]string, len(instanceIDs))
 	copy(group.Instances, instanceIDs)
 
 	groups = append(groups, group)
@@ -120,17 +105,10 @@ func (m *Manager) CreateSubGroup(parentID, name string, instanceIDs []string) *I
 		}
 	}
 
-	subGroup := &InstanceGroup{
-		ID:             m.session.GenerateID(),
-		Name:           name,
-		Phase:          GroupPhasePending,
-		Instances:      make([]string, len(instanceIDs)),
-		SubGroups:      make([]*InstanceGroup, 0),
-		ParentID:       parentID,
-		DependsOn:      make([]string, 0),
-		ExecutionOrder: executionOrder,
-		Created:        time.Now(),
-	}
+	subGroup := grouptypes.NewInstanceGroup(m.session.GenerateID(), name)
+	subGroup.ParentID = parentID
+	subGroup.ExecutionOrder = executionOrder
+	subGroup.Instances = make([]string, len(instanceIDs))
 	copy(subGroup.Instances, instanceIDs)
 
 	parent.SubGroups = append(parent.SubGroups, subGroup)

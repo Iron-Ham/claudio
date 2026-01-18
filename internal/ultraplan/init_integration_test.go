@@ -306,9 +306,9 @@ func TestInit_GroupSessionTypes(t *testing.T) {
 				t.Fatal("Group should be created")
 			}
 
-			if result.Group.SessionType != tt.wantSessionType {
+			if orchestrator.GetSessionType(result.Group) != tt.wantSessionType {
 				t.Errorf("Group.SessionType = %v, want %v",
-					result.Group.SessionType, tt.wantSessionType)
+					orchestrator.GetSessionType(result.Group), tt.wantSessionType)
 			}
 		})
 	}

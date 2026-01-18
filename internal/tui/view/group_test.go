@@ -190,7 +190,7 @@ func TestRenderGroupHeaderWrapped(t *testing.T) {
 				ID:          "test-1",
 				Name:        "Short",
 				Phase:       orchestrator.GroupPhasePending,
-				SessionType: orchestrator.SessionTypeTripleShot,
+				SessionType: string(orchestrator.SessionTypeTripleShot),
 			},
 			progress:   GroupProgress{Completed: 1, Total: 3},
 			collapsed:  false,
@@ -204,7 +204,7 @@ func TestRenderGroupHeaderWrapped(t *testing.T) {
 				ID:          "test-2",
 				Name:        "This is a very long group name that should wrap to multiple lines in the sidebar",
 				Phase:       orchestrator.GroupPhaseExecuting,
-				SessionType: orchestrator.SessionTypeTripleShot,
+				SessionType: string(orchestrator.SessionTypeTripleShot),
 			},
 			progress:   GroupProgress{Completed: 2, Total: 5},
 			collapsed:  false,
@@ -218,7 +218,7 @@ func TestRenderGroupHeaderWrapped(t *testing.T) {
 				ID:          "test-3",
 				Name:        "Selected Group",
 				Phase:       orchestrator.GroupPhaseCompleted,
-				SessionType: orchestrator.SessionTypePlan,
+				SessionType: string(orchestrator.SessionTypePlan),
 			},
 			progress:   GroupProgress{Completed: 3, Total: 3},
 			collapsed:  true,
@@ -247,7 +247,7 @@ func TestRenderGroupHeader_WrappedOutput(t *testing.T) {
 		ID:          "test-1",
 		Name:        "Test Group",
 		Phase:       orchestrator.GroupPhasePending,
-		SessionType: orchestrator.SessionTypeTripleShot,
+		SessionType: string(orchestrator.SessionTypeTripleShot),
 	}
 	progress := GroupProgress{Completed: 1, Total: 3}
 

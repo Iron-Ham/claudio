@@ -52,7 +52,8 @@ func BuildGroupedSidebarData(session *orchestrator.Session) *GroupedSidebarData 
 
 	// Categorize groups by type
 	for _, group := range groups {
-		if group.SessionType.GroupingMode() == "shared" {
+		sessionType := orchestrator.GetSessionType(group)
+		if sessionType.GroupingMode() == "shared" {
 			data.SharedGroups = append(data.SharedGroups, group)
 		} else {
 			data.Groups = append(data.Groups, group)
@@ -117,7 +118,7 @@ func BuildSidebarSections(session *orchestrator.Session) []SidebarSection {
 		sections = append(sections, SidebarSection{
 			Type:  SectionTypeGroup,
 			Title: group.Name,
-			Icon:  group.SessionType.Icon(),
+			Icon:  orchestrator.GetSessionType(group).Icon(),
 			Group: group,
 		})
 	}
@@ -127,7 +128,7 @@ func BuildSidebarSections(session *orchestrator.Session) []SidebarSection {
 		sections = append(sections, SidebarSection{
 			Type:  SectionTypeSharedGroup,
 			Title: group.Name,
-			Icon:  group.SessionType.Icon(),
+			Icon:  orchestrator.GetSessionType(group).Icon(),
 			Group: group,
 		})
 	}
