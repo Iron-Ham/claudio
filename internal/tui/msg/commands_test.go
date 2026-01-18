@@ -1,6 +1,7 @@
 package msg
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -348,3 +349,80 @@ func TestCommandsAreIdempotent(t *testing.T) {
 // Note: Testing with an uninitialized Coordinator that returns nil session
 // requires complex internal setup as the Session() method accesses internal
 // pointers. The nil coordinator cases above verify nil-safety at the outer level.
+
+// mockTerminalOutputCapturer implements TerminalOutputCapturer for testing
+type mockTerminalOutputCapturer struct {
+	output string
+	err    error
+}
+
+func (m *mockTerminalOutputCapturer) CaptureOutput() (string, error) {
+	return m.output, m.err
+}
+
+func TestRefreshTerminalOutputAsync(t *testing.T) {
+	t.Run("nil capturer returns nil", func(t *testing.T) {
+		cmd := RefreshTerminalOutputAsync(nil)
+		if cmd == nil {
+			t.Fatal("RefreshTerminalOutputAsync(nil) returned nil command")
+		}
+
+		result := cmd()
+		if result != nil {
+			t.Errorf("RefreshTerminalOutputAsync(nil) returned %v, want nil", result)
+		}
+	})
+
+	t.Run("successful capture returns TerminalOutputRefreshMsg", func(t *testing.T) {
+		capturer := &mockTerminalOutputCapturer{
+			output: "user@host:~$ ls\nfile1.txt\n",
+			err:    nil,
+		}
+
+		cmd := RefreshTerminalOutputAsync(capturer)
+		if cmd == nil {
+			t.Fatal("RefreshTerminalOutputAsync() returned nil command")
+		}
+
+		result := cmd()
+		msg, ok := result.(TerminalOutputRefreshMsg)
+		if !ok {
+			t.Fatalf("RefreshTerminalOutputAsync() returned %T, want TerminalOutputRefreshMsg", result)
+		}
+
+		if msg.Output != capturer.output {
+			t.Errorf("Output = %q, want %q", msg.Output, capturer.output)
+		}
+	})
+
+	t.Run("empty output returns message with empty output", func(t *testing.T) {
+		capturer := &mockTerminalOutputCapturer{
+			output: "",
+			err:    nil,
+		}
+
+		cmd := RefreshTerminalOutputAsync(capturer)
+		result := cmd()
+		msg, ok := result.(TerminalOutputRefreshMsg)
+		if !ok {
+			t.Fatalf("RefreshTerminalOutputAsync() returned %T, want TerminalOutputRefreshMsg", result)
+		}
+
+		if msg.Output != "" {
+			t.Errorf("Output = %q, want empty", msg.Output)
+		}
+	})
+
+	t.Run("capture error returns nil", func(t *testing.T) {
+		capturer := &mockTerminalOutputCapturer{
+			output: "",
+			err:    errors.New("not running"),
+		}
+
+		cmd := RefreshTerminalOutputAsync(capturer)
+		result := cmd()
+		if result != nil {
+			t.Errorf("RefreshTerminalOutputAsync() with error returned %v, want nil", result)
+		}
+	})
+}

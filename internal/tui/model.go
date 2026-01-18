@@ -347,6 +347,10 @@ type Model struct {
 	filterRegex      *regexp.Regexp  // Compiled custom filter regex
 	outputScroll     int             // Scroll position in output (for search navigation)
 
+	// Terminal pane debouncing
+	// Tracks whether a terminal output refresh is already in flight to avoid
+	// redundant tmux capture-pane calls during rapid typing.
+	terminalRefreshPending bool
 }
 
 // IsUltraPlanMode returns true if the model is in ultra-plan mode

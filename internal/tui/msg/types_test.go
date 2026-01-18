@@ -668,3 +668,39 @@ func TestInlineMultiPlanFileCheckResultMsg(t *testing.T) {
 		})
 	}
 }
+
+func TestTerminalOutputRefreshMsg(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+	}{
+		{
+			name:   "normal output",
+			output: "user@host:~$ ls\nfile1.txt\nfile2.txt\n",
+		},
+		{
+			name:   "empty output",
+			output: "",
+		},
+		{
+			name:   "output with ANSI codes",
+			output: "\033[32mgreen text\033[0m and normal text",
+		},
+		{
+			name:   "multiline output with shell prompt",
+			output: "$ echo hello\nhello\n$ ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := TerminalOutputRefreshMsg{
+				Output: tt.output,
+			}
+
+			if msg.Output != tt.output {
+				t.Errorf("Output = %q, want %q", msg.Output, tt.output)
+			}
+		})
+	}
+}

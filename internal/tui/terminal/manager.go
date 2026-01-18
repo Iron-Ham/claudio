@@ -418,6 +418,13 @@ func (m *Manager) Output() string {
 	return m.output
 }
 
+// SetOutput directly sets the cached terminal output.
+// This is used for immediate output refresh when typing in terminal mode,
+// avoiding the latency of waiting for the next tick-based update.
+func (m *Manager) SetOutput(output string) {
+	m.output = output
+}
+
 // Resize updates the terminal dimensions.
 func (m *Manager) Resize() {
 	if m.process == nil {

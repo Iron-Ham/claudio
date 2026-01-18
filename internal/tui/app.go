@@ -360,6 +360,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// This helps with terminal emulators that don't properly clear stale content
 		return m, tea.ClearScreen
 
+	case tuimsg.TerminalOutputRefreshMsg:
+		// Immediate terminal output refresh from terminal mode typing.
+		// This provides responsive feedback when the user types in the terminal,
+		// avoiding the latency of waiting for the next tick cycle (100ms).
+		//
+		// Clear the debounce flag so subsequent keystrokes can trigger new refreshes.
+		m.terminalRefreshPending = false
+		if m.terminalManager.IsVisible() {
+			m.terminalManager.SetOutput(msg.Output)
+		}
+		return m, nil
+
 	case tuimsg.TickMsg:
 		// Update outputs from instances
 		m.updateOutputs()

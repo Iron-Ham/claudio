@@ -213,3 +213,10 @@ type RalphCompletionProcessedMsg struct {
 	ContinueLoop bool // True if another iteration should be started
 	Err          error
 }
+
+// TerminalOutputRefreshMsg contains captured terminal output for immediate display.
+// This is used to provide responsive feedback when typing in terminal mode,
+// avoiding the 100ms delay of the regular tick-based refresh.
+type TerminalOutputRefreshMsg struct {
+	Output string
+}

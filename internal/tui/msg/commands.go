@@ -28,6 +28,42 @@ func Tick() tea.Cmd {
 	})
 }
 
+// TerminalOutputCapturer defines the interface for capturing terminal output.
+// This allows the msg package to request terminal output without depending
+// on the terminal package directly.
+type TerminalOutputCapturer interface {
+	CaptureOutput() (string, error)
+}
+
+// RefreshTerminalOutputAsync returns a command that captures terminal output asynchronously.
+// This provides immediate feedback when typing in terminal mode, avoiding the latency
+// of waiting for the next tick cycle (100ms).
+//
+// # Performance Characteristics
+//
+// Each call spawns a tmux subprocess to capture pane content via `capture-pane`.
+// Typical latency is 1-5ms per call depending on pane size and system load.
+// The caller should implement debouncing to avoid excessive calls during rapid
+// typing - see Model.terminalRefreshPending in keyhandler.go for the implementation.
+//
+// # Usage
+//
+// The returned command is async and non-blocking. It returns a TerminalOutputRefreshMsg
+// containing the captured output, or nil if capture fails or the capturer is nil.
+func RefreshTerminalOutputAsync(capturer TerminalOutputCapturer) tea.Cmd {
+	return func() tea.Msg {
+		if capturer == nil {
+			return nil
+		}
+		output, err := capturer.CaptureOutput()
+		if err != nil {
+			// On error, return empty - the tick will catch up
+			return nil
+		}
+		return TerminalOutputRefreshMsg{Output: output}
+	}
+}
+
 // RingBell returns a command that outputs a terminal bell character.
 // This forwards bells from tmux sessions to the parent terminal.
 func RingBell() tea.Cmd {

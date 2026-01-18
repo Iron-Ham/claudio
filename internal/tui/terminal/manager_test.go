@@ -716,6 +716,33 @@ func TestOutput(t *testing.T) {
 	}
 }
 
+func TestSetOutput(t *testing.T) {
+	m := NewManager()
+
+	// Initially empty
+	if m.Output() != "" {
+		t.Error("initial Output() should be empty")
+	}
+
+	// Set output using the public method
+	m.SetOutput("immediate refresh output")
+	if m.Output() != "immediate refresh output" {
+		t.Errorf("Output() = %q, want %q", m.Output(), "immediate refresh output")
+	}
+
+	// Can overwrite with different output
+	m.SetOutput("updated output")
+	if m.Output() != "updated output" {
+		t.Errorf("Output() = %q, want %q", m.Output(), "updated output")
+	}
+
+	// Can set to empty
+	m.SetOutput("")
+	if m.Output() != "" {
+		t.Errorf("Output() = %q, want empty", m.Output())
+	}
+}
+
 func TestResize_NoProcess(t *testing.T) {
 	m := NewManager()
 
