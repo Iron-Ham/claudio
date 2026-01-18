@@ -66,7 +66,7 @@ func TestTerminalViewRender(t *testing.T) {
 			wantEmpty: true,
 		},
 		{
-			name:   "renders invocation mode header",
+			name:   "renders project mode header",
 			width:  80,
 			height: 15,
 			state: TerminalState{
@@ -74,7 +74,7 @@ func TestTerminalViewRender(t *testing.T) {
 				CurrentDir:     "/home/user/project",
 				InvocationDir:  "/home/user/project",
 			},
-			wantContains: []string{"[invoke]"},
+			wantContains: []string{"[project]"},
 		},
 		{
 			name:   "renders worktree mode header",
@@ -248,14 +248,14 @@ func TestTerminalViewRenderHeader(t *testing.T) {
 		wantContains []string
 	}{
 		{
-			name:  "invocation mode",
+			name:  "project mode",
 			width: 80,
 			state: TerminalState{
 				IsWorktreeMode: false,
 				CurrentDir:     "/home/user/project",
 				InvocationDir:  "/home/user/project",
 			},
-			wantContains: []string{"[invoke]"},
+			wantContains: []string{"[project]"},
 		},
 		{
 			name:  "worktree mode without instance",
@@ -307,6 +307,26 @@ func TestTerminalViewRenderHeader(t *testing.T) {
 				InvocationDir: "/home/user/project",
 			},
 			wantContains: []string{"TERMINAL"},
+		},
+		{
+			name:  "project mode shows worktree toggle hint",
+			width: 80,
+			state: TerminalState{
+				IsWorktreeMode: false,
+				CurrentDir:     "/home/user/project",
+				InvocationDir:  "/home/user/project",
+			},
+			wantContains: []string{"[project]", ":termdir wt"},
+		},
+		{
+			name:  "worktree mode shows project toggle hint",
+			width: 80,
+			state: TerminalState{
+				IsWorktreeMode: true,
+				CurrentDir:     "/home/user/project",
+				InvocationDir:  "/home/user/project",
+			},
+			wantContains: []string{"[worktree]", ":termdir proj"},
 		},
 	}
 

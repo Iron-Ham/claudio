@@ -279,8 +279,11 @@ func (h *Handler) registerCommands() {
 	h.commands["terminal"] = cmdTerminal
 	h.commands["termdir worktree"] = cmdTerminalDirWorktree
 	h.commands["termdir wt"] = cmdTerminalDirWorktree
-	h.commands["termdir invoke"] = cmdTerminalDirInvocation
-	h.commands["termdir invocation"] = cmdTerminalDirInvocation
+	h.commands["termdir project"] = cmdTerminalDirProject
+	h.commands["termdir proj"] = cmdTerminalDirProject
+	// Legacy aliases for backward compatibility
+	h.commands["termdir invoke"] = cmdTerminalDirProject
+	h.commands["termdir invocation"] = cmdTerminalDirProject
 
 	// Ultraplan commands
 	h.commands["cancel"] = cmdUltraPlanCancel
@@ -848,11 +851,11 @@ func cmdTerminalDirWorktree(_ Dependencies) Result {
 	return Result{TerminalDirMode: &mode}
 }
 
-func cmdTerminalDirInvocation(_ Dependencies) Result {
+func cmdTerminalDirProject(_ Dependencies) Result {
 	if !isTerminalEnabled() {
 		return Result{ErrorMessage: terminalDisabledError}
 	}
-	mode := 0 // TerminalDirInvocation
+	mode := 0 // TerminalDirProject (the directory where Claudio was started)
 	return Result{TerminalDirMode: &mode}
 }
 

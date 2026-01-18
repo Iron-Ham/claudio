@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Terminal Mode Label Clarity** - Changed terminal pane mode indicator from `[invoke]` to `[project]` for better user understanding. The label now clearly indicates "you're in your project directory" instead of using internal jargon. Added `:termdir project` (and `:termdir proj`) as the primary command alias, with legacy `invoke`/`invocation` aliases preserved for backward compatibility. The terminal header now also displays a toggle hint (e.g., `[:termdir wt]`) showing how to switch to the other mode.
+
 - **Coordinator Refactoring Phase 1** - Initial refactoring of `internal/orchestrator/coordinator.go` to establish delegation patterns:
   - Extracted notification methods to `coordinator_callbacks.go` (~170 lines)
   - Extracted adapter types to `coordinator_adapters.go` (~75 lines)
