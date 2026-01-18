@@ -194,6 +194,30 @@ func TestTerminalViewRenderOutput(t *testing.T) {
 			height:       10,
 			wantContains: []string{"line1", "line2"},
 		},
+		{
+			name:         "preserves first line when capture ends with newline",
+			output:       "PROMPT\n\n\n\n\n\n\n\n\n\n\n\n",
+			height:       12,
+			wantContains: []string{"PROMPT"},
+		},
+		{
+			name:         "preserves prompt with ANSI codes when capture ends with newline",
+			output:       "\x1b[32mPrompt ❯\x1b[0m\n\n\n\n\n\n\n\n\n\n\n\n",
+			height:       12,
+			wantContains: []string{"Prompt"},
+		},
+		{
+			name:         "preserves prompt with content and trailing newlines",
+			output:       "PROMPT ❯ ls\nfile1.txt\nfile2.txt\n\n\n",
+			height:       10,
+			wantContains: []string{"PROMPT", "file1.txt", "file2.txt"},
+		},
+		{
+			name:         "preserves content when lines equal height after trim",
+			output:       "line1\nline2\nline3\n",
+			height:       3,
+			wantContains: []string{"line1", "line2", "line3"},
+		},
 	}
 
 	for _, tt := range tests {

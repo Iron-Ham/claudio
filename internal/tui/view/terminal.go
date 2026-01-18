@@ -129,17 +129,24 @@ func (v *TerminalView) renderOutput(output string, height int) string {
 		return placeholder
 	}
 
-	// Split into lines
+	// Trim trailing whitespace before splitting to prevent capture-pane's trailing
+	// newline from creating an extra empty element. Without this, when we "take last
+	// N lines", we could drop content from the beginning (like the shell prompt) while
+	// keeping empty lines from the end.
+	output = strings.TrimRight(output, "\r\n")
+
 	lines := strings.Split(output, "\n")
 
-	// Take only the last 'height' lines (most recent output)
-	if len(lines) > height {
-		lines = lines[len(lines)-height:]
-	}
-
-	// Trim trailing empty lines (tmux capture often includes them)
+	// Trim trailing empty lines from the end of the content
+	// (e.g., empty lines before the cursor position in tmux)
 	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
 		lines = lines[:len(lines)-1]
+	}
+
+	// Take only the last 'height' lines (most recent output)
+	// This is done AFTER trimming empty lines so we prioritize showing actual content
+	if len(lines) > height {
+		lines = lines[len(lines)-height:]
 	}
 
 	// Join and return

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Terminal Pane Shell Prompt Not Visible** - Fixed the terminal pane not displaying the shell prompt. The root cause was that `capture-pane` returns output ending with a newline, which caused `strings.Split` to create an extra empty element. When taking the "last N lines", the prompt (at position 0) was dropped while empty lines were kept. The fix trims trailing newlines before splitting and reorders the trimming/truncation logic to prioritize actual content.
+
 - **Terminal Keybindings Respect Config** - Fixed backtick (`) and `T` keys toggling the terminal pane even when `experimental.terminal_support` is disabled in the config. The terminal keybindings now correctly check the config setting before activating.
 
 - **Adversarial Review Score Threshold Enforcement** - Fixed a bug where users who set a minimum passing score higher than the default (e.g., 9 or 10) would have the adversarial loop stop prematurely. The issue occurred because approval notifications were sent before score enforcement was applied, causing callbacks to receive the unenforced state. The enforcement check is now performed before any notifications, ensuring the loop correctly continues when the reviewer's score is below the configured threshold.
