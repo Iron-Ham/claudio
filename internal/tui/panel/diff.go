@@ -88,7 +88,7 @@ func (p *DiffPanel) Render(state *RenderState) string {
 
 	// Show scroll indicator
 	scrollInfo := fmt.Sprintf("Lines %d-%d of %d", startLine+1, endLine, totalLines)
-	helpHint := "[j/k scroll, g/G top/bottom, d/Esc close]"
+	helpHint := "[j/k scroll, 0/G top/bottom, d/Esc close]"
 	if totalLines <= maxLines {
 		helpHint = "[d/Esc close]"
 	}
