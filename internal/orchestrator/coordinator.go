@@ -18,33 +18,6 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator/verify"
 )
 
-// CoordinatorCallbacks holds callbacks for coordinator events
-type CoordinatorCallbacks struct {
-	// OnPhaseChange is called when the ultra-plan phase changes
-	OnPhaseChange func(phase UltraPlanPhase)
-
-	// OnTaskStart is called when a task begins execution
-	OnTaskStart func(taskID, instanceID string)
-
-	// OnTaskComplete is called when a task completes successfully
-	OnTaskComplete func(taskID string)
-
-	// OnTaskFailed is called when a task fails
-	OnTaskFailed func(taskID, reason string)
-
-	// OnGroupComplete is called when an execution group completes
-	OnGroupComplete func(groupIndex int)
-
-	// OnPlanReady is called when the plan is ready (after planning phase)
-	OnPlanReady func(plan *PlanSpec)
-
-	// OnProgress is called periodically with progress updates
-	OnProgress func(completed, total int, phase UltraPlanPhase)
-
-	// OnComplete is called when the entire ultra-plan completes
-	OnComplete func(success bool, summary string)
-}
-
 // Verifier provides task verification capabilities.
 // This interface allows the Coordinator to delegate verification logic
 // while maintaining control over its own state management.
@@ -83,80 +56,6 @@ type Coordinator struct {
 	// Task tracking
 	runningTasks map[string]string // taskID -> instanceID
 	runningCount int
-}
-
-// coordinatorRetryTracker adapts the Coordinator's RetryManager to the verify.RetryTracker interface.
-type coordinatorRetryTracker struct {
-	c *Coordinator
-}
-
-func (rt *coordinatorRetryTracker) GetRetryCount(taskID string) int {
-	state := rt.c.retryManager.GetState(taskID)
-	if state == nil {
-		return 0
-	}
-	return state.RetryCount
-}
-
-func (rt *coordinatorRetryTracker) IncrementRetry(taskID string) int {
-	session := rt.c.Session()
-	config := session.Config
-	maxRetries := config.MaxTaskRetries
-	if maxRetries == 0 {
-		maxRetries = 3
-	}
-	state := rt.c.retryManager.GetOrCreateState(taskID, maxRetries)
-	rt.c.retryManager.RecordAttempt(taskID, false) // false = failure
-	rt.c.retryManager.SetLastError(taskID, "task produced no commits")
-	return state.RetryCount + 1
-}
-
-func (rt *coordinatorRetryTracker) RecordCommitCount(taskID string, count int) {
-	session := rt.c.Session()
-	config := session.Config
-	maxRetries := config.MaxTaskRetries
-	if maxRetries == 0 {
-		maxRetries = 3
-	}
-	rt.c.retryManager.GetOrCreateState(taskID, maxRetries)
-	rt.c.retryManager.RecordCommitCount(taskID, count)
-}
-
-func (rt *coordinatorRetryTracker) GetMaxRetries(taskID string) int {
-	state := rt.c.retryManager.GetState(taskID)
-	if state == nil {
-		return 0
-	}
-	return state.MaxRetries
-}
-
-// coordinatorEventEmitter adapts the Coordinator's event emission to the verify.EventEmitter interface.
-type coordinatorEventEmitter struct {
-	c *Coordinator
-}
-
-func (e *coordinatorEventEmitter) EmitWarning(taskID, message string) {
-	e.c.manager.emitEvent(CoordinatorEvent{
-		Type:    EventConflict,
-		TaskID:  taskID,
-		Message: message,
-	})
-}
-
-func (e *coordinatorEventEmitter) EmitRetry(taskID string, attempt, maxRetries int, reason string) {
-	e.c.manager.emitEvent(CoordinatorEvent{
-		Type:    EventTaskStarted, // Reuse for retry notification
-		TaskID:  taskID,
-		Message: fmt.Sprintf("Task %s produced no commits, scheduling retry %d/%d", taskID, attempt, maxRetries),
-	})
-}
-
-func (e *coordinatorEventEmitter) EmitFailure(taskID, reason string) {
-	e.c.manager.emitEvent(CoordinatorEvent{
-		Type:    EventTaskFailed,
-		TaskID:  taskID,
-		Message: reason,
-	})
 }
 
 // NewCoordinator creates a new coordinator for an ultra-plan session.
@@ -338,175 +237,6 @@ func (c *Coordinator) Plan() *PlanSpec {
 	return session.Plan
 }
 
-// notifyPhaseChange notifies callbacks of phase change
-func (c *Coordinator) notifyPhaseChange(phase UltraPlanPhase) {
-	// Get the previous phase for logging
-	session := c.Session()
-	fromPhase := PhasePlanning
-	if session != nil {
-		fromPhase = session.Phase
-	}
-
-	c.manager.SetPhase(phase)
-
-	// Log the phase transition
-	c.logger.Info("phase changed",
-		"from_phase", string(fromPhase),
-		"to_phase", string(phase),
-		"session_id", session.ID,
-	)
-
-	// Persist the phase change
-	_ = c.orch.SaveSession()
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnPhaseChange != nil {
-		cb.OnPhaseChange(phase)
-	}
-}
-
-// notifyTaskStart notifies callbacks of task start
-func (c *Coordinator) notifyTaskStart(taskID, instanceID string) {
-	c.manager.AssignTaskToInstance(taskID, instanceID)
-
-	// Get task title for logging
-	session := c.Session()
-	taskTitle := ""
-	if session != nil {
-		if task := session.GetTask(taskID); task != nil {
-			taskTitle = task.Title
-		}
-	}
-
-	// Log task started
-	c.logger.Info("task started",
-		"task_id", taskID,
-		"instance_id", instanceID,
-		"task_title", taskTitle,
-	)
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnTaskStart != nil {
-		cb.OnTaskStart(taskID, instanceID)
-	}
-}
-
-// notifyTaskComplete notifies callbacks of task completion
-func (c *Coordinator) notifyTaskComplete(taskID string) {
-	c.manager.MarkTaskComplete(taskID)
-
-	// Log task completed
-	// Note: duration tracking requires instance start time, which could be added in the future
-	c.logger.Info("task completed",
-		"task_id", taskID,
-	)
-
-	// Persist the task completion
-	_ = c.orch.SaveSession()
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnTaskComplete != nil {
-		cb.OnTaskComplete(taskID)
-	}
-}
-
-// notifyTaskFailed notifies callbacks of task failure
-func (c *Coordinator) notifyTaskFailed(taskID, reason string) {
-	c.manager.MarkTaskFailed(taskID, reason)
-
-	// Log task failed
-	c.logger.Info("task failed",
-		"task_id", taskID,
-		"reason", reason,
-	)
-
-	// Persist the task failure
-	_ = c.orch.SaveSession()
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnTaskFailed != nil {
-		cb.OnTaskFailed(taskID, reason)
-	}
-}
-
-// notifyPlanReady notifies callbacks that planning is complete
-func (c *Coordinator) notifyPlanReady(plan *PlanSpec) {
-	// Log plan ready
-	taskCount := 0
-	groupCount := 0
-	if plan != nil {
-		taskCount = len(plan.Tasks)
-		groupCount = len(plan.ExecutionOrder)
-	}
-	c.logger.Info("plan ready",
-		"task_count", taskCount,
-		"group_count", groupCount,
-	)
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnPlanReady != nil {
-		cb.OnPlanReady(plan)
-	}
-}
-
-// notifyProgress notifies callbacks of progress
-func (c *Coordinator) notifyProgress() {
-	session := c.Session()
-	if session == nil || session.Plan == nil {
-		return
-	}
-
-	completed := len(session.CompletedTasks)
-	total := len(session.Plan.Tasks)
-
-	// Log progress update at DEBUG level
-	c.logger.Debug("progress update",
-		"completed", completed,
-		"total", total,
-		"phase", string(session.Phase),
-	)
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnProgress != nil {
-		cb.OnProgress(completed, total, session.Phase)
-	}
-}
-
-// notifyComplete notifies callbacks of completion
-func (c *Coordinator) notifyComplete(success bool, summary string) {
-	// Log coordinator complete
-	c.logger.Info("coordinator complete",
-		"success", success,
-		"summary", summary,
-	)
-
-	c.mu.RLock()
-	cb := c.callbacks
-	c.mu.RUnlock()
-
-	if cb != nil && cb.OnComplete != nil {
-		cb.OnComplete(success, summary)
-	}
-}
-
 // RunPlanning executes the planning phase
 // This creates a coordinator instance that explores the codebase and generates a plan
 func (c *Coordinator) RunPlanning() error {
@@ -522,71 +252,27 @@ func (c *Coordinator) RunPlanning() error {
 	// Create the planning prompt
 	prompt := fmt.Sprintf(PlanningPromptTemplate, session.Objective)
 
-	// Delegate to PlanningOrchestrator for the actual work
-	// This makes the Coordinator a thin facade that orchestrates the phases
+	// Get PlanningOrchestrator - always delegate to it
 	po := c.PlanningOrchestrator()
-	if po != nil {
-		// Provide callbacks for group management and session state updates
-		getGroup := func() any {
-			// Use session.GroupID (set by TUI) for reliable group lookup
-			if session.GroupID != "" {
-				if g := c.baseSession.GetGroup(session.GroupID); g != nil {
-					return g
-				}
+	if po == nil {
+		return fmt.Errorf("planning orchestrator not initialized")
+	}
+
+	// Provide callbacks for group management and session state updates
+	getGroup := func() any {
+		// Use session.GroupID (set by TUI) for reliable group lookup
+		if session.GroupID != "" {
+			if g := c.baseSession.GetGroup(session.GroupID); g != nil {
+				return g
 			}
-			return c.baseSession.GetGroupBySessionType(SessionTypeUltraPlan)
 		}
-		setCoordinatorID := func(id string) {
-			session.CoordinatorID = id
-		}
-
-		return po.ExecuteWithPrompt(c.ctx, prompt, c.baseSession, getGroup, setCoordinatorID)
+		return c.baseSession.GetGroupBySessionType(SessionTypeUltraPlan)
+	}
+	setCoordinatorID := func(id string) {
+		session.CoordinatorID = id
 	}
 
-	// Fallback: direct implementation if orchestrator unavailable
-	return c.runPlanningSinglePassDirect(prompt)
-}
-
-// runPlanningSinglePassDirect is the fallback direct implementation of single-pass planning.
-// This is used when the PlanningOrchestrator is unavailable.
-// DEPRECATED: Prefer PlanningOrchestrator.ExecuteWithPrompt for new code.
-func (c *Coordinator) runPlanningSinglePassDirect(prompt string) error {
-	session := c.Session()
-
-	// Create a coordinator instance for planning
-	inst, err := c.orch.AddInstance(c.baseSession, prompt)
-	if err != nil {
-		c.logger.Error("planning failed",
-			"error", err.Error(),
-			"stage", "create_instance",
-		)
-		return fmt.Errorf("failed to create planning instance: %w", err)
-	}
-
-	// Add planning instance to the ultraplan group for sidebar display
-	var ultraGroup *InstanceGroup
-	if session.GroupID != "" {
-		ultraGroup = c.baseSession.GetGroup(session.GroupID)
-	}
-	if ultraGroup == nil {
-		ultraGroup = c.baseSession.GetGroupBySessionType(SessionTypeUltraPlan)
-	}
-	if ultraGroup != nil {
-		ultraGroup.AddInstance(inst.ID)
-	}
-
-	session.CoordinatorID = inst.ID
-
-	// Start the instance
-	if err := c.orch.StartInstance(inst); err != nil {
-		c.logger.Error("planning failed",
-			"error", err.Error(),
-			"stage", "start_instance",
-		)
-		return fmt.Errorf("failed to start planning instance: %w", err)
-	}
-
-	return nil
+	return po.ExecuteWithPrompt(c.ctx, prompt, c.baseSession, getGroup, setCoordinatorID)
 }
 
 // RunMultiPassPlanning executes the multi-pass planning phase
@@ -878,100 +564,31 @@ func (c *Coordinator) StartExecution() error {
 	session.StartedAt = &now
 	c.mu.Unlock()
 
-	// Reset ExecutionOrchestrator state for fresh execution
+	// Get ExecutionOrchestrator - always delegate to it
 	eo := c.ExecutionOrchestrator()
-	if eo != nil {
-		eo.Reset()
+	if eo == nil {
+		return fmt.Errorf("execution orchestrator not initialized")
 	}
 
-	// Delegate to ExecutionOrchestrator if execution context can be built
-	// This makes the Coordinator a thin facade that orchestrates the phases
-	if eo != nil {
-		execCtx, err := c.BuildExecutionContext()
-		if err == nil {
-			// Update the orchestrator with the extended context
-			// and start execution via the orchestrator
-			c.wg.Add(1)
-			go func() {
-				defer c.wg.Done()
-				if execErr := eo.ExecuteWithContext(c.ctx, execCtx); execErr != nil {
-					c.logger.Error("execution phase failed", "error", execErr)
-				}
-			}()
-			return nil
-		}
-		// Fall through to direct implementation if context building failed
-		c.logger.Debug("falling back to direct execution implementation",
-			"reason", err.Error())
+	// Reset ExecutionOrchestrator state for fresh execution
+	eo.Reset()
+
+	// Build execution context
+	execCtx, err := c.BuildExecutionContext()
+	if err != nil {
+		return fmt.Errorf("failed to build execution context: %w", err)
 	}
 
-	// Fallback: direct implementation if orchestrator unavailable
+	// Start execution via the orchestrator
 	c.wg.Add(1)
-	go c.executionLoop()
+	go func() {
+		defer c.wg.Done()
+		if execErr := eo.ExecuteWithContext(c.ctx, execCtx); execErr != nil {
+			c.logger.Error("execution phase failed", "error", execErr)
+		}
+	}()
 
 	return nil
-}
-
-// executionLoop manages the parallel execution of tasks
-func (c *Coordinator) executionLoop() {
-	defer c.wg.Done()
-
-	session := c.Session()
-	config := session.Config
-
-	// Channel for task completion notifications
-	completionChan := make(chan taskCompletion, 100)
-
-	for {
-		select {
-		case <-c.ctx.Done():
-			return
-
-		case completion := <-completionChan:
-			c.handleTaskCompletion(completion)
-			c.notifyProgress()
-
-		default:
-			// Fallback: poll for task completions that monitoring goroutines may have missed
-			// This catches cases where goroutines exit early (context cancellation) or fail to send
-			c.pollTaskCompletions(completionChan)
-
-			// Check if we're done
-			c.mu.RLock()
-			completedCount := len(session.CompletedTasks)
-			failedCount := len(session.FailedTasks)
-			totalTasks := len(session.Plan.Tasks)
-			runningCount := c.runningCount
-			c.mu.RUnlock()
-
-			if completedCount+failedCount >= totalTasks {
-				// All tasks done
-				c.finishExecution()
-				return
-			}
-
-			// Check if we can start more tasks (MaxParallel <= 0 means unlimited)
-			if config.MaxParallel <= 0 || runningCount < config.MaxParallel {
-				readyTasks := session.GetReadyTasks()
-				for _, taskID := range readyTasks {
-					c.mu.RLock()
-					currentRunning := c.runningCount
-					c.mu.RUnlock()
-
-					if config.MaxParallel > 0 && currentRunning >= config.MaxParallel {
-						break
-					}
-
-					if err := c.startTask(taskID, completionChan); err != nil {
-						c.notifyTaskFailed(taskID, err.Error())
-					}
-				}
-			}
-
-			// Small sleep to avoid busy-waiting
-			time.Sleep(500 * time.Millisecond)
-		}
-	}
 }
 
 // taskCompletion represents a task completion notification
@@ -982,82 +599,6 @@ type taskCompletion struct {
 	error       string
 	needsRetry  bool // Indicates task should be retried (no commits produced)
 	commitCount int  // Number of commits produced by this task
-}
-
-// startTask starts a single task as a new instance
-func (c *Coordinator) startTask(taskID string, completionChan chan<- taskCompletion) error {
-	session := c.Session()
-	task := session.GetTask(taskID)
-	if task == nil {
-		return fmt.Errorf("task %s not found", taskID)
-	}
-
-	// Create the task prompt with context
-	prompt := c.buildTaskPrompt(task)
-
-	// Determine the base branch for this task
-	// For tasks in group 0, use the default (HEAD/main)
-	// For tasks in later groups, use the consolidated branch from the previous group
-	baseBranch := c.getBaseBranchForGroup(session.CurrentGroup)
-
-	// Create a new instance for this task
-	var inst *Instance
-	var err error
-	if baseBranch != "" {
-		// Use the consolidated branch from the previous group as the base
-		inst, err = c.orch.AddInstanceFromBranch(c.baseSession, prompt, baseBranch)
-	} else {
-		// Use the default (HEAD/main)
-		inst, err = c.orch.AddInstance(c.baseSession, prompt)
-	}
-	if err != nil {
-		c.logger.Error("task execution failed",
-			"task_id", taskID,
-			"error", err.Error(),
-			"stage", "create_instance",
-		)
-		return fmt.Errorf("failed to create instance for task %s: %w", taskID, err)
-	}
-
-	// Add instance to the ultraplan group for sidebar display
-	sessionType := SessionTypeUltraPlan
-	if session.Config.MultiPass {
-		sessionType = SessionTypePlanMulti
-	}
-	if ultraGroup := c.baseSession.GetGroupBySessionType(sessionType); ultraGroup != nil {
-		ultraGroup.AddInstance(inst.ID)
-	}
-
-	// Track the running task
-	c.mu.Lock()
-	c.runningTasks[taskID] = inst.ID
-	c.runningCount++
-	c.mu.Unlock()
-
-	c.notifyTaskStart(taskID, inst.ID)
-
-	// Start the instance
-	if err := c.orch.StartInstance(inst); err != nil {
-		c.mu.Lock()
-		delete(c.runningTasks, taskID)
-		c.runningCount--
-		c.mu.Unlock()
-		c.logger.Error("task execution failed",
-			"task_id", taskID,
-			"error", err.Error(),
-			"stage", "start_instance",
-		)
-		return fmt.Errorf("failed to start instance for task %s: %w", taskID, err)
-	}
-
-	// Monitor the instance for completion in a goroutine
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		c.monitorTaskInstance(taskID, inst.ID, completionChan)
-	}()
-
-	return nil
 }
 
 // buildTaskPrompt creates the prompt for a child task instance.
@@ -1498,180 +1039,34 @@ func (c *Coordinator) finishExecution() {
 func (c *Coordinator) RunSynthesis() error {
 	c.notifyPhaseChange(PhaseSynthesis)
 
-	// Reset SynthesisOrchestrator state for fresh synthesis
+	// Get SynthesisOrchestrator - always delegate to it
 	so := c.SynthesisOrchestrator()
-	if so != nil {
-		so.Reset()
+	if so == nil {
+		return fmt.Errorf("synthesis orchestrator not initialized")
 	}
 
-	// Delegate to SynthesisOrchestrator if available
-	// This makes the Coordinator a thin facade that orchestrates the phases
-	if so != nil {
-		// Start synthesis via the orchestrator in a goroutine
-		// The orchestrator will handle monitoring and trigger consolidation
-		c.wg.Add(1)
-		go func() {
-			defer c.wg.Done()
-			if err := so.Execute(c.ctx); err != nil {
-				c.logger.Error("synthesis phase failed", "error", err)
-				// Update session state on failure
-				session := c.Session()
-				c.mu.Lock()
-				session.Phase = PhaseFailed
-				session.Error = fmt.Sprintf("synthesis failed: %v", err)
-				c.mu.Unlock()
-				_ = c.orch.SaveSession()
-				c.notifyComplete(false, session.Error)
-			}
-		}()
-		return nil
-	}
+	// Reset SynthesisOrchestrator state for fresh synthesis
+	so.Reset()
 
-	// Fallback: direct implementation if orchestrator unavailable
-	return c.runSynthesisDirect()
-}
-
-// runSynthesisDirect is the fallback direct implementation of synthesis.
-// DEPRECATED: Prefer SynthesisOrchestrator.Execute for new code.
-func (c *Coordinator) runSynthesisDirect() error {
-	// Build the synthesis prompt
-	prompt := c.buildSynthesisPrompt()
-
-	// Create a synthesis instance
-	inst, err := c.orch.AddInstance(c.baseSession, prompt)
-	if err != nil {
-		c.logger.Error("synthesis failed",
-			"error", err.Error(),
-			"stage", "create_instance",
-		)
-		return fmt.Errorf("failed to create synthesis instance: %w", err)
-	}
-
-	// Store the synthesis instance ID for TUI visibility
-	session := c.Session()
-	session.SynthesisID = inst.ID
-
-	// Add synthesis instance to the ultraplan group for sidebar display
-	sessionType := SessionTypeUltraPlan
-	if session.Config.MultiPass {
-		sessionType = SessionTypePlanMulti
-	}
-	if ultraGroup := c.baseSession.GetGroupBySessionType(sessionType); ultraGroup != nil {
-		ultraGroup.AddInstance(inst.ID)
-	}
-
-	// Start the instance
-	if err := c.orch.StartInstance(inst); err != nil {
-		c.logger.Error("synthesis failed",
-			"error", err.Error(),
-			"stage", "start_instance",
-		)
-		return fmt.Errorf("failed to start synthesis instance: %w", err)
-	}
-
-	// Monitor the synthesis instance for completion
-	// When it completes, automatically trigger consolidation
+	// Start synthesis via the orchestrator in a goroutine
+	// The orchestrator will handle monitoring and trigger consolidation
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		c.monitorSynthesisInstance(inst.ID)
+		if err := so.Execute(c.ctx); err != nil {
+			c.logger.Error("synthesis phase failed", "error", err)
+			// Update session state on failure
+			session := c.Session()
+			c.mu.Lock()
+			session.Phase = PhaseFailed
+			session.Error = fmt.Sprintf("synthesis failed: %v", err)
+			c.mu.Unlock()
+			_ = c.orch.SaveSession()
+			c.notifyComplete(false, session.Error)
+		}
 	}()
 
 	return nil
-}
-
-// monitorSynthesisInstance monitors the synthesis instance and triggers consolidation when complete
-func (c *Coordinator) monitorSynthesisInstance(instanceID string) {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-c.ctx.Done():
-			return
-
-		case <-ticker.C:
-			inst := c.orch.GetInstance(instanceID)
-			if inst == nil {
-				// Instance gone, assume complete
-				c.onSynthesisComplete()
-				return
-			}
-
-			// Check for sentinel file first - this is the most reliable completion signal
-			// The synthesis agent writes .claudio-synthesis-complete.json when done
-			if c.checkForSynthesisCompletionFile(inst) {
-				// Don't auto-advance - set flag and wait for user approval
-				c.onSynthesisReady()
-				return
-			}
-
-			switch inst.Status {
-			case StatusCompleted:
-				// Synthesis fully completed - trigger consolidation or finish
-				c.onSynthesisComplete()
-				return
-
-			// Note: StatusWaitingInput is intentionally NOT treated as completion.
-			// Synthesis may need multiple user interactions. Use TriggerConsolidation()
-			// or the [s] keybinding to manually signal synthesis is done.
-
-			case StatusError, StatusTimeout, StatusStuck:
-				// Synthesis failed
-				session := c.Session()
-				c.mu.Lock()
-				session.Phase = PhaseFailed
-				session.Error = fmt.Sprintf("synthesis failed: %s", inst.Status)
-				c.mu.Unlock()
-				_ = c.orch.SaveSession()
-				c.notifyComplete(false, session.Error)
-				return
-			}
-		}
-	}
-}
-
-// checkForSynthesisCompletionFile checks if the synthesis completion sentinel file exists and is valid
-func (c *Coordinator) checkForSynthesisCompletionFile(inst *Instance) bool {
-	if inst.WorktreePath == "" {
-		return false
-	}
-
-	completionPath := SynthesisCompletionFilePath(inst.WorktreePath)
-	if _, err := os.Stat(completionPath); err != nil {
-		return false // File doesn't exist yet
-	}
-
-	// File exists - try to parse it to ensure it's valid
-	completion, err := ParseSynthesisCompletionFile(inst.WorktreePath)
-	if err != nil {
-		// File exists but is invalid/incomplete - might still be writing
-		return false
-	}
-
-	// File is valid - check status is set
-	return completion.Status != ""
-}
-
-// onSynthesisReady is called when synthesis writes its completion file
-// Instead of auto-advancing, it sets a flag and waits for user approval
-func (c *Coordinator) onSynthesisReady() {
-	session := c.Session()
-
-	// Parse and store synthesis completion data
-	synthesisCompletion, _ := c.parseRevisionIssues()
-	c.mu.Lock()
-	if synthesisCompletion != nil {
-		session.SynthesisCompletion = synthesisCompletion
-	}
-	session.SynthesisAwaitingApproval = true
-	c.mu.Unlock()
-
-	// Save session state
-	_ = c.orch.SaveSession()
-
-	// Notify that user input is needed (but don't advance)
-	c.notifyPhaseChange(PhaseSynthesis)
 }
 
 // onSynthesisComplete handles synthesis completion and triggers revision or consolidation
@@ -2340,39 +1735,6 @@ func (c *Coordinator) ResumeConsolidation() error {
 	return nil
 }
 
-// buildSynthesisPrompt creates the prompt for the synthesis phase using the prompt.SynthesisBuilder.
-// It builds a prompt.Context with plan info (including commit counts), completed tasks, and failed tasks,
-// then delegates to the builder to produce the formatted prompt string.
-func (c *Coordinator) buildSynthesisPrompt() string {
-	session := c.Session()
-
-	// Build prompt context for the synthesis builder
-	ctx := &prompt.Context{
-		Phase:          prompt.PhaseSynthesis,
-		SessionID:      session.ID,
-		Objective:      session.Objective,
-		Plan:           planInfoWithCommitCounts(session.Plan, session.TaskCommitCounts),
-		CompletedTasks: session.CompletedTasks,
-		FailedTasks:    session.FailedTasks,
-	}
-
-	// Add previous group context if available
-	ctx.PreviousGroupContext = buildPreviousGroupContextStrings(session.GroupConsolidationContexts)
-
-	// Use the SynthesisBuilder to generate the prompt
-	builder := prompt.NewSynthesisBuilder()
-	result, err := builder.Build(ctx)
-	if err != nil {
-		// Log the error and fall back to a minimal prompt
-		c.logger.Error("failed to build synthesis prompt",
-			"error", err.Error(),
-		)
-		return fmt.Sprintf("Review the completed work for objective: %s\n\nIdentify any integration issues or missing functionality.", session.Objective)
-	}
-
-	return result
-}
-
 // Cancel cancels the ultra-plan execution
 func (c *Coordinator) Cancel() {
 	c.cancelFunc()
@@ -2740,9 +2102,14 @@ func (c *Coordinator) RetriggerGroup(targetGroup int) error {
 		Message: fmt.Sprintf("Retriggered from group %d", targetGroup),
 	})
 
-	// Restart execution loop
-	c.wg.Add(1)
-	go c.executionLoop()
+	// Restart execution loop via ExecutionOrchestrator
+	eo := c.ExecutionOrchestrator()
+	if eo == nil {
+		// ExecutionOrchestrator must be initialized - this is a programming error
+		c.logger.Error("RetriggerGroup called but ExecutionOrchestrator is nil")
+		return fmt.Errorf("ExecutionOrchestrator not initialized")
+	}
+	eo.RestartLoop()
 
 	return nil
 }
@@ -3050,9 +2417,8 @@ func (c *Coordinator) restartPlanManager() (string, error) {
 	return session.PlanManagerID, nil
 }
 
-// restartTask restarts a specific task
-// Note: This method bypasses the ExecutionOrchestrator's execute loop and starts
-// the task directly. The session state is the source of truth for task tracking.
+// restartTask restarts a specific task by delegating to the ExecutionOrchestrator.
+// The session state is reset first, then the task is started through the orchestrator.
 func (c *Coordinator) restartTask(taskID string) (string, error) {
 	session := c.Session()
 	if taskID == "" {
@@ -3073,11 +2439,15 @@ func (c *Coordinator) restartTask(taskID string) (string, error) {
 		return "", fmt.Errorf("cannot restart task while %d tasks are running", runningCount)
 	}
 
+	// Get ExecutionOrchestrator - required for proper task execution
+	execOrch := c.ExecutionOrchestrator()
+	if execOrch == nil {
+		return "", fmt.Errorf("ExecutionOrchestrator not initialized")
+	}
+
 	// Reset execution orchestrator state to clear ProcessedTasks and allow re-execution
 	// Since no tasks are running (verified above), clearing all state is safe
-	if execOrch := c.ExecutionOrchestrator(); execOrch != nil {
-		execOrch.Reset()
-	}
+	execOrch.Reset()
 
 	// Reset task state in session
 	c.mu.Lock()
@@ -3116,25 +2486,11 @@ func (c *Coordinator) restartTask(taskID string) (string, error) {
 	session.GroupDecision = nil
 	c.mu.Unlock()
 
-	// Start the task
-	completionChan := make(chan taskCompletion, 1)
-	if err := c.startTask(taskID, completionChan); err != nil {
+	// Start the task through ExecutionOrchestrator
+	newInstanceID, err := execOrch.StartSingleTask(taskID)
+	if err != nil {
 		return "", fmt.Errorf("failed to restart task: %w", err)
 	}
-
-	// Get the new instance ID
-	c.mu.RLock()
-	newInstanceID := session.TaskToInstance[taskID]
-	c.mu.RUnlock()
-
-	// Start monitoring in the background
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		for completion := range completionChan {
-			c.handleTaskCompletion(completion)
-		}
-	}()
 
 	if err := c.orch.SaveSession(); err != nil {
 		c.logger.Error("failed to save session after task restart",

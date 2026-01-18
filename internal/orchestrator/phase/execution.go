@@ -1431,6 +1431,57 @@ func (e *ExecutionOrchestrator) Reset() {
 	}
 }
 
+// RestartLoop starts the execution loop in a new goroutine.
+// This is used by RetriggerGroup to restart execution after resetting state.
+// The orchestrator must have a valid context (e.ctx) set up, which is done
+// by a prior call to Execute() or ExecuteWithContext().
+// If no context exists, a new background context is created.
+func (e *ExecutionOrchestrator) RestartLoop() {
+	e.mu.Lock()
+	if e.ctx == nil {
+		// No existing context - create a new one
+		e.ctx, e.cancel = context.WithCancel(context.Background())
+	}
+	e.cancelled = false
+	e.mu.Unlock()
+
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		e.executionLoop()
+	}()
+}
+
+// StartSingleTask starts a single task and returns its instance ID.
+// This is used by the Coordinator's restartTask to start a specific task
+// through the ExecutionOrchestrator rather than bypassing it.
+// The task state must have already been reset (removed from completed/failed lists)
+// before calling this method.
+func (e *ExecutionOrchestrator) StartSingleTask(taskID string) (string, error) {
+	if e == nil {
+		return "", fmt.Errorf("nil ExecutionOrchestrator")
+	}
+
+	// Ensure we have a valid context
+	e.mu.Lock()
+	if e.ctx == nil {
+		e.ctx, e.cancel = context.WithCancel(context.Background())
+	}
+	e.mu.Unlock()
+
+	// Start the task using the internal method
+	if err := e.startTask(taskID); err != nil {
+		return "", err
+	}
+
+	// Get the instance ID from the running tasks
+	e.mu.RLock()
+	instanceID := e.state.RunningTasks[taskID]
+	e.mu.RUnlock()
+
+	return instanceID, nil
+}
+
 // ErrExecutionCancelled is returned when the orchestrator is cancelled.
 var ErrExecutionCancelled = fmt.Errorf("execution phase cancelled")
 
