@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Task Chaining by Sidebar Number** - The `:chain`, `:dep`, and `:depends` commands now accept an optional sidebar number argument to specify which instance to chain from (e.g., `:chain 2` or `:chain #2`). This is more user-friendly than using instance IDs, which aren't prominently displayed.
 
+### Fixed
+
+- **Adversarial Mode Header Alignment** - Fixed the adversarial mode header displaying the status text outside the styled header border, causing visual misalignment
+
 ### Changed
 
 - **Unified Group Types** - Refactored the `group`, `orchestrator`, and `session` packages to use a shared `grouptypes.InstanceGroup` type, eliminating type duplication and ~80 lines of conversion code. This also prevents data loss (SessionType and Objective fields) when using the group manager.
