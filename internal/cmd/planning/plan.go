@@ -4,7 +4,6 @@ package planning
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -255,19 +254,4 @@ func createIssuesOutput(planSpec *orchestrator.PlanSpec) error {
 	fmt.Printf("Created %d sub-issues\n", len(result.SubIssueNumbers))
 
 	return nil
-}
-
-// LoadPlanFromFile loads a plan from a JSON file (for use by other commands)
-func LoadPlanFromFile(path string) (*orchestrator.PlanSpec, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
-	}
-
-	var planSpec orchestrator.PlanSpec
-	if err := json.Unmarshal(data, &planSpec); err != nil {
-		return nil, fmt.Errorf("failed to parse plan JSON: %w", err)
-	}
-
-	return &planSpec, nil
 }

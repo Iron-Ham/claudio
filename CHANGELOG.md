@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Monorepo Development** - Sparse checkout optimization, Turborepo/Nx integration, affected-only builds
   - **Data Science & ML** - Jupyter notebook management, experiment tracking, GPU resource coordination
 
+### Changed
+
+- **Dead Code Removal** - Comprehensive cleanup of unused code across the codebase:
+  - Removed three unused ultraplan subpackages (`consolidator`, `decomposition`, `executor`)
+  - Removed `internal/instance/facade.go` (unused Facade type and its methods)
+  - Removed `internal/instance/capture/output.go` (unused TmuxCapture implementation)
+  - Removed `internal/instance/process/` package (4 files, never imported)
+  - Removed `internal/logging/aggregate.go` (unused log aggregation utilities)
+  - Removed unused `LoadPlanFromFile` function from `internal/cmd/planning/plan.go`
+  - Updated related doc.go files to remove references to deleted code
+  - This reduces codebase complexity and maintenance burden without affecting functionality.
+
 ### Fixed
 
 - **Terminal Pane Shell Prompt Not Visible** - Fixed the terminal pane not displaying the shell prompt. The root cause was that `capture-pane` returns output ending with a newline, which caused `strings.Split` to create an extra empty element. When taking the "last N lines", the prompt (at position 0) was dropped while empty lines were kept. The fix trims trailing newlines before splitting and reorders the trimming/truncation logic to prioritize actual content.
