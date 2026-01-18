@@ -3,7 +3,7 @@ package tui
 import (
 	"fmt"
 
-	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,7 +31,7 @@ func (m *Model) dispatchTripleShotCompletionChecks() []tea.Cmd {
 
 		// Only check if in a phase that requires polling
 		switch session.Phase {
-		case orchestrator.PhaseTripleShotWorking, orchestrator.PhaseTripleShotEvaluating:
+		case tripleshot.PhaseWorking, tripleshot.PhaseEvaluating:
 			cmds = append(cmds, tuimsg.CheckTripleShotCompletionAsync(coordinator, groupID))
 		}
 	}
@@ -69,13 +69,13 @@ func (m *Model) handleTripleShotCheckResult(msg tuimsg.TripleShotCheckResultMsg)
 	}
 
 	switch msg.Phase {
-	case orchestrator.PhaseTripleShotWorking:
+	case tripleshot.PhaseWorking:
 		return m.processAttemptCheckResults(coordinator, session, msg)
 
-	case orchestrator.PhaseTripleShotEvaluating:
+	case tripleshot.PhaseEvaluating:
 		return m.processJudgeCheckResult(coordinator, msg)
 
-	case orchestrator.PhaseTripleShotFailed:
+	case tripleshot.PhaseFailed:
 		// Show error message for failed tripleshot
 		if session.Error != "" && m.errorMessage == "" {
 			m.errorMessage = "Triple-shot failed: " + session.Error
@@ -89,8 +89,8 @@ func (m *Model) handleTripleShotCheckResult(msg tuimsg.TripleShotCheckResultMsg)
 // processAttemptCheckResults handles completion check results for attempts.
 // Returns async commands to process any completed attempts without blocking the UI.
 func (m *Model) processAttemptCheckResults(
-	coordinator *orchestrator.TripleShotCoordinator,
-	session *orchestrator.TripleShotSession,
+	coordinator *tripleshot.Coordinator,
+	session *tripleshot.Session,
 	msg tuimsg.TripleShotCheckResultMsg,
 ) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -169,7 +169,7 @@ func (m *Model) handleTripleShotAttemptProcessed(msg tuimsg.TripleShotAttemptPro
 // processJudgeCheckResult handles completion check results for the judge.
 // Returns an async command to process the judge completion file without blocking the UI.
 func (m *Model) processJudgeCheckResult(
-	coordinator *orchestrator.TripleShotCoordinator,
+	coordinator *tripleshot.Coordinator,
 	msg tuimsg.TripleShotCheckResultMsg,
 ) (tea.Model, tea.Cmd) {
 	if msg.JudgeError != nil {
@@ -216,7 +216,7 @@ func (m *Model) handleTripleShotJudgeStopped(judgeID string) {
 	}
 
 	// Find the coordinator whose session has this judge
-	var coordinatorToStop *orchestrator.TripleShotCoordinator
+	var coordinatorToStop *tripleshot.Coordinator
 	var groupIDToRemove string
 	for groupID, coord := range m.tripleShot.Coordinators {
 		session := coord.Session()

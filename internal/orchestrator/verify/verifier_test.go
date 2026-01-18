@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
 // mockWorktreeOps is a mock implementation of WorktreeOperations.
@@ -197,7 +199,7 @@ func TestCheckCompletionFile_NoFile(t *testing.T) {
 func TestCheckCompletionFile_ValidTaskCompletion(t *testing.T) {
 	tempDir := t.TempDir()
 
-	completion := TaskCompletionFile{
+	completion := types.TaskCompletionFile{
 		TaskID:        "task-1",
 		Status:        "complete",
 		Summary:       "Task completed successfully",
@@ -273,7 +275,7 @@ func TestCheckCompletionFile_EmptyStatus(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Task completion with empty status should not be considered valid
-	completion := TaskCompletionFile{
+	completion := types.TaskCompletionFile{
 		TaskID:  "task-1",
 		Status:  "",
 		Summary: "No status",
@@ -299,12 +301,12 @@ func TestCheckCompletionFile_EmptyStatus(t *testing.T) {
 func TestParseTaskCompletionFile(t *testing.T) {
 	tempDir := t.TempDir()
 
-	expected := TaskCompletionFile{
+	expected := types.TaskCompletionFile{
 		TaskID:        "task-123",
 		Status:        "complete",
 		Summary:       "Implemented feature X",
 		FilesModified: []string{"a.go", "b.go"},
-		Notes:         "Some notes",
+		Notes:         types.FlexibleString("Some notes"),
 		Issues:        []string{"issue-1"},
 		Suggestions:   []string{"suggestion-1"},
 		Dependencies:  []string{"dep-1"},
@@ -351,7 +353,7 @@ func TestParseTaskCompletionFile_FileNotFound(t *testing.T) {
 func TestFindAndParseTaskCompletionFile_AtRoot(t *testing.T) {
 	tempDir := t.TempDir()
 
-	expected := TaskCompletionFile{
+	expected := types.TaskCompletionFile{
 		TaskID:  "task-root",
 		Status:  "complete",
 		Summary: "File at root",
@@ -387,7 +389,7 @@ func TestFindAndParseTaskCompletionFile_InSubdirectory(t *testing.T) {
 		t.Fatalf("failed to create subdirectory: %v", err)
 	}
 
-	expected := TaskCompletionFile{
+	expected := types.TaskCompletionFile{
 		TaskID:  "task-subdir",
 		Status:  "complete",
 		Summary: "File in subdirectory",
@@ -678,7 +680,7 @@ func TestCheckCompletionFile_BothFilesExist_TaskTakesPrecedence(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// Write both task and revision completion files
-	taskCompletion := TaskCompletionFile{
+	taskCompletion := types.TaskCompletionFile{
 		TaskID: "task-1",
 		Status: "complete",
 	}
@@ -765,7 +767,7 @@ func TestVerifyTaskWork_CompletionFileOverride_NoCommits(t *testing.T) {
 	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
 
 	// Write a completion file with status="complete"
-	completion := TaskCompletionFile{
+	completion := types.TaskCompletionFile{
 		TaskID:  "task-1",
 		Status:  "complete",
 		Summary: "Verification task completed successfully - no code changes needed",
@@ -807,7 +809,7 @@ func TestVerifyTaskWork_CompletionFileInSubdirectory_NoCommits(t *testing.T) {
 	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
 
 	// Write a completion file in subdirectory (simulating Claude wrote it after cd project/src)
-	completion := TaskCompletionFile{
+	completion := types.TaskCompletionFile{
 		TaskID:  "task-1",
 		Status:  "complete",
 		Summary: "Verification task completed - file in subdirectory",
@@ -844,7 +846,7 @@ func TestVerifyTaskWork_CompletionFileBlocked_StillFails(t *testing.T) {
 	v := NewTaskVerifier(wt, rt, events, WithConfig(cfg))
 
 	// Write a completion file with status="blocked" (not "complete")
-	completion := TaskCompletionFile{
+	completion := types.TaskCompletionFile{
 		TaskID:  "task-1",
 		Status:  "blocked",
 		Summary: "Task is blocked by external dependency",
@@ -899,7 +901,7 @@ func TestCheckCompletionFile_InSubdirectory(t *testing.T) {
 	}
 
 	// Write completion file in subdirectory (simulating the bug)
-	completion := TaskCompletionFile{
+	completion := types.TaskCompletionFile{
 		TaskID:  "task-1",
 		Status:  "complete",
 		Summary: "Task completed",
@@ -962,7 +964,7 @@ func TestCheckCompletionFile_SkipsNodeModules(t *testing.T) {
 		t.Fatalf("failed to create node_modules: %v", err)
 	}
 
-	completion := TaskCompletionFile{TaskID: "task-1", Status: "complete"}
+	completion := types.TaskCompletionFile{TaskID: "task-1", Status: "complete"}
 	data, _ := json.Marshal(completion)
 	if err := os.WriteFile(filepath.Join(nodeModules, TaskCompletionFileName), data, 0644); err != nil {
 		t.Fatalf("failed to write completion file: %v", err)
@@ -989,7 +991,7 @@ func TestCheckCompletionFile_SkipsVendor(t *testing.T) {
 		t.Fatalf("failed to create vendor dir: %v", err)
 	}
 
-	completion := TaskCompletionFile{TaskID: "task-1", Status: "complete"}
+	completion := types.TaskCompletionFile{TaskID: "task-1", Status: "complete"}
 	data, _ := json.Marshal(completion)
 	if err := os.WriteFile(filepath.Join(vendorDir, TaskCompletionFileName), data, 0644); err != nil {
 		t.Fatalf("failed to write completion file: %v", err)
@@ -1015,7 +1017,7 @@ func TestCheckCompletionFile_SkipsPods(t *testing.T) {
 		t.Fatalf("failed to create Pods dir: %v", err)
 	}
 
-	completion := TaskCompletionFile{TaskID: "task-1", Status: "complete"}
+	completion := types.TaskCompletionFile{TaskID: "task-1", Status: "complete"}
 	data, _ := json.Marshal(completion)
 	if err := os.WriteFile(filepath.Join(podsDir, TaskCompletionFileName), data, 0644); err != nil {
 		t.Fatalf("failed to write completion file: %v", err)
@@ -1042,8 +1044,8 @@ func TestCheckCompletionFile_RootTakesPrecedence(t *testing.T) {
 	}
 
 	// Write completion files in both root and subdirectory
-	rootCompletion := TaskCompletionFile{TaskID: "root-task", Status: "complete"}
-	subCompletion := TaskCompletionFile{TaskID: "sub-task", Status: "complete"}
+	rootCompletion := types.TaskCompletionFile{TaskID: "root-task", Status: "complete"}
+	subCompletion := types.TaskCompletionFile{TaskID: "sub-task", Status: "complete"}
 
 	rootData, _ := json.Marshal(rootCompletion)
 	subData, _ := json.Marshal(subCompletion)
@@ -1086,7 +1088,7 @@ func TestFindCompletionFile_DepthLimit(t *testing.T) {
 	}
 
 	// Write completion file at depth > maxSearchDepth
-	completion := TaskCompletionFile{TaskID: "deep-task", Status: "complete"}
+	completion := types.TaskCompletionFile{TaskID: "deep-task", Status: "complete"}
 	data, _ := json.Marshal(completion)
 	if err := os.WriteFile(filepath.Join(deepDir, TaskCompletionFileName), data, 0644); err != nil {
 		t.Fatalf("failed to write completion file: %v", err)
@@ -1114,7 +1116,7 @@ func TestFindCompletionFile_WithinDepthLimit(t *testing.T) {
 	}
 
 	// Write completion file at depth = maxSearchDepth
-	completion := TaskCompletionFile{TaskID: "limit-task", Status: "complete"}
+	completion := types.TaskCompletionFile{TaskID: "limit-task", Status: "complete"}
 	data, _ := json.Marshal(completion)
 	if err := os.WriteFile(filepath.Join(atLimitDir, TaskCompletionFileName), data, 0644); err != nil {
 		t.Fatalf("failed to write completion file: %v", err)

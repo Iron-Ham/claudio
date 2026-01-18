@@ -13,11 +13,12 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 	"github.com/Iron-Ham/claudio/internal/worktree"
 )
 
 // TaskCompletionFileName is the sentinel file that tasks write when complete.
-const TaskCompletionFileName = ".claudio-task-complete.json"
+const TaskCompletionFileName = types.TaskCompletionFileName
 
 // RevisionCompletionFileName is the sentinel file that revision tasks write when complete.
 const RevisionCompletionFileName = ".claudio-revision-complete.json"
@@ -60,18 +61,6 @@ type TaskVerifyOptions struct {
 	// NoCode indicates the task doesn't require code changes.
 	// When true, the task succeeds even without commits.
 	NoCode bool
-}
-
-// TaskCompletionFile represents the completion report written by a task.
-type TaskCompletionFile struct {
-	TaskID        string   `json:"task_id"`
-	Status        string   `json:"status"` // "complete", "blocked", or "failed"
-	Summary       string   `json:"summary"`
-	FilesModified []string `json:"files_modified"`
-	Notes         string   `json:"notes,omitempty"`
-	Issues        []string `json:"issues,omitempty"`
-	Suggestions   []string `json:"suggestions,omitempty"`
-	Dependencies  []string `json:"dependencies,omitempty"`
 }
 
 // RevisionCompletionFile represents the completion report from a revision task.
@@ -282,14 +271,14 @@ func (v *TaskVerifier) findCompletionFile(worktreePath, filename string) string 
 
 // ParseTaskCompletionFile reads and parses a task completion file from the worktree root.
 // Use FindAndParseTaskCompletionFile for recursive search when the file location is unknown.
-func (v *TaskVerifier) ParseTaskCompletionFile(worktreePath string) (*TaskCompletionFile, error) {
+func (v *TaskVerifier) ParseTaskCompletionFile(worktreePath string) (*types.TaskCompletionFile, error) {
 	completionPath := filepath.Join(worktreePath, TaskCompletionFileName)
 	data, err := os.ReadFile(completionPath)
 	if err != nil {
 		return nil, err
 	}
 
-	var completion TaskCompletionFile
+	var completion types.TaskCompletionFile
 	if err := json.Unmarshal(data, &completion); err != nil {
 		return nil, fmt.Errorf("failed to parse task completion JSON: %w", err)
 	}
@@ -301,7 +290,7 @@ func (v *TaskVerifier) ParseTaskCompletionFile(worktreePath string) (*TaskComple
 // Unlike ParseTaskCompletionFile, this uses recursive search to find the file
 // in subdirectories if not found at the root. This handles cases where Claude
 // changed directories during task execution.
-func (v *TaskVerifier) FindAndParseTaskCompletionFile(worktreePath string) (*TaskCompletionFile, error) {
+func (v *TaskVerifier) FindAndParseTaskCompletionFile(worktreePath string) (*types.TaskCompletionFile, error) {
 	completionPath := v.findCompletionFile(worktreePath, TaskCompletionFileName)
 	if completionPath == "" {
 		return nil, os.ErrNotExist
@@ -327,13 +316,13 @@ func (v *TaskVerifier) ParseRevisionCompletionFile(worktreePath string) (*Revisi
 
 // parseTaskCompletionFileAtPath reads and parses a task completion file at the given path.
 // Unlike ParseTaskCompletionFile, this takes a full file path rather than a worktree path.
-func (v *TaskVerifier) parseTaskCompletionFileAtPath(filePath string) (*TaskCompletionFile, error) {
+func (v *TaskVerifier) parseTaskCompletionFileAtPath(filePath string) (*types.TaskCompletionFile, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
 
-	var completion TaskCompletionFile
+	var completion types.TaskCompletionFile
 	if err := json.Unmarshal(data, &completion); err != nil {
 		return nil, fmt.Errorf("failed to parse task completion JSON: %w", err)
 	}

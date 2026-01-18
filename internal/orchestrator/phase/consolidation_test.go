@@ -6,6 +6,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
 // mockManagerForConsolidation implements UltraPlanManagerInterface for consolidation tests
@@ -347,7 +349,7 @@ func TestConsolidationOrchestrator_State(t *testing.T) {
 		orch := NewConsolidationOrchestrator(phaseCtx)
 
 		// Set some state
-		orch.SetState(ConsolidationState{
+		orch.SetState(ConsolidatorState{
 			SubPhase:      "merging",
 			CurrentGroup:  1,
 			TotalGroups:   3,
@@ -395,7 +397,7 @@ func TestConsolidationOrchestrator_State(t *testing.T) {
 		}
 
 		orch := NewConsolidationOrchestrator(phaseCtx)
-		orch.SetState(ConsolidationState{
+		orch.SetState(ConsolidatorState{
 			GroupBranches: []string{"branch-1"},
 		})
 
@@ -420,7 +422,7 @@ func TestConsolidationOrchestrator_SetState(t *testing.T) {
 
 		orch := NewConsolidationOrchestrator(phaseCtx)
 
-		newState := ConsolidationState{
+		newState := ConsolidatorState{
 			SubPhase:     "pushing",
 			CurrentGroup: 2,
 			TotalGroups:  5,
@@ -454,7 +456,7 @@ func TestConsolidationOrchestrator_SetState(t *testing.T) {
 		orch := NewConsolidationOrchestrator(phaseCtx)
 
 		branches := []string{"branch-1", "branch-2"}
-		orch.SetState(ConsolidationState{
+		orch.SetState(ConsolidatorState{
 			GroupBranches: branches,
 		})
 
@@ -563,7 +565,7 @@ func TestConsolidationOrchestrator_ConcurrentSafety(t *testing.T) {
 		// Goroutine 1: repeatedly set state
 		go func() {
 			for i := 0; i < 100; i++ {
-				orch.SetState(ConsolidationState{
+				orch.SetState(ConsolidatorState{
 					CurrentGroup: i,
 					TotalGroups:  100,
 				})
@@ -1292,7 +1294,7 @@ func TestConsolidationOrchestrator_Reset(t *testing.T) {
 		orch.setCompletedAt(time.Now())
 		orch.setCompleted(true)
 		orch.addPRUrl("https://pr-1")
-		orch.SetState(ConsolidationState{
+		orch.SetState(ConsolidatorState{
 			SubPhase:      "complete",
 			CurrentGroup:  3,
 			TotalGroups:   5,
@@ -1473,7 +1475,7 @@ func TestConsolidationOrchestrator_ResumeConsolidation(t *testing.T) {
 
 		orch := NewConsolidationOrchestrator(phaseCtx)
 		// Set paused state but no worktree
-		orch.SetState(ConsolidationState{
+		orch.SetState(ConsolidatorState{
 			SubPhase:         "paused",
 			ConflictWorktree: "", // No worktree
 		})
@@ -1749,7 +1751,7 @@ func TestConsolidationOrchestrator_GetConsolidation(t *testing.T) {
 		}
 
 		orch := NewConsolidationOrchestrator(phaseCtx)
-		orch.SetState(ConsolidationState{
+		orch.SetState(ConsolidatorState{
 			SubPhase:     "merging",
 			TotalGroups:  3,
 			CurrentGroup: 1,
@@ -1772,7 +1774,7 @@ func TestConsolidationOrchestrator_GetConsolidation(t *testing.T) {
 		}
 
 		orch := NewConsolidationOrchestrator(phaseCtx)
-		orch.SetState(ConsolidationState{
+		orch.SetState(ConsolidatorState{
 			TotalGroups: 5,
 		})
 
@@ -1826,7 +1828,7 @@ func TestConsolidationOrchestrator_ClearStateForRestart(t *testing.T) {
 		}
 
 		orch := NewConsolidationOrchestrator(phaseCtx)
-		orch.SetState(ConsolidationState{
+		orch.SetState(ConsolidatorState{
 			SubPhase:      "merging",
 			CurrentGroup:  2,
 			TotalGroups:   5,
@@ -2000,7 +2002,7 @@ func TestConsolidationOrchestrator_CanResume(t *testing.T) {
 		}
 
 		orch := NewConsolidationOrchestrator(phaseCtx)
-		orch.SetState(ConsolidationState{
+		orch.SetState(ConsolidatorState{
 			SubPhase:         "paused",
 			ConflictWorktree: "", // No worktree
 		})
@@ -2059,45 +2061,45 @@ func TestResumeErrors(t *testing.T) {
 func TestAggregatedTaskContext_HasContent(t *testing.T) {
 	tests := []struct {
 		name    string
-		context *AggregatedTaskContext
+		context *types.AggregatedTaskContext
 		want    bool
 	}{
 		{
 			name:    "empty context has no content",
-			context: &AggregatedTaskContext{},
+			context: &types.AggregatedTaskContext{},
 			want:    false,
 		},
 		{
 			name: "context with issues has content",
-			context: &AggregatedTaskContext{
+			context: &types.AggregatedTaskContext{
 				AllIssues: []string{"issue 1"},
 			},
 			want: true,
 		},
 		{
 			name: "context with suggestions has content",
-			context: &AggregatedTaskContext{
+			context: &types.AggregatedTaskContext{
 				AllSuggestions: []string{"suggestion 1"},
 			},
 			want: true,
 		},
 		{
 			name: "context with dependencies has content",
-			context: &AggregatedTaskContext{
+			context: &types.AggregatedTaskContext{
 				Dependencies: []string{"dep 1"},
 			},
 			want: true,
 		},
 		{
 			name: "context with notes has content",
-			context: &AggregatedTaskContext{
+			context: &types.AggregatedTaskContext{
 				Notes: []string{"note 1"},
 			},
 			want: true,
 		},
 		{
 			name: "context with only summaries has no content",
-			context: &AggregatedTaskContext{
+			context: &types.AggregatedTaskContext{
 				TaskSummaries: map[string]string{"task-1": "summary"},
 			},
 			want: false,
@@ -2115,14 +2117,14 @@ func TestAggregatedTaskContext_HasContent(t *testing.T) {
 
 func TestGroupConsolidationCompletionFileName(t *testing.T) {
 	expected := ".claudio-group-consolidation-complete.json"
-	if GroupConsolidationCompletionFileName != expected {
-		t.Errorf("GroupConsolidationCompletionFileName = %v, want %v",
-			GroupConsolidationCompletionFileName, expected)
+	if types.GroupConsolidationCompletionFileName != expected {
+		t.Errorf("types.GroupConsolidationCompletionFileName = %v, want %v",
+			types.GroupConsolidationCompletionFileName, expected)
 	}
 }
 
 func TestConsolidationTaskWorktreeInfo(t *testing.T) {
-	info := ConsolidationTaskWorktreeInfo{
+	info := types.ConsolidationTaskWorktreeInfo{
 		TaskID:       "task-1",
 		TaskTitle:    "Test Task",
 		WorktreePath: "/path/to/worktree",
@@ -2144,7 +2146,7 @@ func TestConsolidationTaskWorktreeInfo(t *testing.T) {
 }
 
 func TestConflictResolution(t *testing.T) {
-	resolution := ConflictResolution{
+	resolution := types.ConflictResolution{
 		File:       "path/to/file.go",
 		Resolution: "Merged both changes",
 	}
@@ -2158,9 +2160,9 @@ func TestConflictResolution(t *testing.T) {
 }
 
 func TestVerificationResult(t *testing.T) {
-	result := VerificationResult{
+	result := types.VerificationResult{
 		ProjectType: "go",
-		CommandsRun: []VerificationStep{
+		CommandsRun: []types.VerificationStep{
 			{Name: "build", Command: "go build ./...", Success: true},
 			{Name: "test", Command: "go test ./...", Success: false, Output: "test failed"},
 		},
@@ -2183,18 +2185,18 @@ func TestVerificationResult(t *testing.T) {
 }
 
 func TestGroupConsolidationCompletionFile(t *testing.T) {
-	file := GroupConsolidationCompletionFile{
+	file := types.GroupConsolidationCompletionFile{
 		GroupIndex:        0,
 		Status:            "complete",
 		BranchName:        "feature/consolidated",
 		TasksConsolidated: []string{"task-1", "task-2"},
-		ConflictsResolved: []ConflictResolution{
+		ConflictsResolved: []types.ConflictResolution{
 			{File: "file.go", Resolution: "merged"},
 		},
-		Verification: VerificationResult{
+		Verification: types.VerificationResult{
 			OverallSuccess: true,
 		},
-		AggregatedContext: &AggregatedTaskContext{
+		AggregatedContext: &types.AggregatedTaskContext{
 			AllIssues: []string{"issue 1"},
 		},
 		Notes:              "Consolidation notes",
@@ -2225,7 +2227,7 @@ func TestGroupConsolidationCompletionFile(t *testing.T) {
 }
 
 func TestTaskCompletionFile(t *testing.T) {
-	file := TaskCompletionFile{
+	file := types.TaskCompletionFile{
 		TaskID:        "task-1",
 		Status:        "complete",
 		Summary:       "Implemented feature X",
@@ -2260,7 +2262,7 @@ type mockGroupConsolidationSession struct {
 	branchPrefix              string
 	groupConsolidatedBranches []string
 	groupConsolidatorIDs      []string
-	groupConsolidationCtxs    []*GroupConsolidationCompletionFile
+	groupConsolidationCtxs    []*types.GroupConsolidationCompletionFile
 	isMultiPass               bool
 }
 
@@ -2272,7 +2274,7 @@ func newMockGroupConsolidationSession() *mockGroupConsolidationSession {
 		},
 		groupConsolidatedBranches: make([]string, 0),
 		groupConsolidatorIDs:      make([]string, 0),
-		groupConsolidationCtxs:    make([]*GroupConsolidationCompletionFile, 0),
+		groupConsolidationCtxs:    make([]*types.GroupConsolidationCompletionFile, 0),
 	}
 }
 
@@ -2314,11 +2316,11 @@ func (m *mockGroupConsolidationSession) SetGroupConsolidatorID(groupIndex int, i
 	m.groupConsolidatorIDs[groupIndex] = instanceID
 }
 
-func (m *mockGroupConsolidationSession) GetGroupConsolidationContexts() []*GroupConsolidationCompletionFile {
+func (m *mockGroupConsolidationSession) GetGroupConsolidationContexts() []*types.GroupConsolidationCompletionFile {
 	return m.groupConsolidationCtxs
 }
 
-func (m *mockGroupConsolidationSession) SetGroupConsolidationContext(groupIndex int, ctx *GroupConsolidationCompletionFile) {
+func (m *mockGroupConsolidationSession) SetGroupConsolidationContext(groupIndex int, ctx *types.GroupConsolidationCompletionFile) {
 	for len(m.groupConsolidationCtxs) <= groupIndex {
 		m.groupConsolidationCtxs = append(m.groupConsolidationCtxs, nil)
 	}
@@ -2388,21 +2390,21 @@ func (m *mockInstanceGroup) AddInstance(id string) {
 	m.instances = append(m.instances, id)
 }
 
-// mockTaskCompletionParser implements TaskCompletionFileParser
+// mockTaskCompletionParser implements types.TaskCompletionFileParser
 type mockTaskCompletionParser struct {
-	taskCompletions  map[string]*TaskCompletionFile
-	groupCompletions map[string]*GroupConsolidationCompletionFile
+	taskCompletions  map[string]*types.TaskCompletionFile
+	groupCompletions map[string]*types.GroupConsolidationCompletionFile
 	parseErr         error
 }
 
 func newMockTaskCompletionParser() *mockTaskCompletionParser {
 	return &mockTaskCompletionParser{
-		taskCompletions:  make(map[string]*TaskCompletionFile),
-		groupCompletions: make(map[string]*GroupConsolidationCompletionFile),
+		taskCompletions:  make(map[string]*types.TaskCompletionFile),
+		groupCompletions: make(map[string]*types.GroupConsolidationCompletionFile),
 	}
 }
 
-func (m *mockTaskCompletionParser) ParseTaskCompletionFile(worktreePath string) (*TaskCompletionFile, error) {
+func (m *mockTaskCompletionParser) ParseTaskCompletionFile(worktreePath string) (*types.TaskCompletionFile, error) {
 	if m.parseErr != nil {
 		return nil, m.parseErr
 	}
@@ -2412,7 +2414,7 @@ func (m *mockTaskCompletionParser) ParseTaskCompletionFile(worktreePath string) 
 	return nil, errors.New("completion file not found")
 }
 
-func (m *mockTaskCompletionParser) ParseGroupConsolidationCompletionFile(worktreePath string) (*GroupConsolidationCompletionFile, error) {
+func (m *mockTaskCompletionParser) ParseGroupConsolidationCompletionFile(worktreePath string) (*types.GroupConsolidationCompletionFile, error) {
 	if m.parseErr != nil {
 		return nil, m.parseErr
 	}
@@ -2423,7 +2425,7 @@ func (m *mockTaskCompletionParser) ParseGroupConsolidationCompletionFile(worktre
 }
 
 func (m *mockTaskCompletionParser) GroupConsolidationCompletionFilePath(worktreePath string) string {
-	return worktreePath + "/" + GroupConsolidationCompletionFileName
+	return worktreePath + "/" + types.GroupConsolidationCompletionFileName
 }
 
 // mockGroupConsolidationOrchestrator implements GroupConsolidationOrchestratorInterface
@@ -2644,7 +2646,7 @@ func TestConsolidationOrchestrator_GatherTaskCompletionContextForGroup(t *testin
 		}
 
 		parser := newMockTaskCompletionParser()
-		parser.taskCompletions["/worktree/task-1"] = &TaskCompletionFile{
+		parser.taskCompletions["/worktree/task-1"] = &types.TaskCompletionFile{
 			TaskID:       "task-1",
 			Summary:      "Implemented feature A",
 			Issues:       []string{"issue 1"},
@@ -2652,7 +2654,7 @@ func TestConsolidationOrchestrator_GatherTaskCompletionContextForGroup(t *testin
 			Dependencies: []string{"dep-1"},
 			Notes:        "Notes for task 1",
 		}
-		parser.taskCompletions["/worktree/task-2"] = &TaskCompletionFile{
+		parser.taskCompletions["/worktree/task-2"] = &types.TaskCompletionFile{
 			TaskID:       "task-2",
 			Summary:      "Implemented feature B",
 			Issues:       []string{"issue 2"},
@@ -2710,7 +2712,7 @@ func TestConsolidationOrchestrator_GatherTaskCompletionContextForGroup(t *testin
 		}
 
 		parser := newMockTaskCompletionParser()
-		parser.taskCompletions["/worktree/task-1"] = &TaskCompletionFile{
+		parser.taskCompletions["/worktree/task-1"] = &types.TaskCompletionFile{
 			TaskID:  "task-1",
 			Summary: "Task 1 summary",
 		}
@@ -2767,7 +2769,7 @@ func TestConsolidationOrchestrator_GatherTaskCompletionContextForGroup(t *testin
 		}
 
 		parser := newMockTaskCompletionParser()
-		parser.taskCompletions["/worktree/task-1"] = &TaskCompletionFile{
+		parser.taskCompletions["/worktree/task-1"] = &types.TaskCompletionFile{
 			TaskID:       "task-1",
 			Summary:      "Summary",
 			Issues:       []string{"", "real issue", ""},
@@ -3040,7 +3042,7 @@ func TestConsolidationOrchestrator_BuildGroupConsolidatorPrompt(t *testing.T) {
 		mockOrch.mainBranch = "main"
 
 		parser := newMockTaskCompletionParser()
-		parser.taskCompletions["/worktree/task-1"] = &TaskCompletionFile{
+		parser.taskCompletions["/worktree/task-1"] = &types.TaskCompletionFile{
 			TaskID:      "task-1",
 			Summary:     "Task 1 summary",
 			Issues:      []string{"issue 1"},
@@ -3094,7 +3096,7 @@ func TestConsolidationOrchestrator_BuildGroupConsolidatorPrompt(t *testing.T) {
 		if !contains(prompt, "## Completion Protocol") {
 			t.Error("Prompt should contain completion protocol")
 		}
-		if !contains(prompt, GroupConsolidationCompletionFileName) {
+		if !contains(prompt, types.GroupConsolidationCompletionFileName) {
 			t.Error("Prompt should contain completion file name")
 		}
 	})
@@ -3112,7 +3114,7 @@ func TestConsolidationOrchestrator_BuildGroupConsolidatorPrompt(t *testing.T) {
 		session.planSummary = "Test Plan"
 		session.sessionID = "session-12345678"
 		session.tasks["task-2"] = map[string]any{"title": "Task 2"}
-		session.groupConsolidationCtxs = []*GroupConsolidationCompletionFile{
+		session.groupConsolidationCtxs = []*types.GroupConsolidationCompletionFile{
 			{
 				GroupIndex: 0,
 				Notes:      "Notes from group 0",
@@ -3891,7 +3893,7 @@ func TestConsolidationOrchestrator_MonitorGroupConsolidator(t *testing.T) {
 		}
 
 		parser := newMockTaskCompletionParser()
-		parser.groupCompletions["/tmp/worktree"] = &GroupConsolidationCompletionFile{
+		parser.groupCompletions["/tmp/worktree"] = &types.GroupConsolidationCompletionFile{
 			GroupIndex: 0,
 			Status:     "failed",
 			Notes:      "Something went wrong",
@@ -3899,7 +3901,7 @@ func TestConsolidationOrchestrator_MonitorGroupConsolidator(t *testing.T) {
 
 		// Mock file exists
 		statFile = func(path string) (os.FileInfo, error) {
-			if path == "/tmp/worktree/"+GroupConsolidationCompletionFileName {
+			if path == "/tmp/worktree/"+types.GroupConsolidationCompletionFileName {
 				return nil, nil
 			}
 			return nil, os.ErrNotExist
@@ -4019,19 +4021,19 @@ func TestConsolidationOrchestrator_MonitorGroupConsolidator(t *testing.T) {
 		}
 
 		parser := newMockTaskCompletionParser()
-		parser.groupCompletions["/tmp/worktree"] = &GroupConsolidationCompletionFile{
+		parser.groupCompletions["/tmp/worktree"] = &types.GroupConsolidationCompletionFile{
 			GroupIndex:        0,
 			Status:            "complete",
 			BranchName:        "consolidated-branch",
 			TasksConsolidated: []string{"task-1", "task-2"},
-			Verification:      VerificationResult{OverallSuccess: true},
+			Verification:      types.VerificationResult{OverallSuccess: true},
 		}
 
 		emitter := &mockGroupConsolidationEventEmitter{}
 
 		// Mock file exists
 		statFile = func(path string) (os.FileInfo, error) {
-			if path == "/tmp/worktree/"+GroupConsolidationCompletionFileName {
+			if path == "/tmp/worktree/"+types.GroupConsolidationCompletionFileName {
 				return nil, nil
 			}
 			return nil, os.ErrNotExist

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -23,7 +24,7 @@ var (
 type TripleShotState struct {
 	// Coordinators maps group IDs to their tripleshot coordinators.
 	// This enables multiple concurrent tripleshot sessions.
-	Coordinators map[string]*orchestrator.TripleShotCoordinator
+	Coordinators map[string]*tripleshot.Coordinator
 
 	NeedsNotification bool // Set when user input is needed (checked on tick)
 
@@ -34,7 +35,7 @@ type TripleShotState struct {
 }
 
 // GetCoordinatorForGroup returns the coordinator for a specific group ID.
-func (s *TripleShotState) GetCoordinatorForGroup(groupID string) *orchestrator.TripleShotCoordinator {
+func (s *TripleShotState) GetCoordinatorForGroup(groupID string) *tripleshot.Coordinator {
 	if s == nil || s.Coordinators == nil {
 		return nil
 	}
@@ -43,7 +44,7 @@ func (s *TripleShotState) GetCoordinatorForGroup(groupID string) *orchestrator.T
 
 // GetAllCoordinators returns all active tripleshot coordinators.
 // Results are sorted by group ID for deterministic ordering.
-func (s *TripleShotState) GetAllCoordinators() []*orchestrator.TripleShotCoordinator {
+func (s *TripleShotState) GetAllCoordinators() []*tripleshot.Coordinator {
 	if s == nil || len(s.Coordinators) == 0 {
 		return nil
 	}
@@ -55,7 +56,7 @@ func (s *TripleShotState) GetAllCoordinators() []*orchestrator.TripleShotCoordin
 	}
 	sort.Strings(keys)
 
-	coords := make([]*orchestrator.TripleShotCoordinator, 0, len(s.Coordinators))
+	coords := make([]*tripleshot.Coordinator, 0, len(s.Coordinators))
 	for _, k := range keys {
 		coords = append(coords, s.Coordinators[k])
 	}
@@ -103,11 +104,11 @@ func RenderTripleShotHeader(ctx TripleShotRenderContext) string {
 				continue
 			}
 			switch session.Phase {
-			case orchestrator.PhaseTripleShotWorking, orchestrator.PhaseTripleShotEvaluating:
+			case tripleshot.PhaseWorking, tripleshot.PhaseEvaluating:
 				working++
-			case orchestrator.PhaseTripleShotComplete:
+			case tripleshot.PhaseComplete:
 				complete++
-			case orchestrator.PhaseTripleShotFailed:
+			case tripleshot.PhaseFailed:
 				failed++
 			}
 		}
@@ -133,19 +134,19 @@ func RenderTripleShotHeader(ctx TripleShotRenderContext) string {
 	var phaseStyle lipgloss.Style
 
 	switch session.Phase {
-	case orchestrator.PhaseTripleShotWorking:
+	case tripleshot.PhaseWorking:
 		phaseIcon = "⚡"
 		phaseText = "Working"
 		phaseStyle = tsHighlight
-	case orchestrator.PhaseTripleShotEvaluating:
+	case tripleshot.PhaseEvaluating:
 		phaseIcon = "🔍"
 		phaseText = "Evaluating"
 		phaseStyle = tsWarning
-	case orchestrator.PhaseTripleShotComplete:
+	case tripleshot.PhaseComplete:
 		phaseIcon = "✓"
 		phaseText = "Complete"
 		phaseStyle = tsSuccess
-	case orchestrator.PhaseTripleShotFailed:
+	case tripleshot.PhaseFailed:
 		phaseIcon = "✗"
 		phaseText = "Failed"
 		phaseStyle = tsError
@@ -156,11 +157,11 @@ func RenderTripleShotHeader(ctx TripleShotRenderContext) string {
 	for i, attempt := range session.Attempts {
 		var statusIcon string
 		switch attempt.Status {
-		case orchestrator.AttemptStatusWorking:
+		case tripleshot.AttemptStatusWorking:
 			statusIcon = "⏳"
-		case orchestrator.AttemptStatusCompleted:
+		case tripleshot.AttemptStatusCompleted:
 			statusIcon = "✓"
-		case orchestrator.AttemptStatusFailed:
+		case tripleshot.AttemptStatusFailed:
 			statusIcon = "✗"
 		default:
 			statusIcon = "○"
@@ -176,9 +177,9 @@ func RenderTripleShotHeader(ctx TripleShotRenderContext) string {
 	)
 
 	// Add judge status if in evaluating phase
-	if session.Phase == orchestrator.PhaseTripleShotEvaluating && session.JudgeID != "" {
+	if session.Phase == tripleshot.PhaseEvaluating && session.JudgeID != "" {
 		header += " | Judge: ⏳"
-	} else if session.Phase == orchestrator.PhaseTripleShotComplete {
+	} else if session.Phase == tripleshot.PhaseComplete {
 		header += " | Judge: ✓"
 	}
 
@@ -232,7 +233,7 @@ func RenderTripleShotSidebarSection(ctx TripleShotRenderContext, width int) stri
 }
 
 // renderSingleTripleShotSection renders a single tripleshot session's status.
-func renderSingleTripleShotSection(ctx TripleShotRenderContext, session *orchestrator.TripleShotSession, width int, index int, showIndex bool) []string {
+func renderSingleTripleShotSection(ctx TripleShotRenderContext, session *tripleshot.Session, width int, index int, showIndex bool) []string {
 	var lines []string
 
 	// Task preview with optional index
@@ -258,13 +259,13 @@ func renderSingleTripleShotSection(ctx TripleShotRenderContext, session *orchest
 		var statusText string
 
 		switch attempt.Status {
-		case orchestrator.AttemptStatusWorking:
+		case tripleshot.AttemptStatusWorking:
 			statusStyle = tsHighlight
 			statusText = "working"
-		case orchestrator.AttemptStatusCompleted:
+		case tripleshot.AttemptStatusCompleted:
 			statusStyle = tsSuccess
 			statusText = "done"
-		case orchestrator.AttemptStatusFailed:
+		case tripleshot.AttemptStatusFailed:
 			statusStyle = tsError
 			statusText = "failed"
 		default:
@@ -289,23 +290,23 @@ func renderSingleTripleShotSection(ctx TripleShotRenderContext, session *orchest
 	}
 
 	// Judge status
-	if session.JudgeID != "" || session.Phase == orchestrator.PhaseTripleShotEvaluating || session.Phase == orchestrator.PhaseTripleShotComplete {
+	if session.JudgeID != "" || session.Phase == tripleshot.PhaseEvaluating || session.Phase == tripleshot.PhaseComplete {
 		lines = append(lines, "")
 		lines = append(lines, tsSubtle.Render("Judge:"))
 
 		var judgeStatus string
 		var judgeStyle lipgloss.Style
 		switch session.Phase {
-		case orchestrator.PhaseTripleShotWorking:
+		case tripleshot.PhaseWorking:
 			judgeStatus = "waiting"
 			judgeStyle = tsSubtle
-		case orchestrator.PhaseTripleShotEvaluating:
+		case tripleshot.PhaseEvaluating:
 			judgeStatus = "evaluating"
 			judgeStyle = tsWarning
-		case orchestrator.PhaseTripleShotComplete:
+		case tripleshot.PhaseComplete:
 			judgeStatus = "done"
 			judgeStyle = tsSuccess
-		case orchestrator.PhaseTripleShotFailed:
+		case tripleshot.PhaseFailed:
 			judgeStatus = "failed"
 			judgeStyle = tsError
 		}
@@ -326,12 +327,12 @@ func renderSingleTripleShotSection(ctx TripleShotRenderContext, session *orchest
 	}
 
 	// Evaluation result preview (if complete)
-	if session.Phase == orchestrator.PhaseTripleShotComplete && session.Evaluation != nil {
+	if session.Phase == tripleshot.PhaseComplete && session.Evaluation != nil {
 		lines = append(lines, "")
 		lines = append(lines, tsSubtle.Render("Result:"))
 
 		eval := session.Evaluation
-		if eval.MergeStrategy == orchestrator.MergeStrategySelect && eval.WinnerIndex >= 0 && eval.WinnerIndex < 3 {
+		if eval.MergeStrategy == tripleshot.MergeStrategySelect && eval.WinnerIndex >= 0 && eval.WinnerIndex < 3 {
 			lines = append(lines, tsSuccess.Render(fmt.Sprintf("Winner: Attempt %d", eval.WinnerIndex+1)))
 		} else {
 			lines = append(lines, tsHighlight.Render(fmt.Sprintf("Strategy: %s", eval.MergeStrategy)))
@@ -343,7 +344,7 @@ func renderSingleTripleShotSection(ctx TripleShotRenderContext, session *orchest
 
 // findTripleShotForActiveInstance finds the tripleshot session that contains
 // the currently active instance (based on activeTab).
-func findTripleShotForActiveInstance(ctx TripleShotRenderContext) *orchestrator.TripleShotSession {
+func findTripleShotForActiveInstance(ctx TripleShotRenderContext) *tripleshot.Session {
 	if ctx.Session == nil || ctx.ActiveTab >= len(ctx.Session.Instances) {
 		return nil
 	}
@@ -400,7 +401,7 @@ func RenderTripleShotEvaluation(ctx TripleShotRenderContext) string {
 	lines = append(lines, "")
 
 	// Strategy and winner
-	if eval.MergeStrategy == orchestrator.MergeStrategySelect && eval.WinnerIndex >= 0 && eval.WinnerIndex < 3 {
+	if eval.MergeStrategy == tripleshot.MergeStrategySelect && eval.WinnerIndex >= 0 && eval.WinnerIndex < 3 {
 		lines = append(lines, tsSuccess.Render(fmt.Sprintf("Winner: Attempt %d", eval.WinnerIndex+1)))
 	} else {
 		lines = append(lines, tsHighlight.Render(fmt.Sprintf("Strategy: %s", eval.MergeStrategy)))

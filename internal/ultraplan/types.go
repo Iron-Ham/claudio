@@ -8,7 +8,7 @@
 //   - Planning: PlanSpec, PlannedTask, TaskComplexity
 //   - Execution: UltraPlanPhase, CoordinatorEvent, CoordinatorEventType
 //   - Validation: ValidationResult, ValidationMessage, ValidationSeverity
-//   - Consolidation: ConsolidationPhase, ConsolidationMode, ConsolidationState
+//   - Consolidation: ConsolidationPhase, ConsolidationMode, ConsolidatorState
 //   - Results: GroupConsolidationResult, AggregatedTaskContext
 //
 // These are pure data types with no methods beyond basic getters/setters,
@@ -464,11 +464,11 @@ func (p ConsolidationPhase) IsTerminal() bool {
 	return p == ConsolidationComplete || p == ConsolidationFailed
 }
 
-// ConsolidationState tracks the progress of consolidation.
+// ConsolidatorState tracks the progress of consolidation.
 //
 // Persisted to the Ultra-Plan session for recovery and status display.
 // Updated as consolidation progresses through its phases.
-type ConsolidationState struct {
+type ConsolidatorState struct {
 	// Phase is the current consolidation sub-phase.
 	Phase ConsolidationPhase `json:"phase"`
 
@@ -508,12 +508,12 @@ type ConsolidationState struct {
 }
 
 // HasConflict returns true if consolidation is paused due to a conflict.
-func (s *ConsolidationState) HasConflict() bool {
+func (s *ConsolidatorState) HasConflict() bool {
 	return s.Phase == ConsolidationPaused && len(s.ConflictFiles) > 0
 }
 
 // Duration returns the duration of consolidation, or zero if not started/completed.
-func (s *ConsolidationState) Duration() time.Duration {
+func (s *ConsolidatorState) Duration() time.Duration {
 	if s.StartedAt == nil {
 		return 0
 	}

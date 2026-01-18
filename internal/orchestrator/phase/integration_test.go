@@ -1665,7 +1665,7 @@ func TestIntegration_ConsolidationPhaseLifecycle(t *testing.T) {
 		}
 
 		// Set state
-		consolidator.SetState(ConsolidationState{
+		consolidator.SetState(ConsolidatorState{
 			SubPhase:    "gathering",
 			TotalGroups: 2,
 		})

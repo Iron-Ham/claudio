@@ -1,4 +1,4 @@
-package orchestrator
+package tripleshot
 
 import (
 	"context"
@@ -11,10 +11,46 @@ import (
 	"github.com/Iron-Ham/claudio/internal/util"
 )
 
-// TripleShotCoordinatorCallbacks holds callbacks for coordinator events
-type TripleShotCoordinatorCallbacks struct {
+// OrchestratorInterface defines the methods needed from the Orchestrator.
+// This interface allows the coordinator to work without importing the orchestrator package directly.
+type OrchestratorInterface interface {
+	AddInstance(session SessionInterface, task string) (InstanceInterface, error)
+	StartInstance(inst InstanceInterface) error
+	SaveSession() error
+}
+
+// SessionInterface defines the methods needed from the Session.
+type SessionInterface interface {
+	GetGroup(id string) GroupInterface
+	GetGroupBySessionType(sessionType string) GroupInterface
+	GetInstance(id string) InstanceInterface
+}
+
+// InstanceInterface defines the methods needed from an Instance.
+type InstanceInterface interface {
+	GetID() string
+	GetWorktreePath() string
+	GetBranch() string
+}
+
+// GroupInterface defines the methods needed from an InstanceGroup.
+type GroupInterface interface {
+	AddInstance(instanceID string)
+	AddSubGroup(subGroup GroupInterface)
+	GetInstances() []string
+	SetInstances(instances []string)
+}
+
+// NewGroupFunc is a function type for creating new instance groups.
+type NewGroupFunc func(name string) GroupInterface
+
+// SetSessionTypeFunc is a function type for setting session type on a group.
+type SetSessionTypeFunc func(g GroupInterface, sessionType string)
+
+// CoordinatorCallbacks holds callbacks for coordinator events
+type CoordinatorCallbacks struct {
 	// OnPhaseChange is called when the triple-shot phase changes
-	OnPhaseChange func(phase TripleShotPhase)
+	OnPhaseChange func(phase Phase)
 
 	// OnAttemptStart is called when an attempt begins
 	OnAttemptStart func(attemptIndex int, instanceID string)
@@ -29,19 +65,28 @@ type TripleShotCoordinatorCallbacks struct {
 	OnJudgeStart func(instanceID string)
 
 	// OnEvaluationReady is called when evaluation is complete
-	OnEvaluationReady func(evaluation *TripleShotEvaluation)
+	OnEvaluationReady func(evaluation *Evaluation)
 
 	// OnComplete is called when the entire triple-shot completes
 	OnComplete func(success bool, summary string)
 }
 
-// TripleShotCoordinator orchestrates the execution of a triple-shot session
-type TripleShotCoordinator struct {
-	manager     *TripleShotManager
-	orch        *Orchestrator
-	baseSession *Session
-	callbacks   *TripleShotCoordinatorCallbacks
+// Coordinator orchestrates the execution of a triple-shot session
+type Coordinator struct {
+	manager     *Manager
+	orch        OrchestratorInterface
+	baseSession SessionInterface
+	callbacks   *CoordinatorCallbacks
 	logger      *logging.Logger
+
+	// Session type constant for this workflow
+	sessionType string
+
+	// Function to create new groups
+	newGroup NewGroupFunc
+
+	// Function to set session type on a group
+	setSessionType SetSessionTypeFunc
 
 	// Running state
 	ctx        context.Context
@@ -53,22 +98,37 @@ type TripleShotCoordinator struct {
 	runningAttempts map[int]string // attemptIndex -> instanceID
 }
 
-// NewTripleShotCoordinator creates a new coordinator for a triple-shot session
-func NewTripleShotCoordinator(orch *Orchestrator, baseSession *Session, tripleSession *TripleShotSession, logger *logging.Logger) *TripleShotCoordinator {
+// CoordinatorConfig holds configuration for creating a Coordinator
+type CoordinatorConfig struct {
+	Orchestrator   OrchestratorInterface
+	BaseSession    SessionInterface
+	TripleSession  *Session
+	Logger         *logging.Logger
+	SessionType    string
+	NewGroup       NewGroupFunc
+	SetSessionType SetSessionTypeFunc
+}
+
+// NewCoordinator creates a new coordinator for a triple-shot session
+func NewCoordinator(cfg CoordinatorConfig) *Coordinator {
+	logger := cfg.Logger
 	if logger == nil {
 		logger = logging.NopLogger()
 	}
-	manager := NewTripleShotManager(orch, baseSession, tripleSession, logger)
+	manager := NewManager(cfg.TripleSession, logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	sessionLogger := logger.WithSession(tripleSession.ID).WithPhase("tripleshot-coordinator")
+	sessionLogger := logger.WithSession(cfg.TripleSession.ID).WithPhase("tripleshot-coordinator")
 
-	return &TripleShotCoordinator{
+	return &Coordinator{
 		manager:         manager,
-		orch:            orch,
-		baseSession:     baseSession,
+		orch:            cfg.Orchestrator,
+		baseSession:     cfg.BaseSession,
 		logger:          sessionLogger,
+		sessionType:     cfg.SessionType,
+		newGroup:        cfg.NewGroup,
+		setSessionType:  cfg.SetSessionType,
 		ctx:             ctx,
 		cancelFunc:      cancel,
 		runningAttempts: make(map[int]string),
@@ -76,24 +136,24 @@ func NewTripleShotCoordinator(orch *Orchestrator, baseSession *Session, tripleSe
 }
 
 // SetCallbacks sets the coordinator callbacks
-func (c *TripleShotCoordinator) SetCallbacks(cb *TripleShotCoordinatorCallbacks) {
+func (c *Coordinator) SetCallbacks(cb *CoordinatorCallbacks) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.callbacks = cb
 }
 
 // Manager returns the underlying triple-shot manager
-func (c *TripleShotCoordinator) Manager() *TripleShotManager {
+func (c *Coordinator) Manager() *Manager {
 	return c.manager
 }
 
 // Session returns the triple-shot session
-func (c *TripleShotCoordinator) Session() *TripleShotSession {
+func (c *Coordinator) Session() *Session {
 	return c.manager.Session()
 }
 
 // notifyPhaseChange notifies callbacks of phase change
-func (c *TripleShotCoordinator) notifyPhaseChange(phase TripleShotPhase) {
+func (c *Coordinator) notifyPhaseChange(phase Phase) {
 	session := c.Session()
 	fromPhase := session.Phase
 
@@ -120,7 +180,7 @@ func (c *TripleShotCoordinator) notifyPhaseChange(phase TripleShotPhase) {
 }
 
 // notifyAttemptStart notifies callbacks of attempt start
-func (c *TripleShotCoordinator) notifyAttemptStart(attemptIndex int, instanceID string) {
+func (c *Coordinator) notifyAttemptStart(attemptIndex int, instanceID string) {
 	c.logger.Info("attempt started",
 		"attempt_index", attemptIndex,
 		"instance_id", instanceID,
@@ -136,7 +196,7 @@ func (c *TripleShotCoordinator) notifyAttemptStart(attemptIndex int, instanceID 
 }
 
 // notifyAttemptComplete notifies callbacks of attempt completion
-func (c *TripleShotCoordinator) notifyAttemptComplete(attemptIndex int) {
+func (c *Coordinator) notifyAttemptComplete(attemptIndex int) {
 	c.manager.MarkAttemptComplete(attemptIndex)
 
 	// Persist completion
@@ -154,7 +214,7 @@ func (c *TripleShotCoordinator) notifyAttemptComplete(attemptIndex int) {
 }
 
 // notifyAttemptFailed notifies callbacks of attempt failure
-func (c *TripleShotCoordinator) notifyAttemptFailed(attemptIndex int, reason string) {
+func (c *Coordinator) notifyAttemptFailed(attemptIndex int, reason string) {
 	c.manager.MarkAttemptFailed(attemptIndex, reason)
 
 	// Persist failure
@@ -172,7 +232,7 @@ func (c *TripleShotCoordinator) notifyAttemptFailed(attemptIndex int, reason str
 }
 
 // notifyJudgeStart notifies callbacks of judge start
-func (c *TripleShotCoordinator) notifyJudgeStart(instanceID string) {
+func (c *Coordinator) notifyJudgeStart(instanceID string) {
 	c.logger.Info("judge started", "instance_id", instanceID)
 
 	c.mu.RLock()
@@ -185,7 +245,7 @@ func (c *TripleShotCoordinator) notifyJudgeStart(instanceID string) {
 }
 
 // notifyEvaluationReady notifies callbacks of evaluation completion
-func (c *TripleShotCoordinator) notifyEvaluationReady(evaluation *TripleShotEvaluation) {
+func (c *Coordinator) notifyEvaluationReady(evaluation *Evaluation) {
 	c.manager.SetEvaluation(evaluation)
 
 	// Persist evaluation
@@ -203,7 +263,7 @@ func (c *TripleShotCoordinator) notifyEvaluationReady(evaluation *TripleShotEval
 }
 
 // notifyComplete notifies callbacks of completion
-func (c *TripleShotCoordinator) notifyComplete(success bool, summary string) {
+func (c *Coordinator) notifyComplete(success bool, summary string) {
 	c.logger.Info("triple-shot complete",
 		"success", success,
 		"summary", summary,
@@ -219,7 +279,7 @@ func (c *TripleShotCoordinator) notifyComplete(success bool, summary string) {
 }
 
 // StartAttempts starts all three attempt instances in parallel
-func (c *TripleShotCoordinator) StartAttempts() error {
+func (c *Coordinator) StartAttempts() error {
 	session := c.Session()
 	task := session.Task
 
@@ -230,17 +290,17 @@ func (c *TripleShotCoordinator) StartAttempts() error {
 
 	// Find the triple-shot group to add instances to
 	// Use GroupID for multi-tripleshot support; fall back to session type for backward compatibility
-	var tripleGroup *InstanceGroup
+	var tripleGroup GroupInterface
 	if session.GroupID != "" {
 		tripleGroup = c.baseSession.GetGroup(session.GroupID)
 	}
 	if tripleGroup == nil {
-		tripleGroup = c.baseSession.GetGroupBySessionType(SessionTypeTripleShot)
+		tripleGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
 	}
 
 	// Create and start all three attempts
 	for i := range 3 {
-		prompt := fmt.Sprintf(TripleShotAttemptPromptTemplate, task, i)
+		prompt := fmt.Sprintf(AttemptPromptTemplate, task, i)
 
 		// Create instance for this attempt
 		inst, err := c.orch.AddInstance(c.baseSession, prompt)
@@ -250,20 +310,20 @@ func (c *TripleShotCoordinator) StartAttempts() error {
 
 		// Add instance to the triple-shot group for sidebar display
 		if tripleGroup != nil {
-			tripleGroup.AddInstance(inst.ID)
+			tripleGroup.AddInstance(inst.GetID())
 		}
 
 		// Record attempt info
-		session.Attempts[i] = TripleShotAttempt{
-			InstanceID:   inst.ID,
-			WorktreePath: inst.WorktreePath,
-			Branch:       inst.Branch,
+		session.Attempts[i] = Attempt{
+			InstanceID:   inst.GetID(),
+			WorktreePath: inst.GetWorktreePath(),
+			Branch:       inst.GetBranch(),
 			Status:       AttemptStatusWorking,
 			StartedAt:    &now,
 		}
 
 		c.mu.Lock()
-		c.runningAttempts[i] = inst.ID
+		c.runningAttempts[i] = inst.GetID()
 		c.mu.Unlock()
 
 		// Start the instance
@@ -271,7 +331,7 @@ func (c *TripleShotCoordinator) StartAttempts() error {
 			return fmt.Errorf("failed to start attempt %d: %w", i, err)
 		}
 
-		c.notifyAttemptStart(i, inst.ID)
+		c.notifyAttemptStart(i, inst.GetID())
 	}
 
 	// Persist session state
@@ -283,13 +343,13 @@ func (c *TripleShotCoordinator) StartAttempts() error {
 }
 
 // StartJudge starts the judge instance to evaluate the three attempts
-func (c *TripleShotCoordinator) StartJudge() error {
+func (c *Coordinator) StartJudge() error {
 	session := c.Session()
 
 	// Build the completion summaries for each attempt
 	var summaries [3]string
 	for i, attempt := range session.Attempts {
-		completion, err := ParseTripleShotCompletionFile(attempt.WorktreePath)
+		completion, err := ParseCompletionFile(attempt.WorktreePath)
 		if err != nil {
 			c.logger.Warn("failed to read completion file for attempt",
 				"attempt_index", i,
@@ -304,7 +364,7 @@ func (c *TripleShotCoordinator) StartJudge() error {
 	}
 
 	// Build the judge prompt
-	prompt := fmt.Sprintf(TripleShotJudgePromptTemplate,
+	prompt := fmt.Sprintf(JudgePromptTemplate,
 		session.Task,
 		// Attempt 1
 		session.Attempts[0].InstanceID, session.Attempts[0].Branch, session.Attempts[0].WorktreePath, summaries[0],
@@ -322,29 +382,31 @@ func (c *TripleShotCoordinator) StartJudge() error {
 
 	// Reorganize the triple-shot group: move implementers to a sub-group, add judge to parent
 	// Use GroupID for multi-tripleshot support; fall back to session type for backward compatibility
-	var tripleGroup *InstanceGroup
+	var tripleGroup GroupInterface
 	if session.GroupID != "" {
 		tripleGroup = c.baseSession.GetGroup(session.GroupID)
 	}
 	if tripleGroup == nil {
-		tripleGroup = c.baseSession.GetGroupBySessionType(SessionTypeTripleShot)
+		tripleGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
 	}
-	if tripleGroup != nil {
+	if tripleGroup != nil && c.newGroup != nil {
 		// Create a sub-group for the implementers
-		implementersGroup := NewInstanceGroup("Implementers")
-		SetSessionType(implementersGroup, SessionTypeTripleShot)
+		implementersGroup := c.newGroup("Implementers")
+		if c.setSessionType != nil {
+			c.setSessionType(implementersGroup, c.sessionType)
+		}
 
 		// Move existing instances (the 3 implementers) to the sub-group
-		for _, instID := range tripleGroup.Instances {
+		for _, instID := range tripleGroup.GetInstances() {
 			implementersGroup.AddInstance(instID)
 		}
 
 		// Clear the parent group's instances and add the sub-group
-		tripleGroup.Instances = nil
+		tripleGroup.SetInstances(nil)
 		tripleGroup.AddSubGroup(implementersGroup)
 
 		// Add the judge to the parent group (so it appears at the top level)
-		tripleGroup.AddInstance(inst.ID)
+		tripleGroup.AddInstance(inst.GetID())
 	} else {
 		c.logger.Warn("triple-shot group not found, judge will not be grouped with implementers",
 			"session_id", session.ID,
@@ -352,17 +414,17 @@ func (c *TripleShotCoordinator) StartJudge() error {
 		)
 	}
 
-	session.JudgeID = inst.ID
+	session.JudgeID = inst.GetID()
 
 	// Transition to evaluating phase
-	c.notifyPhaseChange(PhaseTripleShotEvaluating)
+	c.notifyPhaseChange(PhaseEvaluating)
 
 	// Start the judge instance
 	if err := c.orch.StartInstance(inst); err != nil {
 		return fmt.Errorf("failed to start judge instance: %w", err)
 	}
 
-	c.notifyJudgeStart(inst.ID)
+	c.notifyJudgeStart(inst.GetID())
 
 	// Persist session state
 	if err := c.orch.SaveSession(); err != nil {
@@ -373,7 +435,7 @@ func (c *TripleShotCoordinator) StartJudge() error {
 }
 
 // CheckAttemptCompletion checks if an attempt has written its completion file
-func (c *TripleShotCoordinator) CheckAttemptCompletion(attemptIndex int) (bool, error) {
+func (c *Coordinator) CheckAttemptCompletion(attemptIndex int) (bool, error) {
 	session := c.Session()
 	if attemptIndex < 0 || attemptIndex >= 3 {
 		return false, fmt.Errorf("invalid attempt index: %d", attemptIndex)
@@ -384,7 +446,7 @@ func (c *TripleShotCoordinator) CheckAttemptCompletion(attemptIndex int) (bool, 
 		return false, nil
 	}
 
-	completionPath := TripleShotCompletionFilePath(attempt.WorktreePath)
+	completionPath := CompletionFilePath(attempt.WorktreePath)
 	_, err := os.Stat(completionPath)
 	if err == nil {
 		return true, nil
@@ -397,7 +459,7 @@ func (c *TripleShotCoordinator) CheckAttemptCompletion(attemptIndex int) (bool, 
 }
 
 // CheckJudgeCompletion checks if the judge has written its evaluation file
-func (c *TripleShotCoordinator) CheckJudgeCompletion() (bool, error) {
+func (c *Coordinator) CheckJudgeCompletion() (bool, error) {
 	session := c.Session()
 	if session.JudgeID == "" {
 		return false, nil
@@ -409,7 +471,7 @@ func (c *TripleShotCoordinator) CheckJudgeCompletion() (bool, error) {
 		return false, fmt.Errorf("judge instance %s not found", session.JudgeID)
 	}
 
-	evalPath := TripleShotEvaluationFilePath(judgeInst.WorktreePath)
+	evalPath := EvaluationFilePath(judgeInst.GetWorktreePath())
 	_, err := os.Stat(evalPath)
 	if err == nil {
 		return true, nil
@@ -422,7 +484,7 @@ func (c *TripleShotCoordinator) CheckJudgeCompletion() (bool, error) {
 }
 
 // ProcessAttemptCompletion handles when an attempt completes
-func (c *TripleShotCoordinator) ProcessAttemptCompletion(attemptIndex int) error {
+func (c *Coordinator) ProcessAttemptCompletion(attemptIndex int) error {
 	if attemptIndex < 0 || attemptIndex >= 3 {
 		return fmt.Errorf("invalid attempt index: %d", attemptIndex)
 	}
@@ -431,7 +493,7 @@ func (c *TripleShotCoordinator) ProcessAttemptCompletion(attemptIndex int) error
 	attempt := session.Attempts[attemptIndex]
 
 	// Parse the completion file
-	completion, err := ParseTripleShotCompletionFile(attempt.WorktreePath)
+	completion, err := ParseCompletionFile(attempt.WorktreePath)
 	if err != nil {
 		c.notifyAttemptFailed(attemptIndex, fmt.Sprintf("failed to parse completion file: %v", err))
 		return err
@@ -449,12 +511,9 @@ func (c *TripleShotCoordinator) ProcessAttemptCompletion(attemptIndex int) error
 
 		// Only proceed to judge if we have at least 2 successful attempts
 		if session.SuccessfulAttemptCount() >= 2 {
-			c.manager.emitEvent(TripleShotEvent{
-				Type:    EventTripleShotAllAttemptsReady,
-				Message: "All attempts complete, ready for evaluation",
-			})
+			c.manager.EmitAllAttemptsReady()
 		} else {
-			c.notifyPhaseChange(PhaseTripleShotFailed)
+			c.notifyPhaseChange(PhaseFailed)
 			session.Error = "Fewer than 2 attempts succeeded"
 			return fmt.Errorf("fewer than 2 attempts succeeded")
 		}
@@ -464,7 +523,7 @@ func (c *TripleShotCoordinator) ProcessAttemptCompletion(attemptIndex int) error
 }
 
 // ProcessJudgeCompletion handles when the judge completes
-func (c *TripleShotCoordinator) ProcessJudgeCompletion() error {
+func (c *Coordinator) ProcessJudgeCompletion() error {
 	session := c.Session()
 
 	// Find the judge instance
@@ -474,9 +533,9 @@ func (c *TripleShotCoordinator) ProcessJudgeCompletion() error {
 	}
 
 	// Parse the evaluation file
-	evaluation, err := ParseTripleShotEvaluationFile(judgeInst.WorktreePath)
+	evaluation, err := ParseEvaluationFile(judgeInst.GetWorktreePath())
 	if err != nil {
-		c.notifyPhaseChange(PhaseTripleShotFailed)
+		c.notifyPhaseChange(PhaseFailed)
 		session.Error = fmt.Sprintf("failed to parse evaluation: %v", err)
 		return err
 	}
@@ -486,13 +545,13 @@ func (c *TripleShotCoordinator) ProcessJudgeCompletion() error {
 	// Transition to complete phase
 	now := time.Now()
 	session.CompletedAt = &now
-	c.notifyPhaseChange(PhaseTripleShotComplete)
+	c.notifyPhaseChange(PhaseComplete)
 
 	// Build summary
 	var summary string
 	if evaluation.MergeStrategy == MergeStrategySelect {
 		if evaluation.WinnerIndex < 0 || evaluation.WinnerIndex >= 3 {
-			c.notifyPhaseChange(PhaseTripleShotFailed)
+			c.notifyPhaseChange(PhaseFailed)
 			session.Error = fmt.Sprintf("invalid winner index: %d", evaluation.WinnerIndex)
 			return fmt.Errorf("invalid winner index in evaluation: %d", evaluation.WinnerIndex)
 		}
@@ -509,13 +568,13 @@ func (c *TripleShotCoordinator) ProcessJudgeCompletion() error {
 }
 
 // Stop stops the triple-shot execution
-func (c *TripleShotCoordinator) Stop() {
+func (c *Coordinator) Stop() {
 	c.cancelFunc()
 	c.wg.Wait()
 }
 
 // GetAttemptInstanceID returns the instance ID for an attempt
-func (c *TripleShotCoordinator) GetAttemptInstanceID(attemptIndex int) string {
+func (c *Coordinator) GetAttemptInstanceID(attemptIndex int) string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.runningAttempts[attemptIndex]
@@ -523,7 +582,7 @@ func (c *TripleShotCoordinator) GetAttemptInstanceID(attemptIndex int) string {
 
 // GetWinningBranch returns the branch name of the winning solution
 // Returns empty string if evaluation is not complete or strategy is merge
-func (c *TripleShotCoordinator) GetWinningBranch() string {
+func (c *Coordinator) GetWinningBranch() string {
 	session := c.Session()
 	if session.Evaluation == nil {
 		return ""

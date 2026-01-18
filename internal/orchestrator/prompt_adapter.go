@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
 // Error sentinels for phase adapter operations.
@@ -147,7 +148,7 @@ func synthesisInfoFromCompletion(completion *SynthesisCompletionFile) *prompt.Sy
 // This enables passing context from one group's consolidation to inform subsequent groups.
 // The completion file is written by the per-group consolidator session after merging
 // all task branches for that group.
-func groupContextFromCompletion(completion *GroupConsolidationCompletionFile) *prompt.GroupContext {
+func groupContextFromCompletion(completion *types.GroupConsolidationCompletionFile) *prompt.GroupContext {
 	if completion == nil {
 		return nil
 	}
@@ -286,7 +287,7 @@ func planInfoWithCommitCounts(spec *PlanSpec, commitCounts map[string]int) *prom
 
 // buildPreviousGroupContextStrings extracts context strings from GroupConsolidationCompletionFile entries.
 // For each completed group, it formats the notes and issues into a readable string.
-func buildPreviousGroupContextStrings(contexts []*GroupConsolidationCompletionFile) []string {
+func buildPreviousGroupContextStrings(contexts []*types.GroupConsolidationCompletionFile) []string {
 	if contexts == nil {
 		return nil
 	}

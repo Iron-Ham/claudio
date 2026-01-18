@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/Iron-Ham/claudio/internal/tui/output"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
@@ -93,7 +96,7 @@ func AddDependentTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.S
 // CheckTripleShotCompletionAsync returns a command that checks tripleshot completion files
 // in a goroutine, avoiding blocking the UI event loop with file I/O.
 func CheckTripleShotCompletionAsync(
-	coordinator *orchestrator.TripleShotCoordinator,
+	coordinator *tripleshot.Coordinator,
 	groupID string,
 ) tea.Cmd {
 	return func() tea.Msg {
@@ -110,11 +113,11 @@ func CheckTripleShotCompletionAsync(
 		}
 
 		switch session.Phase {
-		case orchestrator.PhaseTripleShotWorking:
+		case tripleshot.PhaseWorking:
 			// Check each attempt's completion file
 			for i := range 3 {
 				attempt := session.Attempts[i]
-				if attempt.Status == orchestrator.AttemptStatusWorking {
+				if attempt.Status == tripleshot.AttemptStatusWorking {
 					complete, err := coordinator.CheckAttemptCompletion(i)
 					result.AttemptResults[i] = complete
 					if err != nil {
@@ -123,7 +126,7 @@ func CheckTripleShotCompletionAsync(
 				}
 			}
 
-		case orchestrator.PhaseTripleShotEvaluating:
+		case tripleshot.PhaseEvaluating:
 			// Check judge completion file
 			complete, err := coordinator.CheckJudgeCompletion()
 			result.JudgeComplete = complete
@@ -137,7 +140,7 @@ func CheckTripleShotCompletionAsync(
 // ProcessAttemptCompletionAsync returns a command that processes an attempt completion file
 // in a goroutine, avoiding blocking the UI event loop with file I/O.
 func ProcessAttemptCompletionAsync(
-	coordinator *orchestrator.TripleShotCoordinator,
+	coordinator *tripleshot.Coordinator,
 	groupID string,
 	attemptIndex int,
 ) tea.Cmd {
@@ -154,7 +157,7 @@ func ProcessAttemptCompletionAsync(
 // ProcessJudgeCompletionAsync returns a command that processes a judge completion file
 // in a goroutine, avoiding blocking the UI event loop with file I/O.
 func ProcessJudgeCompletionAsync(
-	coordinator *orchestrator.TripleShotCoordinator,
+	coordinator *tripleshot.Coordinator,
 	groupID string,
 ) tea.Cmd {
 	return func() tea.Msg {
@@ -374,7 +377,7 @@ func CheckPlanManagerFileAsync(
 // CheckAdversarialCompletionAsync returns a command that checks adversarial completion files
 // in a goroutine, avoiding blocking the UI event loop with file I/O.
 func CheckAdversarialCompletionAsync(
-	coordinator *orchestrator.AdversarialCoordinator,
+	coordinator *adversarial.Coordinator,
 	groupID string,
 ) tea.Cmd {
 	return func() tea.Msg {
@@ -383,7 +386,7 @@ func CheckAdversarialCompletionAsync(
 			// Return an error result instead of nil to avoid silent failure
 			return AdversarialCheckResultMsg{
 				GroupID:        groupID,
-				Phase:          orchestrator.PhaseAdversarialFailed,
+				Phase:          adversarial.PhaseFailed,
 				IncrementError: fmt.Errorf("adversarial session not found"),
 			}
 		}
@@ -394,13 +397,13 @@ func CheckAdversarialCompletionAsync(
 		}
 
 		switch session.Phase {
-		case orchestrator.PhaseAdversarialImplementing:
+		case adversarial.PhaseImplementing:
 			// Check increment file
 			ready, err := coordinator.CheckIncrementReady()
 			result.IncrementReady = ready
 			result.IncrementError = err
 
-		case orchestrator.PhaseAdversarialReviewing:
+		case adversarial.PhaseReviewing:
 			// Check review file
 			ready, err := coordinator.CheckReviewReady()
 			result.ReviewReady = ready
@@ -414,7 +417,7 @@ func CheckAdversarialCompletionAsync(
 // ProcessAdversarialIncrementAsync returns a command that processes an increment file
 // in a goroutine, avoiding blocking the UI event loop with file I/O.
 func ProcessAdversarialIncrementAsync(
-	coordinator *orchestrator.AdversarialCoordinator,
+	coordinator *adversarial.Coordinator,
 	groupID string,
 ) tea.Cmd {
 	return func() tea.Msg {
@@ -429,7 +432,7 @@ func ProcessAdversarialIncrementAsync(
 // ProcessAdversarialReviewAsync returns a command that processes a review file
 // in a goroutine, avoiding blocking the UI event loop with file I/O.
 func ProcessAdversarialReviewAsync(
-	coordinator *orchestrator.AdversarialCoordinator,
+	coordinator *adversarial.Coordinator,
 	groupID string,
 ) tea.Cmd {
 	return func() tea.Msg {
@@ -461,7 +464,7 @@ func ProcessAdversarialReviewAsync(
 // ProcessRalphCompletionAsync returns a command that processes a ralph iteration completion
 // in a goroutine, avoiding blocking the UI event loop.
 func ProcessRalphCompletionAsync(
-	coordinator *orchestrator.RalphCoordinator,
+	coordinator *ralph.Coordinator,
 	groupID string,
 	instanceID string,
 	outputManager *output.Manager,

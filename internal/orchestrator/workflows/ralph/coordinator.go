@@ -1,4 +1,4 @@
-package orchestrator
+package ralph
 
 import (
 	"context"
@@ -10,8 +10,35 @@ import (
 	"github.com/Iron-Ham/claudio/internal/util"
 )
 
-// RalphCoordinatorCallbacks holds callbacks for coordinator events.
-type RalphCoordinatorCallbacks struct {
+// OrchestratorInterface defines the methods needed from the Orchestrator.
+type OrchestratorInterface interface {
+	AddInstance(session SessionInterface, task string) (InstanceInterface, error)
+	AddInstanceToWorktree(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error)
+	StartInstance(inst InstanceInterface) error
+	SaveSession() error
+}
+
+// SessionInterface defines the methods needed from the Session.
+type SessionInterface interface {
+	GetGroup(id string) GroupInterface
+	GetGroupBySessionType(sessionType string) GroupInterface
+	GetInstance(id string) InstanceInterface
+}
+
+// InstanceInterface defines the methods needed from an Instance.
+type InstanceInterface interface {
+	GetID() string
+	GetWorktreePath() string
+	GetBranch() string
+}
+
+// GroupInterface defines the methods needed from an InstanceGroup.
+type GroupInterface interface {
+	AddInstance(instanceID string)
+}
+
+// CoordinatorCallbacks holds callbacks for coordinator events.
+type CoordinatorCallbacks struct {
 	// OnIterationStart is called when a new iteration begins.
 	OnIterationStart func(iteration int, instanceID string)
 
@@ -25,16 +52,19 @@ type RalphCoordinatorCallbacks struct {
 	OnMaxIterations func(iteration int)
 
 	// OnComplete is called when the ralph session completes (for any reason).
-	OnComplete func(phase RalphPhase, summary string)
+	OnComplete func(phase Phase, summary string)
 }
 
-// RalphCoordinator orchestrates the execution of a Ralph Wiggum iterative loop.
-type RalphCoordinator struct {
-	orch        *Orchestrator
-	baseSession *Session
-	session     *RalphSession
-	callbacks   *RalphCoordinatorCallbacks
+// Coordinator orchestrates the execution of a Ralph Wiggum iterative loop.
+type Coordinator struct {
+	orch        OrchestratorInterface
+	baseSession SessionInterface
+	session     *Session
+	callbacks   *CoordinatorCallbacks
 	logger      *logging.Logger
+
+	// Session type constant for this workflow
+	sessionType string
 
 	// Running state
 	ctx        context.Context
@@ -46,8 +76,18 @@ type RalphCoordinator struct {
 	worktree string // Worktree path for all iterations
 }
 
-// NewRalphCoordinator creates a new coordinator for a Ralph Wiggum loop session.
-func NewRalphCoordinator(orch *Orchestrator, baseSession *Session, ralphSession *RalphSession, logger *logging.Logger) *RalphCoordinator {
+// CoordinatorConfig holds configuration for creating a Coordinator
+type CoordinatorConfig struct {
+	Orchestrator OrchestratorInterface
+	BaseSession  SessionInterface
+	RalphSession *Session
+	Logger       *logging.Logger
+	SessionType  string
+}
+
+// NewCoordinator creates a new coordinator for a Ralph Wiggum loop session.
+func NewCoordinator(cfg CoordinatorConfig) *Coordinator {
+	logger := cfg.Logger
 	if logger == nil {
 		logger = logging.NopLogger()
 	}
@@ -56,32 +96,33 @@ func NewRalphCoordinator(orch *Orchestrator, baseSession *Session, ralphSession 
 
 	sessionLogger := logger.WithPhase("ralph-coordinator")
 
-	return &RalphCoordinator{
-		orch:        orch,
-		baseSession: baseSession,
-		session:     ralphSession,
+	return &Coordinator{
+		orch:        cfg.Orchestrator,
+		baseSession: cfg.BaseSession,
+		session:     cfg.RalphSession,
 		logger:      sessionLogger,
+		sessionType: cfg.SessionType,
 		ctx:         ctx,
 		cancelFunc:  cancel,
 	}
 }
 
 // SetCallbacks sets the coordinator callbacks.
-func (c *RalphCoordinator) SetCallbacks(cb *RalphCoordinatorCallbacks) {
+func (c *Coordinator) SetCallbacks(cb *CoordinatorCallbacks) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.callbacks = cb
 }
 
 // Session returns the ralph session.
-func (c *RalphCoordinator) Session() *RalphSession {
+func (c *Coordinator) Session() *Session {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.session
 }
 
 // notifyIterationStart notifies callbacks of iteration start.
-func (c *RalphCoordinator) notifyIterationStart(iteration int, instanceID string) {
+func (c *Coordinator) notifyIterationStart(iteration int, instanceID string) {
 	c.logger.Info("iteration started",
 		"iteration", iteration,
 		"instance_id", instanceID,
@@ -97,7 +138,7 @@ func (c *RalphCoordinator) notifyIterationStart(iteration int, instanceID string
 }
 
 // notifyIterationComplete notifies callbacks of iteration completion.
-func (c *RalphCoordinator) notifyIterationComplete(iteration int) {
+func (c *Coordinator) notifyIterationComplete(iteration int) {
 	c.logger.Info("iteration complete", "iteration", iteration)
 
 	c.mu.RLock()
@@ -110,7 +151,7 @@ func (c *RalphCoordinator) notifyIterationComplete(iteration int) {
 }
 
 // notifyPromiseFound notifies callbacks that completion promise was found.
-func (c *RalphCoordinator) notifyPromiseFound(iteration int) {
+func (c *Coordinator) notifyPromiseFound(iteration int) {
 	c.logger.Info("completion promise found", "iteration", iteration)
 
 	c.mu.RLock()
@@ -123,7 +164,7 @@ func (c *RalphCoordinator) notifyPromiseFound(iteration int) {
 }
 
 // notifyMaxIterations notifies callbacks that max iterations was reached.
-func (c *RalphCoordinator) notifyMaxIterations(iteration int) {
+func (c *Coordinator) notifyMaxIterations(iteration int) {
 	c.logger.Info("max iterations reached", "iteration", iteration)
 
 	c.mu.RLock()
@@ -136,7 +177,7 @@ func (c *RalphCoordinator) notifyMaxIterations(iteration int) {
 }
 
 // notifyComplete notifies callbacks of session completion.
-func (c *RalphCoordinator) notifyComplete(phase RalphPhase, summary string) {
+func (c *Coordinator) notifyComplete(phase Phase, summary string) {
 	c.logger.Info("ralph session complete",
 		"phase", string(phase),
 		"summary", summary,
@@ -152,7 +193,7 @@ func (c *RalphCoordinator) notifyComplete(phase RalphPhase, summary string) {
 }
 
 // StartIteration starts a new iteration of the ralph loop.
-func (c *RalphCoordinator) StartIteration() error {
+func (c *Coordinator) StartIteration() error {
 	c.mu.Lock()
 	session := c.session
 
@@ -160,10 +201,10 @@ func (c *RalphCoordinator) StartIteration() error {
 	if !session.ShouldContinue() {
 		phase := session.Phase
 		c.mu.Unlock()
-		if phase == PhaseRalphCancelled {
+		if phase == PhaseCancelled {
 			return fmt.Errorf("ralph loop was cancelled")
 		}
-		if phase == PhaseRalphComplete {
+		if phase == PhaseComplete {
 			return fmt.Errorf("ralph loop already complete")
 		}
 		return fmt.Errorf("ralph loop cannot continue (phase: %s)", phase)
@@ -193,16 +234,16 @@ func (c *RalphCoordinator) StartIteration() error {
 	)
 
 	// Find the ralph group to add instances to
-	var ralphGroup *InstanceGroup
+	var ralphGroup GroupInterface
 	if groupID != "" {
 		ralphGroup = c.baseSession.GetGroup(groupID)
 	}
 	if ralphGroup == nil {
-		ralphGroup = c.baseSession.GetGroupBySessionType(SessionTypeRalph)
+		ralphGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
 	}
 
 	// Create or reuse instance
-	var inst *Instance
+	var inst InstanceInterface
 	var err error
 
 	if iteration == 1 {
@@ -215,7 +256,7 @@ func (c *RalphCoordinator) StartIteration() error {
 			return fmt.Errorf("failed to create ralph instance: %w", err)
 		}
 		c.mu.Lock()
-		c.worktree = inst.WorktreePath
+		c.worktree = inst.GetWorktreePath()
 		c.mu.Unlock()
 	} else {
 		// Subsequent iterations - reuse the same worktree
@@ -234,12 +275,12 @@ func (c *RalphCoordinator) StartIteration() error {
 
 	// Add instance to the ralph group for sidebar display
 	if ralphGroup != nil {
-		ralphGroup.AddInstance(inst.ID)
+		ralphGroup.AddInstance(inst.GetID())
 	}
 
 	// Store current instance ID (needs lock for session modification)
 	c.mu.Lock()
-	session.SetInstanceID(inst.ID)
+	session.SetInstanceID(inst.GetID())
 	c.mu.Unlock()
 
 	// Start the instance
@@ -250,7 +291,7 @@ func (c *RalphCoordinator) StartIteration() error {
 		return fmt.Errorf("failed to start ralph iteration: %w", err)
 	}
 
-	c.notifyIterationStart(iteration, inst.ID)
+	c.notifyIterationStart(iteration, inst.GetID())
 
 	// Persist session state
 	if err := c.orch.SaveSession(); err != nil {
@@ -262,7 +303,7 @@ func (c *RalphCoordinator) StartIteration() error {
 
 // CheckCompletionInOutput checks if the completion promise is in the given output.
 // Returns true if the promise was found and the session should stop.
-func (c *RalphCoordinator) CheckCompletionInOutput(output string) bool {
+func (c *Coordinator) CheckCompletionInOutput(output string) bool {
 	c.mu.RLock()
 	session := c.session
 	c.mu.RUnlock()
@@ -272,7 +313,7 @@ func (c *RalphCoordinator) CheckCompletionInOutput(output string) bool {
 
 // ProcessIterationCompletion handles when the current iteration's instance completes.
 // Returns true if another iteration should be started, false if the loop is done.
-func (c *RalphCoordinator) ProcessIterationCompletion(output string) (continueLoop bool, err error) {
+func (c *Coordinator) ProcessIterationCompletion(output string) (continueLoop bool, err error) {
 	c.mu.Lock()
 	session := c.session
 	iteration := session.CurrentIteration
@@ -291,7 +332,7 @@ func (c *RalphCoordinator) ProcessIterationCompletion(output string) (continueLo
 		c.notifyPromiseFound(iteration)
 
 		summary := fmt.Sprintf("Ralph loop completed after %d iteration(s) - completion promise found", iteration)
-		c.notifyComplete(PhaseRalphComplete, summary)
+		c.notifyComplete(PhaseComplete, summary)
 
 		// Persist completion
 		if err := c.orch.SaveSession(); err != nil {
@@ -310,7 +351,7 @@ func (c *RalphCoordinator) ProcessIterationCompletion(output string) (continueLo
 		c.notifyMaxIterations(iteration)
 
 		summary := fmt.Sprintf("Ralph loop stopped after %d iteration(s) - max iterations reached", iteration)
-		c.notifyComplete(PhaseRalphMaxIterations, summary)
+		c.notifyComplete(PhaseMaxIterations, summary)
 
 		// Persist state
 		if err := c.orch.SaveSession(); err != nil {
@@ -325,7 +366,7 @@ func (c *RalphCoordinator) ProcessIterationCompletion(output string) (continueLo
 }
 
 // Cancel cancels the ralph loop.
-func (c *RalphCoordinator) Cancel() {
+func (c *Coordinator) Cancel() {
 	c.mu.Lock()
 	session := c.session
 	session.MarkCancelled()
@@ -335,7 +376,7 @@ func (c *RalphCoordinator) Cancel() {
 	c.cancelFunc()
 
 	summary := fmt.Sprintf("Ralph loop cancelled after %d iteration(s)", iteration)
-	c.notifyComplete(PhaseRalphCancelled, summary)
+	c.notifyComplete(PhaseCancelled, summary)
 
 	// Persist cancellation
 	if err := c.orch.SaveSession(); err != nil {
@@ -344,27 +385,27 @@ func (c *RalphCoordinator) Cancel() {
 }
 
 // Stop stops the ralph coordinator.
-func (c *RalphCoordinator) Stop() {
+func (c *Coordinator) Stop() {
 	c.cancelFunc()
 	c.wg.Wait()
 }
 
 // GetWorktree returns the worktree path for the ralph loop.
-func (c *RalphCoordinator) GetWorktree() string {
+func (c *Coordinator) GetWorktree() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.worktree
 }
 
 // SetWorktree sets the worktree path (used when restoring session).
-func (c *RalphCoordinator) SetWorktree(worktree string) {
+func (c *Coordinator) SetWorktree(worktree string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.worktree = worktree
 }
 
 // GetCurrentInstanceID returns the ID of the current active instance.
-func (c *RalphCoordinator) GetCurrentInstanceID() string {
+func (c *Coordinator) GetCurrentInstanceID() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.session.InstanceID

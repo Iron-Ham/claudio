@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	"github.com/Iron-Ham/claudio/internal/util"
@@ -14,7 +15,7 @@ import (
 // Each ralph session has its own group and coordinator.
 type RalphState struct {
 	// Coordinators maps group IDs to their ralph coordinators.
-	Coordinators map[string]*orchestrator.RalphCoordinator
+	Coordinators map[string]*ralph.Coordinator
 
 	// NeedsNotification is set when user notification is needed (checked on tick).
 	NeedsNotification bool
@@ -34,7 +35,7 @@ func (s *RalphState) HasActiveCoordinators() bool {
 }
 
 // GetCoordinatorForGroup returns the coordinator for a specific group ID.
-func (s *RalphState) GetCoordinatorForGroup(groupID string) *orchestrator.RalphCoordinator {
+func (s *RalphState) GetCoordinatorForGroup(groupID string) *ralph.Coordinator {
 	if s == nil || s.Coordinators == nil {
 		return nil
 	}
@@ -42,11 +43,11 @@ func (s *RalphState) GetCoordinatorForGroup(groupID string) *orchestrator.RalphC
 }
 
 // GetAllCoordinators returns all active ralph coordinators.
-func (s *RalphState) GetAllCoordinators() []*orchestrator.RalphCoordinator {
+func (s *RalphState) GetAllCoordinators() []*ralph.Coordinator {
 	if s == nil || s.Coordinators == nil {
 		return nil
 	}
-	coordinators := make([]*orchestrator.RalphCoordinator, 0, len(s.Coordinators))
+	coordinators := make([]*ralph.Coordinator, 0, len(s.Coordinators))
 	for _, coord := range s.Coordinators {
 		if coord != nil {
 			coordinators = append(coordinators, coord)
@@ -56,7 +57,7 @@ func (s *RalphState) GetAllCoordinators() []*orchestrator.RalphCoordinator {
 }
 
 // GetCoordinatorForInstance returns the coordinator that owns the given instance ID.
-func (s *RalphState) GetCoordinatorForInstance(instanceID string) *orchestrator.RalphCoordinator {
+func (s *RalphState) GetCoordinatorForInstance(instanceID string) *ralph.Coordinator {
 	if s == nil || s.Coordinators == nil {
 		return nil
 	}
@@ -144,21 +145,21 @@ func (m *Model) handleRalphCompletionProcessed(msg tuimsg.RalphCompletionProcess
 
 	// Check the session phase
 	switch session.Phase {
-	case orchestrator.PhaseRalphComplete:
+	case ralph.PhaseComplete:
 		m.infoMessage = fmt.Sprintf("Ralph loop completed! Found completion promise after %d iteration(s)", session.CurrentIteration)
 		m.ralph.NeedsNotification = true
 
-	case orchestrator.PhaseRalphMaxIterations:
+	case ralph.PhaseMaxIterations:
 		m.infoMessage = fmt.Sprintf("Ralph loop stopped: max iterations (%d) reached", session.Config.MaxIterations)
 		m.ralph.NeedsNotification = true
 
-	case orchestrator.PhaseRalphCancelled:
+	case ralph.PhaseCancelled:
 		m.infoMessage = "Ralph loop cancelled"
 
-	case orchestrator.PhaseRalphError:
+	case ralph.PhaseError:
 		m.errorMessage = fmt.Sprintf("Ralph loop failed: %s", session.Error)
 
-	case orchestrator.PhaseRalphWorking:
+	case ralph.PhaseWorking:
 		// Continue loop - start next iteration
 		if msg.ContinueLoop {
 			m.infoMessage = fmt.Sprintf("Ralph loop iteration %d starting...", session.CurrentIteration+1)
@@ -244,14 +245,14 @@ func (m Model) initiateRalphMode(prompt string, maxIterations int, completionPro
 	m.orchestrator.RequestGroupRename(ralphGroup.ID, prompt)
 
 	// Create ralph session config
-	config := orchestrator.DefaultRalphConfig()
+	config := ralph.DefaultConfig()
 	config.CompletionPromise = completionPromise
 	if maxIterations > 0 {
 		config.MaxIterations = maxIterations
 	}
 
 	// Create ralph session
-	ralphSession := orchestrator.NewRalphSession(prompt, config)
+	ralphSession := ralph.NewSession(prompt, config)
 	ralphSession.GroupID = ralphGroup.ID
 
 	// Add to RalphSessions slice for persistence
@@ -266,10 +267,10 @@ func (m Model) initiateRalphMode(prompt string, maxIterations int, completionPro
 	// Initialize ralph state if needed
 	if m.ralph == nil {
 		m.ralph = &RalphState{
-			Coordinators: make(map[string]*orchestrator.RalphCoordinator),
+			Coordinators: make(map[string]*ralph.Coordinator),
 		}
 	} else if m.ralph.Coordinators == nil {
-		m.ralph.Coordinators = make(map[string]*orchestrator.RalphCoordinator)
+		m.ralph.Coordinators = make(map[string]*ralph.Coordinator)
 	}
 
 	// Add coordinator to the map

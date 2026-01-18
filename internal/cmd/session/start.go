@@ -14,6 +14,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tmux"
 	"github.com/Iron-Ham/claudio/internal/tui"
@@ -350,11 +351,11 @@ func launchTUIWithTripleshots(cwd string, orch *orchestrator.Orchestrator, sess 
 	}
 
 	// Restore tripleshot coordinators from persisted sessions
-	var coordinators []*orchestrator.TripleShotCoordinator
+	var coordinators []*tripleshot.Coordinator
 	for _, tripleSession := range sess.TripleShots {
 		// Skip completed or failed tripleshots
-		if tripleSession.Phase == orchestrator.PhaseTripleShotComplete ||
-			tripleSession.Phase == orchestrator.PhaseTripleShotFailed {
+		if tripleSession.Phase == tripleshot.PhaseComplete ||
+			tripleSession.Phase == tripleshot.PhaseFailed {
 			continue
 		}
 

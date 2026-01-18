@@ -1,4 +1,4 @@
-package orchestrator
+package adversarial
 
 import (
 	"context"
@@ -11,40 +11,70 @@ import (
 	"github.com/Iron-Ham/claudio/internal/util"
 )
 
-// AdversarialCoordinatorCallbacks holds callbacks for coordinator events
-type AdversarialCoordinatorCallbacks struct {
+// OrchestratorInterface defines the methods needed from the Orchestrator.
+type OrchestratorInterface interface {
+	AddInstance(session SessionInterface, task string) (InstanceInterface, error)
+	AddInstanceToWorktree(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error)
+	StartInstance(inst InstanceInterface) error
+	SaveSession() error
+}
+
+// SessionInterface defines the methods needed from the Session.
+type SessionInterface interface {
+	GetGroup(id string) GroupInterface
+	GetGroupBySessionType(sessionType string) GroupInterface
+	GetInstance(id string) InstanceInterface
+}
+
+// InstanceInterface defines the methods needed from an Instance.
+type InstanceInterface interface {
+	GetID() string
+	GetWorktreePath() string
+	GetBranch() string
+}
+
+// GroupInterface defines the methods needed from an InstanceGroup.
+type GroupInterface interface {
+	AddInstance(instanceID string)
+}
+
+// CoordinatorCallbacks holds callbacks for coordinator events
+type CoordinatorCallbacks struct {
 	// OnPhaseChange is called when the adversarial phase changes
-	OnPhaseChange func(phase AdversarialPhase)
+	OnPhaseChange func(phase Phase)
 
 	// OnImplementerStart is called when the implementer begins a round
 	OnImplementerStart func(round int, instanceID string)
 
 	// OnIncrementReady is called when the implementer submits work for review
-	OnIncrementReady func(round int, increment *AdversarialIncrementFile)
+	OnIncrementReady func(round int, increment *IncrementFile)
 
 	// OnReviewerStart is called when the reviewer begins review
 	OnReviewerStart func(round int, instanceID string)
 
 	// OnReviewReady is called when the reviewer completes review
-	OnReviewReady func(round int, review *AdversarialReviewFile)
+	OnReviewReady func(round int, review *ReviewFile)
 
 	// OnApproved is called when the reviewer approves the implementation
-	OnApproved func(round int, review *AdversarialReviewFile)
+	OnApproved func(round int, review *ReviewFile)
 
 	// OnRejected is called when the reviewer rejects and requests changes
-	OnRejected func(round int, review *AdversarialReviewFile)
+	OnRejected func(round int, review *ReviewFile)
 
 	// OnComplete is called when the adversarial session completes
 	OnComplete func(success bool, summary string)
 }
 
-// AdversarialCoordinator orchestrates the execution of an adversarial review session
-type AdversarialCoordinator struct {
-	manager     *AdversarialManager
-	orch        *Orchestrator
-	baseSession *Session
-	callbacks   *AdversarialCoordinatorCallbacks
+// Coordinator orchestrates the execution of an adversarial review session
+type Coordinator struct {
+	manager     *Manager
+	orch        OrchestratorInterface
+	baseSession SessionInterface
+	callbacks   *CoordinatorCallbacks
 	logger      *logging.Logger
+
+	// Session type constant for this workflow
+	sessionType string
 
 	// Running state
 	ctx        context.Context
@@ -57,46 +87,57 @@ type AdversarialCoordinator struct {
 	reviewerWorktree    string // Worktree path for reviewer (same as implementer)
 }
 
-// NewAdversarialCoordinator creates a new coordinator for an adversarial session
-func NewAdversarialCoordinator(orch *Orchestrator, baseSession *Session, advSession *AdversarialSession, logger *logging.Logger) *AdversarialCoordinator {
+// CoordinatorConfig holds configuration for creating a Coordinator
+type CoordinatorConfig struct {
+	Orchestrator OrchestratorInterface
+	BaseSession  SessionInterface
+	AdvSession   *Session
+	Logger       *logging.Logger
+	SessionType  string
+}
+
+// NewCoordinator creates a new coordinator for an adversarial session
+func NewCoordinator(cfg CoordinatorConfig) *Coordinator {
+	logger := cfg.Logger
 	if logger == nil {
 		logger = logging.NopLogger()
 	}
-	manager := NewAdversarialManager(orch, baseSession, advSession, logger)
+	manager := NewManager(cfg.AdvSession, logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	sessionLogger := logger.WithSession(advSession.ID).WithPhase("adversarial-coordinator")
+	sessionLogger := logger.WithSession(cfg.AdvSession.ID).WithPhase("adversarial-coordinator")
 
-	return &AdversarialCoordinator{
+	return &Coordinator{
 		manager:     manager,
-		orch:        orch,
-		baseSession: baseSession,
+		orch:        cfg.Orchestrator,
+		baseSession: cfg.BaseSession,
 		logger:      sessionLogger,
+		sessionType: cfg.SessionType,
 		ctx:         ctx,
 		cancelFunc:  cancel,
 	}
 }
 
 // SetCallbacks sets the coordinator callbacks
-func (c *AdversarialCoordinator) SetCallbacks(cb *AdversarialCoordinatorCallbacks) {
+func (c *Coordinator) SetCallbacks(cb *CoordinatorCallbacks) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.callbacks = cb
 }
 
 // Manager returns the underlying adversarial manager
-func (c *AdversarialCoordinator) Manager() *AdversarialManager {
+func (c *Coordinator) Manager() *Manager {
 	return c.manager
 }
 
 // Session returns the adversarial session
-func (c *AdversarialCoordinator) Session() *AdversarialSession {
+func (c *Coordinator) Session() *Session {
 	return c.manager.Session()
 }
 
 // notifyPhaseChange notifies callbacks of phase change
-func (c *AdversarialCoordinator) notifyPhaseChange(phase AdversarialPhase) {
+func (c *Coordinator) notifyPhaseChange(phase Phase) {
 	session := c.Session()
 	fromPhase := session.Phase
 
@@ -127,7 +168,7 @@ func (c *AdversarialCoordinator) notifyPhaseChange(phase AdversarialPhase) {
 }
 
 // notifyImplementerStart notifies callbacks of implementer start
-func (c *AdversarialCoordinator) notifyImplementerStart(round int, instanceID string) {
+func (c *Coordinator) notifyImplementerStart(round int, instanceID string) {
 	c.logger.Info("implementer started",
 		"round", round,
 		"instance_id", instanceID,
@@ -143,7 +184,7 @@ func (c *AdversarialCoordinator) notifyImplementerStart(round int, instanceID st
 }
 
 // notifyIncrementReady notifies callbacks of increment completion
-func (c *AdversarialCoordinator) notifyIncrementReady(round int, increment *AdversarialIncrementFile) {
+func (c *Coordinator) notifyIncrementReady(round int, increment *IncrementFile) {
 	c.manager.RecordIncrement(increment)
 
 	// Persist increment
@@ -165,7 +206,7 @@ func (c *AdversarialCoordinator) notifyIncrementReady(round int, increment *Adve
 }
 
 // notifyReviewerStart notifies callbacks of reviewer start
-func (c *AdversarialCoordinator) notifyReviewerStart(round int, instanceID string) {
+func (c *Coordinator) notifyReviewerStart(round int, instanceID string) {
 	c.logger.Info("reviewer started",
 		"round", round,
 		"instance_id", instanceID,
@@ -181,7 +222,7 @@ func (c *AdversarialCoordinator) notifyReviewerStart(round int, instanceID strin
 }
 
 // notifyReviewReady notifies callbacks of review completion
-func (c *AdversarialCoordinator) notifyReviewReady(round int, review *AdversarialReviewFile) {
+func (c *Coordinator) notifyReviewReady(round int, review *ReviewFile) {
 	c.manager.RecordReview(review)
 
 	// Persist review
@@ -214,7 +255,7 @@ func (c *AdversarialCoordinator) notifyReviewReady(round int, review *Adversaria
 }
 
 // notifyComplete notifies callbacks of completion
-func (c *AdversarialCoordinator) notifyComplete(success bool, summary string) {
+func (c *Coordinator) notifyComplete(success bool, summary string) {
 	c.logger.Info("adversarial session complete",
 		"success", success,
 		"summary", summary,
@@ -230,7 +271,7 @@ func (c *AdversarialCoordinator) notifyComplete(success bool, summary string) {
 }
 
 // StartImplementer starts the implementer instance for the current round
-func (c *AdversarialCoordinator) StartImplementer() error {
+func (c *Coordinator) StartImplementer() error {
 	session := c.Session()
 	task := session.Task
 	round := session.CurrentRound
@@ -248,7 +289,7 @@ func (c *AdversarialCoordinator) StartImplementer() error {
 
 	// Get previous review feedback if this isn't the first round
 	// Must be done BEFORE StartRound() which appends a new round to History
-	var previousReview *AdversarialReviewFile
+	var previousReview *ReviewFile
 	if round > 1 && len(session.History) > 0 {
 		previousReview = session.History[len(session.History)-1].Review
 	}
@@ -257,19 +298,19 @@ func (c *AdversarialCoordinator) StartImplementer() error {
 	c.manager.StartRound()
 
 	// Build the implementer prompt
-	prompt := FormatAdversarialImplementerPrompt(task, round, previousReview)
+	prompt := FormatImplementerPrompt(task, round, previousReview)
 
 	// Find the adversarial group to add instances to
-	var advGroup *InstanceGroup
+	var advGroup GroupInterface
 	if session.GroupID != "" {
 		advGroup = c.baseSession.GetGroup(session.GroupID)
 	}
 	if advGroup == nil {
-		advGroup = c.baseSession.GetGroupBySessionType(SessionTypeAdversarial)
+		advGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
 	}
 
 	// Create instance for implementer
-	var inst *Instance
+	var inst InstanceInterface
 	var err error
 
 	if round == 1 {
@@ -278,8 +319,8 @@ func (c *AdversarialCoordinator) StartImplementer() error {
 		if err != nil {
 			return fmt.Errorf("failed to create implementer instance: %w", err)
 		}
-		c.implementerWorktree = inst.WorktreePath
-		c.reviewerWorktree = inst.WorktreePath // Reviewer will use same worktree
+		c.implementerWorktree = inst.GetWorktreePath()
+		c.reviewerWorktree = inst.GetWorktreePath() // Reviewer will use same worktree
 	} else {
 		// Subsequent rounds - reuse the same worktree
 		inst, err = c.orch.AddInstanceToWorktree(c.baseSession, prompt, c.implementerWorktree, "")
@@ -290,21 +331,21 @@ func (c *AdversarialCoordinator) StartImplementer() error {
 
 	// Add instance to the adversarial group for sidebar display
 	if advGroup != nil {
-		advGroup.AddInstance(inst.ID)
+		advGroup.AddInstance(inst.GetID())
 	}
 
 	// Store implementer ID
-	session.ImplementerID = inst.ID
+	session.ImplementerID = inst.GetID()
 
 	// Transition to implementing phase
-	c.notifyPhaseChange(PhaseAdversarialImplementing)
+	c.notifyPhaseChange(PhaseImplementing)
 
 	// Start the instance
 	if err := c.orch.StartInstance(inst); err != nil {
 		return fmt.Errorf("failed to start implementer: %w", err)
 	}
 
-	c.notifyImplementerStart(round, inst.ID)
+	c.notifyImplementerStart(round, inst.GetID())
 
 	// Persist session state
 	if c.orch != nil {
@@ -319,7 +360,7 @@ func (c *AdversarialCoordinator) StartImplementer() error {
 }
 
 // StartReviewer starts the reviewer instance for the current round
-func (c *AdversarialCoordinator) StartReviewer(increment *AdversarialIncrementFile) error {
+func (c *Coordinator) StartReviewer(increment *IncrementFile) error {
 	session := c.Session()
 	task := session.Task
 	round := session.CurrentRound
@@ -331,15 +372,15 @@ func (c *AdversarialCoordinator) StartReviewer(increment *AdversarialIncrementFi
 	if minPassingScore < 1 || minPassingScore > 10 {
 		minPassingScore = 8 // Fallback to default if invalid
 	}
-	prompt := FormatAdversarialReviewerPrompt(task, round, increment, minPassingScore)
+	prompt := FormatReviewerPrompt(task, round, increment, minPassingScore)
 
 	// Find the adversarial group
-	var advGroup *InstanceGroup
+	var advGroup GroupInterface
 	if session.GroupID != "" {
 		advGroup = c.baseSession.GetGroup(session.GroupID)
 	}
 	if advGroup == nil {
-		advGroup = c.baseSession.GetGroupBySessionType(SessionTypeAdversarial)
+		advGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
 	}
 
 	// Create reviewer instance in the same worktree
@@ -350,21 +391,21 @@ func (c *AdversarialCoordinator) StartReviewer(increment *AdversarialIncrementFi
 
 	// Add instance to the adversarial group
 	if advGroup != nil {
-		advGroup.AddInstance(inst.ID)
+		advGroup.AddInstance(inst.GetID())
 	}
 
 	// Store reviewer ID
-	session.ReviewerID = inst.ID
+	session.ReviewerID = inst.GetID()
 
 	// Transition to reviewing phase
-	c.notifyPhaseChange(PhaseAdversarialReviewing)
+	c.notifyPhaseChange(PhaseReviewing)
 
 	// Start the instance
 	if err := c.orch.StartInstance(inst); err != nil {
 		return fmt.Errorf("failed to start reviewer: %w", err)
 	}
 
-	c.notifyReviewerStart(round, inst.ID)
+	c.notifyReviewerStart(round, inst.GetID())
 
 	// Persist session state
 	if c.orch != nil {
@@ -379,12 +420,12 @@ func (c *AdversarialCoordinator) StartReviewer(increment *AdversarialIncrementFi
 }
 
 // CheckIncrementReady checks if the implementer has written their increment file
-func (c *AdversarialCoordinator) CheckIncrementReady() (bool, error) {
+func (c *Coordinator) CheckIncrementReady() (bool, error) {
 	if c.implementerWorktree == "" {
 		return false, nil
 	}
 
-	incrementPath := AdversarialIncrementFilePath(c.implementerWorktree)
+	incrementPath := IncrementFilePath(c.implementerWorktree)
 	_, err := os.Stat(incrementPath)
 	if err == nil {
 		return true, nil
@@ -396,12 +437,12 @@ func (c *AdversarialCoordinator) CheckIncrementReady() (bool, error) {
 }
 
 // CheckReviewReady checks if the reviewer has written their review file
-func (c *AdversarialCoordinator) CheckReviewReady() (bool, error) {
+func (c *Coordinator) CheckReviewReady() (bool, error) {
 	if c.reviewerWorktree == "" {
 		return false, nil
 	}
 
-	reviewPath := AdversarialReviewFilePath(c.reviewerWorktree)
+	reviewPath := ReviewFilePath(c.reviewerWorktree)
 	_, err := os.Stat(reviewPath)
 	if err == nil {
 		return true, nil
@@ -413,14 +454,14 @@ func (c *AdversarialCoordinator) CheckReviewReady() (bool, error) {
 }
 
 // ProcessIncrementCompletion handles when the implementer completes
-func (c *AdversarialCoordinator) ProcessIncrementCompletion() error {
+func (c *Coordinator) ProcessIncrementCompletion() error {
 	session := c.Session()
 	round := session.CurrentRound
 
 	// Parse the increment file
-	increment, err := ParseAdversarialIncrementFile(c.implementerWorktree)
+	increment, err := ParseIncrementFile(c.implementerWorktree)
 	if err != nil {
-		c.notifyPhaseChange(PhaseAdversarialFailed)
+		c.notifyPhaseChange(PhaseFailed)
 		session.Error = fmt.Sprintf("failed to parse increment file: %v", err)
 		return err
 	}
@@ -435,7 +476,7 @@ func (c *AdversarialCoordinator) ProcessIncrementCompletion() error {
 
 	// Check for failure status
 	if increment.Status == "failed" {
-		c.notifyPhaseChange(PhaseAdversarialFailed)
+		c.notifyPhaseChange(PhaseFailed)
 		session.Error = fmt.Sprintf("implementer failed: %s", increment.Summary)
 		return fmt.Errorf("implementer reported failure: %s", increment.Summary)
 	}
@@ -443,7 +484,7 @@ func (c *AdversarialCoordinator) ProcessIncrementCompletion() error {
 	c.notifyIncrementReady(round, increment)
 
 	// Clear the increment file so it's fresh for next round
-	if err := os.Remove(AdversarialIncrementFilePath(c.implementerWorktree)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(IncrementFilePath(c.implementerWorktree)); err != nil && !os.IsNotExist(err) {
 		c.logger.Warn("failed to remove increment file", "error", err)
 	}
 
@@ -452,14 +493,14 @@ func (c *AdversarialCoordinator) ProcessIncrementCompletion() error {
 }
 
 // ProcessReviewCompletion handles when the reviewer completes
-func (c *AdversarialCoordinator) ProcessReviewCompletion() error {
+func (c *Coordinator) ProcessReviewCompletion() error {
 	session := c.Session()
 	round := session.CurrentRound
 
 	// Parse the review file
-	review, err := ParseAdversarialReviewFile(c.reviewerWorktree)
+	review, err := ParseReviewFile(c.reviewerWorktree)
 	if err != nil {
-		c.notifyPhaseChange(PhaseAdversarialFailed)
+		c.notifyPhaseChange(PhaseFailed)
 		session.Error = fmt.Sprintf("failed to parse review file: %v", err)
 		return err
 	}
@@ -495,7 +536,7 @@ func (c *AdversarialCoordinator) ProcessReviewCompletion() error {
 	c.notifyReviewReady(round, review)
 
 	// Clear the review file so it's fresh for next round
-	if err := os.Remove(AdversarialReviewFilePath(c.reviewerWorktree)); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(ReviewFilePath(c.reviewerWorktree)); err != nil && !os.IsNotExist(err) {
 		c.logger.Warn("failed to remove review file", "error", err)
 	}
 
@@ -503,8 +544,8 @@ func (c *AdversarialCoordinator) ProcessReviewCompletion() error {
 		// Work approved - complete the session
 		now := time.Now()
 		session.CompletedAt = &now
-		c.notifyPhaseChange(PhaseAdversarialApproved)
-		c.notifyPhaseChange(PhaseAdversarialComplete)
+		c.notifyPhaseChange(PhaseApproved)
+		c.notifyPhaseChange(PhaseComplete)
 
 		summary := fmt.Sprintf("Approved after %d round(s). Final score: %d/10. %s",
 			round, review.Score, review.Summary)
@@ -512,7 +553,7 @@ func (c *AdversarialCoordinator) ProcessReviewCompletion() error {
 	} else {
 		// Work rejected - check if we should continue
 		if c.manager.IsMaxIterationsReached() {
-			c.notifyPhaseChange(PhaseAdversarialFailed)
+			c.notifyPhaseChange(PhaseFailed)
 			session.Error = fmt.Sprintf("max iterations reached (%d) without approval", session.Config.MaxIterations)
 			c.notifyComplete(false, session.Error)
 			return fmt.Errorf("%s", session.Error)
@@ -529,20 +570,20 @@ func (c *AdversarialCoordinator) ProcessReviewCompletion() error {
 }
 
 // Stop stops the adversarial execution
-func (c *AdversarialCoordinator) Stop() {
+func (c *Coordinator) Stop() {
 	c.cancelFunc()
 	c.wg.Wait()
 }
 
 // GetImplementerWorktree returns the implementer's worktree path
-func (c *AdversarialCoordinator) GetImplementerWorktree() string {
+func (c *Coordinator) GetImplementerWorktree() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.implementerWorktree
 }
 
 // SetWorktrees sets the worktree paths (used when restoring session)
-func (c *AdversarialCoordinator) SetWorktrees(worktree string) {
+func (c *Coordinator) SetWorktrees(worktree string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.implementerWorktree = worktree

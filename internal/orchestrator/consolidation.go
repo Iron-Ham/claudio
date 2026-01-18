@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 	"github.com/Iron-Ham/claudio/internal/pr"
 	"github.com/Iron-Ham/claudio/internal/util"
 	"github.com/Iron-Ham/claudio/internal/worktree"
@@ -39,8 +40,8 @@ const (
 	ConsolidationFailed           ConsolidationPhase = "failed"
 )
 
-// ConsolidationState tracks the progress of consolidation
-type ConsolidationState struct {
+// ConsolidatorState tracks the progress of consolidation
+type ConsolidatorState struct {
 	Phase            ConsolidationPhase `json:"phase"`
 	CurrentGroup     int                `json:"current_group"`
 	TotalGroups      int                `json:"total_groups"`
@@ -56,7 +57,7 @@ type ConsolidationState struct {
 }
 
 // HasConflict returns true if consolidation is paused due to a conflict.
-func (s *ConsolidationState) HasConflict() bool {
+func (s *ConsolidatorState) HasConflict() bool {
 	return s.Phase == ConsolidationPaused && len(s.ConflictFiles) > 0
 }
 
@@ -112,7 +113,7 @@ type Consolidator struct {
 	baseSession *Session
 	config      ConsolidationConfig
 	wt          *worktree.Manager
-	state       *ConsolidationState
+	state       *ConsolidatorState
 	results     []*GroupConsolidationResult
 	logger      *logging.Logger
 
@@ -143,7 +144,7 @@ func NewConsolidator(orch *Orchestrator, session *UltraPlanSession, baseSession 
 		baseSession:  baseSession,
 		config:       config,
 		wt:           orch.wt,
-		state:        &ConsolidationState{Phase: ConsolidationIdle},
+		state:        &ConsolidatorState{Phase: ConsolidationIdle},
 		results:      make([]*GroupConsolidationResult, 0),
 		taskBranches: make(map[string]string),
 		stopChan:     make(chan struct{}),
@@ -159,7 +160,7 @@ func (c *Consolidator) SetEventCallback(cb func(ConsolidationEvent)) {
 }
 
 // State returns a copy of the current consolidation state
-func (c *Consolidator) State() *ConsolidationState {
+func (c *Consolidator) State() *ConsolidatorState {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	// Return a copy
@@ -1089,8 +1090,8 @@ func (e *ConflictError) Error() string {
 
 // gatherTaskCompletionContext reads completion files from all completed task worktrees
 // and aggregates the context for use in consolidation prompts and PR descriptions
-func (c *Consolidator) gatherTaskCompletionContext(taskIDs []string) *AggregatedTaskContext {
-	context := &AggregatedTaskContext{
+func (c *Consolidator) gatherTaskCompletionContext(taskIDs []string) *types.AggregatedTaskContext {
+	context := &types.AggregatedTaskContext{
 		TaskSummaries:  make(map[string]string),
 		AllIssues:      make([]string, 0),
 		AllSuggestions: make([]string, 0),
@@ -1150,55 +1151,6 @@ func (c *Consolidator) gatherTaskCompletionContext(taskIDs []string) *Aggregated
 	}
 
 	return context
-}
-
-// AggregatedTaskContext holds the aggregated context from all task completion files
-type AggregatedTaskContext struct {
-	TaskSummaries  map[string]string // taskID -> summary
-	AllIssues      []string          // All issues from all tasks
-	AllSuggestions []string          // All suggestions from all tasks
-	Dependencies   []string          // Deduplicated list of new dependencies
-	Notes          []string          // Implementation notes from all tasks
-}
-
-// HasContent returns true if there is any aggregated context worth displaying
-func (a *AggregatedTaskContext) HasContent() bool {
-	return len(a.AllIssues) > 0 || len(a.AllSuggestions) > 0 || len(a.Dependencies) > 0 || len(a.Notes) > 0
-}
-
-// FormatForPR formats the aggregated context for inclusion in a PR description
-func (a *AggregatedTaskContext) FormatForPR() string {
-	var sb strings.Builder
-
-	if len(a.Notes) > 0 {
-		sb.WriteString("\n## Implementation Notes\n\n")
-		for _, note := range a.Notes {
-			sb.WriteString(fmt.Sprintf("- %s\n", note))
-		}
-	}
-
-	if len(a.AllIssues) > 0 {
-		sb.WriteString("\n## Issues/Concerns Flagged\n\n")
-		for _, issue := range a.AllIssues {
-			sb.WriteString(fmt.Sprintf("- %s\n", issue))
-		}
-	}
-
-	if len(a.AllSuggestions) > 0 {
-		sb.WriteString("\n## Integration Suggestions\n\n")
-		for _, suggestion := range a.AllSuggestions {
-			sb.WriteString(fmt.Sprintf("- %s\n", suggestion))
-		}
-	}
-
-	if len(a.Dependencies) > 0 {
-		sb.WriteString("\n## New Dependencies\n\n")
-		for _, dep := range a.Dependencies {
-			sb.WriteString(fmt.Sprintf("- `%s`\n", dep))
-		}
-	}
-
-	return sb.String()
 }
 
 // Helper functions

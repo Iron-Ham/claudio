@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator/context"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
 func TestSessionInstanceFinderFindInstanceByTaskID(t *testing.T) {
@@ -155,7 +156,7 @@ func TestFileCompletionReaderReadTaskCompletion(t *testing.T) {
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Create a valid task completion file
-	completion := TaskCompletionFile{
+	completion := types.TaskCompletionFile{
 		TaskID:        "task-1",
 		Status:        "complete",
 		Summary:       "Task completed successfully",
@@ -166,7 +167,7 @@ func TestFileCompletionReaderReadTaskCompletion(t *testing.T) {
 		Dependencies:  []string{"dep1"},
 	}
 
-	completionPath := filepath.Join(tempDir, TaskCompletionFileName)
+	completionPath := filepath.Join(tempDir, types.TaskCompletionFileName)
 	data, err := json.Marshal(completion)
 	if err != nil {
 		t.Fatal(err)
@@ -258,19 +259,19 @@ func TestFileCompletionReaderReadGroupConsolidationCompletion(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	completion := GroupConsolidationCompletionFile{
+	completion := types.GroupConsolidationCompletionFile{
 		GroupIndex:         0,
 		Status:             "complete",
 		BranchName:         "group-1-branch",
 		TasksConsolidated:  []string{"task-1", "task-2"},
 		Notes:              "Group notes",
 		IssuesForNextGroup: []string{"Watch for X"},
-		Verification: VerificationResult{
+		Verification: types.VerificationResult{
 			OverallSuccess: true,
 		},
 	}
 
-	completionPath := filepath.Join(tempDir, GroupConsolidationCompletionFileName)
+	completionPath := filepath.Join(tempDir, types.GroupConsolidationCompletionFileName)
 	data, err := json.Marshal(completion)
 	if err != nil {
 		t.Fatal(err)
@@ -350,7 +351,7 @@ func TestAggregatedTaskContextFromContext(t *testing.T) {
 	}
 
 	// Test with data
-	ctxAgg := &context.AggregatedTaskContext{
+	ctxAgg := &types.AggregatedTaskContext{
 		TaskSummaries:  map[string]string{"task-1": "Summary 1"},
 		AllIssues:      []string{"Issue 1"},
 		AllSuggestions: []string{"Suggestion 1"},

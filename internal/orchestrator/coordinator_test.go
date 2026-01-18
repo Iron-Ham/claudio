@@ -7,6 +7,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
 // TestGetMultiPassStrategyNames verifies that we have the expected strategies
@@ -1208,7 +1209,7 @@ func TestResumeConsolidation_NoConsolidation(t *testing.T) {
 // TestResumeConsolidation_NotPaused tests ResumeConsolidation when not in paused state
 func TestResumeConsolidation_NotPaused(t *testing.T) {
 	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
-	session.Consolidation = &ConsolidationState{
+	session.Consolidation = &ConsolidatorState{
 		Phase: ConsolidationMergingTasks, // Not paused
 	}
 
@@ -1229,7 +1230,7 @@ func TestResumeConsolidation_NotPaused(t *testing.T) {
 // TestResumeConsolidation_NoConflictWorktree tests ResumeConsolidation with no conflict worktree
 func TestResumeConsolidation_NoConflictWorktree(t *testing.T) {
 	session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
-	session.Consolidation = &ConsolidationState{
+	session.Consolidation = &ConsolidatorState{
 		Phase:            ConsolidationPaused,
 		ConflictWorktree: "", // Empty worktree path
 	}
@@ -1298,7 +1299,7 @@ func TestResumeConsolidation_ValidationStates(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			session := NewUltraPlanSession("Test objective", DefaultUltraPlanConfig())
-			session.Consolidation = &ConsolidationState{
+			session.Consolidation = &ConsolidatorState{
 				Phase:            tt.phase,
 				ConflictWorktree: tt.worktree,
 			}
@@ -1329,16 +1330,16 @@ func TestResumeConsolidation_ValidationStates(t *testing.T) {
 	}
 }
 
-// TestConsolidationState_HasConflict tests the HasConflict method
-func TestConsolidationState_HasConflict(t *testing.T) {
+// TestConsolidatorState_HasConflict tests the HasConflict method
+func TestConsolidatorState_HasConflict(t *testing.T) {
 	tests := []struct {
 		name     string
-		state    ConsolidationState
+		state    ConsolidatorState
 		expected bool
 	}{
 		{
 			name: "paused with conflict files",
-			state: ConsolidationState{
+			state: ConsolidatorState{
 				Phase:         ConsolidationPaused,
 				ConflictFiles: []string{"file1.go", "file2.go"},
 			},
@@ -1346,7 +1347,7 @@ func TestConsolidationState_HasConflict(t *testing.T) {
 		},
 		{
 			name: "paused without conflict files",
-			state: ConsolidationState{
+			state: ConsolidatorState{
 				Phase:         ConsolidationPaused,
 				ConflictFiles: []string{},
 			},
@@ -1354,7 +1355,7 @@ func TestConsolidationState_HasConflict(t *testing.T) {
 		},
 		{
 			name: "paused with nil conflict files",
-			state: ConsolidationState{
+			state: ConsolidatorState{
 				Phase:         ConsolidationPaused,
 				ConflictFiles: nil,
 			},
@@ -1362,7 +1363,7 @@ func TestConsolidationState_HasConflict(t *testing.T) {
 		},
 		{
 			name: "not paused with conflict files",
-			state: ConsolidationState{
+			state: ConsolidatorState{
 				Phase:         ConsolidationMergingTasks,
 				ConflictFiles: []string{"file1.go"},
 			},
@@ -1370,7 +1371,7 @@ func TestConsolidationState_HasConflict(t *testing.T) {
 		},
 		{
 			name: "complete phase",
-			state: ConsolidationState{
+			state: ConsolidatorState{
 				Phase: ConsolidationComplete,
 			},
 			expected: false,
@@ -2105,11 +2106,11 @@ func TestBuildTaskPrompt_RegressionPreviousGroupContext(t *testing.T) {
 		"task-2": "inst-2",
 	}
 	// Add group consolidation context from group 0
-	session.GroupConsolidationContexts = []*GroupConsolidationCompletionFile{
+	session.GroupConsolidationContexts = []*types.GroupConsolidationCompletionFile{
 		{
 			Notes:              "Group 1 completed with auth module setup",
 			IssuesForNextGroup: []string{"Ensure API compatibility", "Update documentation"},
-			Verification:       VerificationResult{OverallSuccess: true},
+			Verification:       types.VerificationResult{OverallSuccess: true},
 		},
 	}
 

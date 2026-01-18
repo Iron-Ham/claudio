@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	"github.com/Iron-Ham/claudio/internal/util"
 )
@@ -47,7 +48,7 @@ func TestNewWithTripleShot_CreatesGroupForCLIStartedSession(t *testing.T) {
 	}
 
 	// Create tripleshot session without a GroupID (simulates CLI startup)
-	tripleSession := &orchestrator.TripleShotSession{
+	tripleSession := &tripleshot.Session{
 		ID:   "triple-1",
 		Task: "Test task for tripleshot",
 	}
@@ -73,11 +74,11 @@ func TestNewWithTripleShots_CreatesGroupsForLegacySessions(t *testing.T) {
 	}
 
 	// Create multiple tripleshot sessions without GroupIDs (legacy sessions)
-	session1 := &orchestrator.TripleShotSession{
+	session1 := &tripleshot.Session{
 		ID:   "triple-1",
 		Task: "Task 1",
 	}
-	session2 := &orchestrator.TripleShotSession{
+	session2 := &tripleshot.Session{
 		ID:   "triple-2",
 		Task: "Task 2",
 	}

@@ -11,6 +11,8 @@ import (
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prworkflow"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/viper"
 )
@@ -36,7 +38,7 @@ type Dependencies interface {
 	IsTripleShotMode() bool
 	IsAdversarialMode() bool
 	GetUltraPlanCoordinator() *orchestrator.Coordinator
-	GetTripleShotCoordinators() []*orchestrator.TripleShotCoordinator // Returns all active tripleshot coordinators
+	GetTripleShotCoordinators() []*tripleshot.Coordinator // Returns all active tripleshot coordinators
 
 	// Logger access
 	GetLogger() *logging.Logger
@@ -49,7 +51,7 @@ type Dependencies interface {
 	IsRalphMode() bool
 
 	// GetRalphCoordinators returns all active ralph coordinators
-	GetRalphCoordinators() []*orchestrator.RalphCoordinator
+	GetRalphCoordinators() []*ralph.Coordinator
 }
 
 // Result represents the outcome of executing a command.

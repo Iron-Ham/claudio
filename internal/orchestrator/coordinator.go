@@ -14,6 +14,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator/phase"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/retry"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/verify"
 )
 
@@ -2088,7 +2089,7 @@ func (c *Coordinator) StartConsolidation() error {
 
 	// Initialize consolidation state
 	c.mu.Lock()
-	session.Consolidation = &ConsolidationState{
+	session.Consolidation = &ConsolidatorState{
 		Phase:       ConsolidationCreatingBranches,
 		TotalGroups: len(session.Plan.ExecutionOrder),
 	}
@@ -2248,7 +2249,7 @@ func (c *Coordinator) finishConsolidation() {
 }
 
 // GetConsolidation returns the current consolidation state
-func (c *Coordinator) GetConsolidation() *ConsolidationState {
+func (c *Coordinator) GetConsolidation() *ConsolidatorState {
 	session := c.Session()
 	if session == nil {
 		return nil
@@ -3434,14 +3435,14 @@ func (c *Coordinator) getBaseBranchForGroup(groupIndex int) string {
 
 // gatherTaskCompletionContextForGroup reads completion files from all completed tasks in a group
 // and aggregates the context for the group consolidator
-func (c *Coordinator) gatherTaskCompletionContextForGroup(groupIndex int) *AggregatedTaskContext {
+func (c *Coordinator) gatherTaskCompletionContextForGroup(groupIndex int) *types.AggregatedTaskContext {
 	session := c.Session()
 	if session == nil || session.Plan == nil || groupIndex >= len(session.Plan.ExecutionOrder) {
-		return &AggregatedTaskContext{TaskSummaries: make(map[string]string)}
+		return &types.AggregatedTaskContext{TaskSummaries: make(map[string]string)}
 	}
 
 	taskIDs := session.Plan.ExecutionOrder[groupIndex]
-	context := &AggregatedTaskContext{
+	context := &types.AggregatedTaskContext{
 		TaskSummaries:  make(map[string]string),
 		AllIssues:      make([]string, 0),
 		AllSuggestions: make([]string, 0),

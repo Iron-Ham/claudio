@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
-// ConsolidationState tracks the progress and status of consolidation.
+// ConsolidatorState tracks the progress and status of consolidation.
 // This mirrors the state tracked by the underlying Consolidator but is
 // managed by the orchestrator for phase-level coordination.
-type ConsolidationState struct {
+type ConsolidatorState struct {
 	// SubPhase tracks the current sub-phase within consolidation
 	SubPhase string
 
@@ -76,7 +77,7 @@ type ConsolidationOrchestrator struct {
 	mu sync.Mutex
 
 	// state tracks consolidation progress
-	state *ConsolidationState
+	state *ConsolidatorState
 
 	// cancelled indicates whether Cancel() has been called
 	cancelled bool
@@ -116,7 +117,7 @@ func NewConsolidationOrchestrator(phaseCtx *PhaseContext) *ConsolidationOrchestr
 		logger:   logger,
 		ctx:      ctx,
 		cancel:   cancel,
-		state:    &ConsolidationState{},
+		state:    &ConsolidatorState{},
 	}
 }
 
@@ -209,7 +210,7 @@ func (o *ConsolidationOrchestrator) Cancel() {
 
 // State returns a copy of the current consolidation state.
 // This is safe to call from any goroutine.
-func (o *ConsolidationOrchestrator) State() ConsolidationState {
+func (o *ConsolidationOrchestrator) State() ConsolidatorState {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -232,12 +233,12 @@ func (o *ConsolidationOrchestrator) State() ConsolidationState {
 
 // SetState updates the consolidation state. This is primarily used for
 // restoring state when resuming a paused consolidation.
-func (o *ConsolidationOrchestrator) SetState(state ConsolidationState) {
+func (o *ConsolidationOrchestrator) SetState(state ConsolidatorState) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
 	// Deep copy slices to prevent external mutation
-	o.state = &ConsolidationState{
+	o.state = &ConsolidatorState{
 		SubPhase:         state.SubPhase,
 		CurrentGroup:     state.CurrentGroup,
 		TotalGroups:      state.TotalGroups,
@@ -659,7 +660,7 @@ func (o *ConsolidationOrchestrator) Reset() {
 	defer o.mu.Unlock()
 
 	// Reset state
-	o.state = &ConsolidationState{}
+	o.state = &ConsolidatorState{}
 	o.instanceID = ""
 	o.completionFile = nil
 	o.startedAt = nil
@@ -816,7 +817,7 @@ func (o *ConsolidationOrchestrator) ResumeConsolidation(
 // GetConsolidation returns a copy of the current consolidation state.
 // This is an alias for State() that matches the naming convention used by the Coordinator.
 // Returns nil if no consolidation is in progress (i.e., state is at initial values).
-func (o *ConsolidationOrchestrator) GetConsolidation() *ConsolidationState {
+func (o *ConsolidationOrchestrator) GetConsolidation() *ConsolidatorState {
 	state := o.State()
 
 	// Return nil if there's no active consolidation
@@ -902,89 +903,6 @@ func (o *ConsolidationOrchestrator) CanResume() bool {
 }
 
 // ============================================================================
-// Per-Group Consolidation Types
-// ============================================================================
-
-// GroupConsolidationCompletionFileName is the sentinel file that per-group
-// consolidators write when complete.
-const GroupConsolidationCompletionFileName = ".claudio-group-consolidation-complete.json"
-
-// ConsolidationTaskWorktreeInfo holds information about a task's worktree for consolidation.
-// This mirrors the TaskWorktreeInfo from orchestrator package but is defined here
-// to avoid circular imports.
-type ConsolidationTaskWorktreeInfo struct {
-	TaskID       string // Task ID
-	TaskTitle    string // Human-readable task title
-	WorktreePath string // Path to the git worktree
-	Branch       string // Branch name for this task
-}
-
-// AggregatedTaskContext holds the aggregated context from all task completion files.
-// This is used to provide rich context for the group consolidator prompt and PR descriptions.
-type AggregatedTaskContext struct {
-	TaskSummaries  map[string]string // taskID -> summary
-	AllIssues      []string          // All issues from all tasks
-	AllSuggestions []string          // All suggestions from all tasks
-	Dependencies   []string          // Deduplicated list of new dependencies
-	Notes          []string          // Implementation notes from all tasks
-}
-
-// HasContent returns true if there is any aggregated context worth displaying.
-func (a *AggregatedTaskContext) HasContent() bool {
-	return len(a.AllIssues) > 0 || len(a.AllSuggestions) > 0 || len(a.Dependencies) > 0 || len(a.Notes) > 0
-}
-
-// ConflictResolution describes how a merge conflict was resolved.
-type ConflictResolution struct {
-	File       string `json:"file"`       // File that had the conflict
-	Resolution string `json:"resolution"` // Description of how it was resolved
-}
-
-// VerificationResult holds the results of build/lint/test verification.
-// The consolidator determines appropriate commands based on project type.
-type VerificationResult struct {
-	ProjectType    string             `json:"project_type,omitempty"` // Detected: "go", "node", "ios", "python", etc.
-	CommandsRun    []VerificationStep `json:"commands_run"`
-	OverallSuccess bool               `json:"overall_success"`
-	Summary        string             `json:"summary,omitempty"` // Brief summary of verification outcome
-}
-
-// VerificationStep represents a single verification command and its result.
-type VerificationStep struct {
-	Name    string `json:"name"`    // e.g., "build", "lint", "test"
-	Command string `json:"command"` // Actual command run
-	Success bool   `json:"success"`
-	Output  string `json:"output,omitempty"` // Truncated output on failure
-}
-
-// GroupConsolidationCompletionFile is written by the per-group consolidator session
-// when it finishes consolidating a group's task branches.
-type GroupConsolidationCompletionFile struct {
-	GroupIndex         int                    `json:"group_index"`
-	Status             string                 `json:"status"` // "complete", "failed"
-	BranchName         string                 `json:"branch_name"`
-	TasksConsolidated  []string               `json:"tasks_consolidated"`
-	ConflictsResolved  []ConflictResolution   `json:"conflicts_resolved,omitempty"`
-	Verification       VerificationResult     `json:"verification"`
-	AggregatedContext  *AggregatedTaskContext `json:"aggregated_context,omitempty"`
-	Notes              string                 `json:"notes,omitempty"`                 // Consolidator's observations
-	IssuesForNextGroup []string               `json:"issues_for_next_group,omitempty"` // Warnings/concerns to pass forward
-}
-
-// TaskCompletionFile represents the completion data written by task instances.
-// This is used to gather context from completed tasks for consolidation.
-type TaskCompletionFile struct {
-	TaskID        string   `json:"task_id"`
-	Status        string   `json:"status"`
-	Summary       string   `json:"summary"`
-	FilesModified []string `json:"files_modified"`
-	Issues        []string `json:"issues,omitempty"`
-	Suggestions   []string `json:"suggestions,omitempty"`
-	Dependencies  []string `json:"dependencies,omitempty"`
-	Notes         string   `json:"notes,omitempty"`
-}
-
-// ============================================================================
 // Per-Group Consolidation Interfaces
 // ============================================================================
 
@@ -1018,10 +936,10 @@ type GroupConsolidationSessionInterface interface {
 	SetGroupConsolidatorID(groupIndex int, instanceID string)
 
 	// GetGroupConsolidationContexts returns the consolidation contexts from each group
-	GetGroupConsolidationContexts() []*GroupConsolidationCompletionFile
+	GetGroupConsolidationContexts() []*types.GroupConsolidationCompletionFile
 
 	// SetGroupConsolidationContext sets the consolidation context for a group
-	SetGroupConsolidationContext(groupIndex int, context *GroupConsolidationCompletionFile)
+	SetGroupConsolidationContext(groupIndex int, context *types.GroupConsolidationCompletionFile)
 
 	// IsMultiPass returns true if multi-pass planning is enabled
 	IsMultiPass() bool
@@ -1080,10 +998,10 @@ type GroupConsolidationBaseSessionInterface interface {
 // TaskCompletionFileParser parses task completion files from worktrees.
 type TaskCompletionFileParser interface {
 	// ParseTaskCompletionFile reads and parses a task completion file
-	ParseTaskCompletionFile(worktreePath string) (*TaskCompletionFile, error)
+	ParseTaskCompletionFile(worktreePath string) (*types.TaskCompletionFile, error)
 
 	// ParseGroupConsolidationCompletionFile reads and parses a group consolidation completion file
-	ParseGroupConsolidationCompletionFile(worktreePath string) (*GroupConsolidationCompletionFile, error)
+	ParseGroupConsolidationCompletionFile(worktreePath string) (*types.GroupConsolidationCompletionFile, error)
 
 	// GroupConsolidationCompletionFilePath returns the full path to the completion file
 	GroupConsolidationCompletionFilePath(worktreePath string) string
@@ -1116,20 +1034,20 @@ type GroupConsolidationEventEmitter interface {
 //   - baseSession: The base session providing instance info
 //   - parser: The completion file parser
 //
-// Returns an AggregatedTaskContext containing all gathered information.
+// Returns an types.AggregatedTaskContext containing all gathered information.
 func (o *ConsolidationOrchestrator) GatherTaskCompletionContextForGroup(
 	groupIndex int,
 	session GroupConsolidationSessionInterface,
 	baseSession GroupConsolidationBaseSessionInterface,
 	parser TaskCompletionFileParser,
-) *AggregatedTaskContext {
+) *types.AggregatedTaskContext {
 	executionOrder := session.GetPlanExecutionOrder()
 	if groupIndex >= len(executionOrder) {
-		return &AggregatedTaskContext{TaskSummaries: make(map[string]string)}
+		return &types.AggregatedTaskContext{TaskSummaries: make(map[string]string)}
 	}
 
 	taskIDs := executionOrder[groupIndex]
-	context := &AggregatedTaskContext{
+	context := &types.AggregatedTaskContext{
 		TaskSummaries:  make(map[string]string),
 		AllIssues:      make([]string, 0),
 		AllSuggestions: make([]string, 0),
@@ -1215,19 +1133,19 @@ func (o *ConsolidationOrchestrator) GatherTaskCompletionContextForGroup(
 //   - session: The session providing execution order and task info
 //   - baseSession: The base session providing instance info
 //
-// Returns a slice of ConsolidationTaskWorktreeInfo for each task with an active instance.
+// Returns a slice of types.ConsolidationTaskWorktreeInfo for each task with an active instance.
 func (o *ConsolidationOrchestrator) GetTaskBranchesForGroup(
 	groupIndex int,
 	session GroupConsolidationSessionInterface,
 	baseSession GroupConsolidationBaseSessionInterface,
-) []ConsolidationTaskWorktreeInfo {
+) []types.ConsolidationTaskWorktreeInfo {
 	executionOrder := session.GetPlanExecutionOrder()
 	if groupIndex >= len(executionOrder) {
 		return nil
 	}
 
 	taskIDs := executionOrder[groupIndex]
-	var branches []ConsolidationTaskWorktreeInfo
+	var branches []types.ConsolidationTaskWorktreeInfo
 
 	for _, taskID := range taskIDs {
 		task := session.GetTask(taskID)
@@ -1241,7 +1159,7 @@ func (o *ConsolidationOrchestrator) GetTaskBranchesForGroup(
 		// Find the instance for this task
 		inst := baseSession.GetInstanceByTask(taskID)
 		if inst != nil {
-			branches = append(branches, ConsolidationTaskWorktreeInfo{
+			branches = append(branches, types.ConsolidationTaskWorktreeInfo{
 				TaskID:       taskID,
 				TaskTitle:    taskTitle,
 				WorktreePath: inst.GetWorktreePath(),
@@ -1845,7 +1763,7 @@ func (o *ConsolidationOrchestrator) writeGroupCompletionProtocol(
 	consolidatedBranch string,
 ) {
 	sb.WriteString("## Completion Protocol\n\n")
-	fmt.Fprintf(sb, "When consolidation is complete, write `%s` in your worktree root:\n\n", GroupConsolidationCompletionFileName)
+	fmt.Fprintf(sb, "When consolidation is complete, write `%s` in your worktree root:\n\n", types.GroupConsolidationCompletionFileName)
 	sb.WriteString("```json\n")
 	sb.WriteString("{\n")
 	fmt.Fprintf(sb, "  \"group_index\": %d,\n", groupIndex)

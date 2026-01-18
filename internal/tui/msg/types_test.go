@@ -7,6 +7,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 )
 
 // TestTickMsg verifies TickMsg type alias behavior
@@ -296,7 +297,7 @@ func TestTripleShotCheckResultMsg(t *testing.T) {
 		attemptErrors  map[int]error
 		judgeComplete  bool
 		judgeError     error
-		phase          orchestrator.TripleShotPhase
+		phase          tripleshot.Phase
 	}{
 		{
 			name:           "working phase",
@@ -305,7 +306,7 @@ func TestTripleShotCheckResultMsg(t *testing.T) {
 			attemptErrors:  map[int]error{},
 			judgeComplete:  false,
 			judgeError:     nil,
-			phase:          orchestrator.PhaseTripleShotWorking,
+			phase:          tripleshot.PhaseWorking,
 		},
 		{
 			name:           "evaluating phase",
@@ -314,7 +315,7 @@ func TestTripleShotCheckResultMsg(t *testing.T) {
 			attemptErrors:  nil,
 			judgeComplete:  true,
 			judgeError:     nil,
-			phase:          orchestrator.PhaseTripleShotEvaluating,
+			phase:          tripleshot.PhaseEvaluating,
 		},
 		{
 			name:           "with errors",
@@ -323,7 +324,7 @@ func TestTripleShotCheckResultMsg(t *testing.T) {
 			attemptErrors:  map[int]error{0: errors.New("check failed")},
 			judgeComplete:  false,
 			judgeError:     errors.New("judge error"),
-			phase:          orchestrator.PhaseTripleShotWorking,
+			phase:          tripleshot.PhaseWorking,
 		},
 	}
 
