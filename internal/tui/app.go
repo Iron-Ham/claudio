@@ -1203,9 +1203,16 @@ func (m Model) renderAddTask(width int) string {
 		BranchSelectorHeight: m.branchSelectorHeight,
 	}
 
-	// Customize title/subtitle for dependent task mode
-	if m.addingDependentTask && m.dependentOnInstanceID != "" {
-		inputState.Title = "Chain New Task"
+	// Customize title/subtitle based on the mode
+	switch {
+	case m.startingTripleShot:
+		inputState.Title = "Triple-Shot"
+		inputState.Subtitle = "Three instances will compete to solve your task:"
+	case m.startingAdversarial:
+		inputState.Title = "Adversarial Review"
+		inputState.Subtitle = "Implementer and reviewer iterate until approved:"
+	case m.addingDependentTask && m.dependentOnInstanceID != "":
+		inputState.Title = "Chain Task"
 		// Find the parent task name for context
 		parentTask := m.dependentOnInstanceID
 		for _, inst := range m.session.Instances {
@@ -1218,6 +1225,8 @@ func (m Model) renderAddTask(width int) string {
 			}
 		}
 		inputState.Subtitle = "This task will auto-start when \"" + parentTask + "\" completes:"
+	default:
+		inputState.Title = "New Task"
 	}
 
 	inputView := view.NewInputView()

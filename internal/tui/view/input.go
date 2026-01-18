@@ -30,7 +30,7 @@ type InputState struct {
 	Cursor int    // Cursor position (0 = before first char)
 
 	// Title and subtitle (optional - uses defaults if empty)
-	Title    string // Title shown at top (default: "Add New Instance")
+	Title    string // Title shown at top (default: "New Task")
 	Subtitle string // Subtitle shown below title (default: "Enter task description:")
 
 	// Template dropdown state
@@ -65,7 +65,7 @@ func (v *InputView) Render(state *InputState, width int) string {
 	// Title (use default if not set)
 	title := state.Title
 	if title == "" {
-		title = "Add New Instance"
+		title = "New Task"
 	}
 	b.WriteString(styles.Title.Render(title))
 	b.WriteString("\n\n")

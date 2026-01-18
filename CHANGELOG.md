@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Add Task Dialog Titles** - The "Add New Instance" dialog now displays context-aware titles based on the type of task being created: "Triple-Shot" for triple-shot mode, "Adversarial Review" for adversarial mode, "Chain Task" for dependent tasks, and "New Task" for standard tasks. Each mode also shows a descriptive subtitle explaining its purpose.
+
 ### Added
 
 - **Adversarial Review Mode** - New `claudio adversarial` command that creates an iterative feedback loop between an Implementer and a critical Reviewer:
