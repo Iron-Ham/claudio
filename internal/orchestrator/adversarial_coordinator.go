@@ -109,8 +109,12 @@ func (c *AdversarialCoordinator) notifyPhaseChange(phase AdversarialPhase) {
 	)
 
 	// Persist the phase change
-	if err := c.orch.SaveSession(); err != nil {
-		c.logger.Error("failed to persist phase change", "error", err)
+	if c.orch != nil {
+		if err := c.orch.SaveSession(); err != nil {
+			c.logger.Error("failed to persist phase change", "error", err)
+		}
+	} else {
+		c.logger.Warn("orchestrator is nil, skipping session persistence")
 	}
 
 	c.mu.RLock()
@@ -143,8 +147,12 @@ func (c *AdversarialCoordinator) notifyIncrementReady(round int, increment *Adve
 	c.manager.RecordIncrement(increment)
 
 	// Persist increment
-	if err := c.orch.SaveSession(); err != nil {
-		c.logger.Error("failed to persist increment", "round", round, "error", err)
+	if c.orch != nil {
+		if err := c.orch.SaveSession(); err != nil {
+			c.logger.Error("failed to persist increment", "round", round, "error", err)
+		}
+	} else {
+		c.logger.Warn("orchestrator is nil, skipping session persistence")
 	}
 
 	c.mu.RLock()
@@ -177,8 +185,12 @@ func (c *AdversarialCoordinator) notifyReviewReady(round int, review *Adversaria
 	c.manager.RecordReview(review)
 
 	// Persist review
-	if err := c.orch.SaveSession(); err != nil {
-		c.logger.Error("failed to persist review", "round", round, "error", err)
+	if c.orch != nil {
+		if err := c.orch.SaveSession(); err != nil {
+			c.logger.Error("failed to persist review", "round", round, "error", err)
+		}
+	} else {
+		c.logger.Warn("orchestrator is nil, skipping session persistence")
 	}
 
 	c.mu.RLock()
@@ -295,8 +307,12 @@ func (c *AdversarialCoordinator) StartImplementer() error {
 	c.notifyImplementerStart(round, inst.ID)
 
 	// Persist session state
-	if err := c.orch.SaveSession(); err != nil {
-		c.logger.Error("failed to persist session after starting implementer", "error", err)
+	if c.orch != nil {
+		if err := c.orch.SaveSession(); err != nil {
+			c.logger.Error("failed to persist session after starting implementer", "error", err)
+		}
+	} else {
+		c.logger.Warn("orchestrator is nil, skipping session persistence")
 	}
 
 	return nil
@@ -351,8 +367,12 @@ func (c *AdversarialCoordinator) StartReviewer(increment *AdversarialIncrementFi
 	c.notifyReviewerStart(round, inst.ID)
 
 	// Persist session state
-	if err := c.orch.SaveSession(); err != nil {
-		c.logger.Error("failed to persist session after starting reviewer", "error", err)
+	if c.orch != nil {
+		if err := c.orch.SaveSession(); err != nil {
+			c.logger.Error("failed to persist session after starting reviewer", "error", err)
+		}
+	} else {
+		c.logger.Warn("orchestrator is nil, skipping session persistence")
 	}
 
 	return nil
@@ -452,14 +472,8 @@ func (c *AdversarialCoordinator) ProcessReviewCompletion() error {
 		)
 	}
 
-	c.notifyReviewReady(round, review)
-
-	// Clear the review file so it's fresh for next round
-	if err := os.Remove(AdversarialReviewFilePath(c.reviewerWorktree)); err != nil && !os.IsNotExist(err) {
-		c.logger.Warn("failed to remove review file", "error", err)
-	}
-
 	// Enforce score/approval consistency: if approved but score < minPassingScore, treat as rejection
+	// This MUST happen before notifyReviewReady so callbacks receive the enforced state
 	minScore := session.Config.MinPassingScore
 	if minScore < 1 || minScore > 10 {
 		minScore = 8 // Fallback to default
@@ -476,6 +490,13 @@ func (c *AdversarialCoordinator) ProcessReviewCompletion() error {
 				fmt.Sprintf("Score of %d is below the minimum passing score of %d", review.Score, minScore),
 			}
 		}
+	}
+
+	c.notifyReviewReady(round, review)
+
+	// Clear the review file so it's fresh for next round
+	if err := os.Remove(AdversarialReviewFilePath(c.reviewerWorktree)); err != nil && !os.IsNotExist(err) {
+		c.logger.Warn("failed to remove review file", "error", err)
 	}
 
 	if review.Approved {

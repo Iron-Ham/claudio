@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Adversarial Review Score Threshold Enforcement** - Fixed a bug where users who set a minimum passing score higher than the default (e.g., 9 or 10) would have the adversarial loop stop prematurely. The issue occurred because approval notifications were sent before score enforcement was applied, causing callbacks to receive the unenforced state. The enforcement check is now performed before any notifications, ensuring the loop correctly continues when the reviewer's score is below the configured threshold.
+
 - **Terminal Pane Color Support** - Fixed the terminal pane not displaying colors properly by setting `TERM=xterm-256color` in the environment and configuring `default-terminal` per-session before tmux session creation. The approach now aligns with the instance package for consistency.
 
 ### Changed
