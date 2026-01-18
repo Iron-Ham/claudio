@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Terminal Pane Color Support** - Fixed the terminal pane not displaying colors properly by setting `TERM=xterm-256color` in the environment and configuring `default-terminal` per-session before tmux session creation. The approach now aligns with the instance package for consistency.
+
 ### Changed
 
 - **Scroll-to-Top Key Binding** - Changed scroll-to-top from `g` to `0` (zero) to resolve overload conflict with group commands (`gc`, `gn`, `gp`, etc.). The `g` key now exclusively enters group command mode when in grouped sidebar view.
