@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Comprehensive Platform-Specific Documentation** - Added detailed tutorials for using Claudio with all major development platforms:
+  - **Web Development (Node.js/React/Vue)** - npm/yarn/pnpm caching, dev server coordination, framework-specific workflows
+  - **Go Development** - Module caching, build optimization, workspace patterns, code generation
+  - **Python Development** - Virtual environment management, pip/poetry/conda, Django/Flask/FastAPI patterns
+  - **Rust Development** - Cargo workspace management, target directory isolation, sccache integration
+  - **Android Development** - Gradle build caching, module-based development, emulator coordination
+  - **Full-Stack Development** - Docker Compose isolation, database per worktree, API coordination
+  - **Monorepo Development** - Sparse checkout optimization, Turborepo/Nx integration, affected-only builds
+  - **Data Science & ML** - Jupyter notebook management, experiment tracking, GPU resource coordination
+
 ### Fixed
 
 - **Terminal Keybindings Respect Config** - Fixed backtick (`) and `T` keys toggling the terminal pane even when `experimental.terminal_support` is disabled in the config. The terminal keybindings now correctly check the config setting before activating.

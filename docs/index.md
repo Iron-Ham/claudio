@@ -18,7 +18,7 @@ Claudio enables parallel AI-assisted development by running multiple Claude Code
 - **Plan Mode** - Claude analyzes your codebase and generates structured task plans
 - **UltraPlan Mode** - 4-phase hierarchical planning with automatic parallel execution
 - **Multi-Pass Planning** - Three competing strategies evaluate and select the best approach
-- **TripleShot Mode** - Spawn 3 parallel attempts per task, judge selects the best (experimental)
+- **TripleShot Mode** - Spawn 3 parallel attempts per task, judge selects the best
 
 ### Workflow Automation
 - **PR Automation** - AI-generated pull requests with smart reviewer assignment
@@ -60,10 +60,24 @@ Comprehensive documentation covering concepts, workflows, and configuration.
 ### [Tutorials](tutorials/index.md)
 Step-by-step guides for common workflows.
 
+**Workflow Tutorials:**
 - [Quick Start](tutorials/quick-start.md) - 5-minute introduction
 - [Feature Development](tutorials/feature-development.md) - Build features in parallel
 - [Code Review Workflow](tutorials/code-review-workflow.md) - Parallel reviews
 - [Large Refactor](tutorials/large-refactor.md) - Coordinate major changes
+
+**Platform-Specific Guides:**
+- [Web Development](tutorials/web-development.md) - Node.js, React, Vue, Angular
+- [Go Development](tutorials/go-development.md) - Go modules and workspaces
+- [Python Development](tutorials/python-development.md) - Django, Flask, FastAPI
+- [Rust Development](tutorials/rust-development.md) - Cargo and workspaces
+- [iOS Development](tutorials/ios-development.md) - Xcode and Swift
+- [Android Development](tutorials/android-development.md) - Gradle and Kotlin
+
+**Architecture Guides:**
+- [Full-Stack Development](tutorials/fullstack-development.md) - Docker and microservices
+- [Monorepo Development](tutorials/monorepo-development.md) - Turborepo, Nx, sparse checkout
+- [Data Science & ML](tutorials/datascience-development.md) - Jupyter, experiments, GPUs
 
 ### [Reference](reference/index.md)
 Technical reference documentation.
@@ -109,6 +123,24 @@ Frequently asked questions.
 │  claude process │ │  claude process │ │  claude process │
 └─────────────────┘ └─────────────────┘ └─────────────────┘
 ```
+
+## Platform Support
+
+Claudio includes comprehensive guides for all major development platforms:
+
+| Platform | Key Features |
+|----------|-------------|
+| **Web/Node.js** | npm/yarn/pnpm caching, dev server coordination, framework-specific builds |
+| **Go** | Module cache sharing, fast incremental builds, workspace support |
+| **Python** | Virtualenv isolation, conda/poetry support, ML framework integration |
+| **Rust** | Cargo workspace support, sccache integration, incremental compilation |
+| **iOS** | DerivedData management, simulator coordination, SPM caching |
+| **Android** | Gradle build cache, module-based development, emulator coordination |
+| **Full-Stack** | Docker Compose isolation, database per worktree, API coordination |
+| **Monorepo** | Sparse checkout, Turborepo/Nx integration, affected-only builds |
+| **ML/Data Science** | Notebook management, experiment tracking, GPU coordination |
+
+See the [Tutorials](tutorials/index.md) for detailed platform-specific guidance.
 
 ## Contributing
 
