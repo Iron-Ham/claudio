@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Reviewer critically examines the work and provides detailed feedback
   - Loop continues until Reviewer approves the implementation or max iterations reached
   - Configurable max iterations with `--max-iterations` flag (default: 10)
+  - Configurable minimum passing score with `--min-passing-score` flag (default: 8)
+  - Both settings can be configured in `config.yaml` under `adversarial:` section or via TUI config editor
   - Useful for complex implementations that benefit from rigorous code review
   - **NEW**: Now accessible from the TUI via `:adversarial` or `:adv` command
   - Supports multiple concurrent adversarial sessions, similar to TripleShot mode

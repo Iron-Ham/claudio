@@ -37,22 +37,34 @@ The process continues until:
 - Maximum iterations are reached (configurable)
 - Either instance encounters a fatal error
 
+Configuration options can be set in config.yaml under 'adversarial:' or via flags:
+- max_iterations: Maximum review cycles (0 = unlimited, default: 10)
+- min_passing_score: Minimum score for approval (1-10, default: 8)
+
 Examples:
   # Start adversarial review with a task
   claudio adversarial "Implement user authentication with JWT"
 
   # Limit the number of review cycles
-  claudio adversarial --max-iterations 5 "Refactor the database layer"`,
+  claudio adversarial --max-iterations 5 "Refactor the database layer"
+
+  # Require a perfect score for approval
+  claudio adversarial --min-passing-score 10 "Critical security feature"`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runAdversarial,
 }
 
 var (
-	adversarialMaxIterations int
+	adversarialMaxIterations   int
+	adversarialMinPassingScore int
 )
 
 func init() {
-	adversarialCmd.Flags().IntVar(&adversarialMaxIterations, "max-iterations", 10, "Maximum number of implement-review cycles (0 = unlimited)")
+	// Get config defaults
+	cfg := config.Get()
+
+	adversarialCmd.Flags().IntVar(&adversarialMaxIterations, "max-iterations", cfg.Adversarial.MaxIterations, "Maximum number of implement-review cycles (0 = unlimited)")
+	adversarialCmd.Flags().IntVar(&adversarialMinPassingScore, "min-passing-score", cfg.Adversarial.MinPassingScore, "Minimum score required for reviewer approval (1-10)")
 }
 
 // RegisterAdversarialCmd registers the adversarial command with the given parent command.
@@ -81,9 +93,11 @@ func runAdversarial(cmd *cobra.Command, args []string) error {
 	sessionID := orchsession.GenerateID()
 	cfg := config.Get()
 
-	// Create adversarial configuration
-	advConfig := orchestrator.DefaultAdversarialConfig()
-	advConfig.MaxIterations = adversarialMaxIterations
+	// Create adversarial configuration from flags (which default to config values)
+	advConfig := orchestrator.AdversarialConfig{
+		MaxIterations:   adversarialMaxIterations,
+		MinPassingScore: adversarialMinPassingScore,
+	}
 
 	// Create logger if enabled
 	sessionDir := sessutil.GetSessionDir(cwd, sessionID)
@@ -116,6 +130,7 @@ func runAdversarial(cmd *cobra.Command, args []string) error {
 		"session_id", sessionID,
 		"task", util.TruncateString(task, 100),
 		"max_iterations", advConfig.MaxIterations,
+		"min_passing_score", advConfig.MinPassingScore,
 	)
 
 	// Create adversarial session

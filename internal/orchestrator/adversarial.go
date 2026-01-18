@@ -27,16 +27,22 @@ const (
 	PhaseAdversarialFailed AdversarialPhase = "failed"
 )
 
-// AdversarialConfig holds configuration for an adversarial review session
+// AdversarialConfig holds configuration for an adversarial review session.
+// Note: This struct is used at runtime for orchestration. There is a corresponding
+// config.AdversarialConfig struct used for file persistence and viper loading
+// which should be kept in sync with this one when adding new fields.
 type AdversarialConfig struct {
 	// MaxIterations limits the number of implement-review cycles (0 = unlimited)
 	MaxIterations int `json:"max_iterations"`
+	// MinPassingScore is the minimum score required for approval (1-10, default: 8)
+	MinPassingScore int `json:"min_passing_score"`
 }
 
 // DefaultAdversarialConfig returns the default configuration
 func DefaultAdversarialConfig() AdversarialConfig {
 	return AdversarialConfig{
-		MaxIterations: 10, // Reasonable default to prevent infinite loops
+		MaxIterations:   10, // Reasonable default to prevent infinite loops
+		MinPassingScore: 8,  // Score >= 8 required for approval
 	}
 }
 
@@ -442,7 +448,7 @@ The system is waiting for this file to continue the workflow.
 ` + "```" + `
 
 **Rules:**
-- Set approved to true ONLY if the implementation is truly ready (score >= 8, no critical issues)
+- Set approved to true ONLY if the implementation is truly ready (score >= %d, no critical issues)
 - Score from 1-10: 1-4 = major problems, 5-6 = needs work, 7-8 = good, 9-10 = excellent
 - Issues should list specific problems that MUST be fixed
 - Suggestions are optional improvements (not required for approval)
@@ -504,7 +510,7 @@ func FormatAdversarialImplementerPrompt(task string, round int, previousReview *
 }
 
 // FormatAdversarialReviewerPrompt creates the full prompt for the reviewer
-func FormatAdversarialReviewerPrompt(task string, round int, increment *AdversarialIncrementFile) string {
+func FormatAdversarialReviewerPrompt(task string, round int, increment *AdversarialIncrementFile, minPassingScore int) string {
 	submission := fmt.Sprintf(`**Summary:** %s
 
 **Approach:** %s
@@ -518,5 +524,5 @@ func FormatAdversarialReviewerPrompt(task string, round int, increment *Adversar
 		increment.Notes,
 	)
 
-	return fmt.Sprintf(AdversarialReviewerPromptTemplate, task, round, submission, round)
+	return fmt.Sprintf(AdversarialReviewerPromptTemplate, task, round, submission, round, minPassingScore)
 }

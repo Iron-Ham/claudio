@@ -264,6 +264,53 @@ func TestConfig_ResourceConfig_Values(t *testing.T) {
 	}
 }
 
+func TestConfig_AdversarialConfig_Defaults(t *testing.T) {
+	cfg := Default()
+
+	// MaxIterations should default to 10
+	if cfg.Adversarial.MaxIterations != 10 {
+		t.Errorf("Adversarial.MaxIterations = %d, want 10", cfg.Adversarial.MaxIterations)
+	}
+
+	// MinPassingScore should default to 8
+	if cfg.Adversarial.MinPassingScore != 8 {
+		t.Errorf("Adversarial.MinPassingScore = %d, want 8", cfg.Adversarial.MinPassingScore)
+	}
+}
+
+func TestConfig_AdversarialConfig_ViperLoading(t *testing.T) {
+	// Test that adversarial config is properly loaded via viper
+	viper.Reset()
+	SetDefaults()
+
+	// After SetDefaults, adversarial values should be the defaults
+	if viper.GetInt("adversarial.max_iterations") != 10 {
+		t.Errorf("viper.GetInt('adversarial.max_iterations') = %d, want 10", viper.GetInt("adversarial.max_iterations"))
+	}
+	if viper.GetInt("adversarial.min_passing_score") != 8 {
+		t.Errorf("viper.GetInt('adversarial.min_passing_score') = %d, want 8", viper.GetInt("adversarial.min_passing_score"))
+	}
+
+	// Test setting via viper (simulates config file or environment)
+	viper.Set("adversarial.max_iterations", 5)
+	viper.Set("adversarial.min_passing_score", 9)
+
+	cfg := Get()
+	if cfg.Adversarial.MaxIterations != 5 {
+		t.Errorf("Adversarial.MaxIterations = %d, want 5", cfg.Adversarial.MaxIterations)
+	}
+	if cfg.Adversarial.MinPassingScore != 9 {
+		t.Errorf("Adversarial.MinPassingScore = %d, want 9", cfg.Adversarial.MinPassingScore)
+	}
+
+	// Test unlimited iterations (0)
+	viper.Set("adversarial.max_iterations", 0)
+	cfg = Get()
+	if cfg.Adversarial.MaxIterations != 0 {
+		t.Errorf("Adversarial.MaxIterations = %d, want 0 (unlimited)", cfg.Adversarial.MaxIterations)
+	}
+}
+
 func TestConfig_UltraplanConfig_Values(t *testing.T) {
 	cfg := Default()
 

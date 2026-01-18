@@ -79,6 +79,9 @@ func (c *Config) Validate() []ValidationError {
 	// Validate Plan config
 	errors = append(errors, c.validatePlan()...)
 
+	// Validate Adversarial config
+	errors = append(errors, c.validateAdversarial()...)
+
 	// Validate Logging config
 	errors = append(errors, c.validateLogging()...)
 
@@ -401,6 +404,38 @@ func (c *Config) validatePlan() []ValidationError {
 			Field:   "plan.output_file",
 			Value:   c.Plan.OutputFile,
 			Message: "cannot be empty when output_format is 'json' or 'both'",
+		})
+	}
+
+	return errors
+}
+
+// validateAdversarial validates the AdversarialConfig
+func (c *Config) validateAdversarial() []ValidationError {
+	var errors []ValidationError
+
+	// MaxIterations must be non-negative (0 means unlimited)
+	if c.Adversarial.MaxIterations < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "adversarial.max_iterations",
+			Value:   c.Adversarial.MaxIterations,
+			Message: "must be non-negative (0 = unlimited)",
+		})
+	}
+
+	// MinPassingScore must be between 1 and 10
+	if c.Adversarial.MinPassingScore < 1 {
+		errors = append(errors, ValidationError{
+			Field:   "adversarial.min_passing_score",
+			Value:   c.Adversarial.MinPassingScore,
+			Message: "must be at least 1",
+		})
+	}
+	if c.Adversarial.MinPassingScore > 10 {
+		errors = append(errors, ValidationError{
+			Field:   "adversarial.min_passing_score",
+			Value:   c.Adversarial.MinPassingScore,
+			Message: "cannot exceed 10",
 		})
 	}
 

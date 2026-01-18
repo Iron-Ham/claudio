@@ -310,8 +310,12 @@ func (c *AdversarialCoordinator) StartReviewer(increment *AdversarialIncrementFi
 
 	c.logger.Info("starting reviewer", "round", round)
 
-	// Build the reviewer prompt
-	prompt := FormatAdversarialReviewerPrompt(task, round, increment)
+	// Build the reviewer prompt with configurable minimum passing score
+	minPassingScore := session.Config.MinPassingScore
+	if minPassingScore < 1 || minPassingScore > 10 {
+		minPassingScore = 8 // Fallback to default if invalid
+	}
+	prompt := FormatAdversarialReviewerPrompt(task, round, increment, minPassingScore)
 
 	// Find the adversarial group
 	var advGroup *InstanceGroup
@@ -453,6 +457,25 @@ func (c *AdversarialCoordinator) ProcessReviewCompletion() error {
 	// Clear the review file so it's fresh for next round
 	if err := os.Remove(AdversarialReviewFilePath(c.reviewerWorktree)); err != nil && !os.IsNotExist(err) {
 		c.logger.Warn("failed to remove review file", "error", err)
+	}
+
+	// Enforce score/approval consistency: if approved but score < minPassingScore, treat as rejection
+	minScore := session.Config.MinPassingScore
+	if minScore < 1 || minScore > 10 {
+		minScore = 8 // Fallback to default
+	}
+	if review.Approved && review.Score < minScore {
+		c.logger.Warn("review marked approved but score below minimum",
+			"score", review.Score,
+			"min_passing_score", minScore,
+			"overriding_to", "rejected",
+		)
+		review.Approved = false
+		if len(review.RequiredChanges) == 0 {
+			review.RequiredChanges = []string{
+				fmt.Sprintf("Score of %d is below the minimum passing score of %d", review.Score, minScore),
+			}
+		}
 	}
 
 	if review.Approved {

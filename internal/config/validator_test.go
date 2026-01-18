@@ -630,6 +630,131 @@ func TestConfig_Validate_Ultraplan(t *testing.T) {
 	})
 }
 
+func TestConfig_Validate_Adversarial(t *testing.T) {
+	t.Run("default config is valid", func(t *testing.T) {
+		cfg := Default()
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if strings.HasPrefix(err.Field, "adversarial.") {
+				t.Errorf("default adversarial config should be valid, got error: %v", err)
+			}
+		}
+	})
+
+	t.Run("negative max iterations is invalid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Adversarial.MaxIterations = -1
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "adversarial.max_iterations" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for negative max iterations")
+		}
+	})
+
+	t.Run("zero max iterations is valid (unlimited)", func(t *testing.T) {
+		cfg := Default()
+		cfg.Adversarial.MaxIterations = 0
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if err.Field == "adversarial.max_iterations" {
+				t.Errorf("zero max iterations should be valid (unlimited): %v", err)
+			}
+		}
+	})
+
+	t.Run("positive max iterations is valid", func(t *testing.T) {
+		for _, iterations := range []int{1, 5, 10, 100} {
+			cfg := Default()
+			cfg.Adversarial.MaxIterations = iterations
+			errs := cfg.Validate()
+
+			for _, err := range errs {
+				if err.Field == "adversarial.max_iterations" {
+					t.Errorf("max iterations %d should be valid: %v", iterations, err)
+				}
+			}
+		}
+	})
+
+	t.Run("min passing score too low", func(t *testing.T) {
+		cfg := Default()
+		cfg.Adversarial.MinPassingScore = 0
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "adversarial.min_passing_score" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for min passing score of 0")
+		}
+	})
+
+	t.Run("min passing score too high", func(t *testing.T) {
+		cfg := Default()
+		cfg.Adversarial.MinPassingScore = 11
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "adversarial.min_passing_score" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for min passing score above 10")
+		}
+	})
+
+	t.Run("valid min passing scores", func(t *testing.T) {
+		for _, score := range []int{1, 5, 8, 10} {
+			cfg := Default()
+			cfg.Adversarial.MinPassingScore = score
+			errs := cfg.Validate()
+
+			for _, err := range errs {
+				if err.Field == "adversarial.min_passing_score" {
+					t.Errorf("min passing score %d should be valid: %v", score, err)
+				}
+			}
+		}
+	})
+
+	t.Run("boundary values are valid", func(t *testing.T) {
+		cfg := Default()
+		cfg.Adversarial.MinPassingScore = 1 // Minimum valid score
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if err.Field == "adversarial.min_passing_score" {
+				t.Errorf("min passing score 1 should be valid: %v", err)
+			}
+		}
+
+		cfg.Adversarial.MinPassingScore = 10 // Maximum valid score
+		errs = cfg.Validate()
+
+		for _, err := range errs {
+			if err.Field == "adversarial.min_passing_score" {
+				t.Errorf("min passing score 10 should be valid: %v", err)
+			}
+		}
+	})
+}
+
 func TestConfig_Validate_Plan(t *testing.T) {
 	t.Run("valid output formats", func(t *testing.T) {
 		for _, format := range []string{"json", "issues", "both", ""} {
