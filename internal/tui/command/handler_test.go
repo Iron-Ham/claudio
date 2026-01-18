@@ -833,23 +833,33 @@ func TestTerminalCommands(t *testing.T) {
 		}
 	})
 
-	t.Run("termdir invoke sets mode", func(t *testing.T) {
+	t.Run("termdir project sets mode", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("termdir project", deps)
+		if result.TerminalDirMode == nil || *result.TerminalDirMode != 0 {
+			t.Error("expected TerminalDirMode to be set to 0 (project)")
+		}
+	})
+
+	t.Run("termdir proj alias", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+
+		result := h.Execute("termdir proj", deps)
+		if result.TerminalDirMode == nil || *result.TerminalDirMode != 0 {
+			t.Error("expected TerminalDirMode to be set to 0 (project)")
+		}
+	})
+
+	t.Run("termdir invoke legacy alias", func(t *testing.T) {
 		h := New()
 		deps := newMockDeps()
 
 		result := h.Execute("termdir invoke", deps)
 		if result.TerminalDirMode == nil || *result.TerminalDirMode != 0 {
-			t.Error("expected TerminalDirMode to be set to 0 (invocation)")
-		}
-	})
-
-	t.Run("termdir invocation alias", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-
-		result := h.Execute("termdir invocation", deps)
-		if result.TerminalDirMode == nil || *result.TerminalDirMode != 0 {
-			t.Error("expected TerminalDirMode to be set to 0 (invocation)")
+			t.Error("expected TerminalDirMode to be set to 0 (project)")
 		}
 	})
 }
@@ -858,7 +868,7 @@ func TestTerminalCommandsDisabled(t *testing.T) {
 	// When terminal support is disabled, commands should return an error
 	viper.Set("experimental.terminal_support", false)
 
-	commands := []string{"term", "terminal", "t", "termdir worktree", "termdir wt", "termdir invoke", "termdir invocation"}
+	commands := []string{"term", "terminal", "t", "termdir worktree", "termdir wt", "termdir project", "termdir proj", "termdir invoke", "termdir invocation"}
 
 	for _, cmd := range commands {
 		t.Run(cmd, func(t *testing.T) {
@@ -1033,6 +1043,7 @@ func TestAllCommandsRecognized(t *testing.T) {
 		// Terminal
 		"t", "term", "terminal",
 		"termdir worktree", "termdir wt",
+		"termdir project", "termdir proj",
 		"termdir invoke", "termdir invocation",
 		// Ultraplan
 		"cancel",

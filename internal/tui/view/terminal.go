@@ -28,7 +28,7 @@ func NewTerminalView(width, height int) *TerminalView {
 type TerminalState struct {
 	// Output is the current terminal output
 	Output string
-	// IsWorktreeMode indicates whether we're in worktree mode (true) or invocation dir mode (false)
+	// IsWorktreeMode indicates whether we're in worktree mode (true) or project dir mode (false)
 	IsWorktreeMode bool
 	// CurrentDir is the current working directory of the terminal
 	CurrentDir string
@@ -86,7 +86,7 @@ func (v *TerminalView) renderHeader(state TerminalState) string {
 			modeStr = "[worktree]"
 		}
 	} else {
-		modeStr = "[invoke]"
+		modeStr = "[project]"
 	}
 
 	// Shorten the directory path for display
@@ -106,15 +106,30 @@ func (v *TerminalView) renderHeader(state TerminalState) string {
 		focusIndicator = styles.TerminalFocusIndicator.Render(" TERMINAL ")
 	}
 
+	// Mode toggle hint - show how to switch to the other mode
+	var toggleHint string
+	if state.IsWorktreeMode {
+		toggleHint = styles.Muted.Render("[:termdir proj]")
+	} else {
+		toggleHint = styles.Muted.Render("[:termdir wt]")
+	}
+
 	// Build header
 	header := styles.TerminalHeader.Render(modeStr + " " + displayDir)
 	if focusIndicator != "" {
 		header = focusIndicator + " " + header
 	}
 
-	// Truncate if too long
+	// Calculate available space for hint
 	maxWidth := v.Width - 4 // Account for borders and padding
-	if lipgloss.Width(header) > maxWidth {
+	headerWidth := lipgloss.Width(header)
+	hintWidth := lipgloss.Width(toggleHint)
+
+	// Add hint if there's enough space, otherwise truncate if needed
+	if headerWidth+2+hintWidth <= maxWidth {
+		gap := maxWidth - headerWidth - hintWidth
+		header = header + strings.Repeat(" ", gap) + toggleHint
+	} else if headerWidth > maxWidth {
 		header = util.TruncateANSI(header, maxWidth)
 	}
 
