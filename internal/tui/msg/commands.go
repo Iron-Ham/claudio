@@ -457,3 +457,38 @@ func ProcessAdversarialReviewAsync(
 		}
 	}
 }
+
+// ProcessRalphCompletionAsync returns a command that processes a ralph iteration completion
+// in a goroutine, avoiding blocking the UI event loop.
+func ProcessRalphCompletionAsync(
+	coordinator *orchestrator.RalphCoordinator,
+	groupID string,
+	instanceID string,
+	outputManager *output.Manager,
+) tea.Cmd {
+	return func() tea.Msg {
+		session := coordinator.Session()
+		if session == nil {
+			return RalphCompletionProcessedMsg{
+				GroupID: groupID,
+				Err:     fmt.Errorf("ralph session not found"),
+			}
+		}
+
+		// Get the instance output for completion promise checking
+		var instanceOutput string
+		if outputManager != nil {
+			instanceOutput = outputManager.GetOutput(instanceID)
+		}
+
+		// Process the iteration completion
+		continueLoop, err := coordinator.ProcessIterationCompletion(instanceOutput)
+
+		return RalphCompletionProcessedMsg{
+			GroupID:      groupID,
+			Iteration:    session.CurrentIteration,
+			ContinueLoop: continueLoop,
+			Err:          err,
+		}
+	}
+}

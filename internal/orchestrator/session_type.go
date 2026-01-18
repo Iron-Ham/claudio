@@ -23,6 +23,10 @@ const (
 	// SessionTypeAdversarial represents an adversarial review session with
 	// implementer-reviewer feedback loop.
 	SessionTypeAdversarial SessionType = "adversarial"
+
+	// SessionTypeRalph represents a Ralph Wiggum iterative development loop.
+	// Claude autonomously iterates on work until a completion promise is found.
+	SessionTypeRalph SessionType = "ralph"
 )
 
 // Icon returns the display icon for this session type.
@@ -38,6 +42,8 @@ func (t SessionType) Icon() string {
 		return "\u25b3" // △ triangle
 	case SessionTypeAdversarial:
 		return "\u2694" // ⚔ crossed swords
+	case SessionTypeRalph:
+		return "\u267b" // ♻ recycling symbol (iterative loop)
 	default:
 		return "\u25cf" // ● filled circle (standard)
 	}
@@ -52,7 +58,7 @@ func (t SessionType) GroupingMode() string {
 	switch t {
 	case SessionTypePlan:
 		return "shared"
-	case SessionTypePlanMulti, SessionTypeUltraPlan, SessionTypeTripleShot, SessionTypeAdversarial:
+	case SessionTypePlanMulti, SessionTypeUltraPlan, SessionTypeTripleShot, SessionTypeAdversarial, SessionTypeRalph:
 		return "own"
 	default:
 		return "none"
@@ -63,7 +69,7 @@ func (t SessionType) GroupingMode() string {
 // (multiple instances coordinated together).
 func (t SessionType) IsOrchestratedType() bool {
 	switch t {
-	case SessionTypeUltraPlan, SessionTypeTripleShot, SessionTypePlanMulti, SessionTypeAdversarial:
+	case SessionTypeUltraPlan, SessionTypeTripleShot, SessionTypePlanMulti, SessionTypeAdversarial, SessionTypeRalph:
 		return true
 	default:
 		return false

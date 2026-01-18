@@ -44,6 +44,12 @@ type Dependencies interface {
 
 	// IsInstanceTripleShotJudge checks if an instance is a judge in any active triple-shot session
 	IsInstanceTripleShotJudge(instanceID string) bool
+
+	// IsRalphMode returns true if there are any active ralph loop sessions
+	IsRalphMode() bool
+
+	// GetRalphCoordinators returns all active ralph coordinators
+	GetRalphCoordinators() []*orchestrator.RalphCoordinator
 }
 
 // Result represents the outcome of executing a command.
@@ -111,6 +117,13 @@ type Result struct {
 	StartGroupPR   *bool                   // Request to start a group PR workflow
 	GroupPRMode    *prworkflow.GroupPRMode // Mode for group PR creation (stacked, consolidated, single)
 	GroupPRGroupID *string                 // Target group ID for single group PR mode
+
+	// Mode transition - Ralph Wiggum Loop
+	StartRalphLoop         *bool   // Request to start a ralph loop
+	CancelRalphLoop        *bool   // Request to cancel active ralph loop
+	RalphPrompt            *string // The prompt for ralph loop
+	RalphMaxIterations     *int    // Max iterations (safety limit)
+	RalphCompletionPromise *string // Phrase that signals completion
 }
 
 // CommandInfo contains metadata about a command for help display.
@@ -286,6 +299,12 @@ func (h *Handler) registerCommands() {
 	h.commands["multiplan"] = cmdMultiPlan
 	h.commands["mp"] = cmdMultiPlan
 
+	// Ralph Wiggum loop commands
+	h.argCommands["ralph"] = cmdRalph
+	h.argCommands["ralph-loop"] = cmdRalph
+	h.commands["cancel-ralph"] = cmdCancelRalph
+	h.commands["ralph-cancel"] = cmdCancelRalph
+
 	// Group management commands
 	h.argCommands["group"] = func(deps Dependencies, args string) Result {
 		return executeGroupCommand(args, deps)
@@ -353,6 +372,8 @@ func (h *Handler) buildCategories() {
 				{ShortKey: "", LongKey: "plan", Description: "Start inline plan mode for structured task planning", Category: "utility"},
 				{ShortKey: "", LongKey: "multiplan", Description: "Start multi-pass plan mode (3 planners + 1 assessor)", Category: "utility"},
 				{ShortKey: "", LongKey: "ultraplan", Description: "Start ultraplan mode (use --multi-pass or --plan flags)", Category: "utility"},
+				{ShortKey: "", LongKey: "ralph", Description: "Start Ralph Wiggum iterative loop (requires --completion-promise)", Category: "utility"},
+				{ShortKey: "", LongKey: "cancel-ralph", Description: "Cancel active Ralph loop", Category: "utility"},
 			},
 		},
 		{
@@ -389,6 +410,10 @@ func (h *Handler) buildFlags() {
 		// Ultraplan flags
 		{Command: "ultraplan", Flag: "--multi-pass", Description: "Use multi-pass planning (3 strategies)"},
 		{Command: "ultraplan", Flag: "--plan <file>", Description: "Load plan from existing file"},
+
+		// Ralph Wiggum loop flags
+		{Command: "ralph", Flag: "--completion-promise <text>", Description: "Phrase that signals loop completion (required)"},
+		{Command: "ralph", Flag: "--max-iterations <n>", Description: "Safety limit on iterations (default: 50)"},
 
 		// PR flags (these are already documented as separate commands in buildCategories,
 		// so we only need to add truly new flags here that aren't full commands)
@@ -1180,6 +1205,161 @@ func cmdUltraPlan(deps Dependencies, args string) Result {
 	}
 
 	return result
+}
+
+// cmdRalph handles the :ralph command with arguments.
+// Usage:
+//   - :ralph "<prompt>" --max-iterations N --completion-promise "TEXT"
+//   - :ralph-loop "<prompt>" --completion-promise "DONE"
+func cmdRalph(deps Dependencies, args string) Result {
+	// Don't allow starting ralph if in ultraplan mode
+	if deps.IsUltraPlanMode() {
+		return Result{ErrorMessage: "Cannot start ralph loop while in ultraplan mode"}
+	}
+
+	// Parse arguments
+	args = strings.TrimSpace(args)
+	if args == "" {
+		// No args - prompt for task input
+		startRalph := true
+		return Result{
+			StartRalphLoop: &startRalph,
+			InfoMessage:    "Enter a prompt for ralph loop",
+		}
+	}
+
+	// Parse flags and prompt
+	prompt, maxIterations, completionPromise, err := parseRalphArgs(args)
+	if err != nil {
+		return Result{ErrorMessage: err.Error()}
+	}
+
+	// Require completion promise
+	if completionPromise == "" {
+		return Result{ErrorMessage: "Ralph loop requires --completion-promise to know when to stop"}
+	}
+
+	// Signal to start ralph loop
+	startRalph := true
+	result := Result{
+		StartRalphLoop:         &startRalph,
+		RalphPrompt:            &prompt,
+		RalphCompletionPromise: &completionPromise,
+	}
+
+	if maxIterations > 0 {
+		result.RalphMaxIterations = &maxIterations
+	}
+
+	return result
+}
+
+// parseRalphArgs parses the arguments for the ralph command.
+// Returns: prompt, maxIterations, completionPromise, error
+func parseRalphArgs(args string) (string, int, string, error) {
+	var prompt string
+	var maxIterations int
+	var completionPromise string
+
+	// Check for flags
+	remaining := args
+
+	// Parse --max-iterations
+	if idx := strings.Index(remaining, "--max-iterations"); idx >= 0 {
+		beforeFlag := strings.TrimSpace(remaining[:idx])
+		afterFlag := strings.TrimPrefix(remaining[idx:], "--max-iterations")
+		afterFlag = strings.TrimSpace(afterFlag)
+
+		// Extract the number
+		parts := strings.SplitN(afterFlag, " ", 2)
+		if len(parts) == 0 || parts[0] == "" {
+			return "", 0, "", fmt.Errorf("--max-iterations requires a number")
+		}
+		n, err := parseNumber(parts[0])
+		if err != nil {
+			return "", 0, "", fmt.Errorf("invalid --max-iterations value: %w", err)
+		}
+		maxIterations = n
+
+		// Rebuild remaining
+		if len(parts) > 1 {
+			remaining = beforeFlag + " " + strings.TrimSpace(parts[1])
+		} else {
+			remaining = beforeFlag
+		}
+	}
+
+	// Parse --completion-promise
+	if idx := strings.Index(remaining, "--completion-promise"); idx >= 0 {
+		beforeFlag := strings.TrimSpace(remaining[:idx])
+		afterFlag := strings.TrimPrefix(remaining[idx:], "--completion-promise")
+		afterFlag = strings.TrimSpace(afterFlag)
+
+		// Extract the promise (handle quoted strings)
+		promise, rest, err := parseQuotedOrWord(afterFlag)
+		if err != nil {
+			return "", 0, "", fmt.Errorf("invalid --completion-promise: %w", err)
+		}
+		completionPromise = promise
+		remaining = beforeFlag + " " + rest
+	}
+
+	// The remaining text is the prompt (remove surrounding quotes if present)
+	prompt = strings.TrimSpace(remaining)
+	if (strings.HasPrefix(prompt, "\"") && strings.HasSuffix(prompt, "\"")) ||
+		(strings.HasPrefix(prompt, "'") && strings.HasSuffix(prompt, "'")) {
+		prompt = prompt[1 : len(prompt)-1]
+	}
+
+	return prompt, maxIterations, completionPromise, nil
+}
+
+// parseNumber parses an integer from a string.
+func parseNumber(s string) (int, error) {
+	var n int
+	_, err := fmt.Sscanf(s, "%d", &n)
+	return n, err
+}
+
+// parseQuotedOrWord parses a quoted string or single word from the input.
+// Returns the value, the remaining string, and any error.
+func parseQuotedOrWord(s string) (string, string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", "", fmt.Errorf("expected value")
+	}
+
+	// Check for quoted string
+	if s[0] == '"' || s[0] == '\'' {
+		quote := s[0]
+		endIdx := strings.IndexByte(s[1:], quote)
+		if endIdx == -1 {
+			return "", "", fmt.Errorf("unclosed quote")
+		}
+		value := s[1 : endIdx+1]
+		rest := strings.TrimSpace(s[endIdx+2:])
+		return value, rest, nil
+	}
+
+	// Single word
+	parts := strings.SplitN(s, " ", 2)
+	if len(parts) == 1 {
+		return parts[0], "", nil
+	}
+	return parts[0], strings.TrimSpace(parts[1]), nil
+}
+
+// cmdCancelRalph handles the :cancel-ralph command.
+func cmdCancelRalph(deps Dependencies) Result {
+	if !deps.IsRalphMode() {
+		return Result{ErrorMessage: "Not in ralph loop mode"}
+	}
+
+	cancelRalph := true
+	return Result{
+		CancelRalphLoop: &cancelRalph,
+		InfoMessage:     "Ralph loop cancelled",
+	}
 }
 
 func cmdHelp(_ Dependencies) Result {

@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Task Chaining by Sidebar Number** - The `:chain`, `:dep`, and `:depends` commands now accept an optional sidebar number argument to specify which instance to chain from (e.g., `:chain 2` or `:chain #2`). This is more user-friendly than using instance IDs, which aren't prominently displayed.
 
+- **Ralph Wiggum Loop** - New `:ralph` command that creates an iterative development loop where Claude autonomously re-executes the same prompt until a completion promise is found in the output:
+  - Uses "completion promise" detection - when the specified phrase appears in Claude's output, the loop terminates successfully
+  - Configurable safety limit with `--max-iterations` flag (default: 50) to prevent runaway loops
+  - Configurable completion phrase with `--completion-promise` flag
+  - Cancel active loops with `:cancel-ralph` command
+  - Each iteration runs in the same worktree, allowing work to persist and accumulate
+  - Supports multiple concurrent ralph sessions with independent coordinators
+  - Named after the Simpsons character Ralph Wiggum, referencing the "I'm helping!" meme for iterative self-improvement
+
 ### Changed
 
 - **Unified Group Types** - Refactored the `group`, `orchestrator`, and `session` packages to use a shared `grouptypes.InstanceGroup` type, eliminating type duplication and ~80 lines of conversion code. This also prevents data loss (SessionType and Objective fields) when using the group manager.

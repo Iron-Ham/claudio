@@ -143,6 +143,10 @@ type Session struct {
 	// Each adversarial session has its own group and coordinator.
 	AdversarialSessions []*AdversarialSession `json:"adversarial_sessions,omitempty"`
 
+	// RalphSessions holds multiple concurrent Ralph Wiggum iterative loop sessions.
+	// Each ralph session has its own group and coordinator.
+	RalphSessions []*RalphSession `json:"ralph_sessions,omitempty"`
+
 	// Recovery state tracking - helps detect and recover interrupted sessions
 	RecoveryState   RecoveryState `json:"recovery_state,omitempty"`   // Current recovery state
 	LastActiveAt    *time.Time    `json:"last_active_at,omitempty"`   // Last time any instance had activity

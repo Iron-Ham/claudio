@@ -251,6 +251,9 @@ type Model struct {
 	// Adversarial review mode (nil if not in adversarial mode)
 	adversarial *view.AdversarialState
 
+	// Ralph Wiggum loop mode (nil if not in ralph mode)
+	ralph *RalphState
+
 	// Plan editor mode (nil if not in plan editor mode)
 	planEditor *PlanEditorState
 
@@ -359,6 +362,19 @@ func (m Model) IsTripleShotMode() bool {
 // IsAdversarialMode returns true if there are any active adversarial sessions.
 func (m Model) IsAdversarialMode() bool {
 	return m.adversarial != nil && m.adversarial.HasActiveCoordinators()
+}
+
+// IsRalphMode returns true if there are any active ralph loop sessions.
+func (m Model) IsRalphMode() bool {
+	return m.ralph != nil && m.ralph.HasActiveCoordinators()
+}
+
+// GetRalphCoordinators returns all active ralph loop coordinators.
+func (m Model) GetRalphCoordinators() []*orchestrator.RalphCoordinator {
+	if m.ralph == nil {
+		return nil
+	}
+	return m.ralph.GetAllCoordinators()
 }
 
 // IsInlinePlanMode returns true if there are any active inline plan sessions.
