@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Coordinator Refactoring Phase 1** - Initial refactoring of `internal/orchestrator/coordinator.go` to establish delegation patterns:
+  - Extracted notification methods to `coordinator_callbacks.go` (~170 lines)
+  - Extracted adapter types to `coordinator_adapters.go` (~75 lines)
+  - Removed 6 deprecated functions: `runPlanningSinglePassDirect`, `runSynthesisDirect`, `monitorSynthesisInstance`, `checkForSynthesisCompletionFile`, `onSynthesisReady`, `buildSynthesisPrompt`
+  - Removed fallback paths - code now requires phase orchestrators to be initialized
+  - Fixed `restartTask()` to delegate to `ExecutionOrchestrator.StartSingleTask()`
+  - Added `StartSingleTask()` and `RestartLoop()` to `ExecutionOrchestrator`
+  - Created placeholder packages `phase/step/` and `group/consolidator.go` documenting future extraction targets
+
 - **Orchestrator Package Refactoring** - Major refactoring of `internal/orchestrator/` to improve modularity and testability:
   - Extracted workflow coordinators into dedicated subpackages: `workflows/tripleshot/`, `workflows/adversarial/`, `workflows/ralph/`
   - Created shared `types/` package for common type definitions (`TaskCompletionFile`, etc.)

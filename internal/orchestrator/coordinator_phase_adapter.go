@@ -1242,12 +1242,19 @@ func (a *executionCoordinatorAdapter) EmitEvent(eventType, message string) {
 }
 
 // StartExecutionLoop restarts the execution loop (used by RetriggerGroup).
+// Delegates to the ExecutionOrchestrator's RestartLoop() method.
 func (a *executionCoordinatorAdapter) StartExecutionLoop() {
 	if a.c == nil {
 		return
 	}
-	a.c.wg.Add(1)
-	go a.c.executionLoop()
+
+	eo := a.c.ExecutionOrchestrator()
+	if eo == nil {
+		// ExecutionOrchestrator must be initialized - this is a programming error
+		a.c.logger.Error("StartExecutionLoop called but ExecutionOrchestrator is nil")
+		return
+	}
+	eo.RestartLoop()
 }
 
 // BuildExecutionContext creates an ExecutionContext for the ExecutionOrchestrator.
