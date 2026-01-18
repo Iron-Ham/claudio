@@ -248,6 +248,9 @@ type Model struct {
 	// Triple-shot mode (nil if not in triple-shot mode)
 	tripleShot *TripleShotState
 
+	// Adversarial review mode (nil if not in adversarial mode)
+	adversarial *view.AdversarialState
+
 	// Plan editor mode (nil if not in plan editor mode)
 	planEditor *PlanEditorState
 
@@ -278,6 +281,9 @@ type Model struct {
 
 	// Triple-shot task state (for :tripleshot command)
 	startingTripleShot bool // When true, taskInput will start a triple-shot session
+
+	// Adversarial task state (for :adversarial command)
+	startingAdversarial bool // When true, taskInput will start an adversarial session
 
 	errorMessage   string
 	infoMessage    string    // Non-error status message
@@ -348,6 +354,11 @@ func (m Model) IsUltraPlanMode() bool {
 // IsTripleShotMode returns true if there are any active tripleshot sessions.
 func (m Model) IsTripleShotMode() bool {
 	return m.tripleShot != nil && m.tripleShot.HasActiveCoordinators()
+}
+
+// IsAdversarialMode returns true if there are any active adversarial sessions.
+func (m Model) IsAdversarialMode() bool {
+	return m.adversarial != nil && m.adversarial.HasActiveCoordinators()
 }
 
 // IsInlinePlanMode returns true if there are any active inline plan sessions.

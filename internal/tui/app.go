@@ -107,6 +107,39 @@ func NewWithTripleShot(orch *orchestrator.Orchestrator, session *orchestrator.Se
 	}
 }
 
+// NewWithAdversarial creates a new TUI application in adversarial review mode
+func NewWithAdversarial(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.AdversarialCoordinator, logger *logging.Logger) *App {
+	model := NewModel(orch, session, logger)
+	model.adversarial = &view.AdversarialState{
+		Coordinators: make(map[string]*orchestrator.AdversarialCoordinator),
+	}
+	// Add the coordinator to the map keyed by its group ID for multiple session support
+	if coordinator != nil {
+		advSession := coordinator.Session()
+		if advSession != nil {
+			// Create a group if one doesn't exist (CLI-started sessions)
+			if advSession.GroupID == "" {
+				advGroup := orchestrator.NewInstanceGroupWithType(
+					util.TruncateString(advSession.Task, 30),
+					orchestrator.SessionTypeAdversarial,
+					advSession.Task,
+				)
+				session.AddGroup(advGroup)
+				advSession.GroupID = advGroup.ID
+
+				// Auto-enable grouped sidebar mode
+				model.autoEnableGroupedMode()
+			}
+			model.adversarial.Coordinators[advSession.GroupID] = coordinator
+		}
+	}
+	return &App{
+		model:        model,
+		orchestrator: orch,
+		session:      session,
+	}
+}
+
 // NewWithTripleShots creates a new TUI application with multiple tripleshot coordinators.
 // This is used when restoring a session that had multiple concurrent tripleshots.
 func NewWithTripleShots(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinators []*orchestrator.TripleShotCoordinator, logger *logging.Logger) *App {
@@ -263,6 +296,24 @@ func (m Model) Init() tea.Cmd {
 		}
 	}
 
+	// Schedule adversarial initialization if needed
+	if m.adversarial != nil && m.adversarial.HasActiveCoordinators() {
+		for _, coordinator := range m.adversarial.Coordinators {
+			session := coordinator.Session()
+			// Start implementer if session is new (no implementer started yet)
+			if session != nil && session.Phase == orchestrator.PhaseAdversarialImplementing && session.ImplementerID == "" {
+				// Capture coordinator for closure
+				coord := coordinator
+				cmds = append(cmds, func() tea.Msg {
+					if err := coord.StartImplementer(); err != nil {
+						return tuimsg.AdversarialErrorMsg{Err: err}
+					}
+					return tuimsg.AdversarialStartedMsg{}
+				})
+			}
+		}
+	}
+
 	return tea.Batch(cmds...)
 }
 
@@ -330,6 +381,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// This avoids blocking the UI with file I/O
 		cmds = append(cmds, m.dispatchTripleShotCompletionChecks()...)
 
+		// Dispatch async commands to check adversarial completion files
+		// This avoids blocking the UI with file I/O
+		cmds = append(cmds, m.dispatchAdversarialCompletionChecks()...)
+
 		// Dispatch async commands to check ultraplan files
 		// This avoids blocking the UI with file I/O during planning phases
 		cmds = append(cmds, m.dispatchUltraPlanFileChecks()...)
@@ -341,6 +396,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Check if ultraplan needs user notification
 		if m.ultraPlan != nil && m.ultraPlan.NeedsNotification {
 			m.ultraPlan.NeedsNotification = false
+			cmds = append(cmds, tuimsg.NotifyUser())
+		}
+
+		// Check if adversarial needs user notification
+		if m.adversarial != nil && m.adversarial.NeedsNotification {
+			m.adversarial.NeedsNotification = false
 			cmds = append(cmds, tuimsg.NotifyUser())
 		}
 
@@ -468,6 +529,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuimsg.InlineMultiPlanFileCheckResultMsg:
 		// Handle async inline multiplan file check result
 		return m.handleInlineMultiPlanFileCheckResult(msg)
+
+	// Adversarial mode message handlers
+	case tuimsg.AdversarialStartedMsg:
+		m.infoMessage = "Adversarial review started"
+		return m, nil
+
+	case tuimsg.AdversarialErrorMsg:
+		m.errorMessage = "Adversarial review error: " + msg.Err.Error()
+		// Clean up adversarial state on error
+		m.cleanupAdversarial()
+		if m.logger != nil {
+			m.logger.Error("adversarial review error", "error", msg.Err)
+		}
+		return m, nil
+
+	case tuimsg.AdversarialCheckResultMsg:
+		// Handle async completion check results
+		return m.handleAdversarialCheckResult(msg)
+
+	case tuimsg.AdversarialIncrementProcessedMsg:
+		// Handle async increment file processing result
+		return m.handleAdversarialIncrementProcessed(msg)
+
+	case tuimsg.AdversarialReviewProcessedMsg:
+		// Handle async review file processing result
+		return m.handleAdversarialReviewProcessed(msg)
 	}
 
 	return m, nil
@@ -613,6 +700,14 @@ func (m *Model) applyCommandResult(result command.Result) {
 	// Handle triple-shot mode transition
 	if result.StartTripleShot != nil && *result.StartTripleShot {
 		m.startingTripleShot = true
+		m.addingTask = true
+		m.taskInput = ""
+		m.taskInputCursor = 0
+	}
+
+	// Handle adversarial mode transition
+	if result.StartAdversarial != nil && *result.StartAdversarial {
+		m.startingAdversarial = true
 		m.addingTask = true
 		m.taskInput = ""
 		m.taskInputCursor = 0
@@ -833,6 +928,8 @@ func (m Model) View() string {
 		header = m.renderUltraPlanHeader()
 	} else if m.IsTripleShotMode() {
 		header = m.renderTripleShotHeader()
+	} else if m.IsAdversarialMode() {
+		header = m.renderAdversarialHeader()
 	} else {
 		header = m.renderHeader()
 	}
@@ -917,6 +1014,8 @@ func (m Model) View() string {
 		b.WriteString(m.renderUltraPlanHelp())
 	} else if m.IsTripleShotMode() {
 		b.WriteString(m.renderTripleShotHelp())
+	} else if m.IsAdversarialMode() {
+		b.WriteString(m.renderAdversarialHelp())
 	} else {
 		b.WriteString(m.renderHelp())
 	}
@@ -1344,6 +1443,38 @@ func (m Model) renderTripleShotHelp() string {
 	return view.RenderTripleShotHelp(m.buildHelpBarState())
 }
 
+// renderAdversarialHeader renders the header for adversarial mode.
+// Delegates to view.RenderAdversarialHeader for the actual rendering.
+func (m Model) renderAdversarialHeader() string {
+	title := "Claudio"
+	if m.session != nil && m.session.Name != "" {
+		title = fmt.Sprintf("Claudio: %s", m.session.Name)
+	}
+
+	// Build the context for adversarial header rendering
+	ctx := view.AdversarialRenderContext{
+		Orchestrator: m.orchestrator,
+		Session:      m.session,
+		Adversarial:  m.adversarial,
+		ActiveTab:    m.activeTab,
+	}
+
+	// Render the adversarial status part
+	advHeader := view.RenderAdversarialHeader(ctx)
+
+	// Combine title with adversarial header
+	if advHeader != "" {
+		return styles.Header.Render(title) + "  " + advHeader
+	}
+	return styles.Header.Render(title)
+}
+
+// renderAdversarialHelp renders the help bar for adversarial mode.
+// Delegates to view.RenderAdversarialHelp for the actual rendering.
+func (m Model) renderAdversarialHelp() string {
+	return view.RenderAdversarialHelp(m.buildHelpBarState())
+}
+
 // initiateTripleShotMode creates and starts a triple-shot session.
 // Supports multiple concurrent tripleshots by adding to the Coordinators map.
 func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
@@ -1399,5 +1530,79 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 			return tuimsg.TripleShotErrorMsg{Err: err}
 		}
 		return tuimsg.TripleShotStartedMsg{}
+	}
+}
+
+// initiateAdversarialMode creates and starts an adversarial session.
+// Supports multiple concurrent adversarial sessions by adding to the Coordinators map.
+func (m Model) initiateAdversarialMode(task string) (Model, tea.Cmd) {
+	// Validate required dependencies
+	if m.session == nil {
+		m.errorMessage = "Cannot start adversarial mode: no active session"
+		if m.logger != nil {
+			m.logger.Error("initiateAdversarialMode called with nil session")
+		}
+		return m, nil
+	}
+	if m.orchestrator == nil {
+		m.errorMessage = "Cannot start adversarial mode: orchestrator not available"
+		if m.logger != nil {
+			m.logger.Error("initiateAdversarialMode called with nil orchestrator")
+		}
+		return m, nil
+	}
+
+	// Create a group for this adversarial session FIRST to get its ID
+	advGroup := orchestrator.NewInstanceGroupWithType(
+		util.TruncateString(task, 30),
+		orchestrator.SessionTypeAdversarial,
+		task,
+	)
+	m.session.AddGroup(advGroup)
+
+	// Request intelligent name generation for the group
+	m.orchestrator.RequestGroupRename(advGroup.ID, task)
+
+	// Create adversarial session with default config
+	advConfig := orchestrator.DefaultAdversarialConfig()
+	advSession := orchestrator.NewAdversarialSession(task, advConfig)
+
+	// Link group ID to session for multi-adversarial support
+	advSession.GroupID = advGroup.ID
+
+	// Add to AdversarialSessions slice for persistence (supports multiple)
+	m.session.AdversarialSessions = append(m.session.AdversarialSessions, advSession)
+
+	// Create coordinator
+	coordinator := orchestrator.NewAdversarialCoordinator(m.orchestrator, m.session, advSession, m.logger)
+
+	// Auto-enable grouped sidebar mode
+	m.autoEnableGroupedMode()
+
+	// Initialize adversarial state if needed, or add to existing coordinators
+	if m.adversarial == nil {
+		m.adversarial = &AdversarialState{
+			Coordinators: make(map[string]*orchestrator.AdversarialCoordinator),
+		}
+	} else if m.adversarial.Coordinators == nil {
+		m.adversarial.Coordinators = make(map[string]*orchestrator.AdversarialCoordinator)
+	}
+
+	// Add coordinator to the map keyed by group ID
+	m.adversarial.Coordinators[advGroup.ID] = coordinator
+
+	numActive := len(m.adversarial.Coordinators)
+	if numActive > 1 {
+		m.infoMessage = fmt.Sprintf("Starting adversarial session #%d...", numActive)
+	} else {
+		m.infoMessage = "Starting adversarial mode..."
+	}
+
+	// Start implementer asynchronously
+	return m, func() tea.Msg {
+		if err := coordinator.StartImplementer(); err != nil {
+			return tuimsg.AdversarialErrorMsg{Err: err}
+		}
+		return tuimsg.AdversarialStartedMsg{}
 	}
 }

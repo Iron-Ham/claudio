@@ -227,6 +227,7 @@ func (m Model) cancelTaskInput() Model {
 	m.addingDependentTask = false
 	m.dependentOnInstanceID = ""
 	m.startingTripleShot = false
+	m.startingAdversarial = false
 	m.taskInput = ""
 	m.taskInputCursor = 0
 	m.templateSuffix = ""        // Clear suffix on cancel
@@ -246,6 +247,7 @@ func (m Model) submitTaskInput() (tea.Model, tea.Cmd) {
 		dependsOn := m.dependentOnInstanceID
 		baseBranch := m.selectedBaseBranch
 		isTripleShot := m.startingTripleShot
+		isAdversarial := m.startingAdversarial
 		m = m.cancelTaskInput()
 
 		// Handle inline plan/ultraplan/multiplan objective submission
@@ -269,6 +271,11 @@ func (m Model) submitTaskInput() (tea.Model, tea.Cmd) {
 		// Handle triple-shot mode initiation
 		if isTripleShot {
 			return m.initiateTripleShotMode(task)
+		}
+
+		// Handle adversarial mode initiation
+		if isAdversarial {
+			return m.initiateAdversarialMode(task)
 		}
 
 		// Add instance asynchronously to avoid blocking UI during git worktree creation

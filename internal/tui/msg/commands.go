@@ -7,6 +7,7 @@
 package msg
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -366,6 +367,93 @@ func CheckPlanManagerFileAsync(
 			Found:    true,
 			Plan:     plan,
 			Decision: decision,
+		}
+	}
+}
+
+// CheckAdversarialCompletionAsync returns a command that checks adversarial completion files
+// in a goroutine, avoiding blocking the UI event loop with file I/O.
+func CheckAdversarialCompletionAsync(
+	coordinator *orchestrator.AdversarialCoordinator,
+	groupID string,
+) tea.Cmd {
+	return func() tea.Msg {
+		session := coordinator.Session()
+		if session == nil {
+			// Return an error result instead of nil to avoid silent failure
+			return AdversarialCheckResultMsg{
+				GroupID:        groupID,
+				Phase:          orchestrator.PhaseAdversarialFailed,
+				IncrementError: fmt.Errorf("adversarial session not found"),
+			}
+		}
+
+		result := AdversarialCheckResultMsg{
+			GroupID: groupID,
+			Phase:   session.Phase,
+		}
+
+		switch session.Phase {
+		case orchestrator.PhaseAdversarialImplementing:
+			// Check increment file
+			ready, err := coordinator.CheckIncrementReady()
+			result.IncrementReady = ready
+			result.IncrementError = err
+
+		case orchestrator.PhaseAdversarialReviewing:
+			// Check review file
+			ready, err := coordinator.CheckReviewReady()
+			result.ReviewReady = ready
+			result.ReviewError = err
+		}
+
+		return result
+	}
+}
+
+// ProcessAdversarialIncrementAsync returns a command that processes an increment file
+// in a goroutine, avoiding blocking the UI event loop with file I/O.
+func ProcessAdversarialIncrementAsync(
+	coordinator *orchestrator.AdversarialCoordinator,
+	groupID string,
+) tea.Cmd {
+	return func() tea.Msg {
+		err := coordinator.ProcessIncrementCompletion()
+		return AdversarialIncrementProcessedMsg{
+			GroupID: groupID,
+			Err:     err,
+		}
+	}
+}
+
+// ProcessAdversarialReviewAsync returns a command that processes a review file
+// in a goroutine, avoiding blocking the UI event loop with file I/O.
+func ProcessAdversarialReviewAsync(
+	coordinator *orchestrator.AdversarialCoordinator,
+	groupID string,
+) tea.Cmd {
+	return func() tea.Msg {
+		err := coordinator.ProcessReviewCompletion()
+
+		// Get review result for feedback
+		approved := false
+		score := 0
+		if err == nil {
+			session := coordinator.Session()
+			if session != nil && len(session.History) > 0 {
+				lastRound := session.History[len(session.History)-1]
+				if lastRound.Review != nil {
+					approved = lastRound.Review.Approved
+					score = lastRound.Review.Score
+				}
+			}
+		}
+
+		return AdversarialReviewProcessedMsg{
+			GroupID:  groupID,
+			Approved: approved,
+			Score:    score,
+			Err:      err,
 		}
 	}
 }

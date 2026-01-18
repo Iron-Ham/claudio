@@ -34,6 +34,7 @@ type Dependencies interface {
 	GetDiffContent() string
 	IsUltraPlanMode() bool
 	IsTripleShotMode() bool
+	IsAdversarialMode() bool
 	GetUltraPlanCoordinator() *orchestrator.Coordinator
 	GetTripleShotCoordinators() []*orchestrator.TripleShotCoordinator // Returns all active tripleshot coordinators
 
@@ -85,6 +86,9 @@ type Result struct {
 
 	// Mode transition - Triple-Shot
 	StartTripleShot *bool // Request to switch to triple-shot mode
+
+	// Mode transition - Adversarial
+	StartAdversarial *bool // Request to switch to adversarial mode
 
 	// StoppedTripleShotJudgeID is set when a stopped instance was a triple-shot judge.
 	// The TUI should clean up the corresponding triple-shot session.
@@ -273,6 +277,10 @@ func (h *Handler) registerCommands() {
 	h.commands["triple"] = cmdTripleShot
 	h.commands["3shot"] = cmdTripleShot
 
+	// Adversarial commands
+	h.commands["adversarial"] = cmdAdversarial
+	h.commands["adv"] = cmdAdversarial
+
 	// Plan mode commands
 	h.commands["plan"] = cmdPlan
 	h.commands["multiplan"] = cmdMultiPlan
@@ -341,6 +349,7 @@ func (h *Handler) buildCategories() {
 				{ShortKey: "", LongKey: "pr --group=single", Description: "Create PR for current group only", Category: "utility"},
 				{ShortKey: "", LongKey: "cancel", Description: "Cancel ultra-plan execution", Category: "utility"},
 				{ShortKey: "", LongKey: "tripleshot", Description: "Start triple-shot mode (3 parallel attempts + judge)", Category: "utility"},
+				{ShortKey: "", LongKey: "adversarial", Description: "Start adversarial mode (implementer + reviewer feedback loop)", Category: "utility"},
 				{ShortKey: "", LongKey: "plan", Description: "Start inline plan mode for structured task planning", Category: "utility"},
 				{ShortKey: "", LongKey: "multiplan", Description: "Start multi-pass plan mode (3 planners + 1 assessor)", Category: "utility"},
 				{ShortKey: "", LongKey: "ultraplan", Description: "Start ultraplan mode (use --multi-pass or --plan flags)", Category: "utility"},
@@ -1038,6 +1047,27 @@ func cmdTripleShot(deps Dependencies) Result {
 	return Result{
 		StartTripleShot: &startTripleShot,
 		InfoMessage:     infoMsg,
+	}
+}
+
+func cmdAdversarial(deps Dependencies) Result {
+	// Don't allow starting adversarial if in ultraplan mode
+	if deps.IsUltraPlanMode() {
+		return Result{ErrorMessage: "Cannot start adversarial mode while in ultraplan mode"}
+	}
+
+	// Multiple adversarial sessions are allowed - no check for IsAdversarialMode()
+
+	// Signal to the model that we want to enter adversarial mode
+	// The model will handle prompting for the task
+	startAdversarial := true
+	infoMsg := "Enter a task for adversarial mode (implementer + reviewer)"
+	if deps.IsAdversarialMode() {
+		infoMsg = "Enter a task for additional adversarial session"
+	}
+	return Result{
+		StartAdversarial: &startAdversarial,
+		InfoMessage:      infoMsg,
 	}
 }
 

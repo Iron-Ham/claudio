@@ -145,3 +145,50 @@ type InlineMultiPlanFileCheckResultMsg struct {
 	StrategyName string
 	GroupID      string // Session group ID for matching to correct session
 }
+
+// AdversarialStartedMsg indicates adversarial session has started.
+type AdversarialStartedMsg struct{}
+
+// AdversarialErrorMsg indicates an error during adversarial operation.
+type AdversarialErrorMsg struct {
+	Err error
+}
+
+// AdversarialCheckResultMsg contains results from async completion file checks.
+// This allows the tick handler to dispatch async I/O and receive results
+// without blocking the UI event loop.
+type AdversarialCheckResultMsg struct {
+	// GroupID identifies which adversarial coordinator this result is for
+	GroupID string
+
+	// IncrementReady indicates whether the increment file exists
+	IncrementReady bool
+
+	// IncrementError is any error encountered checking the increment file
+	IncrementError error
+
+	// ReviewReady indicates whether the review file exists
+	ReviewReady bool
+
+	// ReviewError is any error encountered checking the review file
+	ReviewError error
+
+	// Phase is the current phase of the adversarial session
+	Phase orchestrator.AdversarialPhase
+}
+
+// AdversarialIncrementProcessedMsg contains the result of processing an increment file.
+// This is returned by processIncrementCompletionAsync after reading and parsing the file.
+type AdversarialIncrementProcessedMsg struct {
+	GroupID string
+	Err     error
+}
+
+// AdversarialReviewProcessedMsg contains the result of processing a review file.
+// This is returned by processReviewCompletionAsync after reading and parsing the file.
+type AdversarialReviewProcessedMsg struct {
+	GroupID  string
+	Approved bool
+	Score    int
+	Err      error
+}

@@ -19,6 +19,10 @@ const (
 
 	// SessionTypeTripleShot represents a :tripleshot competing solutions session.
 	SessionTypeTripleShot SessionType = "tripleshot"
+
+	// SessionTypeAdversarial represents an adversarial review session with
+	// implementer-reviewer feedback loop.
+	SessionTypeAdversarial SessionType = "adversarial"
 )
 
 // Icon returns the display icon for this session type.
@@ -32,6 +36,8 @@ func (t SessionType) Icon() string {
 		return "\u26a1" // ⚡ lightning
 	case SessionTypeTripleShot:
 		return "\u25b3" // △ triangle
+	case SessionTypeAdversarial:
+		return "\u2694" // ⚔ crossed swords
 	default:
 		return "\u25cf" // ● filled circle (standard)
 	}
@@ -46,7 +52,7 @@ func (t SessionType) GroupingMode() string {
 	switch t {
 	case SessionTypePlan:
 		return "shared"
-	case SessionTypePlanMulti, SessionTypeUltraPlan, SessionTypeTripleShot:
+	case SessionTypePlanMulti, SessionTypeUltraPlan, SessionTypeTripleShot, SessionTypeAdversarial:
 		return "own"
 	default:
 		return "none"
@@ -57,7 +63,7 @@ func (t SessionType) GroupingMode() string {
 // (multiple instances coordinated together).
 func (t SessionType) IsOrchestratedType() bool {
 	switch t {
-	case SessionTypeUltraPlan, SessionTypeTripleShot, SessionTypePlanMulti:
+	case SessionTypeUltraPlan, SessionTypeTripleShot, SessionTypePlanMulti, SessionTypeAdversarial:
 		return true
 	default:
 		return false

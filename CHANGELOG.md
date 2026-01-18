@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Adversarial Review Mode** - New `claudio adversarial` command that creates an iterative feedback loop between an Implementer and a critical Reviewer:
+  - Implementer works on the task and submits work via increment files
+  - Reviewer critically examines the work and provides detailed feedback
+  - Loop continues until Reviewer approves the implementation or max iterations reached
+  - Configurable max iterations with `--max-iterations` flag (default: 10)
+  - Useful for complex implementations that benefit from rigorous code review
+  - **NEW**: Now accessible from the TUI via `:adversarial` or `:adv` command
+  - Supports multiple concurrent adversarial sessions, similar to TripleShot mode
+
 - **Task Chaining by Sidebar Number** - The `:chain`, `:dep`, and `:depends` commands now accept an optional sidebar number argument to specify which instance to chain from (e.g., `:chain 2` or `:chain #2`). This is more user-friendly than using instance IDs, which aren't prominently displayed.
 
 ### Changed
