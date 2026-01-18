@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
 func TestParsePlanFromOutput(t *testing.T) {
@@ -663,7 +664,7 @@ func TestFlexibleString_UnmarshalJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var result struct {
-				Notes FlexibleString `json:"notes"`
+				Notes types.FlexibleString `json:"notes"`
 			}
 			if err := json.Unmarshal([]byte(tt.json), &result); err != nil {
 				t.Fatalf("Unmarshal failed: %v", err)
@@ -685,7 +686,7 @@ func TestTaskCompletionFile_ParseWithArrayNotes(t *testing.T) {
 		"notes": ["First note about tests", "Second note about implementation"]
 	}`
 
-	var completion TaskCompletionFile
+	var completion types.TaskCompletionFile
 	if err := json.Unmarshal([]byte(jsonData), &completion); err != nil {
 		t.Fatalf("Failed to parse completion file with array notes: %v", err)
 	}
@@ -1121,10 +1122,10 @@ func TestPlanSpec_GetTasks_InterfaceSatisfaction(t *testing.T) {
 }
 
 func TestGroupConsolidationCompletionFile_Getters(t *testing.T) {
-	completion := &GroupConsolidationCompletionFile{
+	completion := &types.GroupConsolidationCompletionFile{
 		Notes:              "Consolidation went smoothly",
 		IssuesForNextGroup: []string{"Watch out for API changes", "New dependency added"},
-		Verification: VerificationResult{
+		Verification: types.VerificationResult{
 			OverallSuccess: true,
 		},
 	}
@@ -1147,9 +1148,9 @@ func TestGroupConsolidationCompletionFile_Getters(t *testing.T) {
 }
 
 func TestGroupConsolidationCompletionFile_Getters_VerificationFailed(t *testing.T) {
-	completion := &GroupConsolidationCompletionFile{
+	completion := &types.GroupConsolidationCompletionFile{
 		Notes: "Consolidation had issues",
-		Verification: VerificationResult{
+		Verification: types.VerificationResult{
 			OverallSuccess: false,
 		},
 	}
@@ -1161,7 +1162,7 @@ func TestGroupConsolidationCompletionFile_Getters_VerificationFailed(t *testing.
 
 func TestGroupConsolidationCompletionFile_Getters_EmptyFields(t *testing.T) {
 	// Test with empty/default fields
-	completion := &GroupConsolidationCompletionFile{}
+	completion := &types.GroupConsolidationCompletionFile{}
 
 	if got := completion.GetNotes(); got != "" {
 		t.Errorf("GetNotes() = %q, want empty string", got)
@@ -1169,7 +1170,7 @@ func TestGroupConsolidationCompletionFile_Getters_EmptyFields(t *testing.T) {
 	if got := completion.GetIssuesForNextGroup(); got != nil {
 		t.Errorf("GetIssuesForNextGroup() = %v, want nil", got)
 	}
-	// Default VerificationResult has OverallSuccess = false
+	// Default types.VerificationResult has OverallSuccess = false
 	if completion.IsVerificationSuccess() {
 		t.Error("IsVerificationSuccess() = true, want false for default")
 	}
@@ -1413,8 +1414,8 @@ func TestPlanSpecImplementsInterface(t *testing.T) {
 }
 
 func TestGroupConsolidationImplementsInterface(t *testing.T) {
-	// Create a GroupConsolidationCompletionFile with test data
-	consolidation := &GroupConsolidationCompletionFile{
+	// Create a types.GroupConsolidationCompletionFile with test data
+	consolidation := &types.GroupConsolidationCompletionFile{
 		GroupIndex: 1,
 		Status:     "complete",
 		BranchName: "ultraplan/group-1-consolidated",
@@ -1423,15 +1424,15 @@ func TestGroupConsolidationImplementsInterface(t *testing.T) {
 			"task-auth-handlers",
 			"task-auth-middleware",
 		},
-		ConflictsResolved: []ConflictResolution{
+		ConflictsResolved: []types.ConflictResolution{
 			{
 				File:       "internal/auth/config.go",
 				Resolution: "Merged both import additions",
 			},
 		},
-		Verification: VerificationResult{
+		Verification: types.VerificationResult{
 			ProjectType: "go",
-			CommandsRun: []VerificationStep{
+			CommandsRun: []types.VerificationStep{
 				{Name: "build", Command: "go build ./...", Success: true},
 				{Name: "lint", Command: "golangci-lint run", Success: true},
 				{Name: "test", Command: "go test ./...", Success: true},
@@ -1446,7 +1447,7 @@ func TestGroupConsolidationImplementsInterface(t *testing.T) {
 		},
 	}
 
-	// Compile-time interface check: if GroupConsolidationCompletionFile does not
+	// Compile-time interface check: if types.GroupConsolidationCompletionFile does not
 	// satisfy prompt.GroupConsolidationLike, this line will cause a compilation error.
 	var _ prompt.GroupConsolidationLike = consolidation
 
@@ -1489,8 +1490,8 @@ func TestGroupConsolidationImplementsInterface(t *testing.T) {
 	}
 
 	// Test with failed verification
-	failedConsolidation := &GroupConsolidationCompletionFile{
-		Verification: VerificationResult{
+	failedConsolidation := &types.GroupConsolidationCompletionFile{
+		Verification: types.VerificationResult{
 			OverallSuccess: false,
 		},
 	}

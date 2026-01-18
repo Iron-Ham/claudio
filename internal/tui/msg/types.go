@@ -5,6 +5,8 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 )
 
 // TickMsg is sent periodically to drive UI updates and polling.
@@ -90,7 +92,7 @@ type TripleShotCheckResultMsg struct {
 	JudgeError error
 
 	// Phase is the current phase of the tripleshot session
-	Phase orchestrator.TripleShotPhase
+	Phase tripleshot.Phase
 }
 
 // TripleShotAttemptProcessedMsg contains the result of processing an attempt completion file.
@@ -174,7 +176,7 @@ type AdversarialCheckResultMsg struct {
 	ReviewError error
 
 	// Phase is the current phase of the adversarial session
-	Phase orchestrator.AdversarialPhase
+	Phase adversarial.Phase
 }
 
 // AdversarialIncrementProcessedMsg contains the result of processing an increment file.

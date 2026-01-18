@@ -23,6 +23,8 @@ import (
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/spf13/viper"
 )
 
@@ -40,12 +42,12 @@ type mockDeps struct {
 	tripleShotMode        bool
 	adversarialMode       bool
 	ultraCoordinator      *orchestrator.Coordinator
-	tripleShotCoordinator *orchestrator.TripleShotCoordinator
+	tripleShotCoordinator *tripleshot.Coordinator
 	logger                *logging.Logger
 	startTime             time.Time
 	isTripleShotJudge     bool
 	ralphMode             bool
-	ralphCoordinators     []*orchestrator.RalphCoordinator
+	ralphCoordinators     []*ralph.Coordinator
 }
 
 func (m *mockDeps) GetOrchestrator() *orchestrator.Orchestrator { return m.orchestrator }
@@ -62,9 +64,9 @@ func (m *mockDeps) IsAdversarialMode() bool                     { return m.adver
 func (m *mockDeps) GetUltraPlanCoordinator() *orchestrator.Coordinator {
 	return m.ultraCoordinator
 }
-func (m *mockDeps) GetTripleShotCoordinators() []*orchestrator.TripleShotCoordinator {
+func (m *mockDeps) GetTripleShotCoordinators() []*tripleshot.Coordinator {
 	if m.tripleShotCoordinator != nil {
-		return []*orchestrator.TripleShotCoordinator{m.tripleShotCoordinator}
+		return []*tripleshot.Coordinator{m.tripleShotCoordinator}
 	}
 	return nil
 }
@@ -72,7 +74,7 @@ func (m *mockDeps) GetLogger() *logging.Logger            { return m.logger }
 func (m *mockDeps) GetStartTime() time.Time               { return m.startTime }
 func (m *mockDeps) IsInstanceTripleShotJudge(string) bool { return m.isTripleShotJudge }
 func (m *mockDeps) IsRalphMode() bool                     { return m.ralphMode }
-func (m *mockDeps) GetRalphCoordinators() []*orchestrator.RalphCoordinator {
+func (m *mockDeps) GetRalphCoordinators() []*ralph.Coordinator {
 	return m.ralphCoordinators
 }
 

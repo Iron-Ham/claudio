@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -23,13 +24,13 @@ var (
 type AdversarialState struct {
 	// Coordinators maps group IDs to their adversarial coordinators.
 	// This enables multiple concurrent adversarial sessions.
-	Coordinators map[string]*orchestrator.AdversarialCoordinator
+	Coordinators map[string]*adversarial.Coordinator
 
 	NeedsNotification bool // Set when user input is needed (checked on tick)
 }
 
 // GetCoordinatorForGroup returns the coordinator for a specific group ID.
-func (s *AdversarialState) GetCoordinatorForGroup(groupID string) *orchestrator.AdversarialCoordinator {
+func (s *AdversarialState) GetCoordinatorForGroup(groupID string) *adversarial.Coordinator {
 	if s == nil || s.Coordinators == nil {
 		return nil
 	}
@@ -38,7 +39,7 @@ func (s *AdversarialState) GetCoordinatorForGroup(groupID string) *orchestrator.
 
 // GetAllCoordinators returns all active adversarial coordinators.
 // Results are sorted by group ID for deterministic ordering.
-func (s *AdversarialState) GetAllCoordinators() []*orchestrator.AdversarialCoordinator {
+func (s *AdversarialState) GetAllCoordinators() []*adversarial.Coordinator {
 	if s == nil || len(s.Coordinators) == 0 {
 		return nil
 	}
@@ -50,7 +51,7 @@ func (s *AdversarialState) GetAllCoordinators() []*orchestrator.AdversarialCoord
 	}
 	sort.Strings(keys)
 
-	coords := make([]*orchestrator.AdversarialCoordinator, 0, len(s.Coordinators))
+	coords := make([]*adversarial.Coordinator, 0, len(s.Coordinators))
 	for _, k := range keys {
 		coords = append(coords, s.Coordinators[k])
 	}
@@ -99,13 +100,13 @@ func RenderAdversarialHeader(ctx AdversarialRenderContext) string {
 				continue
 			}
 			switch session.Phase {
-			case orchestrator.PhaseAdversarialImplementing:
+			case adversarial.PhaseImplementing:
 				implementing++
-			case orchestrator.PhaseAdversarialReviewing:
+			case adversarial.PhaseReviewing:
 				reviewing++
-			case orchestrator.PhaseAdversarialComplete, orchestrator.PhaseAdversarialApproved:
+			case adversarial.PhaseComplete, adversarial.PhaseApproved:
 				complete++
-			case orchestrator.PhaseAdversarialFailed:
+			case adversarial.PhaseFailed:
 				failed++
 			}
 		}
@@ -131,19 +132,19 @@ func RenderAdversarialHeader(ctx AdversarialRenderContext) string {
 	var phaseStyle lipgloss.Style
 
 	switch session.Phase {
-	case orchestrator.PhaseAdversarialImplementing:
+	case adversarial.PhaseImplementing:
 		phaseIcon = "🔨"
 		phaseText = "Implementing"
 		phaseStyle = advHighlight
-	case orchestrator.PhaseAdversarialReviewing:
+	case adversarial.PhaseReviewing:
 		phaseIcon = "🔍"
 		phaseText = "Reviewing"
 		phaseStyle = advWarning
-	case orchestrator.PhaseAdversarialApproved, orchestrator.PhaseAdversarialComplete:
+	case adversarial.PhaseApproved, adversarial.PhaseComplete:
 		phaseIcon = "✓"
 		phaseText = "Approved"
 		phaseStyle = advSuccess
-	case orchestrator.PhaseAdversarialFailed:
+	case adversarial.PhaseFailed:
 		phaseIcon = "✗"
 		phaseText = "Failed"
 		phaseStyle = advError
@@ -204,7 +205,7 @@ func RenderAdversarialSidebarSection(ctx AdversarialRenderContext, width int) st
 }
 
 // renderSingleAdversarialSection renders a single adversarial session's status.
-func renderSingleAdversarialSection(ctx AdversarialRenderContext, session *orchestrator.AdversarialSession, width int, index int, showIndex bool) []string {
+func renderSingleAdversarialSection(ctx AdversarialRenderContext, session *adversarial.Session, width int, index int, showIndex bool) []string {
 	var lines []string
 
 	// Task preview with optional index
@@ -228,16 +229,16 @@ func renderSingleAdversarialSection(ctx AdversarialRenderContext, session *orche
 	var phaseText string
 
 	switch session.Phase {
-	case orchestrator.PhaseAdversarialImplementing:
+	case adversarial.PhaseImplementing:
 		phaseStyle = advHighlight
 		phaseText = "implementing"
-	case orchestrator.PhaseAdversarialReviewing:
+	case adversarial.PhaseReviewing:
 		phaseStyle = advWarning
 		phaseText = "reviewing"
-	case orchestrator.PhaseAdversarialApproved, orchestrator.PhaseAdversarialComplete:
+	case adversarial.PhaseApproved, adversarial.PhaseComplete:
 		phaseStyle = advSuccess
 		phaseText = "approved"
-	case orchestrator.PhaseAdversarialFailed:
+	case adversarial.PhaseFailed:
 		phaseStyle = advError
 		phaseText = "failed"
 	default:
@@ -269,9 +270,9 @@ func renderSingleAdversarialSection(ctx AdversarialRenderContext, session *orche
 
 		implStatus := "working"
 		implStyle := advHighlight
-		if session.Phase == orchestrator.PhaseAdversarialReviewing ||
-			session.Phase == orchestrator.PhaseAdversarialApproved ||
-			session.Phase == orchestrator.PhaseAdversarialComplete {
+		if session.Phase == adversarial.PhaseReviewing ||
+			session.Phase == adversarial.PhaseApproved ||
+			session.Phase == adversarial.PhaseComplete {
 			implStatus = "done"
 			implStyle = advSuccess
 		}
@@ -299,10 +300,10 @@ func renderSingleAdversarialSection(ctx AdversarialRenderContext, session *orche
 		var revStatus string
 		var revStyle lipgloss.Style
 		switch session.Phase {
-		case orchestrator.PhaseAdversarialApproved, orchestrator.PhaseAdversarialComplete:
+		case adversarial.PhaseApproved, adversarial.PhaseComplete:
 			revStatus = "approved"
 			revStyle = advSuccess
-		case orchestrator.PhaseAdversarialImplementing:
+		case adversarial.PhaseImplementing:
 			revStatus = "waiting"
 			revStyle = advSubtle
 		default:
@@ -310,7 +311,7 @@ func renderSingleAdversarialSection(ctx AdversarialRenderContext, session *orche
 			revStyle = advWarning
 		}
 		lines = append(lines, prefix+revStyle.Render(revStatus))
-	} else if session.Phase != orchestrator.PhaseAdversarialImplementing {
+	} else if session.Phase != adversarial.PhaseImplementing {
 		lines = append(lines, "  "+advSubtle.Render("pending"))
 	} else {
 		lines = append(lines, "  "+advSubtle.Render("waiting for implementation"))
@@ -361,7 +362,7 @@ func RenderAdversarialHelp(state *HelpBarState) string {
 
 // FindAdversarialForActiveInstance finds the adversarial session that contains
 // the currently active instance (based on activeTab).
-func FindAdversarialForActiveInstance(ctx AdversarialRenderContext) *orchestrator.AdversarialSession {
+func FindAdversarialForActiveInstance(ctx AdversarialRenderContext) *adversarial.Session {
 	if ctx.Session == nil || ctx.ActiveTab >= len(ctx.Session.Instances) {
 		return nil
 	}

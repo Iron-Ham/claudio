@@ -3,6 +3,8 @@ package context
 import (
 	"strings"
 	"testing"
+
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
 // mockInstanceFinder is a test double for InstanceFinder
@@ -591,7 +593,7 @@ func TestFormatWorktreeInfoForPrompt(t *testing.T) {
 	worktrees := []TaskWorktreeInfo{
 		{TaskID: "task-1", TaskTitle: "Task One", WorktreePath: "/path/to/wt", Branch: "feature-1"},
 	}
-	taskContext := &AggregatedTaskContext{
+	taskContext := &types.AggregatedTaskContext{
 		TaskSummaries: map[string]string{"task-1": "Completed successfully"},
 	}
 
@@ -686,12 +688,12 @@ func TestFormatSynthesisContextForPrompt(t *testing.T) {
 func TestAggregatedTaskContextHasContent(t *testing.T) {
 	tests := []struct {
 		name string
-		ctx  *AggregatedTaskContext
+		ctx  *types.AggregatedTaskContext
 		want bool
 	}{
 		{
 			name: "empty context",
-			ctx: &AggregatedTaskContext{
+			ctx: &types.AggregatedTaskContext{
 				TaskSummaries:  make(map[string]string),
 				AllIssues:      []string{},
 				AllSuggestions: []string{},
@@ -702,35 +704,35 @@ func TestAggregatedTaskContextHasContent(t *testing.T) {
 		},
 		{
 			name: "has issues",
-			ctx: &AggregatedTaskContext{
+			ctx: &types.AggregatedTaskContext{
 				AllIssues: []string{"Issue 1"},
 			},
 			want: true,
 		},
 		{
 			name: "has suggestions",
-			ctx: &AggregatedTaskContext{
+			ctx: &types.AggregatedTaskContext{
 				AllSuggestions: []string{"Suggestion 1"},
 			},
 			want: true,
 		},
 		{
 			name: "has dependencies",
-			ctx: &AggregatedTaskContext{
+			ctx: &types.AggregatedTaskContext{
 				Dependencies: []string{"dep1"},
 			},
 			want: true,
 		},
 		{
 			name: "has notes",
-			ctx: &AggregatedTaskContext{
+			ctx: &types.AggregatedTaskContext{
 				Notes: []string{"Note 1"},
 			},
 			want: true,
 		},
 		{
 			name: "summaries only is not content",
-			ctx: &AggregatedTaskContext{
+			ctx: &types.AggregatedTaskContext{
 				TaskSummaries: map[string]string{"task-1": "Summary"},
 			},
 			want: false,
@@ -747,7 +749,7 @@ func TestAggregatedTaskContextHasContent(t *testing.T) {
 }
 
 func TestAggregatedTaskContextFormatForPR(t *testing.T) {
-	ctx := &AggregatedTaskContext{
+	ctx := &types.AggregatedTaskContext{
 		TaskSummaries:  map[string]string{"task-1": "Summary"},
 		AllIssues:      []string{"[task-1] Issue 1"},
 		AllSuggestions: []string{"[task-1] Suggestion 1"},
@@ -775,7 +777,7 @@ func TestAggregatedTaskContextFormatForPR(t *testing.T) {
 }
 
 func TestAggregatedTaskContextFormatForPREmpty(t *testing.T) {
-	ctx := &AggregatedTaskContext{
+	ctx := &types.AggregatedTaskContext{
 		TaskSummaries:  make(map[string]string),
 		AllIssues:      []string{},
 		AllSuggestions: []string{},

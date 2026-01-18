@@ -6,6 +6,10 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 )
 
 // InstanceStatus represents the current state of a Claude instance
@@ -137,15 +141,15 @@ type Session struct {
 
 	// TripleShots holds multiple concurrent triple-shot sessions.
 	// Each tripleshot has its own group and coordinator.
-	TripleShots []*TripleShotSession `json:"triple_shots,omitempty"`
+	TripleShots []*tripleshot.Session `json:"triple_shots,omitempty"`
 
 	// AdversarialSessions holds multiple concurrent adversarial review sessions.
 	// Each adversarial session has its own group and coordinator.
-	AdversarialSessions []*AdversarialSession `json:"adversarial_sessions,omitempty"`
+	AdversarialSessions []*adversarial.Session `json:"adversarial_sessions,omitempty"`
 
 	// RalphSessions holds multiple concurrent Ralph Wiggum iterative loop sessions.
 	// Each ralph session has its own group and coordinator.
-	RalphSessions []*RalphSession `json:"ralph_sessions,omitempty"`
+	RalphSessions []*ralph.Session `json:"ralph_sessions,omitempty"`
 
 	// Recovery state tracking - helps detect and recover interrupted sessions
 	RecoveryState   RecoveryState `json:"recovery_state,omitempty"`   // Current recovery state

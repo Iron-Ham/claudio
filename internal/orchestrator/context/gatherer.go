@@ -7,6 +7,8 @@ package context
 import (
 	"fmt"
 	"strings"
+
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
 // TaskContext holds the context gathered for a single task execution.
@@ -83,56 +85,6 @@ type GroupContext struct {
 	Notes          string
 	IssuesForNext  []string
 	VerificationOK bool
-}
-
-// AggregatedTaskContext holds the aggregated context from task completion files.
-// This is used to build prompts for consolidation and synthesis phases.
-type AggregatedTaskContext struct {
-	TaskSummaries  map[string]string // taskID -> summary
-	AllIssues      []string          // All issues from all tasks
-	AllSuggestions []string          // All suggestions from all tasks
-	Dependencies   []string          // Deduplicated list of new dependencies
-	Notes          []string          // Implementation notes from all tasks
-}
-
-// HasContent returns true if there is any aggregated context worth displaying.
-func (a *AggregatedTaskContext) HasContent() bool {
-	return len(a.AllIssues) > 0 || len(a.AllSuggestions) > 0 || len(a.Dependencies) > 0 || len(a.Notes) > 0
-}
-
-// FormatForPR formats the aggregated context for inclusion in a PR description.
-func (a *AggregatedTaskContext) FormatForPR() string {
-	var sb strings.Builder
-
-	if len(a.Notes) > 0 {
-		sb.WriteString("\n## Implementation Notes\n\n")
-		for _, note := range a.Notes {
-			sb.WriteString(fmt.Sprintf("- %s\n", note))
-		}
-	}
-
-	if len(a.AllIssues) > 0 {
-		sb.WriteString("\n## Issues/Concerns Flagged\n\n")
-		for _, issue := range a.AllIssues {
-			sb.WriteString(fmt.Sprintf("- %s\n", issue))
-		}
-	}
-
-	if len(a.AllSuggestions) > 0 {
-		sb.WriteString("\n## Integration Suggestions\n\n")
-		for _, suggestion := range a.AllSuggestions {
-			sb.WriteString(fmt.Sprintf("- %s\n", suggestion))
-		}
-	}
-
-	if len(a.Dependencies) > 0 {
-		sb.WriteString("\n## New Dependencies\n\n")
-		for _, dep := range a.Dependencies {
-			sb.WriteString(fmt.Sprintf("- `%s`\n", dep))
-		}
-	}
-
-	return sb.String()
 }
 
 // InstanceFinder provides an interface for finding instances by various criteria.
@@ -278,8 +230,8 @@ func (g *Gatherer) GatherTaskContext(taskID string, worktrees []TaskWorktreeInfo
 
 // GatherAggregatedTaskContext aggregates context from multiple tasks' completion files.
 // This is useful for building prompts that need information from multiple completed tasks.
-func (g *Gatherer) GatherAggregatedTaskContext(taskIDs []string) *AggregatedTaskContext {
-	ctx := &AggregatedTaskContext{
+func (g *Gatherer) GatherAggregatedTaskContext(taskIDs []string) *types.AggregatedTaskContext {
+	ctx := &types.AggregatedTaskContext{
 		TaskSummaries:  make(map[string]string),
 		AllIssues:      make([]string, 0),
 		AllSuggestions: make([]string, 0),
@@ -490,7 +442,7 @@ func (g *Gatherer) FormatTaskListForPrompt(completedTaskIDs []string, commitCoun
 }
 
 // FormatWorktreeInfoForPrompt formats worktree information for inclusion in a prompt.
-func (g *Gatherer) FormatWorktreeInfoForPrompt(worktrees []TaskWorktreeInfo, taskContext *AggregatedTaskContext) string {
+func (g *Gatherer) FormatWorktreeInfoForPrompt(worktrees []TaskWorktreeInfo, taskContext *types.AggregatedTaskContext) string {
 	var sb strings.Builder
 
 	for _, wt := range worktrees {

@@ -30,7 +30,7 @@
 // Consolidation:
 //   - [ConsolidationMode]: "stacked" (one PR per group) or "single" (one PR total)
 //   - [ConsolidationPhase]: Sub-phases during branch merging and PR creation
-//   - [ConsolidationState]: Tracks progress, branches, and PRs created
+//   - [ConsolidatorState]: Tracks progress, branches, and PRs created
 //
 // # Phase Lifecycle
 //

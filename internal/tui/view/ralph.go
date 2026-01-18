@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -22,14 +23,14 @@ var (
 // Mirrors the TUI-level RalphState for view components.
 type RalphState struct {
 	// Coordinators maps group IDs to their ralph coordinators.
-	Coordinators map[string]*orchestrator.RalphCoordinator
+	Coordinators map[string]*ralph.Coordinator
 
 	// NeedsNotification is set when user notification is needed.
 	NeedsNotification bool
 }
 
 // GetCoordinatorForGroup returns the coordinator for a specific group ID.
-func (s *RalphState) GetCoordinatorForGroup(groupID string) *orchestrator.RalphCoordinator {
+func (s *RalphState) GetCoordinatorForGroup(groupID string) *ralph.Coordinator {
 	if s == nil || s.Coordinators == nil {
 		return nil
 	}
@@ -38,7 +39,7 @@ func (s *RalphState) GetCoordinatorForGroup(groupID string) *orchestrator.RalphC
 
 // GetAllCoordinators returns all active ralph coordinators.
 // Results are sorted by group ID for deterministic ordering.
-func (s *RalphState) GetAllCoordinators() []*orchestrator.RalphCoordinator {
+func (s *RalphState) GetAllCoordinators() []*ralph.Coordinator {
 	if s == nil || len(s.Coordinators) == 0 {
 		return nil
 	}
@@ -50,7 +51,7 @@ func (s *RalphState) GetAllCoordinators() []*orchestrator.RalphCoordinator {
 	}
 	sort.Strings(keys)
 
-	coords := make([]*orchestrator.RalphCoordinator, 0, len(s.Coordinators))
+	coords := make([]*ralph.Coordinator, 0, len(s.Coordinators))
 	for _, k := range keys {
 		coords = append(coords, s.Coordinators[k])
 	}
@@ -98,11 +99,11 @@ func RenderRalphHeader(ctx RalphRenderContext) string {
 				continue
 			}
 			switch session.Phase {
-			case orchestrator.PhaseRalphWorking:
+			case ralph.PhaseWorking:
 				working++
-			case orchestrator.PhaseRalphComplete:
+			case ralph.PhaseComplete:
 				complete++
-			case orchestrator.PhaseRalphMaxIterations, orchestrator.PhaseRalphCancelled, orchestrator.PhaseRalphError:
+			case ralph.PhaseMaxIterations, ralph.PhaseCancelled, ralph.PhaseError:
 				stopped++
 			}
 		}
@@ -128,23 +129,23 @@ func RenderRalphHeader(ctx RalphRenderContext) string {
 	var phaseStyle lipgloss.Style
 
 	switch session.Phase {
-	case orchestrator.PhaseRalphWorking:
+	case ralph.PhaseWorking:
 		phaseIcon = "♻"
 		phaseText = "Running"
 		phaseStyle = ralphHighlight
-	case orchestrator.PhaseRalphComplete:
+	case ralph.PhaseComplete:
 		phaseIcon = "✓"
 		phaseText = "Complete"
 		phaseStyle = ralphSuccess
-	case orchestrator.PhaseRalphMaxIterations:
+	case ralph.PhaseMaxIterations:
 		phaseIcon = "⚠"
 		phaseText = "Max Iterations"
 		phaseStyle = ralphWarning
-	case orchestrator.PhaseRalphCancelled:
+	case ralph.PhaseCancelled:
 		phaseIcon = "✗"
 		phaseText = "Cancelled"
 		phaseStyle = ralphWarning
-	case orchestrator.PhaseRalphError:
+	case ralph.PhaseError:
 		phaseIcon = "✗"
 		phaseText = "Error"
 		phaseStyle = styles.Error
@@ -205,7 +206,7 @@ func RenderRalphSidebarSection(ctx RalphRenderContext, width int) string {
 }
 
 // renderSingleRalphSection renders a single ralph session's status.
-func renderSingleRalphSection(ctx RalphRenderContext, session *orchestrator.RalphSession, width int, index int, showIndex bool) []string {
+func renderSingleRalphSection(ctx RalphRenderContext, session *ralph.Session, width int, index int, showIndex bool) []string {
 	var lines []string
 
 	// Prompt preview with optional index
@@ -229,19 +230,19 @@ func renderSingleRalphSection(ctx RalphRenderContext, session *orchestrator.Ralp
 	var phaseText string
 
 	switch session.Phase {
-	case orchestrator.PhaseRalphWorking:
+	case ralph.PhaseWorking:
 		phaseStyle = ralphHighlight
 		phaseText = "running"
-	case orchestrator.PhaseRalphComplete:
+	case ralph.PhaseComplete:
 		phaseStyle = ralphSuccess
 		phaseText = "complete"
-	case orchestrator.PhaseRalphMaxIterations:
+	case ralph.PhaseMaxIterations:
 		phaseStyle = ralphWarning
 		phaseText = "max iterations"
-	case orchestrator.PhaseRalphCancelled:
+	case ralph.PhaseCancelled:
 		phaseStyle = ralphWarning
 		phaseText = "cancelled"
-	case orchestrator.PhaseRalphError:
+	case ralph.PhaseError:
 		phaseStyle = styles.Error
 		phaseText = "error"
 	default:
@@ -284,7 +285,7 @@ func renderSingleRalphSection(ctx RalphRenderContext, session *orchestrator.Ralp
 
 		instStatus := "working"
 		instStyle := ralphHighlight
-		if session.Phase != orchestrator.PhaseRalphWorking {
+		if session.Phase != ralph.PhaseWorking {
 			instStatus = "done"
 			instStyle = ralphSuccess
 		}
@@ -315,7 +316,7 @@ func RenderRalphHelp(state *HelpBarState) string {
 
 // FindRalphForActiveInstance finds the ralph session that contains
 // the currently active instance (based on activeTab).
-func FindRalphForActiveInstance(ctx RalphRenderContext) *orchestrator.RalphSession {
+func FindRalphForActiveInstance(ctx RalphRenderContext) *ralph.Session {
 	if ctx.Session == nil || ctx.ActiveTab >= len(ctx.Session.Instances) {
 		return nil
 	}

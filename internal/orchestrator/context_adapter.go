@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator/context"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
 // sessionInstanceFinder adapts Session and UltraPlanSession to the context.InstanceFinder interface.
@@ -190,16 +191,10 @@ func TaskWorktreeInfoToContext(orchInfo []TaskWorktreeInfo) []context.TaskWorktr
 	return result
 }
 
-// AggregatedTaskContextFromContext converts context.AggregatedTaskContext to AggregatedTaskContext.
-func AggregatedTaskContextFromContext(ctxAgg *context.AggregatedTaskContext) *AggregatedTaskContext {
-	if ctxAgg == nil {
-		return nil
-	}
-	return &AggregatedTaskContext{
-		TaskSummaries:  ctxAgg.TaskSummaries,
-		AllIssues:      ctxAgg.AllIssues,
-		AllSuggestions: ctxAgg.AllSuggestions,
-		Dependencies:   ctxAgg.Dependencies,
-		Notes:          ctxAgg.Notes,
-	}
+// AggregatedTaskContextFromContext returns the types.AggregatedTaskContext.
+// This function previously converted between two duplicate type definitions.
+// Now that both the context and orchestrator packages use types.AggregatedTaskContext,
+// this is a simple pass-through for API compatibility.
+func AggregatedTaskContextFromContext(ctxAgg *types.AggregatedTaskContext) *types.AggregatedTaskContext {
+	return ctxAgg
 }

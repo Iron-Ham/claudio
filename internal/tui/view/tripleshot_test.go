@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 )
 
 func TestRenderTripleShotPlanGroups(t *testing.T) {
@@ -224,7 +225,7 @@ func TestTripleShotState_HasActiveCoordinators(t *testing.T) {
 
 	t.Run("state with empty Coordinators map returns false", func(t *testing.T) {
 		state := &TripleShotState{
-			Coordinators: make(map[string]*orchestrator.TripleShotCoordinator),
+			Coordinators: make(map[string]*tripleshot.Coordinator),
 		}
 		if state.HasActiveCoordinators() {
 			t.Error("expected false for empty coordinators map")
@@ -233,7 +234,7 @@ func TestTripleShotState_HasActiveCoordinators(t *testing.T) {
 
 	t.Run("state with coordinators in map returns true", func(t *testing.T) {
 		state := &TripleShotState{
-			Coordinators: map[string]*orchestrator.TripleShotCoordinator{
+			Coordinators: map[string]*tripleshot.Coordinator{
 				"group-1": nil, // Even nil coordinator counts as entry
 			},
 		}
@@ -244,7 +245,7 @@ func TestTripleShotState_HasActiveCoordinators(t *testing.T) {
 
 	t.Run("state with coordinator in map returns true", func(t *testing.T) {
 		state := &TripleShotState{
-			Coordinators: map[string]*orchestrator.TripleShotCoordinator{
+			Coordinators: map[string]*tripleshot.Coordinator{
 				"group-1": {},
 			},
 		}
@@ -270,10 +271,10 @@ func TestTripleShotState_GetAllCoordinators(t *testing.T) {
 	})
 
 	t.Run("returns coordinators from map", func(t *testing.T) {
-		coord1 := &orchestrator.TripleShotCoordinator{}
-		coord2 := &orchestrator.TripleShotCoordinator{}
+		coord1 := &tripleshot.Coordinator{}
+		coord2 := &tripleshot.Coordinator{}
 		state := &TripleShotState{
-			Coordinators: map[string]*orchestrator.TripleShotCoordinator{
+			Coordinators: map[string]*tripleshot.Coordinator{
 				"group-1": coord1,
 				"group-2": coord2,
 			},
@@ -286,11 +287,11 @@ func TestTripleShotState_GetAllCoordinators(t *testing.T) {
 	})
 
 	t.Run("returns deterministic order by group ID", func(t *testing.T) {
-		coord1 := &orchestrator.TripleShotCoordinator{}
-		coord2 := &orchestrator.TripleShotCoordinator{}
-		coord3 := &orchestrator.TripleShotCoordinator{}
+		coord1 := &tripleshot.Coordinator{}
+		coord2 := &tripleshot.Coordinator{}
+		coord3 := &tripleshot.Coordinator{}
 		state := &TripleShotState{
-			Coordinators: map[string]*orchestrator.TripleShotCoordinator{
+			Coordinators: map[string]*tripleshot.Coordinator{
 				"z-group": coord1,
 				"a-group": coord2,
 				"m-group": coord3,
@@ -309,7 +310,7 @@ func TestTripleShotState_GetAllCoordinators(t *testing.T) {
 
 	t.Run("returns nil when map empty", func(t *testing.T) {
 		state := &TripleShotState{
-			Coordinators: make(map[string]*orchestrator.TripleShotCoordinator),
+			Coordinators: make(map[string]*tripleshot.Coordinator),
 		}
 
 		result := state.GetAllCoordinators()
@@ -321,9 +322,9 @@ func TestTripleShotState_GetAllCoordinators(t *testing.T) {
 
 func TestTripleShotState_GetCoordinatorForGroup(t *testing.T) {
 	t.Run("returns coordinator from map when found", func(t *testing.T) {
-		coord := &orchestrator.TripleShotCoordinator{}
+		coord := &tripleshot.Coordinator{}
 		state := &TripleShotState{
-			Coordinators: map[string]*orchestrator.TripleShotCoordinator{
+			Coordinators: map[string]*tripleshot.Coordinator{
 				"target-group": coord,
 			},
 		}
@@ -336,8 +337,8 @@ func TestTripleShotState_GetCoordinatorForGroup(t *testing.T) {
 
 	t.Run("returns nil when not found and no fallback", func(t *testing.T) {
 		state := &TripleShotState{
-			Coordinators: map[string]*orchestrator.TripleShotCoordinator{
-				"other-group": &orchestrator.TripleShotCoordinator{},
+			Coordinators: map[string]*tripleshot.Coordinator{
+				"other-group": &tripleshot.Coordinator{},
 			},
 		}
 
@@ -349,7 +350,7 @@ func TestTripleShotState_GetCoordinatorForGroup(t *testing.T) {
 
 	t.Run("returns nil when not in map", func(t *testing.T) {
 		state := &TripleShotState{
-			Coordinators: map[string]*orchestrator.TripleShotCoordinator{},
+			Coordinators: map[string]*tripleshot.Coordinator{},
 		}
 
 		result := state.GetCoordinatorForGroup("any-group")

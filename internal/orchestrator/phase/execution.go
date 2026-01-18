@@ -303,8 +303,8 @@ type RetryRecoverySessionInterface interface {
 	// ClearRevisionState clears all revision-related state.
 	ClearRevisionState()
 
-	// ClearConsolidationState clears all consolidation-related state.
-	ClearConsolidationState()
+	// ClearConsolidatorState clears all consolidation-related state.
+	ClearConsolidatorState()
 
 	// ClearPRUrls clears the PR URLs.
 	ClearPRUrls()

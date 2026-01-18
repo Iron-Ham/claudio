@@ -15,6 +15,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/issue"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/retry"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
 // UltraPlanPhase represents the current phase of an ultra-plan session
@@ -409,11 +410,11 @@ type UltraPlanSession struct {
 
 	// Per-group consolidation contexts: index -> completion file data
 	// Stores the context from each group's consolidator to pass to the next group
-	GroupConsolidationContexts []*GroupConsolidationCompletionFile `json:"group_consolidation_contexts,omitempty"`
+	GroupConsolidationContexts []*types.GroupConsolidationCompletionFile `json:"group_consolidation_contexts,omitempty"`
 
 	// Consolidation results (persisted for recovery and display)
-	Consolidation *ConsolidationState `json:"consolidation,omitempty"`
-	PRUrls        []string            `json:"pr_urls,omitempty"`
+	Consolidation *ConsolidatorState `json:"consolidation,omitempty"`
+	PRUrls        []string           `json:"pr_urls,omitempty"`
 
 	// Task retry tracking: task ID -> retry state
 	TaskRetries map[string]*TaskRetryState `json:"task_retries,omitempty"`
@@ -1256,53 +1257,8 @@ func ValidatePlan(plan *PlanSpec) error {
 // PlanFileName is the name of the file where the planning agent writes its plan
 const PlanFileName = ".claudio-plan.json"
 
-// TaskCompletionFileName is the name of the sentinel file that tasks write when complete
-const TaskCompletionFileName = ".claudio-task-complete.json"
-
-// FlexibleString is a type that can unmarshal from either a JSON string or an array of strings.
-// When unmarshaling an array, the strings are joined with newlines.
-// This provides flexibility for Claude instances that may write notes as either format.
-type FlexibleString string
-
-// UnmarshalJSON implements json.Unmarshaler for FlexibleString
-func (f *FlexibleString) UnmarshalJSON(data []byte) error {
-	// Try to unmarshal as a string first
-	var s string
-	if err := json.Unmarshal(data, &s); err == nil {
-		*f = FlexibleString(s)
-		return nil
-	}
-
-	// Try to unmarshal as an array of strings
-	var arr []string
-	if err := json.Unmarshal(data, &arr); err == nil {
-		*f = FlexibleString(strings.Join(arr, "\n"))
-		return nil
-	}
-
-	// If both fail, treat as empty
-	*f = ""
-	return nil
-}
-
-// String returns the underlying string value
-func (f FlexibleString) String() string {
-	return string(f)
-}
-
-// TaskCompletionFile represents the completion report written by a task
-// This file serves as both a sentinel (existence = task done) and a context carrier
-type TaskCompletionFile struct {
-	TaskID        string   `json:"task_id"`
-	Status        string   `json:"status"` // "complete", "blocked", or "failed"
-	Summary       string   `json:"summary"`
-	FilesModified []string `json:"files_modified"`
-	// Rich context for consolidation
-	Notes        FlexibleString `json:"notes,omitempty"`        // Free-form implementation notes (accepts string or array)
-	Issues       []string       `json:"issues,omitempty"`       // Blocking issues or concerns found
-	Suggestions  []string       `json:"suggestions,omitempty"`  // Integration suggestions for other tasks
-	Dependencies []string       `json:"dependencies,omitempty"` // Runtime dependencies added
-}
+// TaskCompletionFileName is imported from types package
+const TaskCompletionFileName = types.TaskCompletionFileName
 
 // TaskCompletionFilePath returns the full path to the task completion file for a given worktree
 func TaskCompletionFilePath(worktreePath string) string {
@@ -1310,14 +1266,14 @@ func TaskCompletionFilePath(worktreePath string) string {
 }
 
 // ParseTaskCompletionFile reads and parses a task completion file
-func ParseTaskCompletionFile(worktreePath string) (*TaskCompletionFile, error) {
+func ParseTaskCompletionFile(worktreePath string) (*types.TaskCompletionFile, error) {
 	completionPath := TaskCompletionFilePath(worktreePath)
 	data, err := os.ReadFile(completionPath)
 	if err != nil {
 		return nil, err
 	}
 
-	var completion TaskCompletionFile
+	var completion types.TaskCompletionFile
 	if err := json.Unmarshal(data, &completion); err != nil {
 		return nil, fmt.Errorf("failed to parse task completion JSON: %w", err)
 	}
@@ -1444,61 +1400,8 @@ func ParseConsolidationCompletionFile(worktreePath string) (*ConsolidationComple
 	return &completion, nil
 }
 
-// GroupConsolidationCompletionFileName is the sentinel file that per-group consolidators write when complete
-const GroupConsolidationCompletionFileName = ".claudio-group-consolidation-complete.json"
-
-// ConflictResolution describes how a merge conflict was resolved
-type ConflictResolution struct {
-	File       string `json:"file"`       // File that had the conflict
-	Resolution string `json:"resolution"` // Description of how it was resolved
-}
-
-// VerificationResult holds the results of build/lint/test verification
-// The consolidator determines appropriate commands based on project type
-type VerificationResult struct {
-	ProjectType    string             `json:"project_type,omitempty"` // Detected: "go", "node", "ios", "python", etc.
-	CommandsRun    []VerificationStep `json:"commands_run"`
-	OverallSuccess bool               `json:"overall_success"`
-	Summary        string             `json:"summary,omitempty"` // Brief summary of verification outcome
-}
-
-// VerificationStep represents a single verification command and its result
-type VerificationStep struct {
-	Name    string `json:"name"`    // e.g., "build", "lint", "test"
-	Command string `json:"command"` // Actual command run
-	Success bool   `json:"success"`
-	Output  string `json:"output,omitempty"` // Truncated output on failure
-}
-
-// GroupConsolidationCompletionFile is written by the per-group consolidator session
-// when it finishes consolidating a group's task branches
-type GroupConsolidationCompletionFile struct {
-	GroupIndex         int                    `json:"group_index"`
-	Status             string                 `json:"status"` // "complete", "failed"
-	BranchName         string                 `json:"branch_name"`
-	TasksConsolidated  []string               `json:"tasks_consolidated"`
-	ConflictsResolved  []ConflictResolution   `json:"conflicts_resolved,omitempty"`
-	Verification       VerificationResult     `json:"verification"`
-	AggregatedContext  *AggregatedTaskContext `json:"aggregated_context,omitempty"`
-	Notes              string                 `json:"notes,omitempty"`                 // Consolidator's observations
-	IssuesForNextGroup []string               `json:"issues_for_next_group,omitempty"` // Warnings/concerns to pass forward
-}
-
-// GetNotes returns the consolidator's observations about the consolidated code.
-// This method enables GroupConsolidationCompletionFile to satisfy prompt.GroupContextLike interface.
-func (g *GroupConsolidationCompletionFile) GetNotes() string { return g.Notes }
-
-// GetIssuesForNextGroup returns warnings or concerns to pass to the next group.
-// This method enables GroupConsolidationCompletionFile to satisfy prompt.GroupContextLike interface.
-func (g *GroupConsolidationCompletionFile) GetIssuesForNextGroup() []string {
-	return g.IssuesForNextGroup
-}
-
-// IsVerificationSuccess returns true if the verification (build/lint/tests) passed.
-// This method enables GroupConsolidationCompletionFile to satisfy prompt.GroupContextLike interface.
-func (g *GroupConsolidationCompletionFile) IsVerificationSuccess() bool {
-	return g.Verification.OverallSuccess
-}
+// GroupConsolidationCompletionFileName is imported from types package
+const GroupConsolidationCompletionFileName = types.GroupConsolidationCompletionFileName
 
 // GroupConsolidationCompletionFilePath returns the full path to the group consolidation completion file
 func GroupConsolidationCompletionFilePath(worktreePath string) string {
@@ -1506,14 +1409,14 @@ func GroupConsolidationCompletionFilePath(worktreePath string) string {
 }
 
 // ParseGroupConsolidationCompletionFile reads and parses a group consolidation completion file
-func ParseGroupConsolidationCompletionFile(worktreePath string) (*GroupConsolidationCompletionFile, error) {
+func ParseGroupConsolidationCompletionFile(worktreePath string) (*types.GroupConsolidationCompletionFile, error) {
 	completionPath := GroupConsolidationCompletionFilePath(worktreePath)
 	data, err := os.ReadFile(completionPath)
 	if err != nil {
 		return nil, err
 	}
 
-	var completion GroupConsolidationCompletionFile
+	var completion types.GroupConsolidationCompletionFile
 	if err := json.Unmarshal(data, &completion); err != nil {
 		return nil, fmt.Errorf("failed to parse group consolidation completion JSON: %w", err)
 	}

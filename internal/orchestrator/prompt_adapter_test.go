@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/types"
 )
 
 func TestPlanInfoFromPlanSpec(t *testing.T) {
@@ -734,7 +735,7 @@ func TestSynthesisInfoFromCompletion(t *testing.T) {
 func TestGroupContextFromCompletion(t *testing.T) {
 	tests := []struct {
 		name       string
-		completion *GroupConsolidationCompletionFile
+		completion *types.GroupConsolidationCompletionFile
 		want       *prompt.GroupContext
 	}{
 		{
@@ -744,7 +745,7 @@ func TestGroupContextFromCompletion(t *testing.T) {
 		},
 		{
 			name:       "empty completion",
-			completion: &GroupConsolidationCompletionFile{},
+			completion: &types.GroupConsolidationCompletionFile{},
 			want: &prompt.GroupContext{
 				GroupIndex:         0,
 				Notes:              "",
@@ -754,14 +755,14 @@ func TestGroupContextFromCompletion(t *testing.T) {
 		},
 		{
 			name: "full completion with passing verification",
-			completion: &GroupConsolidationCompletionFile{
+			completion: &types.GroupConsolidationCompletionFile{
 				GroupIndex:         1,
 				Status:             "complete",
 				BranchName:         "Iron-Ham/ultraplan-abc123-group-2",
 				TasksConsolidated:  []string{"task-1", "task-2"},
 				Notes:              "Consolidated successfully with minor conflict resolution",
 				IssuesForNextGroup: []string{"Watch for API changes in auth module", "Database schema pending migration"},
-				Verification: VerificationResult{
+				Verification: types.VerificationResult{
 					ProjectType:    "go",
 					OverallSuccess: true,
 					Summary:        "All checks passed",
@@ -776,13 +777,13 @@ func TestGroupContextFromCompletion(t *testing.T) {
 		},
 		{
 			name: "completion with failing verification",
-			completion: &GroupConsolidationCompletionFile{
+			completion: &types.GroupConsolidationCompletionFile{
 				GroupIndex:        2,
 				Status:            "complete",
 				BranchName:        "Iron-Ham/ultraplan-xyz789-group-3",
 				TasksConsolidated: []string{"task-5"},
 				Notes:             "Merged but tests are failing",
-				Verification: VerificationResult{
+				Verification: types.VerificationResult{
 					ProjectType:    "go",
 					OverallSuccess: false,
 					Summary:        "Tests failed: 3 failures",
@@ -1428,7 +1429,7 @@ func TestPlanInfoWithCommitCounts(t *testing.T) {
 func TestBuildPreviousGroupContextStrings(t *testing.T) {
 	tests := []struct {
 		name     string
-		contexts []*GroupConsolidationCompletionFile
+		contexts []*types.GroupConsolidationCompletionFile
 		want     []string
 	}{
 		{
@@ -1438,12 +1439,12 @@ func TestBuildPreviousGroupContextStrings(t *testing.T) {
 		},
 		{
 			name:     "empty contexts returns nil",
-			contexts: []*GroupConsolidationCompletionFile{},
+			contexts: []*types.GroupConsolidationCompletionFile{},
 			want:     nil,
 		},
 		{
 			name: "contexts with only nil entries returns nil",
-			contexts: []*GroupConsolidationCompletionFile{
+			contexts: []*types.GroupConsolidationCompletionFile{
 				nil,
 				nil,
 			},
@@ -1451,7 +1452,7 @@ func TestBuildPreviousGroupContextStrings(t *testing.T) {
 		},
 		{
 			name: "context with notes only",
-			contexts: []*GroupConsolidationCompletionFile{
+			contexts: []*types.GroupConsolidationCompletionFile{
 				{
 					GroupIndex: 0,
 					Notes:      "Group 0 completed successfully",
@@ -1461,7 +1462,7 @@ func TestBuildPreviousGroupContextStrings(t *testing.T) {
 		},
 		{
 			name: "context with issues only",
-			contexts: []*GroupConsolidationCompletionFile{
+			contexts: []*types.GroupConsolidationCompletionFile{
 				{
 					GroupIndex:         0,
 					IssuesForNextGroup: []string{"Watch out for API changes", "Tests may be flaky"},
@@ -1471,7 +1472,7 @@ func TestBuildPreviousGroupContextStrings(t *testing.T) {
 		},
 		{
 			name: "context with notes and issues",
-			contexts: []*GroupConsolidationCompletionFile{
+			contexts: []*types.GroupConsolidationCompletionFile{
 				{
 					GroupIndex:         0,
 					Notes:              "Consolidated 3 tasks",
@@ -1482,7 +1483,7 @@ func TestBuildPreviousGroupContextStrings(t *testing.T) {
 		},
 		{
 			name: "multiple contexts",
-			contexts: []*GroupConsolidationCompletionFile{
+			contexts: []*types.GroupConsolidationCompletionFile{
 				{
 					GroupIndex: 0,
 					Notes:      "First group done",
@@ -1501,7 +1502,7 @@ func TestBuildPreviousGroupContextStrings(t *testing.T) {
 		},
 		{
 			name: "context with empty notes and empty issues",
-			contexts: []*GroupConsolidationCompletionFile{
+			contexts: []*types.GroupConsolidationCompletionFile{
 				{
 					GroupIndex:         0,
 					Notes:              "",

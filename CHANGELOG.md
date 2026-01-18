@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Orchestrator Package Refactoring** - Major refactoring of `internal/orchestrator/` to improve modularity and testability:
+  - Extracted workflow coordinators into dedicated subpackages: `workflows/tripleshot/`, `workflows/adversarial/`, `workflows/ralph/`
+  - Created shared `types/` package for common type definitions (`TaskCompletionFile`, etc.)
+  - Reduced type duplication between root orchestrator and phase packages
+  - Added comprehensive test coverage for all workflow coordinators (90%+ coverage)
+  - Created workflow adapters for clean integration with the main orchestrator
+
 - **Dead Code Removal** - Comprehensive cleanup of unused code across the codebase:
   - Removed three unused ultraplan subpackages (`consolidator`, `decomposition`, `executor`)
   - Removed `internal/instance/facade.go` (unused Facade type and its methods)

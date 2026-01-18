@@ -9,6 +9,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
 	sessutil "github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tui"
 	"github.com/Iron-Ham/claudio/internal/util"
@@ -94,7 +95,7 @@ func runAdversarial(cmd *cobra.Command, args []string) error {
 	cfg := config.Get()
 
 	// Create adversarial configuration from flags (which default to config values)
-	advConfig := orchestrator.AdversarialConfig{
+	advConfig := adversarial.Config{
 		MaxIterations:   adversarialMaxIterations,
 		MinPassingScore: adversarialMinPassingScore,
 	}

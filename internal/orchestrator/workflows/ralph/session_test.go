@@ -1,17 +1,17 @@
-package orchestrator
+package ralph
 
 import (
 	"testing"
 )
 
-func TestNewRalphSession(t *testing.T) {
+func TestNewSession(t *testing.T) {
 	prompt := "Test prompt"
-	config := &RalphConfig{
+	config := &Config{
 		MaxIterations:     10,
 		CompletionPromise: "DONE",
 	}
 
-	session := NewRalphSession(prompt, config)
+	session := NewSession(prompt, config)
 
 	if session.Prompt != prompt {
 		t.Errorf("expected prompt %q, got %q", prompt, session.Prompt)
@@ -22,16 +22,16 @@ func TestNewRalphSession(t *testing.T) {
 	if session.CurrentIteration != 0 {
 		t.Errorf("expected initial iteration 0, got %d", session.CurrentIteration)
 	}
-	if session.Phase != PhaseRalphWorking {
-		t.Errorf("expected phase %q, got %q", PhaseRalphWorking, session.Phase)
+	if session.Phase != PhaseWorking {
+		t.Errorf("expected phase %q, got %q", PhaseWorking, session.Phase)
 	}
 	if session.StartedAt.IsZero() {
 		t.Error("expected StartedAt to be set")
 	}
 }
 
-func TestNewRalphSessionWithNilConfig(t *testing.T) {
-	session := NewRalphSession("Test", nil)
+func TestNewSessionWithNilConfig(t *testing.T) {
+	session := NewSession("Test", nil)
 
 	if session.Config == nil {
 		t.Error("expected default config to be created")
@@ -41,22 +41,22 @@ func TestNewRalphSessionWithNilConfig(t *testing.T) {
 	}
 }
 
-func TestRalphSessionIsActive(t *testing.T) {
+func TestSessionIsActive(t *testing.T) {
 	tests := []struct {
 		name     string
-		phase    RalphPhase
+		phase    Phase
 		expected bool
 	}{
-		{"working", PhaseRalphWorking, true},
-		{"complete", PhaseRalphComplete, false},
-		{"max iterations", PhaseRalphMaxIterations, false},
-		{"cancelled", PhaseRalphCancelled, false},
-		{"error", PhaseRalphError, false},
+		{"working", PhaseWorking, true},
+		{"complete", PhaseComplete, false},
+		{"max iterations", PhaseMaxIterations, false},
+		{"cancelled", PhaseCancelled, false},
+		{"error", PhaseError, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := NewRalphSession("Test", nil)
+			session := NewSession("Test", nil)
 			session.Phase = tt.phase
 			if session.IsActive() != tt.expected {
 				t.Errorf("expected IsActive() = %v for phase %q", tt.expected, tt.phase)
@@ -65,26 +65,26 @@ func TestRalphSessionIsActive(t *testing.T) {
 	}
 }
 
-func TestRalphSessionShouldContinue(t *testing.T) {
+func TestSessionShouldContinue(t *testing.T) {
 	tests := []struct {
 		name           string
-		phase          RalphPhase
+		phase          Phase
 		currentIter    int
 		maxIter        int
 		shouldContinue bool
 	}{
-		{"working below max", PhaseRalphWorking, 1, 10, true},
-		{"working at max", PhaseRalphWorking, 10, 10, false},
-		{"working above max", PhaseRalphWorking, 11, 10, false},
-		{"working no limit", PhaseRalphWorking, 100, 0, true},
-		{"complete", PhaseRalphComplete, 1, 10, false},
-		{"cancelled", PhaseRalphCancelled, 1, 10, false},
-		{"error", PhaseRalphError, 1, 10, false},
+		{"working below max", PhaseWorking, 1, 10, true},
+		{"working at max", PhaseWorking, 10, 10, false},
+		{"working above max", PhaseWorking, 11, 10, false},
+		{"working no limit", PhaseWorking, 100, 0, true},
+		{"complete", PhaseComplete, 1, 10, false},
+		{"cancelled", PhaseCancelled, 1, 10, false},
+		{"error", PhaseError, 1, 10, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := NewRalphSession("Test", &RalphConfig{MaxIterations: tt.maxIter})
+			session := NewSession("Test", &Config{MaxIterations: tt.maxIter})
 			session.Phase = tt.phase
 			session.CurrentIteration = tt.currentIter
 			if session.ShouldContinue() != tt.shouldContinue {
@@ -94,7 +94,7 @@ func TestRalphSessionShouldContinue(t *testing.T) {
 	}
 }
 
-func TestRalphSessionCheckCompletionPromise(t *testing.T) {
+func TestSessionCheckCompletionPromise(t *testing.T) {
 	tests := []struct {
 		name     string
 		promise  string
@@ -111,7 +111,7 @@ func TestRalphSessionCheckCompletionPromise(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := NewRalphSession("Test", &RalphConfig{CompletionPromise: tt.promise})
+			session := NewSession("Test", &Config{CompletionPromise: tt.promise})
 			if session.CheckCompletionPromise(tt.output) != tt.expected {
 				t.Errorf("expected CheckCompletionPromise() = %v", tt.expected)
 			}
@@ -119,53 +119,53 @@ func TestRalphSessionCheckCompletionPromise(t *testing.T) {
 	}
 }
 
-func TestRalphSessionMarkComplete(t *testing.T) {
-	session := NewRalphSession("Test", nil)
+func TestSessionMarkComplete(t *testing.T) {
+	session := NewSession("Test", nil)
 
 	session.MarkComplete()
 
-	if session.Phase != PhaseRalphComplete {
-		t.Errorf("expected phase %q, got %q", PhaseRalphComplete, session.Phase)
+	if session.Phase != PhaseComplete {
+		t.Errorf("expected phase %q, got %q", PhaseComplete, session.Phase)
 	}
 	if session.CompletedAt == nil {
 		t.Error("expected CompletedAt to be set")
 	}
 }
 
-func TestRalphSessionMarkMaxIterationsReached(t *testing.T) {
-	session := NewRalphSession("Test", nil)
+func TestSessionMarkMaxIterationsReached(t *testing.T) {
+	session := NewSession("Test", nil)
 
 	session.MarkMaxIterationsReached()
 
-	if session.Phase != PhaseRalphMaxIterations {
-		t.Errorf("expected phase %q, got %q", PhaseRalphMaxIterations, session.Phase)
+	if session.Phase != PhaseMaxIterations {
+		t.Errorf("expected phase %q, got %q", PhaseMaxIterations, session.Phase)
 	}
 	if session.CompletedAt == nil {
 		t.Error("expected CompletedAt to be set")
 	}
 }
 
-func TestRalphSessionMarkCancelled(t *testing.T) {
-	session := NewRalphSession("Test", nil)
+func TestSessionMarkCancelled(t *testing.T) {
+	session := NewSession("Test", nil)
 
 	session.MarkCancelled()
 
-	if session.Phase != PhaseRalphCancelled {
-		t.Errorf("expected phase %q, got %q", PhaseRalphCancelled, session.Phase)
+	if session.Phase != PhaseCancelled {
+		t.Errorf("expected phase %q, got %q", PhaseCancelled, session.Phase)
 	}
 	if session.CompletedAt == nil {
 		t.Error("expected CompletedAt to be set")
 	}
 }
 
-func TestRalphSessionMarkError(t *testing.T) {
-	session := NewRalphSession("Test", nil)
+func TestSessionMarkError(t *testing.T) {
+	session := NewSession("Test", nil)
 	testErr := errGenericTest
 
 	session.MarkError(testErr)
 
-	if session.Phase != PhaseRalphError {
-		t.Errorf("expected phase %q, got %q", PhaseRalphError, session.Phase)
+	if session.Phase != PhaseError {
+		t.Errorf("expected phase %q, got %q", PhaseError, session.Phase)
 	}
 	if session.Error != testErr.Error() {
 		t.Errorf("expected error %q, got %q", testErr.Error(), session.Error)
@@ -175,8 +175,8 @@ func TestRalphSessionMarkError(t *testing.T) {
 	}
 }
 
-func TestRalphSessionIncrementIteration(t *testing.T) {
-	session := NewRalphSession("Test", nil)
+func TestSessionIncrementIteration(t *testing.T) {
+	session := NewSession("Test", nil)
 
 	session.IncrementIteration()
 	if session.CurrentIteration != 1 {
@@ -189,8 +189,8 @@ func TestRalphSessionIncrementIteration(t *testing.T) {
 	}
 }
 
-func TestRalphSessionSetInstanceID(t *testing.T) {
-	session := NewRalphSession("Test", nil)
+func TestSessionSetInstanceID(t *testing.T) {
+	session := NewSession("Test", nil)
 
 	session.SetInstanceID("inst-1")
 	if session.InstanceID != "inst-1" {
@@ -209,8 +209,8 @@ func TestRalphSessionSetInstanceID(t *testing.T) {
 	}
 }
 
-func TestDefaultRalphConfig(t *testing.T) {
-	config := DefaultRalphConfig()
+func TestDefaultConfig(t *testing.T) {
+	config := DefaultConfig()
 
 	if config.MaxIterations != 50 {
 		t.Errorf("expected MaxIterations 50, got %d", config.MaxIterations)

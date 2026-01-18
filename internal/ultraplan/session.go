@@ -161,8 +161,8 @@ type Session struct {
 	GroupConsolidationContexts []*GroupConsolidationCompletionFile `json:"group_consolidation_contexts,omitempty"`
 
 	// Consolidation results (persisted for recovery and display)
-	Consolidation *ConsolidationState `json:"consolidation,omitempty"`
-	PRUrls        []string            `json:"pr_urls,omitempty"`
+	Consolidation *ConsolidatorState `json:"consolidation,omitempty"`
+	PRUrls        []string           `json:"pr_urls,omitempty"`
 
 	// Task retry tracking: task ID -> retry state
 	TaskRetries map[string]*TaskRetryState `json:"task_retries,omitempty"`

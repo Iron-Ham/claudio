@@ -8,6 +8,8 @@ import (
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
 	"github.com/Iron-Ham/claudio/internal/tui/output"
@@ -370,7 +372,7 @@ func (m Model) IsRalphMode() bool {
 }
 
 // GetRalphCoordinators returns all active ralph loop coordinators.
-func (m Model) GetRalphCoordinators() []*orchestrator.RalphCoordinator {
+func (m Model) GetRalphCoordinators() []*ralph.Coordinator {
 	if m.ralph == nil {
 		return nil
 	}
@@ -1288,7 +1290,7 @@ func (m Model) GetUltraPlanCoordinator() *orchestrator.Coordinator {
 }
 
 // GetTripleShotCoordinators returns all active tripleshot coordinators.
-func (m Model) GetTripleShotCoordinators() []*orchestrator.TripleShotCoordinator {
+func (m Model) GetTripleShotCoordinators() []*tripleshot.Coordinator {
 	if m.tripleShot == nil {
 		return nil
 	}

@@ -3,7 +3,7 @@ package tui
 import (
 	"fmt"
 
-	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,7 +31,7 @@ func (m *Model) dispatchAdversarialCompletionChecks() []tea.Cmd {
 
 		// Only check if in a phase that requires polling
 		switch session.Phase {
-		case orchestrator.PhaseAdversarialImplementing, orchestrator.PhaseAdversarialReviewing:
+		case adversarial.PhaseImplementing, adversarial.PhaseReviewing:
 			cmds = append(cmds, tuimsg.CheckAdversarialCompletionAsync(coordinator, groupID))
 		}
 	}
@@ -69,13 +69,13 @@ func (m *Model) handleAdversarialCheckResult(msg tuimsg.AdversarialCheckResultMs
 	}
 
 	switch msg.Phase {
-	case orchestrator.PhaseAdversarialImplementing:
+	case adversarial.PhaseImplementing:
 		return m.processAdversarialIncrementCheck(coordinator, msg)
 
-	case orchestrator.PhaseAdversarialReviewing:
+	case adversarial.PhaseReviewing:
 		return m.processAdversarialReviewCheck(coordinator, msg)
 
-	case orchestrator.PhaseAdversarialFailed:
+	case adversarial.PhaseFailed:
 		// Show error message for failed adversarial session
 		if session.Error != "" && m.errorMessage == "" {
 			m.errorMessage = "Adversarial review failed: " + session.Error
@@ -89,7 +89,7 @@ func (m *Model) handleAdversarialCheckResult(msg tuimsg.AdversarialCheckResultMs
 // processAdversarialIncrementCheck handles completion check results for the increment file.
 // Returns async command to process the increment file if ready.
 func (m *Model) processAdversarialIncrementCheck(
-	coordinator *orchestrator.AdversarialCoordinator,
+	coordinator *adversarial.Coordinator,
 	msg tuimsg.AdversarialCheckResultMsg,
 ) (tea.Model, tea.Cmd) {
 	if msg.IncrementError != nil {
@@ -113,7 +113,7 @@ func (m *Model) processAdversarialIncrementCheck(
 // processAdversarialReviewCheck handles completion check results for the review file.
 // Returns async command to process the review file if ready.
 func (m *Model) processAdversarialReviewCheck(
-	coordinator *orchestrator.AdversarialCoordinator,
+	coordinator *adversarial.Coordinator,
 	msg tuimsg.AdversarialCheckResultMsg,
 ) (tea.Model, tea.Cmd) {
 	if msg.ReviewError != nil {
@@ -244,7 +244,7 @@ func (m *Model) cleanupAdversarial() {
 }
 
 // GetAdversarialCoordinators returns all active adversarial coordinators.
-func (m Model) GetAdversarialCoordinators() []*orchestrator.AdversarialCoordinator {
+func (m Model) GetAdversarialCoordinators() []*adversarial.Coordinator {
 	if m.adversarial == nil {
 		return nil
 	}

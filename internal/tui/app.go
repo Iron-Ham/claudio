@@ -14,6 +14,8 @@ import (
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
 	"github.com/Iron-Ham/claudio/internal/tui/filter"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
@@ -75,10 +77,10 @@ func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Ses
 }
 
 // NewWithTripleShot creates a new TUI application in triple-shot mode
-func NewWithTripleShot(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.TripleShotCoordinator, logger *logging.Logger) *App {
+func NewWithTripleShot(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *tripleshot.Coordinator, logger *logging.Logger) *App {
 	model := NewModel(orch, session, logger)
 	model.tripleShot = &TripleShotState{
-		Coordinators: make(map[string]*orchestrator.TripleShotCoordinator),
+		Coordinators: make(map[string]*tripleshot.Coordinator),
 	}
 	// Add the coordinator to the map keyed by its group ID for multiple tripleshot support
 	if coordinator != nil {
@@ -108,10 +110,10 @@ func NewWithTripleShot(orch *orchestrator.Orchestrator, session *orchestrator.Se
 }
 
 // NewWithAdversarial creates a new TUI application in adversarial review mode
-func NewWithAdversarial(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *orchestrator.AdversarialCoordinator, logger *logging.Logger) *App {
+func NewWithAdversarial(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *adversarial.Coordinator, logger *logging.Logger) *App {
 	model := NewModel(orch, session, logger)
 	model.adversarial = &view.AdversarialState{
-		Coordinators: make(map[string]*orchestrator.AdversarialCoordinator),
+		Coordinators: make(map[string]*adversarial.Coordinator),
 	}
 	// Add the coordinator to the map keyed by its group ID for multiple session support
 	if coordinator != nil {
@@ -142,10 +144,10 @@ func NewWithAdversarial(orch *orchestrator.Orchestrator, session *orchestrator.S
 
 // NewWithTripleShots creates a new TUI application with multiple tripleshot coordinators.
 // This is used when restoring a session that had multiple concurrent tripleshots.
-func NewWithTripleShots(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinators []*orchestrator.TripleShotCoordinator, logger *logging.Logger) *App {
+func NewWithTripleShots(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinators []*tripleshot.Coordinator, logger *logging.Logger) *App {
 	model := NewModel(orch, session, logger)
 	model.tripleShot = &TripleShotState{
-		Coordinators: make(map[string]*orchestrator.TripleShotCoordinator),
+		Coordinators: make(map[string]*tripleshot.Coordinator),
 	}
 
 	// Add all coordinators to the map keyed by their group IDs
@@ -301,7 +303,7 @@ func (m Model) Init() tea.Cmd {
 		for _, coordinator := range m.adversarial.Coordinators {
 			session := coordinator.Session()
 			// Start implementer if session is new (no implementer started yet)
-			if session != nil && session.Phase == orchestrator.PhaseAdversarialImplementing && session.ImplementerID == "" {
+			if session != nil && session.Phase == adversarial.PhaseImplementing && session.ImplementerID == "" {
 				// Capture coordinator for closure
 				coord := coordinator
 				cmds = append(cmds, func() tea.Msg {
@@ -1588,10 +1590,10 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	// Initialize triple-shot state if needed, or add to existing coordinators
 	if m.tripleShot == nil {
 		m.tripleShot = &TripleShotState{
-			Coordinators: make(map[string]*orchestrator.TripleShotCoordinator),
+			Coordinators: make(map[string]*tripleshot.Coordinator),
 		}
 	} else if m.tripleShot.Coordinators == nil {
-		m.tripleShot.Coordinators = make(map[string]*orchestrator.TripleShotCoordinator)
+		m.tripleShot.Coordinators = make(map[string]*tripleshot.Coordinator)
 	}
 
 	// Add coordinator to the map keyed by group ID
@@ -1662,10 +1664,10 @@ func (m Model) initiateAdversarialMode(task string) (Model, tea.Cmd) {
 	// Initialize adversarial state if needed, or add to existing coordinators
 	if m.adversarial == nil {
 		m.adversarial = &AdversarialState{
-			Coordinators: make(map[string]*orchestrator.AdversarialCoordinator),
+			Coordinators: make(map[string]*adversarial.Coordinator),
 		}
 	} else if m.adversarial.Coordinators == nil {
-		m.adversarial.Coordinators = make(map[string]*orchestrator.AdversarialCoordinator)
+		m.adversarial.Coordinators = make(map[string]*adversarial.Coordinator)
 	}
 
 	// Add coordinator to the map keyed by group ID
