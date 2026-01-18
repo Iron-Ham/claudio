@@ -611,7 +611,7 @@ func (v *InstanceView) buildScrollIndicator(
 		percent = scrollOffset * 100 / maxScroll
 	}
 	return styles.Muted.Render(fmt.Sprintf("Line %d-%d/%d (%d%%)", startLine+1, endLine, totalLines, percent)) +
-		"  " + styles.Muted.Render("[j/k] scroll  [g/G] top/bottom")
+		"  " + styles.Muted.Render("[j/k] scroll  [0/G] top/bottom")
 }
 
 // highlightSearchMatches highlights search matches in visible lines.
