@@ -10,6 +10,7 @@ import (
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/spf13/viper"
 )
 
 // -----------------------------------------------------------------------------
@@ -674,6 +675,10 @@ func (m Model) handleEnterInputMode() (tea.Model, tea.Cmd) {
 
 // handleToggleTerminal toggles terminal pane visibility.
 func (m Model) handleToggleTerminal() (tea.Model, tea.Cmd) {
+	// Check if terminal support is enabled
+	if !viper.GetBool("experimental.terminal_support") {
+		return m, nil
+	}
 	sessionID := ""
 	if m.orchestrator != nil {
 		sessionID = m.orchestrator.SessionID()
@@ -684,6 +689,10 @@ func (m Model) handleToggleTerminal() (tea.Model, tea.Cmd) {
 
 // handleSwitchTerminalDir switches terminal directory mode.
 func (m Model) handleSwitchTerminalDir() (tea.Model, tea.Cmd) {
+	// Check if terminal support is enabled
+	if !viper.GetBool("experimental.terminal_support") {
+		return m, nil
+	}
 	if m.terminalManager.IsVisible() {
 		m.switchTerminalDir()
 	}

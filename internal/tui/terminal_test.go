@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/spf13/viper"
 )
 
 func TestTerminalHeightConstants(t *testing.T) {
@@ -335,4 +337,101 @@ func TestGetTerminalDir(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTerminalKeybindingsDisabled(t *testing.T) {
+	// Save original value and restore after test
+	originalValue := viper.GetBool("experimental.terminal_support")
+	defer viper.Set("experimental.terminal_support", originalValue)
+
+	// Disable terminal support
+	viper.Set("experimental.terminal_support", false)
+
+	t.Run("backtick key does nothing when terminal disabled", func(t *testing.T) {
+		m := Model{
+			terminalManager: terminal.NewManager(),
+		}
+
+		// Verify terminal is not visible initially
+		if m.IsTerminalVisible() {
+			t.Fatal("terminal should not be visible initially")
+		}
+
+		// Call handleToggleTerminal (triggered by backtick key)
+		newModel, _ := m.handleToggleTerminal()
+		resultModel := newModel.(Model)
+
+		// Verify terminal is still not visible
+		if resultModel.IsTerminalVisible() {
+			t.Error("terminal should remain hidden when terminal support is disabled")
+		}
+	})
+
+	t.Run("T key does nothing when terminal disabled", func(t *testing.T) {
+		m := Model{
+			terminalManager: terminal.NewManager(),
+		}
+
+		// Verify terminal is not visible initially
+		if m.IsTerminalVisible() {
+			t.Fatal("terminal should not be visible initially")
+		}
+
+		// Call handleToggleTerminal (triggered by T key)
+		newModel, _ := m.handleToggleTerminal()
+		resultModel := newModel.(Model)
+
+		// Verify terminal is still not visible
+		if resultModel.IsTerminalVisible() {
+			t.Error("terminal should remain hidden when terminal support is disabled")
+		}
+	})
+
+	t.Run("ctrl+shift+t does nothing when terminal disabled", func(t *testing.T) {
+		m := Model{
+			terminalManager: terminal.NewManager(),
+		}
+		// Force terminal to be visible to test the switch dir function
+		m.terminalManager.SetLayout(terminal.LayoutVisible)
+
+		// Call handleSwitchTerminalDir (triggered by ctrl+shift+t)
+		newModel, _ := m.handleSwitchTerminalDir()
+		resultModel := newModel.(Model)
+
+		// Verify no error occurred and model is returned unchanged
+		if resultModel.errorMessage != "" {
+			t.Errorf("unexpected error message: %s", resultModel.errorMessage)
+		}
+	})
+}
+
+func TestHandleNormalModeKeyTerminalDisabled(t *testing.T) {
+	// Save original value and restore after test
+	originalValue := viper.GetBool("experimental.terminal_support")
+	defer viper.Set("experimental.terminal_support", originalValue)
+
+	// Disable terminal support
+	viper.Set("experimental.terminal_support", false)
+
+	t.Run("backtick key in normal mode does nothing when terminal disabled", func(t *testing.T) {
+		m := Model{
+			terminalManager: terminal.NewManager(),
+			inputMode:       false, // Normal mode
+		}
+
+		// Create backtick key message
+		keyMsg := tea.KeyMsg{
+			Type:  tea.KeyRunes,
+			Runes: []rune{'`'},
+		}
+
+		// Handle the key in normal mode
+		newModel, _ := m.handleNormalModeKey(keyMsg)
+		resultModel := newModel.(Model)
+
+		// Verify terminal is still not visible
+		if resultModel.IsTerminalVisible() {
+			t.Error("terminal should remain hidden when terminal support is disabled")
+		}
+	})
 }
