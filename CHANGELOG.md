@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-01-18
+
+This release brings **Major Architecture Refactoring & Platform Guides** - a comprehensive refactoring of the Coordinator into a thin facade with specialized orchestrators, plus detailed platform-specific documentation for all major development environments.
+
 ### Added
 
 - **Adversarial Review Rejection After Approval** - Users can now reject an "Approved" adversarial review result by having the reviewer write a new failing review file. When the reviewer writes a new completion file with a failing score, the implementer automatically restarts work on the next round.
@@ -630,6 +634,8 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.11.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.11.0
+[0.10.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.10.0
 [0.9.2]: https://github.com/Iron-Ham/claudio/releases/tag/v0.9.2
 [0.9.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.9.1
 [0.9.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.9.0
