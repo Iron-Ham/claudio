@@ -1,19 +1,15 @@
 // Package step provides step introspection and restart logic for ultra-plan workflows.
 //
-// This package is intended to contain:
-//   - StepInfo type and resolution logic (GetStepInfo)
-//   - RestartStep dispatch and phase-specific restarters
-//   - Step types (StepTypePlanning, StepTypeTask, etc.)
+// This package provides:
+//   - StepInfo type for describing workflow steps
+//   - Resolver for introspecting step information from instance IDs
+//   - Restarter for restarting any step type (planning, tasks, synthesis, etc.)
+//   - Interfaces that decouple step logic from the Coordinator implementation
 //
-// Currently, the step management logic remains in the Coordinator
-// (internal/orchestrator/coordinator.go) due to tight coupling with:
-//   - Session state (UltraPlanSession)
-//   - All phase orchestrators (Planning, Execution, Synthesis, Consolidation)
-//   - Coordinator's internal state
+// The Resolver queries both session state and phase orchestrators to resolve
+// instance IDs to step information, providing fallback lookups for robustness.
 //
-// Future refactoring could extract this logic here by defining interfaces
-// for the required dependencies.
-//
-// The step types (StepType, StepInfo) are currently defined in
-// internal/orchestrator/ultraplan.go.
+// The Restarter handles all step types: Planning, PlanManager, Task, Synthesis,
+// Revision, Consolidation, and GroupConsolidator. It stops existing instances
+// and starts fresh ones with proper state reset.
 package step

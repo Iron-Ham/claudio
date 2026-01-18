@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Terminal Mode Label Clarity** - Changed terminal pane mode indicator from `[invoke]` to `[project]` for better user understanding. The label now clearly indicates "you're in your project directory" instead of using internal jargon. Added `:termdir project` (and `:termdir proj`) as the primary command alias, with legacy `invoke`/`invocation` aliases preserved for backward compatibility. The terminal header now also displays a toggle hint (e.g., `[:termdir wt]`) showing how to switch to the other mode.
 
+- **Coordinator Refactoring Phases 2-5** - Continued major refactoring of `internal/orchestrator/coordinator.go`:
+  - **Phase 2**: Removed duplicate task execution methods (delegating to `ExecutionOrchestrator`)
+  - **Phase 3**: Removed duplicate revision methods (delegating to `SynthesisOrchestrator`)
+  - **Phase 4**: Created `phase/step/` package with `Resolver` and `Restarter` for step management
+  - **Phase 5**: Created `group/consolidate/` package with `Consolidator` for group consolidation
+  - Added adapters: `coordinator_step_adapter.go`, `coordinator_consolidate_adapter.go`
+  - Moved completion file parsing functions to `types/completion.go`
+  - Reduced coordinator.go from 3,271 lines/69 methods to 1,359 lines/38 methods (59% reduction)
+  - Established clean separation of concerns between coordination and specialized operations
+
 - **Coordinator Refactoring Phase 1** - Initial refactoring of `internal/orchestrator/coordinator.go` to establish delegation patterns:
   - Extracted notification methods to `coordinator_callbacks.go` (~170 lines)
   - Extracted adapter types to `coordinator_adapters.go` (~75 lines)

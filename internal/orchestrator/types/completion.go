@@ -6,6 +6,8 @@ package types
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -171,4 +173,46 @@ func (g *GroupConsolidationCompletionFile) GetIssuesForNextGroup() []string {
 // This method enables GroupConsolidationCompletionFile to satisfy prompt.GroupContextLike interface.
 func (g *GroupConsolidationCompletionFile) IsVerificationSuccess() bool {
 	return g.Verification.OverallSuccess
+}
+
+// TaskCompletionFilePath returns the full path to the task completion file for a given worktree.
+func TaskCompletionFilePath(worktreePath string) string {
+	return filepath.Join(worktreePath, TaskCompletionFileName)
+}
+
+// ParseTaskCompletionFile reads and parses a task completion file.
+func ParseTaskCompletionFile(worktreePath string) (*TaskCompletionFile, error) {
+	completionPath := TaskCompletionFilePath(worktreePath)
+	data, err := os.ReadFile(completionPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var completion TaskCompletionFile
+	if err := json.Unmarshal(data, &completion); err != nil {
+		return nil, fmt.Errorf("failed to parse task completion JSON: %w", err)
+	}
+
+	return &completion, nil
+}
+
+// GroupConsolidationCompletionFilePath returns the full path to the group consolidation completion file.
+func GroupConsolidationCompletionFilePath(worktreePath string) string {
+	return filepath.Join(worktreePath, GroupConsolidationCompletionFileName)
+}
+
+// ParseGroupConsolidationCompletionFile reads and parses a group consolidation completion file.
+func ParseGroupConsolidationCompletionFile(worktreePath string) (*GroupConsolidationCompletionFile, error) {
+	completionPath := GroupConsolidationCompletionFilePath(worktreePath)
+	data, err := os.ReadFile(completionPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var completion GroupConsolidationCompletionFile
+	if err := json.Unmarshal(data, &completion); err != nil {
+		return nil, fmt.Errorf("failed to parse group consolidation completion JSON: %w", err)
+	}
+
+	return &completion, nil
 }

@@ -326,6 +326,20 @@ func (m *mockExecutionCoordinator) StartExecutionLoop() {
 	// No-op for testing - could track calls if needed
 }
 
+func (m *mockExecutionCoordinator) ResetStateForRetrigger(targetGroup int, tasksToReset map[string]bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Track the call and set the phase to executing (mimics real behavior)
+	m.sessionPhase = PhaseExecuting
+}
+
+func (m *mockExecutionCoordinator) ResetStateForRetry(failedTasks []string, groupIdx int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Track retry calls by clearing tasks (mimics real behavior)
+	m.clearTaskCalls = append(m.clearTaskCalls, failedTasks...)
+}
+
 // mockPlannedTask implements PlannedTaskData for testing.
 type mockPlannedTask struct {
 	id          string
@@ -2695,13 +2709,11 @@ func TestExecutionOrchestrator_RetriggerGroup(t *testing.T) {
 		}
 		exec.mu.RUnlock()
 
-		// Verify phase set to executing
-		if mgr.currentPhase != PhaseExecuting {
-			t.Errorf("Phase = %v, want %v", mgr.currentPhase, PhaseExecuting)
-		}
-
-		// Verify coordinator calls
+		// Verify phase set to executing via ResetStateForRetrigger
 		coord.mu.Lock()
+		if coord.sessionPhase != PhaseExecuting {
+			t.Errorf("Phase = %v, want %v", coord.sessionPhase, PhaseExecuting)
+		}
 		if coord.saveCalls == 0 {
 			t.Error("SaveSession should have been called")
 		}

@@ -451,6 +451,14 @@ func (c *IntegrationTestCoordinator) StartExecutionLoop() {
 	// No-op for integration tests
 }
 
+func (c *IntegrationTestCoordinator) ResetStateForRetrigger(targetGroup int, tasksToReset map[string]bool) {
+	// No-op for integration tests
+}
+
+func (c *IntegrationTestCoordinator) ResetStateForRetry(failedTasks []string, groupIdx int) {
+	// No-op for integration tests
+}
+
 // GetPhaseHistory returns the recorded phase transitions for verification.
 func (c *IntegrationTestCoordinator) GetPhaseHistory() []UltraPlanPhase {
 	c.mu.Lock()

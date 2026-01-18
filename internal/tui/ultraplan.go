@@ -966,14 +966,14 @@ func (m *Model) handleMultiPassCoordinatorCompletion(inst *orchestrator.Instance
 	if parseErr != nil {
 		// Store nil for failed coordinator to track completion
 		// This prevents the system from hanging forever waiting for a plan that will never arrive
-		m.ultraPlan.Coordinator.StoreCandidatePlan(planIndex, nil)
+		m.ultraPlan.Coordinator.Manager().StoreCandidatePlan(planIndex, nil)
 		m.errorMessage = fmt.Sprintf("Multi-pass coordinator %d (%s) failed to parse plan: %v", planIndex+1, strategyName, parseErr)
 
 		// Check if all coordinators have completed (even if some failed)
-		completedCount := m.ultraPlan.Coordinator.CountCoordinatorsCompleted()
+		completedCount := m.ultraPlan.Coordinator.Manager().CountCoordinatorsCompleted()
 		if completedCount >= numCoordinators {
 			// All coordinators completed - proceed with valid plans if we have any
-			validCount := m.ultraPlan.Coordinator.CountCandidatePlans()
+			validCount := m.ultraPlan.Coordinator.Manager().CountCandidatePlans()
 			if validCount > 0 {
 				m.infoMessage = fmt.Sprintf("%d/%d plans collected. Starting plan evaluation with available plans...",
 					validCount, numCoordinators)
@@ -992,15 +992,15 @@ func (m *Model) handleMultiPassCoordinatorCompletion(inst *orchestrator.Instance
 	}
 
 	// Store the plan using mutex-protected method to avoid race conditions
-	collectedCount := m.ultraPlan.Coordinator.StoreCandidatePlan(planIndex, plan)
+	collectedCount := m.ultraPlan.Coordinator.Manager().StoreCandidatePlan(planIndex, plan)
 
 	m.infoMessage = fmt.Sprintf("Multi-pass plan %d/%d collected (%s): %d tasks",
 		collectedCount, numCoordinators, strategyName, len(plan.Tasks))
 
 	// Check if all coordinators have completed
-	completedCount := m.ultraPlan.Coordinator.CountCoordinatorsCompleted()
+	completedCount := m.ultraPlan.Coordinator.Manager().CountCoordinatorsCompleted()
 	if completedCount >= numCoordinators {
-		validCount := m.ultraPlan.Coordinator.CountCandidatePlans()
+		validCount := m.ultraPlan.Coordinator.Manager().CountCandidatePlans()
 		if validCount > 0 {
 			// Start plan evaluation with whatever valid plans we have
 			if validCount < numCoordinators {
@@ -1122,12 +1122,12 @@ func (m *Model) handleMultiPassPlanFileCheckResult(msg tuimsg.MultiPassPlanFileC
 	numCoordinators := len(session.PlanCoordinatorIDs)
 
 	// Store the plan
-	collectedCount := m.ultraPlan.Coordinator.StoreCandidatePlan(msg.Index, msg.Plan)
+	collectedCount := m.ultraPlan.Coordinator.Manager().StoreCandidatePlan(msg.Index, msg.Plan)
 	m.infoMessage = fmt.Sprintf("Plan file detected %d/%d (%s): %d tasks",
 		collectedCount, numCoordinators, msg.StrategyName, len(msg.Plan.Tasks))
 
 	// Check if all plans are now collected
-	validCount := m.ultraPlan.Coordinator.CountCandidatePlans()
+	validCount := m.ultraPlan.Coordinator.Manager().CountCandidatePlans()
 	if validCount >= numCoordinators {
 		// All plans collected - start plan manager
 		m.infoMessage = "All candidate plans collected via file detection. Starting plan evaluation..."
