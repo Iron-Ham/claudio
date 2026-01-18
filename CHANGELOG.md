@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Monorepo Development** - Sparse checkout optimization, Turborepo/Nx integration, affected-only builds
   - **Data Science & ML** - Jupyter notebook management, experiment tracking, GPU resource coordination
 
+### Fixed
+
+- **Scroll Hint Accuracy** - Updated scroll indicator hint from `[g/G]` to `[0/G]` to match actual keybindings
+
 ### Changed
 
 - **Coordinator Refactoring Phase 1** - Initial refactoring of `internal/orchestrator/coordinator.go` to establish delegation patterns:
