@@ -21,6 +21,7 @@ type Config struct {
 	Resources    ResourceConfig     `mapstructure:"resources"`
 	Ultraplan    UltraplanConfig    `mapstructure:"ultraplan"`
 	Plan         PlanConfig         `mapstructure:"plan"`
+	Adversarial  AdversarialConfig  `mapstructure:"adversarial"`
 	Logging      LoggingConfig      `mapstructure:"logging"`
 	Paths        PathsConfig        `mapstructure:"paths"`
 	Experimental ExperimentalConfig `mapstructure:"experimental"`
@@ -175,6 +176,18 @@ type PlanConfig struct {
 	Labels []string `mapstructure:"labels"`
 	// OutputFile is the default output file path for JSON output (default: ".claudio-plan.json")
 	OutputFile string `mapstructure:"output_file"`
+}
+
+// AdversarialConfig controls adversarial review mode behavior.
+// Note: This struct is for configuration file persistence and viper loading.
+// There is a corresponding orchestrator.AdversarialConfig struct used at runtime
+// which should be kept in sync with this one when adding new fields.
+type AdversarialConfig struct {
+	// MaxIterations limits the number of implement-review cycles (default: 10, 0 = unlimited)
+	MaxIterations int `mapstructure:"max_iterations"`
+	// MinPassingScore is the minimum score required for approval (1-10, default: 8)
+	// The reviewer must give a score >= this value for the implementation to be approved
+	MinPassingScore int `mapstructure:"min_passing_score"`
 }
 
 // LoggingConfig controls debug logging behavior
@@ -386,6 +399,10 @@ func Default() *Config {
 			Labels:       []string{},
 			OutputFile:   ".claudio-plan.json",
 		},
+		Adversarial: AdversarialConfig{
+			MaxIterations:   10, // Reasonable default to prevent infinite loops
+			MinPassingScore: 8,  // Score >= 8 required for approval
+		},
 		Logging: LoggingConfig{
 			Enabled:    true,
 			Level:      "info",
@@ -493,6 +510,10 @@ func SetDefaults() {
 	viper.SetDefault("plan.multi_pass", defaults.Plan.MultiPass)
 	viper.SetDefault("plan.labels", defaults.Plan.Labels)
 	viper.SetDefault("plan.output_file", defaults.Plan.OutputFile)
+
+	// Adversarial defaults
+	viper.SetDefault("adversarial.max_iterations", defaults.Adversarial.MaxIterations)
+	viper.SetDefault("adversarial.min_passing_score", defaults.Adversarial.MinPassingScore)
 
 	// Logging defaults
 	viper.SetDefault("logging.enabled", defaults.Logging.Enabled)

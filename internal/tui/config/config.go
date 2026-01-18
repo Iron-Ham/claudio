@@ -398,6 +398,25 @@ func New() Model {
 			},
 		},
 		{
+			Name: "Adversarial",
+			Items: []ConfigItem{
+				{
+					Key:         "adversarial.max_iterations",
+					Label:       "Max Iterations",
+					Description: "Maximum implement-review cycles (0 = unlimited)",
+					Type:        "int",
+					Category:    "adversarial",
+				},
+				{
+					Key:         "adversarial.min_passing_score",
+					Label:       "Min Passing Score",
+					Description: "Minimum reviewer score for approval (1-10)",
+					Type:        "int",
+					Category:    "adversarial",
+				},
+			},
+		},
+		{
 			Name: "Paths",
 			Items: []ConfigItem{
 				{
@@ -1056,6 +1075,12 @@ func (m *Model) validateAndSet(item ConfigItem, value string) error {
 		if intVal < 0 {
 			return fmt.Errorf("value must be non-negative")
 		}
+		// Item-specific validation for fields with special constraints
+		if item.Key == "adversarial.min_passing_score" {
+			if intVal < 1 || intVal > 10 {
+				return fmt.Errorf("value must be between 1 and 10")
+			}
+		}
 		viper.Set(item.Key, intVal)
 	case "float":
 		floatVal, err := strconv.ParseFloat(value, 64)
@@ -1164,6 +1189,9 @@ func (m *Model) resetCurrentToDefault() {
 		"plan.multi_pass":    defaults.Plan.MultiPass,
 		"plan.labels":        strings.Join(defaults.Plan.Labels, ","),
 		"plan.output_file":   defaults.Plan.OutputFile,
+		// Adversarial
+		"adversarial.max_iterations":    defaults.Adversarial.MaxIterations,
+		"adversarial.min_passing_score": defaults.Adversarial.MinPassingScore,
 		// Paths
 		"paths.worktree_dir":                   defaults.Paths.WorktreeDir,
 		"paths.sparse_checkout.enabled":        defaults.Paths.SparseCheckout.Enabled,
