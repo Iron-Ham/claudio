@@ -12,8 +12,6 @@
 //   - Context propagation (session ID, instance ID, phase)
 //   - Log rotation with configurable size limits
 //   - Optional gzip compression for rotated logs
-//   - Log aggregation and filtering utilities
-//   - Export to JSON, text, or CSV formats
 //
 // # Thread Safety
 //
@@ -87,30 +85,6 @@
 //	    logger := logging.NopLogger()
 //	    // Use logger in tests without creating files
 //	}
-//
-// # Log Aggregation and Filtering
-//
-// Read and analyze logs after a session:
-//
-//	// Load all logs from a session
-//	entries, err := logging.AggregateLogs("/path/to/session")
-//	if err != nil {
-//	    return err
-//	}
-//
-//	// Filter logs by various criteria
-//	filter := logging.LogFilter{
-//	    Level:      "WARN",           // Minimum level
-//	    InstanceID: "instance-123",   // Specific instance
-//	    Phase:      "consolidation",  // Specific phase
-//	    StartTime:  time.Now().Add(-1 * time.Hour),  // Last hour
-//	}
-//	filtered := logging.FilterLogs(entries, filter)
-//
-//	// Export to various formats
-//	logging.ExportLogEntries(filtered, "errors.json", "json")
-//	logging.ExportLogEntries(filtered, "errors.txt", "text")
-//	logging.ExportLogEntries(filtered, "errors.csv", "csv")
 //
 // # Log Levels
 //

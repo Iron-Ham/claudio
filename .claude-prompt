@@ -1,5 +1,0 @@
-The 'g' key is overloaded:
-- 'g' triggers group commands like gc, gn, gp
-- 'g' used to trigger scroll-to-top (`G` scrolls to bottom). 
-
-We should change the scroll-to-top key and hint in the UI.

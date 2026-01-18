@@ -144,9 +144,8 @@ func (p *Process) startLocked() error {
 	}
 
 	// Create a new detached tmux session with proper environment setup.
-	// We set TERM=xterm-256color in the environment so the shell inherits it directly.
-	// This approach matches the instance package (internal/instance/process/tmux.go)
-	// and avoids modifying global tmux state that could affect other sessions.
+	// We set TERM=xterm-256color in the environment so the shell inherits it directly,
+	// which avoids modifying global tmux state that could affect other sessions.
 	createCmd := p.cmdRunner.CommandWithEnv(p.socketName,
 		"new-session",
 		"-d",
