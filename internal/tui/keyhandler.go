@@ -523,8 +523,15 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+k":
 		return m.handleKillInstance()
 
-	case "g":
+	case "0":
 		return m.handleGoToTop()
+
+	case "g":
+		// Enter group command mode (for gc, gn, gp, etc.)
+		if m.sidebarMode == view.SidebarModeGrouped && m.session != nil && m.session.HasGroups() {
+			m.inputRouter.SetGroupCommandPending(true)
+		}
+		return m, nil
 
 	case "G":
 		return m.handleGoToBottom()
@@ -870,12 +877,6 @@ func (m Model) handleKillInstance() (tea.Model, tea.Cmd) {
 
 // handleGoToTop goes to the top of diff, help panel, or output.
 func (m Model) handleGoToTop() (tea.Model, tea.Cmd) {
-	// In grouped sidebar mode with groups, enter group command mode
-	if m.sidebarMode == view.SidebarModeGrouped && m.session != nil && m.session.HasGroups() {
-		m.inputRouter.SetGroupCommandPending(true)
-		return m, nil
-	}
-	// Otherwise, go to top of diff, help panel, or output
 	if m.showDiff {
 		m.diffScroll = 0
 		return m, nil

@@ -149,7 +149,7 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 	if state.ShowDiff {
 		badge := styles.ModeBadgeDiff.Render("DIFF")
 		help := styles.HelpKey.Render("[j/k]") + " scroll  " +
-			styles.HelpKey.Render("[g/G]") + " top/bottom  " +
+			styles.HelpKey.Render("[0/G]") + " top/bottom  " +
 			styles.HelpKey.Render("[:d/Esc]") + " close"
 		return styles.HelpBar.Render(badge + "  " + help)
 	}

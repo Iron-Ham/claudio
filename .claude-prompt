@@ -1,1 +1,5 @@
-Implement a group shortcut that effectively does a `:D` on every member of the group. maybe `gq` if that's in keeping with vim norms?
+The 'g' key is overloaded:
+- 'g' triggers group commands like gc, gn, gp
+- 'g' used to trigger scroll-to-top (`G` scrolls to bottom). 
+
+We should change the scroll-to-top key and hint in the UI.
