@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Comprehensive Platform-Specific Documentation** - Added detailed tutorials for using Claudio with all major development platforms:
+  - **Web Development (Node.js/React/Vue)** - npm/yarn/pnpm caching, dev server coordination, framework-specific workflows
+  - **Go Development** - Module caching, build optimization, workspace patterns, code generation
+  - **Python Development** - Virtual environment management, pip/poetry/conda, Django/Flask/FastAPI patterns
+  - **Rust Development** - Cargo workspace management, target directory isolation, sccache integration
+  - **Android Development** - Gradle build caching, module-based development, emulator coordination
+  - **Full-Stack Development** - Docker Compose isolation, database per worktree, API coordination
+  - **Monorepo Development** - Sparse checkout optimization, Turborepo/Nx integration, affected-only builds
+  - **Data Science & ML** - Jupyter notebook management, experiment tracking, GPU resource coordination
+
 ### Fixed
 
 - **Terminal Pane Shell Prompt Not Visible** - Fixed the terminal pane not displaying the shell prompt. The root cause was that `capture-pane` returns output ending with a newline, which caused `strings.Split` to create an extra empty element. When taking the "last N lines", the prompt (at position 0) was dropped while empty lines were kept. The fix trims trailing newlines before splitting and reorders the trimming/truncation logic to prioritize actual content.
