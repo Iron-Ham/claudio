@@ -1516,11 +1516,37 @@ func (m Model) renderAdversarialHeader() string {
 	// Render the adversarial status part
 	advHeader := view.RenderAdversarialHeader(ctx)
 
-	// Combine title with adversarial header
-	if advHeader != "" {
-		return styles.Header.Render(title) + "  " + advHeader
+	// Calculate available width for layout
+	termWidth := m.terminalManager.Width()
+
+	// If no adversarial header, render simple header
+	if advHeader == "" {
+		return styles.Header.Width(termWidth).Render(title)
 	}
-	return styles.Header.Render(title)
+
+	// Calculate widths for left-right layout
+	advWidth := lipgloss.Width(advHeader)
+	titleWidth := termWidth - advWidth - 2 // 2 for spacing
+
+	// Style for title (left side)
+	titleStyled := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(styles.PrimaryColor).
+		Width(titleWidth).
+		Render(title)
+
+	// Join title and adversarial status
+	content := lipgloss.JoinHorizontal(lipgloss.Center, titleStyled, " ", advHeader)
+
+	// Apply the header border styling
+	return lipgloss.NewStyle().
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderBottom(true).
+		BorderForeground(styles.BorderColor).
+		MarginBottom(1).
+		PaddingBottom(1).
+		Width(termWidth).
+		Render(content)
 }
 
 // renderAdversarialHelp renders the help bar for adversarial mode.
