@@ -569,6 +569,63 @@ func (c *Coordinator) ProcessReviewCompletion() error {
 	return nil
 }
 
+// ProcessRejectionAfterApproval handles the case where a user rejects an approved
+// result by having the reviewer write a new failing review file. This allows the
+// workflow to continue from an approved/complete state.
+func (c *Coordinator) ProcessRejectionAfterApproval() error {
+	session := c.Session()
+
+	// Parse the new review file
+	review, err := ParseReviewFile(c.reviewerWorktree)
+	if err != nil {
+		return fmt.Errorf("failed to parse rejection review file: %w", err)
+	}
+
+	// Only process if this is actually a rejection
+	if review.Approved {
+		c.logger.Info("review file found after approval but it's still approved, ignoring",
+			"score", review.Score,
+		)
+		// Remove the file so we don't keep re-processing it
+		if err := os.Remove(ReviewFilePath(c.reviewerWorktree)); err != nil && !os.IsNotExist(err) {
+			c.logger.Warn("failed to remove review file", "error", err)
+		}
+		return nil
+	}
+
+	c.logger.Info("processing rejection after approval",
+		"score", review.Score,
+		"issues_count", len(review.Issues),
+		"required_changes_count", len(review.RequiredChanges),
+	)
+
+	// Clear completed state
+	session.CompletedAt = nil
+	session.Error = ""
+
+	// Record the rejection
+	c.notifyReviewReady(session.CurrentRound, review)
+
+	// Remove the review file so it's fresh for next round
+	if err := os.Remove(ReviewFilePath(c.reviewerWorktree)); err != nil && !os.IsNotExist(err) {
+		c.logger.Warn("failed to remove review file", "error", err)
+	}
+
+	// Check iteration limits
+	if c.manager.IsMaxIterationsReached() {
+		c.notifyPhaseChange(PhaseFailed)
+		session.Error = fmt.Sprintf("max iterations reached (%d) without approval", session.Config.MaxIterations)
+		c.notifyComplete(false, session.Error)
+		return fmt.Errorf("%s", session.Error)
+	}
+
+	// Advance to next round
+	c.manager.NextRound()
+
+	// Start implementer again with the review feedback
+	return c.StartImplementer()
+}
+
 // Stop stops the adversarial execution
 func (c *Coordinator) Stop() {
 	c.cancelFunc()

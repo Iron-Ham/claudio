@@ -408,6 +408,14 @@ func CheckAdversarialCompletionAsync(
 			ready, err := coordinator.CheckReviewReady()
 			result.ReviewReady = ready
 			result.ReviewError = err
+
+		case adversarial.PhaseApproved, adversarial.PhaseComplete:
+			// Also check review file in approved/complete phases to allow users
+			// to reject an approved result by having the reviewer write a new
+			// failing review file
+			ready, err := coordinator.CheckReviewReady()
+			result.ReviewReady = ready
+			result.ReviewError = err
 		}
 
 		return result
@@ -457,6 +465,36 @@ func ProcessAdversarialReviewAsync(
 			Approved: approved,
 			Score:    score,
 			Err:      err,
+		}
+	}
+}
+
+// ProcessAdversarialRejectionAfterApprovalAsync returns a command that processes a rejection
+// that occurred after an initial approval. This allows users to reject an approved result
+// by having the reviewer write a new failing review file.
+func ProcessAdversarialRejectionAfterApprovalAsync(
+	coordinator *adversarial.Coordinator,
+	groupID string,
+) tea.Cmd {
+	return func() tea.Msg {
+		err := coordinator.ProcessRejectionAfterApproval()
+
+		// Get review result for feedback
+		score := 0
+		if err == nil {
+			session := coordinator.Session()
+			if session != nil && len(session.History) > 0 {
+				lastRound := session.History[len(session.History)-1]
+				if lastRound.Review != nil {
+					score = lastRound.Review.Score
+				}
+			}
+		}
+
+		return AdversarialRejectionAfterApprovalMsg{
+			GroupID: groupID,
+			Score:   score,
+			Err:     err,
 		}
 	}
 }

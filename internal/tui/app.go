@@ -568,6 +568,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle async review file processing result
 		return m.handleAdversarialReviewProcessed(msg)
 
+	case tuimsg.AdversarialRejectionAfterApprovalMsg:
+		// Handle async rejection-after-approval processing result
+		return m.handleAdversarialRejectionAfterApprovalProcessed(msg)
+
 	// Ralph loop message handlers
 	case tuimsg.RalphIterationStartedMsg:
 		return m.handleRalphIterationStarted(msg)
