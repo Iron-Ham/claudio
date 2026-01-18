@@ -579,6 +579,7 @@ func (c *Coordinator) BuildPhaseContext() (*phase.PhaseContext, error) {
 		Manager:      newCoordinatorManagerAdapter(c),
 		Orchestrator: newCoordinatorOrchestratorAdapter(c),
 		Session:      newCoordinatorSessionAdapter(c, session),
+		BaseSession:  newBaseSessionAdapter(c),
 		Logger:       logger,
 		Callbacks:    newCoordinatorCallbacksAdapter(c),
 	}
@@ -588,6 +589,55 @@ func (c *Coordinator) BuildPhaseContext() (*phase.PhaseContext, error) {
 	}
 
 	return ctx, nil
+}
+
+// baseSessionAdapter implements phase.BaseSessionInterface.
+// It provides access to the base session for instance grouping.
+type baseSessionAdapter struct {
+	c *Coordinator
+}
+
+// newBaseSessionAdapter creates a new base session adapter.
+func newBaseSessionAdapter(c *Coordinator) *baseSessionAdapter {
+	return &baseSessionAdapter{c: c}
+}
+
+// GetGroupBySessionType returns the instance group for a session type.
+func (a *baseSessionAdapter) GetGroupBySessionType(sessionType string) phase.InstanceGroupInterface {
+	if a.c == nil || a.c.baseSession == nil {
+		return nil
+	}
+	group := a.c.baseSession.GetGroupBySessionType(SessionType(sessionType))
+	if group == nil {
+		return nil
+	}
+	return &instanceGroupAdapter{group: group}
+}
+
+// GetInstances returns all instances in the session.
+func (a *baseSessionAdapter) GetInstances() []phase.InstanceInterface {
+	if a.c == nil || a.c.baseSession == nil {
+		return nil
+	}
+	instances := a.c.baseSession.Instances
+	result := make([]phase.InstanceInterface, len(instances))
+	for i, inst := range instances {
+		result[i] = newInstanceInterfaceAdapter(inst)
+	}
+	return result
+}
+
+// instanceGroupAdapter implements phase.InstanceGroupInterface.
+type instanceGroupAdapter struct {
+	group *InstanceGroup
+}
+
+// AddInstance adds an instance to the group.
+func (a *instanceGroupAdapter) AddInstance(instanceID string) {
+	if a.group == nil {
+		return
+	}
+	a.group.AddInstance(instanceID)
 }
 
 // GetBaseSession returns the base Session for use by phase orchestrators.
@@ -793,6 +843,7 @@ func (c *Coordinator) buildPhaseContextLocked() (*phase.PhaseContext, error) {
 		Manager:      newCoordinatorManagerAdapter(c),
 		Orchestrator: newCoordinatorOrchestratorAdapter(c),
 		Session:      newCoordinatorSessionAdapter(c, session),
+		BaseSession:  newBaseSessionAdapter(c),
 		Logger:       logger,
 		Callbacks:    newCoordinatorCallbacksAdapter(c),
 	}
@@ -866,4 +917,349 @@ func (c *Coordinator) ConsolidationOrchestrator() *phase.ConsolidationOrchestrat
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.consolidationOrchestrator
+}
+
+// ============================================================================
+// Execution Phase Adapters
+// ============================================================================
+
+// executionCoordinatorAdapter implements phase.ExecutionCoordinatorInterface.
+// This adapter bridges the Coordinator to the execution orchestrator's
+// coordinator interface, enabling the execution phase to be fully delegated.
+type executionCoordinatorAdapter struct {
+	c *Coordinator
+}
+
+// newExecutionCoordinatorAdapter creates a new execution coordinator adapter.
+func newExecutionCoordinatorAdapter(c *Coordinator) *executionCoordinatorAdapter {
+	return &executionCoordinatorAdapter{c: c}
+}
+
+// GetBaseBranchForGroup returns the base branch for a given group index.
+func (a *executionCoordinatorAdapter) GetBaseBranchForGroup(groupIndex int) string {
+	if a.c == nil {
+		return ""
+	}
+	return a.c.getBaseBranchForGroup(groupIndex)
+}
+
+// AddRunningTask registers a task as running with the given instance ID.
+func (a *executionCoordinatorAdapter) AddRunningTask(taskID, instanceID string) {
+	if a.c == nil {
+		return
+	}
+	a.c.AddRunningTask(taskID, instanceID)
+}
+
+// RemoveRunningTask unregisters a task from the running state.
+func (a *executionCoordinatorAdapter) RemoveRunningTask(taskID string) bool {
+	if a.c == nil {
+		return false
+	}
+	return a.c.RemoveRunningTask(taskID)
+}
+
+// GetRunningTaskCount returns the number of currently running tasks.
+func (a *executionCoordinatorAdapter) GetRunningTaskCount() int {
+	if a.c == nil {
+		return 0
+	}
+	return a.c.GetRunningTaskCount()
+}
+
+// IsTaskRunning returns true if the given task is currently running.
+func (a *executionCoordinatorAdapter) IsTaskRunning(taskID string) bool {
+	if a.c == nil {
+		return false
+	}
+	return a.c.IsTaskRunning(taskID)
+}
+
+// GetBaseSession returns the base session for instance group management.
+func (a *executionCoordinatorAdapter) GetBaseSession() any {
+	if a.c == nil {
+		return nil
+	}
+	return a.c.baseSession
+}
+
+// GetTaskGroupIndex returns the group index for a given task ID.
+func (a *executionCoordinatorAdapter) GetTaskGroupIndex(taskID string) int {
+	if a.c == nil {
+		return 0
+	}
+	return a.c.getTaskGroupIndex(taskID)
+}
+
+// VerifyTaskWork checks if a task produced actual commits.
+func (a *executionCoordinatorAdapter) VerifyTaskWork(taskID string, inst any) phase.TaskCompletion {
+	if a.c == nil {
+		return phase.TaskCompletion{TaskID: taskID, Success: false, Error: "nil coordinator"}
+	}
+	instance, ok := inst.(*Instance)
+	if !ok {
+		return phase.TaskCompletion{TaskID: taskID, Success: false, Error: "invalid instance type"}
+	}
+	result := a.c.verifyTaskWork(taskID, instance)
+	return phase.TaskCompletion{
+		TaskID:      result.taskID,
+		InstanceID:  result.instanceID,
+		Success:     result.success,
+		Error:       result.error,
+		NeedsRetry:  result.needsRetry,
+		CommitCount: result.commitCount,
+	}
+}
+
+// CheckForTaskCompletionFile checks if the task has written its completion sentinel file.
+func (a *executionCoordinatorAdapter) CheckForTaskCompletionFile(inst any) bool {
+	if a.c == nil {
+		return false
+	}
+	if instance, ok := inst.(*Instance); ok {
+		return a.c.checkForTaskCompletionFile(instance)
+	}
+	return false
+}
+
+// HandleTaskCompletion processes a task completion notification.
+func (a *executionCoordinatorAdapter) HandleTaskCompletion(completion phase.TaskCompletion) {
+	if a.c == nil {
+		return
+	}
+	a.c.handleTaskCompletion(taskCompletion{
+		taskID:      completion.TaskID,
+		instanceID:  completion.InstanceID,
+		success:     completion.Success,
+		error:       completion.Error,
+		needsRetry:  completion.NeedsRetry,
+		commitCount: completion.CommitCount,
+	})
+}
+
+// PollTaskCompletions checks for task completions that monitoring goroutines may have missed.
+// It polls synchronously and forwards any found completions to the provided channel.
+func (a *executionCoordinatorAdapter) PollTaskCompletions(completionChan chan<- phase.TaskCompletion) {
+	if a.c == nil {
+		return
+	}
+	// Create a local channel to receive completions
+	localChan := make(chan taskCompletion, 100)
+
+	// Start a goroutine that polls and then closes the channel when done.
+	// This ensures the forwarding goroutine below won't block forever.
+	go func() {
+		a.c.pollTaskCompletions(localChan)
+		close(localChan) // Signal that no more completions will be sent
+	}()
+
+	// Forward any completions to the phase completion channel.
+	// This goroutine will exit when localChan is closed.
+	go func() {
+		for tc := range localChan {
+			completionChan <- phase.TaskCompletion{
+				TaskID:      tc.taskID,
+				InstanceID:  tc.instanceID,
+				Success:     tc.success,
+				Error:       tc.error,
+				NeedsRetry:  tc.needsRetry,
+				CommitCount: tc.commitCount,
+			}
+		}
+	}()
+}
+
+// NotifyTaskStart notifies callbacks that a task has started.
+func (a *executionCoordinatorAdapter) NotifyTaskStart(taskID, instanceID string) {
+	if a.c == nil {
+		return
+	}
+	a.c.notifyTaskStart(taskID, instanceID)
+}
+
+// NotifyTaskFailed notifies callbacks that a task has failed.
+func (a *executionCoordinatorAdapter) NotifyTaskFailed(taskID, reason string) {
+	if a.c == nil {
+		return
+	}
+	a.c.notifyTaskFailed(taskID, reason)
+}
+
+// NotifyProgress notifies callbacks of progress updates.
+func (a *executionCoordinatorAdapter) NotifyProgress() {
+	if a.c == nil {
+		return
+	}
+	a.c.notifyProgress()
+}
+
+// FinishExecution performs cleanup after execution completes.
+func (a *executionCoordinatorAdapter) FinishExecution() {
+	if a.c == nil {
+		return
+	}
+	a.c.finishExecution()
+}
+
+// AddInstanceToGroup adds an instance to the appropriate ultra-plan group.
+func (a *executionCoordinatorAdapter) AddInstanceToGroup(instanceID string, isMultiPass bool) {
+	if a.c == nil || a.c.baseSession == nil {
+		return
+	}
+	sessionType := SessionTypeUltraPlan
+	if isMultiPass {
+		sessionType = SessionTypePlanMulti
+	}
+	if ultraGroup := a.c.baseSession.GetGroupBySessionType(sessionType); ultraGroup != nil {
+		ultraGroup.AddInstance(instanceID)
+	}
+}
+
+// StartGroupConsolidation starts the group consolidation process.
+func (a *executionCoordinatorAdapter) StartGroupConsolidation(groupIndex int) error {
+	if a.c == nil {
+		return fmt.Errorf("nil coordinator")
+	}
+	return a.c.startGroupConsolidatorSession(groupIndex)
+}
+
+// HandlePartialGroupFailure handles a group with mixed success/failure.
+func (a *executionCoordinatorAdapter) HandlePartialGroupFailure(groupIndex int) {
+	if a.c == nil {
+		return
+	}
+	a.c.handlePartialGroupFailure(groupIndex)
+}
+
+// ClearTaskFromInstance removes the task-to-instance mapping for retry.
+func (a *executionCoordinatorAdapter) ClearTaskFromInstance(taskID string) {
+	if a.c == nil {
+		return
+	}
+	session := a.c.Session()
+	if session != nil {
+		a.c.mu.Lock()
+		delete(session.TaskToInstance, taskID)
+		a.c.mu.Unlock()
+	}
+}
+
+// SaveSession persists the current session state.
+func (a *executionCoordinatorAdapter) SaveSession() error {
+	if a.c == nil || a.c.orch == nil {
+		return fmt.Errorf("nil coordinator or orchestrator")
+	}
+	return a.c.orch.SaveSession()
+}
+
+// RunSynthesis starts the synthesis phase.
+func (a *executionCoordinatorAdapter) RunSynthesis() error {
+	if a.c == nil {
+		return fmt.Errorf("nil coordinator")
+	}
+	return a.c.RunSynthesis()
+}
+
+// NotifyComplete notifies callbacks of overall completion.
+func (a *executionCoordinatorAdapter) NotifyComplete(success bool, summary string) {
+	if a.c == nil {
+		return
+	}
+	a.c.notifyComplete(success, summary)
+}
+
+// SetSessionPhase sets the session phase.
+func (a *executionCoordinatorAdapter) SetSessionPhase(p phase.UltraPlanPhase) {
+	if a.c == nil {
+		return
+	}
+	session := a.c.Session()
+	if session != nil {
+		a.c.mu.Lock()
+		session.Phase = UltraPlanPhase(p)
+		a.c.mu.Unlock()
+	}
+}
+
+// SetSessionError sets the session error message.
+func (a *executionCoordinatorAdapter) SetSessionError(err string) {
+	if a.c == nil {
+		return
+	}
+	session := a.c.Session()
+	if session != nil {
+		a.c.mu.Lock()
+		session.Error = err
+		a.c.mu.Unlock()
+	}
+}
+
+// GetNoSynthesis returns true if synthesis phase should be skipped.
+func (a *executionCoordinatorAdapter) GetNoSynthesis() bool {
+	if a.c == nil {
+		return false
+	}
+	session := a.c.Session()
+	if session == nil {
+		return false
+	}
+	return session.Config.NoSynthesis
+}
+
+// RecordTaskCommitCount records the commit count for a completed task.
+func (a *executionCoordinatorAdapter) RecordTaskCommitCount(taskID string, count int) {
+	if a.c == nil {
+		return
+	}
+	session := a.c.Session()
+	if session != nil {
+		a.c.mu.Lock()
+		if session.TaskCommitCounts == nil {
+			session.TaskCommitCounts = make(map[string]int)
+		}
+		session.TaskCommitCounts[taskID] = count
+		a.c.mu.Unlock()
+	}
+}
+
+// ConsolidateGroupWithVerification consolidates a group and verifies commits exist.
+func (a *executionCoordinatorAdapter) ConsolidateGroupWithVerification(groupIndex int) error {
+	if a.c == nil {
+		return fmt.Errorf("nil coordinator")
+	}
+	return a.c.consolidateGroupWithVerification(groupIndex)
+}
+
+// EmitEvent emits a coordinator event for UI notification.
+func (a *executionCoordinatorAdapter) EmitEvent(eventType, message string) {
+	if a.c == nil || a.c.manager == nil {
+		return
+	}
+	a.c.manager.emitEvent(CoordinatorEvent{
+		Type:    CoordinatorEventType(eventType),
+		Message: message,
+	})
+}
+
+// StartExecutionLoop restarts the execution loop (used by RetriggerGroup).
+func (a *executionCoordinatorAdapter) StartExecutionLoop() {
+	if a.c == nil {
+		return
+	}
+	a.c.wg.Add(1)
+	go a.c.executionLoop()
+}
+
+// BuildExecutionContext creates an ExecutionContext for the ExecutionOrchestrator.
+// This provides all the adapters needed for full execution phase delegation.
+func (c *Coordinator) BuildExecutionContext() (*phase.ExecutionContext, error) {
+	phaseCtx, err := c.BuildPhaseContext()
+	if err != nil {
+		return nil, err
+	}
+
+	return &phase.ExecutionContext{
+		PhaseContext: phaseCtx,
+		Coordinator:  newExecutionCoordinatorAdapter(c),
+	}, nil
 }

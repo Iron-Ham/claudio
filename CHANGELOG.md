@@ -13,7 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Coordinator Thin Facade Refactoring** - The Coordinator has been refactored into a thin facade that delegates phase execution to specialized phase orchestrators (PlanningOrchestrator, ExecutionOrchestrator, SynthesisOrchestrator). This improves separation of concerns and testability by moving phase-specific logic into dedicated orchestrators, with the Coordinator now serving as the public API that coordinates between phases.
+
 - **Scroll-to-Top Key Binding** - Changed scroll-to-top from `g` to `0` (zero) to resolve overload conflict with group commands (`gc`, `gn`, `gp`, etc.). The `g` key now exclusively enters group command mode when in grouped sidebar view.
+
 - **Add Task Dialog Titles** - The "Add New Instance" dialog now displays context-aware titles based on the type of task being created: "Triple-Shot" for triple-shot mode, "Adversarial Review" for adversarial mode, "Chain Task" for dependent tasks, and "New Task" for standard tasks. Each mode also shows a descriptive subtitle explaining its purpose.
 
 ### Added

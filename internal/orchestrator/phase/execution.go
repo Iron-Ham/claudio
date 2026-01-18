@@ -511,6 +511,30 @@ func (e *ExecutionOrchestrator) Phase() UltraPlanPhase {
 	return PhaseExecuting
 }
 
+// ExecuteWithContext runs the execution phase with an extended execution context.
+// This provides access to coordinator-level operations needed for full execution functionality.
+// This is the preferred method for executing when the full Coordinator is available.
+//
+// The execCtx provides extended interfaces:
+//   - ExecutionCoordinatorInterface: task verification, group consolidation, callbacks
+//   - ExecutionSessionInterface: extended session access (optional)
+//   - ExecutionOrchestratorInterface: extended orchestrator access (optional)
+//
+// Returns an error if execution fails or is cancelled.
+func (e *ExecutionOrchestrator) ExecuteWithContext(ctx context.Context, execCtx *ExecutionContext) error {
+	if execCtx == nil {
+		return fmt.Errorf("execution context is required")
+	}
+
+	// Update the internal execution context
+	e.mu.Lock()
+	e.execCtx = execCtx
+	e.mu.Unlock()
+
+	// Delegate to the main Execute method
+	return e.Execute(ctx)
+}
+
 // Execute runs the execution phase logic.
 // It manages the parallel execution of tasks, respecting MaxParallel limits,
 // monitoring task completion, and advancing through execution groups.

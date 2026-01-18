@@ -521,6 +521,37 @@ func (c *Coordinator) RunPlanning() error {
 	// Create the planning prompt
 	prompt := fmt.Sprintf(PlanningPromptTemplate, session.Objective)
 
+	// Delegate to PlanningOrchestrator for the actual work
+	// This makes the Coordinator a thin facade that orchestrates the phases
+	po := c.PlanningOrchestrator()
+	if po != nil {
+		// Provide callbacks for group management and session state updates
+		getGroup := func() any {
+			// Use session.GroupID (set by TUI) for reliable group lookup
+			if session.GroupID != "" {
+				if g := c.baseSession.GetGroup(session.GroupID); g != nil {
+					return g
+				}
+			}
+			return c.baseSession.GetGroupBySessionType(SessionTypeUltraPlan)
+		}
+		setCoordinatorID := func(id string) {
+			session.CoordinatorID = id
+		}
+
+		return po.ExecuteWithPrompt(c.ctx, prompt, c.baseSession, getGroup, setCoordinatorID)
+	}
+
+	// Fallback: direct implementation if orchestrator unavailable
+	return c.runPlanningSinglePassDirect(prompt)
+}
+
+// runPlanningSinglePassDirect is the fallback direct implementation of single-pass planning.
+// This is used when the PlanningOrchestrator is unavailable.
+// DEPRECATED: Prefer PlanningOrchestrator.ExecuteWithPrompt for new code.
+func (c *Coordinator) runPlanningSinglePassDirect(prompt string) error {
+	session := c.Session()
+
 	// Create a coordinator instance for planning
 	inst, err := c.orch.AddInstance(c.baseSession, prompt)
 	if err != nil {
@@ -528,15 +559,10 @@ func (c *Coordinator) RunPlanning() error {
 			"error", err.Error(),
 			"stage", "create_instance",
 		)
-		// Update PlanningOrchestrator state on error
-		if po := c.PlanningOrchestrator(); po != nil {
-			po.SetError(err.Error())
-		}
 		return fmt.Errorf("failed to create planning instance: %w", err)
 	}
 
 	// Add planning instance to the ultraplan group for sidebar display
-	// Use session.GroupID (set by TUI) for reliable group lookup, with fallback to type-based lookup
 	var ultraGroup *InstanceGroup
 	if session.GroupID != "" {
 		ultraGroup = c.baseSession.GetGroup(session.GroupID)
@@ -550,32 +576,15 @@ func (c *Coordinator) RunPlanning() error {
 
 	session.CoordinatorID = inst.ID
 
-	// Update PlanningOrchestrator state
-	if po := c.PlanningOrchestrator(); po != nil {
-		po.SetState(phase.PlanningState{
-			InstanceID:         inst.ID,
-			Prompt:             prompt,
-			MultiPass:          false,
-			AwaitingCompletion: true,
-		})
-	}
-
 	// Start the instance
 	if err := c.orch.StartInstance(inst); err != nil {
 		c.logger.Error("planning failed",
 			"error", err.Error(),
 			"stage", "start_instance",
 		)
-		// Update PlanningOrchestrator state on error
-		if po := c.PlanningOrchestrator(); po != nil {
-			po.SetError(err.Error())
-			po.SetAwaitingCompletion(false)
-		}
 		return fmt.Errorf("failed to start planning instance: %w", err)
 	}
 
-	// Wait for the instance to complete
-	// The TUI will handle monitoring; here we just set up the session state
 	return nil
 }
 
@@ -869,11 +878,33 @@ func (c *Coordinator) StartExecution() error {
 	c.mu.Unlock()
 
 	// Reset ExecutionOrchestrator state for fresh execution
-	if eo := c.ExecutionOrchestrator(); eo != nil {
+	eo := c.ExecutionOrchestrator()
+	if eo != nil {
 		eo.Reset()
 	}
 
-	// Start the execution loop in a goroutine
+	// Delegate to ExecutionOrchestrator if execution context can be built
+	// This makes the Coordinator a thin facade that orchestrates the phases
+	if eo != nil {
+		execCtx, err := c.BuildExecutionContext()
+		if err == nil {
+			// Update the orchestrator with the extended context
+			// and start execution via the orchestrator
+			c.wg.Add(1)
+			go func() {
+				defer c.wg.Done()
+				if execErr := eo.ExecuteWithContext(c.ctx, execCtx); execErr != nil {
+					c.logger.Error("execution phase failed", "error", execErr)
+				}
+			}()
+			return nil
+		}
+		// Fall through to direct implementation if context building failed
+		c.logger.Debug("falling back to direct execution implementation",
+			"reason", err.Error())
+	}
+
+	// Fallback: direct implementation if orchestrator unavailable
 	c.wg.Add(1)
 	go c.executionLoop()
 
@@ -1467,10 +1498,41 @@ func (c *Coordinator) RunSynthesis() error {
 	c.notifyPhaseChange(PhaseSynthesis)
 
 	// Reset SynthesisOrchestrator state for fresh synthesis
-	if so := c.SynthesisOrchestrator(); so != nil {
+	so := c.SynthesisOrchestrator()
+	if so != nil {
 		so.Reset()
 	}
 
+	// Delegate to SynthesisOrchestrator if available
+	// This makes the Coordinator a thin facade that orchestrates the phases
+	if so != nil {
+		// Start synthesis via the orchestrator in a goroutine
+		// The orchestrator will handle monitoring and trigger consolidation
+		c.wg.Add(1)
+		go func() {
+			defer c.wg.Done()
+			if err := so.Execute(c.ctx); err != nil {
+				c.logger.Error("synthesis phase failed", "error", err)
+				// Update session state on failure
+				session := c.Session()
+				c.mu.Lock()
+				session.Phase = PhaseFailed
+				session.Error = fmt.Sprintf("synthesis failed: %v", err)
+				c.mu.Unlock()
+				_ = c.orch.SaveSession()
+				c.notifyComplete(false, session.Error)
+			}
+		}()
+		return nil
+	}
+
+	// Fallback: direct implementation if orchestrator unavailable
+	return c.runSynthesisDirect()
+}
+
+// runSynthesisDirect is the fallback direct implementation of synthesis.
+// DEPRECATED: Prefer SynthesisOrchestrator.Execute for new code.
+func (c *Coordinator) runSynthesisDirect() error {
 	// Build the synthesis prompt
 	prompt := c.buildSynthesisPrompt()
 
