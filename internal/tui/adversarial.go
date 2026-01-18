@@ -29,9 +29,12 @@ func (m *Model) dispatchAdversarialCompletionChecks() []tea.Cmd {
 			continue
 		}
 
-		// Only check if in a phase that requires polling
+		// Check during active phases and also approved/complete phases
+		// (to allow users to reject an approved result by having the reviewer
+		// write a new failing review file)
 		switch session.Phase {
-		case adversarial.PhaseImplementing, adversarial.PhaseReviewing:
+		case adversarial.PhaseImplementing, adversarial.PhaseReviewing,
+			adversarial.PhaseApproved, adversarial.PhaseComplete:
 			cmds = append(cmds, tuimsg.CheckAdversarialCompletionAsync(coordinator, groupID))
 		}
 	}
@@ -74,6 +77,11 @@ func (m *Model) handleAdversarialCheckResult(msg tuimsg.AdversarialCheckResultMs
 
 	case adversarial.PhaseReviewing:
 		return m.processAdversarialReviewCheck(coordinator, msg)
+
+	case adversarial.PhaseApproved, adversarial.PhaseComplete:
+		// Check if user rejected an approved result by having the reviewer
+		// write a new failing review file
+		return m.processAdversarialRejectionAfterApprovalCheck(coordinator, msg)
 
 	case adversarial.PhaseFailed:
 		// Show error message for failed adversarial session
@@ -129,6 +137,77 @@ func (m *Model) processAdversarialReviewCheck(
 	if msg.ReviewReady {
 		// Dispatch async command to process the review file
 		return m, tuimsg.ProcessAdversarialReviewAsync(coordinator, msg.GroupID)
+	}
+
+	return m, nil
+}
+
+// processAdversarialRejectionAfterApprovalCheck handles completion check results when in
+// approved/complete phase. If a review file is found, it dispatches async processing to
+// potentially restart the workflow if the user rejected the approval.
+func (m *Model) processAdversarialRejectionAfterApprovalCheck(
+	coordinator *adversarial.Coordinator,
+	msg tuimsg.AdversarialCheckResultMsg,
+) (tea.Model, tea.Cmd) {
+	if msg.ReviewError != nil {
+		if m.logger != nil {
+			m.logger.Warn("failed to check review file in approved phase",
+				"error", msg.ReviewError,
+				"group_id", msg.GroupID,
+			)
+		}
+		return m, nil
+	}
+
+	if msg.ReviewReady {
+		// A new review file was found after approval - process it to potentially
+		// restart the workflow
+		return m, tuimsg.ProcessAdversarialRejectionAfterApprovalAsync(coordinator, msg.GroupID)
+	}
+
+	return m, nil
+}
+
+// handleAdversarialRejectionAfterApprovalProcessed handles the result of processing a
+// rejection that occurred after an initial approval.
+func (m *Model) handleAdversarialRejectionAfterApprovalProcessed(msg tuimsg.AdversarialRejectionAfterApprovalMsg) (tea.Model, tea.Cmd) {
+	if m.adversarial == nil {
+		return m, nil
+	}
+
+	// Find the coordinator for this result
+	coordinator := m.adversarial.GetCoordinatorForGroup(msg.GroupID)
+	if coordinator == nil {
+		if m.logger != nil {
+			m.logger.Warn("adversarial rejection after approval for unknown coordinator",
+				"group_id", msg.GroupID,
+			)
+		}
+		return m, nil
+	}
+
+	if msg.Err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to process rejection after approval",
+				"error", msg.Err,
+				"group_id", msg.GroupID,
+			)
+		}
+		m.errorMessage = "Failed to process reviewer rejection"
+		return m, nil
+	}
+
+	session := coordinator.Session()
+	if session == nil {
+		return m, nil
+	}
+
+	// Only show message if the implementer is restarting (rejection was processed)
+	if session.Phase == adversarial.PhaseImplementing {
+		m.infoMessage = fmt.Sprintf("Approval rejected! Score %d/10 - Starting round %d...",
+			msg.Score, session.CurrentRound)
+		// Clear the needs notification flag since we're restarting
+		m.adversarial.NeedsNotification = false
 	}
 
 	return m, nil

@@ -1178,3 +1178,237 @@ func TestCoordinator_NilCallbacks(t *testing.T) {
 
 	// If we got here without panic, the test passes
 }
+
+func TestCoordinator_ProcessRejectionAfterApproval_RestartsWorkflow(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "adversarial-coord-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.Config.MaxIterations = 5
+	advSession.CurrentRound = 1
+	advSession.Phase = PhaseComplete // Simulate already approved/complete state
+	baseSession := newMockSession()
+
+	// Create a group for the session type
+	group := &mockGroup{}
+	baseSession.groups["adversarial"] = group
+
+	var addInstanceToWorktreeCalled bool
+	mockOrch := &mockOrchestrator{
+		addInstanceToWorktreeFunc: func(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error) {
+			addInstanceToWorktreeCalled = true
+			return &mockInstance{id: "impl-inst-r2", worktreePath: tmpDir, branch: "test-branch"}, nil
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: mockOrch,
+		BaseSession:  baseSession,
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	// Start the first round (so we have history)
+	coord.Manager().StartRound()
+
+	var rejectedCalled bool
+	var implementerStartCalled bool
+	cb := &CoordinatorCallbacks{
+		OnReviewReady: func(round int, review *ReviewFile) {},
+		OnRejected: func(round int, review *ReviewFile) {
+			rejectedCalled = true
+		},
+		OnPhaseChange:      func(phase Phase) {},
+		OnImplementerStart: func(round int, instanceID string) { implementerStartCalled = true },
+	}
+	coord.SetCallbacks(cb)
+
+	// Write a review file with rejection (user rejected the approval)
+	review := ReviewFile{
+		Round:           1,
+		Approved:        false,
+		Score:           5,
+		Summary:         "Actually, this doesn't meet requirements",
+		Issues:          []string{"Missing critical feature"},
+		RequiredChanges: []string{"Add the missing feature"},
+	}
+	data, _ := json.MarshalIndent(review, "", "  ")
+	if err := os.WriteFile(ReviewFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	err = coord.ProcessRejectionAfterApproval()
+	if err != nil {
+		t.Fatalf("ProcessRejectionAfterApproval failed: %v", err)
+	}
+
+	// Should have advanced to next round
+	if advSession.CurrentRound != 2 {
+		t.Errorf("expected round = 2, got %d", advSession.CurrentRound)
+	}
+
+	// Should have started implementer
+	if !addInstanceToWorktreeCalled {
+		t.Error("AddInstanceToWorktree should have been called for next round")
+	}
+
+	// Should have called rejection callback
+	if !rejectedCalled {
+		t.Error("OnRejected should have been called")
+	}
+
+	// Should have called implementer start callback
+	if !implementerStartCalled {
+		t.Error("OnImplementerStart should have been called")
+	}
+
+	// Phase should be implementing
+	if advSession.Phase != PhaseImplementing {
+		t.Errorf("expected phase = implementing, got %s", advSession.Phase)
+	}
+
+	// CompletedAt should be cleared
+	if advSession.CompletedAt != nil {
+		t.Error("CompletedAt should be nil after rejection")
+	}
+
+	// Review file should be removed
+	if _, err := os.Stat(ReviewFilePath(tmpDir)); !os.IsNotExist(err) {
+		t.Error("review file should have been removed after processing")
+	}
+}
+
+func TestCoordinator_ProcessRejectionAfterApproval_IgnoresApproval(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "adversarial-coord-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.Phase = PhaseComplete
+	advSession.CurrentRound = 1
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	// Start a round so we have history
+	coord.Manager().StartRound()
+
+	var rejectedCalled bool
+	cb := &CoordinatorCallbacks{
+		OnReviewReady: func(round int, review *ReviewFile) {},
+		OnRejected: func(round int, review *ReviewFile) {
+			rejectedCalled = true
+		},
+		OnPhaseChange: func(phase Phase) {},
+	}
+	coord.SetCallbacks(cb)
+
+	// Write a review file that is still approved (user didn't reject)
+	review := ReviewFile{
+		Round:    1,
+		Approved: true,
+		Score:    9,
+		Summary:  "Still approved",
+	}
+	data, _ := json.MarshalIndent(review, "", "  ")
+	if err := os.WriteFile(ReviewFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	err = coord.ProcessRejectionAfterApproval()
+	if err != nil {
+		t.Fatalf("ProcessRejectionAfterApproval failed: %v", err)
+	}
+
+	// Should NOT have advanced to next round
+	if advSession.CurrentRound != 1 {
+		t.Errorf("expected round = 1, got %d", advSession.CurrentRound)
+	}
+
+	// Should NOT have called rejection callback
+	if rejectedCalled {
+		t.Error("OnRejected should NOT have been called for still-approved review")
+	}
+
+	// Phase should remain complete
+	if advSession.Phase != PhaseComplete {
+		t.Errorf("expected phase = complete, got %s", advSession.Phase)
+	}
+
+	// Review file should be removed even if still approved (to avoid re-processing)
+	if _, err := os.Stat(ReviewFilePath(tmpDir)); !os.IsNotExist(err) {
+		t.Error("review file should have been removed after processing")
+	}
+}
+
+func TestCoordinator_ProcessRejectionAfterApproval_MaxIterationsReached(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "adversarial-coord-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.Config.MaxIterations = 1 // Allow only 1 iteration
+	advSession.CurrentRound = 2         // Already exceeded
+	advSession.Phase = PhaseComplete
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	// Start a round for history
+	coord.Manager().StartRound()
+
+	var failedPhaseCalled bool
+	cb := &CoordinatorCallbacks{
+		OnReviewReady: func(round int, review *ReviewFile) {},
+		OnRejected:    func(round int, review *ReviewFile) {},
+		OnPhaseChange: func(phase Phase) {
+			if phase == PhaseFailed {
+				failedPhaseCalled = true
+			}
+		},
+		OnComplete: func(success bool, summary string) {},
+	}
+	coord.SetCallbacks(cb)
+
+	// Write a review file with rejection
+	review := ReviewFile{
+		Round:    2,
+		Approved: false,
+		Score:    5,
+		Summary:  "Still needs work",
+	}
+	data, _ := json.MarshalIndent(review, "", "  ")
+	if err := os.WriteFile(ReviewFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	err = coord.ProcessRejectionAfterApproval()
+	if err == nil {
+		t.Error("expected error when max iterations reached")
+	}
+
+	if !failedPhaseCalled {
+		t.Error("expected phase to transition to failed")
+	}
+}

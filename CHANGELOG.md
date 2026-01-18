@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Adversarial Review Rejection After Approval** - Users can now reject an "Approved" adversarial review result by having the reviewer write a new failing review file. When the reviewer writes a new completion file with a failing score, the implementer automatically restarts work on the next round.
+
 - **Comprehensive Platform-Specific Documentation** - Added detailed tutorials for using Claudio with all major development platforms:
   - **Web Development (Node.js/React/Vue)** - npm/yarn/pnpm caching, dev server coordination, framework-specific workflows
   - **Go Development** - Module caching, build optimization, workspace patterns, code generation

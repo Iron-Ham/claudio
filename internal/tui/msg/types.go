@@ -195,6 +195,15 @@ type AdversarialReviewProcessedMsg struct {
 	Err      error
 }
 
+// AdversarialRejectionAfterApprovalMsg contains the result of processing a rejection
+// that occurred after an initial approval. This allows users to reject an approved
+// result by having the reviewer write a new failing review file.
+type AdversarialRejectionAfterApprovalMsg struct {
+	GroupID string
+	Score   int
+	Err     error
+}
+
 // RalphIterationStartedMsg indicates a new ralph iteration has started.
 type RalphIterationStartedMsg struct {
 	GroupID   string
