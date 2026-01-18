@@ -9,17 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Terminal Keybindings Respect Config** - Fixed backtick (`) and `T` keys toggling the terminal pane even when `experimental.terminal_support` is disabled in the config. The terminal keybindings now correctly check the config setting before activating.
+
 - **Adversarial Review Score Threshold Enforcement** - Fixed a bug where users who set a minimum passing score higher than the default (e.g., 9 or 10) would have the adversarial loop stop prematurely. The issue occurred because approval notifications were sent before score enforcement was applied, causing callbacks to receive the unenforced state. The enforcement check is now performed before any notifications, ensuring the loop correctly continues when the reviewer's score is below the configured threshold.
+
+## [0.10.0] - 2026-01-17
+
+This release introduces **Adversarial Review Mode** and **Ralph Wiggum Loop** - two powerful new workflows for iterative development and code review. It also graduates TripleShot from experimental to a permanent feature.
+
+### Fixed
 
 - **Terminal Pane Color Support** - Fixed the terminal pane not displaying colors properly by setting `TERM=xterm-256color` in the environment and configuring `default-terminal` per-session before tmux session creation. The approach now aligns with the instance package for consistency.
 
-### Changed
-
-- **Coordinator Thin Facade Refactoring** - The Coordinator has been refactored into a thin facade that delegates phase execution to specialized phase orchestrators (PlanningOrchestrator, ExecutionOrchestrator, SynthesisOrchestrator). This improves separation of concerns and testability by moving phase-specific logic into dedicated orchestrators, with the Coordinator now serving as the public API that coordinates between phases.
-
-- **Scroll-to-Top Key Binding** - Changed scroll-to-top from `g` to `0` (zero) to resolve overload conflict with group commands (`gc`, `gn`, `gp`, etc.). The `g` key now exclusively enters group command mode when in grouped sidebar view.
-
-- **Add Task Dialog Titles** - The "Add New Instance" dialog now displays context-aware titles based on the type of task being created: "Triple-Shot" for triple-shot mode, "Adversarial Review" for adversarial mode, "Chain Task" for dependent tasks, and "New Task" for standard tasks. Each mode also shows a descriptive subtitle explaining its purpose.
+- **Adversarial Mode Header Alignment** - Fixed the adversarial mode header displaying the status text outside the styled header border, causing visual misalignment.
 
 ### Added
 
@@ -44,9 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Named after the Simpsons character Ralph Wiggum, referencing the "I'm helping!" meme for iterative self-improvement
 
 - **Task Chaining by Sidebar Number** - The `:chain`, `:dep`, and `:depends` commands now accept an optional sidebar number argument to specify which instance to chain from (e.g., `:chain 2` or `:chain #2`). This is more user-friendly than using instance IDs, which aren't prominently displayed.
-- **Adversarial Mode Header Alignment** - Fixed the adversarial mode header displaying the status text outside the styled header border, causing visual misalignment
 
 ### Changed
+
+- **Coordinator Thin Facade Refactoring** - The Coordinator has been refactored into a thin facade that delegates phase execution to specialized phase orchestrators (PlanningOrchestrator, ExecutionOrchestrator, SynthesisOrchestrator). This improves separation of concerns and testability by moving phase-specific logic into dedicated orchestrators, with the Coordinator now serving as the public API that coordinates between phases.
+
+- **Scroll-to-Top Key Binding** - Changed scroll-to-top from `g` to `0` (zero) to resolve overload conflict with group commands (`gc`, `gn`, `gp`, etc.). The `g` key now exclusively enters group command mode when in grouped sidebar view.
+
+- **Add Task Dialog Titles** - The "Add New Instance" dialog now displays context-aware titles based on the type of task being created: "Triple-Shot" for triple-shot mode, "Adversarial Review" for adversarial mode, "Chain Task" for dependent tasks, and "New Task" for standard tasks. Each mode also shows a descriptive subtitle explaining its purpose.
 
 - **Unified Group Types** - Refactored the `group`, `orchestrator`, and `session` packages to use a shared `grouptypes.InstanceGroup` type, eliminating type duplication and ~80 lines of conversion code. This also prevents data loss (SessionType and Objective fields) when using the group manager.
 
