@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Terminal Pane Color Support** - Fixed the terminal pane not displaying colors properly by setting `TERM=xterm-256color` in the environment and configuring `default-terminal` per-session before tmux session creation. The approach now aligns with the instance package for consistency.
+
 ### Changed
 
 - **Add Task Dialog Titles** - The "Add New Instance" dialog now displays context-aware titles based on the type of task being created: "Triple-Shot" for triple-shot mode, "Adversarial Review" for adversarial mode, "Chain Task" for dependent tasks, and "New Task" for standard tasks. Each mode also shows a descriptive subtitle explaining its purpose.
