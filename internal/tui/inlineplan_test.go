@@ -537,3 +537,260 @@ func TestToggleGraphView_RoundTripFromGrouped(t *testing.T) {
 		t.Errorf("after second toggle: sidebarMode = %v, want %v (groups should be preserved)", m.sidebarMode, view.SidebarModeGrouped)
 	}
 }
+
+func TestCollapsePlannersToSubGroup_NilSession(t *testing.T) {
+	m := &Model{}
+	// Should not panic when session is nil
+	m.collapsePlannersToSubGroup(nil)
+}
+
+func TestCollapsePlannersToSubGroup_EmptyGroupID(t *testing.T) {
+	session := &InlinePlanSession{
+		GroupID:             "",
+		PlanningInstanceIDs: []string{"planner-1", "planner-2"},
+	}
+	m := &Model{}
+	// Should not panic when GroupID is empty
+	m.collapsePlannersToSubGroup(session)
+}
+
+func TestCollapsePlannersToSubGroup_NoPlannerIDs(t *testing.T) {
+	session := &InlinePlanSession{
+		GroupID:             "test-group",
+		PlanningInstanceIDs: []string{},
+	}
+	m := &Model{}
+	// Should not panic when no planner IDs
+	m.collapsePlannersToSubGroup(session)
+}
+
+func TestCollapsePlannersToSubGroup_GroupNotFound(t *testing.T) {
+	session := &InlinePlanSession{
+		GroupID:             "nonexistent-group",
+		PlanningInstanceIDs: []string{"planner-1"},
+	}
+	// Create session without the group
+	orchSession := orchestrator.NewSession("test", "/test-repo")
+	m := &Model{
+		session: orchSession,
+	}
+	// Should not panic when group doesn't exist
+	m.collapsePlannersToSubGroup(session)
+}
+
+func TestCollapsePlannersToSubGroup_CreatesSubGroup(t *testing.T) {
+	// Set up orchestrator session with a group
+	orchSession := orchestrator.NewSession("test", "/test-repo")
+	mainGroup := orchestrator.NewInstanceGroup("Main Group")
+	mainGroup.AddInstance("planner-1")
+	mainGroup.AddInstance("planner-2")
+	mainGroup.AddInstance("planner-3")
+	orchSession.AddGroup(mainGroup)
+
+	session := &InlinePlanSession{
+		GroupID:             mainGroup.ID,
+		PlanningInstanceIDs: []string{"planner-1", "planner-2", "planner-3"},
+	}
+
+	m := &Model{
+		session: orchSession,
+	}
+
+	m.collapsePlannersToSubGroup(session)
+
+	// Verify sub-group was created
+	if len(mainGroup.SubGroups) != 1 {
+		t.Fatalf("expected 1 sub-group, got %d", len(mainGroup.SubGroups))
+	}
+
+	subGroup := mainGroup.SubGroups[0]
+	if subGroup.Name != "Planning Instances" {
+		t.Errorf("expected sub-group name 'Planning Instances', got '%s'", subGroup.Name)
+	}
+
+	// Verify planners moved to sub-group
+	if len(subGroup.Instances) != 3 {
+		t.Errorf("expected 3 instances in sub-group, got %d", len(subGroup.Instances))
+	}
+
+	// Verify planners removed from main group
+	if len(mainGroup.Instances) != 0 {
+		t.Errorf("expected 0 instances in main group after moving to sub-group, got %d", len(mainGroup.Instances))
+	}
+
+	// Verify PlannerSubGroupID is set
+	if session.PlannerSubGroupID == "" {
+		t.Error("expected PlannerSubGroupID to be set")
+	}
+	if session.PlannerSubGroupID != subGroup.ID {
+		t.Errorf("expected PlannerSubGroupID to match sub-group ID, got %s vs %s",
+			session.PlannerSubGroupID, subGroup.ID)
+	}
+}
+
+func TestCollapsePlannersToSubGroup_AutoCollapsesInUI(t *testing.T) {
+	// Set up orchestrator session with a group
+	orchSession := orchestrator.NewSession("test", "/test-repo")
+	mainGroup := orchestrator.NewInstanceGroup("Main Group")
+	mainGroup.AddInstance("planner-1")
+	orchSession.AddGroup(mainGroup)
+
+	session := &InlinePlanSession{
+		GroupID:             mainGroup.ID,
+		PlanningInstanceIDs: []string{"planner-1"},
+	}
+
+	m := &Model{
+		session:        orchSession,
+		groupViewState: nil, // Will be initialized by the function
+	}
+
+	m.collapsePlannersToSubGroup(session)
+
+	// Verify groupViewState was initialized
+	if m.groupViewState == nil {
+		t.Fatal("expected groupViewState to be initialized")
+	}
+
+	// Verify sub-group is collapsed in UI state
+	if !m.groupViewState.IsCollapsed(session.PlannerSubGroupID) {
+		t.Error("expected sub-group to be collapsed in UI state")
+	}
+}
+
+func TestCollapsePlannersToSubGroup_ExistingGroupViewState(t *testing.T) {
+	// Set up orchestrator session with a group
+	orchSession := orchestrator.NewSession("test", "/test-repo")
+	mainGroup := orchestrator.NewInstanceGroup("Main Group")
+	mainGroup.AddInstance("planner-1")
+	orchSession.AddGroup(mainGroup)
+
+	session := &InlinePlanSession{
+		GroupID:             mainGroup.ID,
+		PlanningInstanceIDs: []string{"planner-1"},
+	}
+
+	// Create model with existing groupViewState
+	m := &Model{
+		session:        orchSession,
+		groupViewState: newTestGroupViewState(),
+	}
+
+	// Pre-collapse some other group
+	m.groupViewState.CollapsedGroups["other-group"] = true
+
+	m.collapsePlannersToSubGroup(session)
+
+	// Verify existing collapsed state is preserved
+	if !m.groupViewState.IsCollapsed("other-group") {
+		t.Error("existing collapsed state should be preserved")
+	}
+
+	// Verify new sub-group is collapsed
+	if !m.groupViewState.IsCollapsed(session.PlannerSubGroupID) {
+		t.Error("new sub-group should be collapsed")
+	}
+}
+
+func TestCollapsePlannersToSubGroup_SubGroupPhaseCompleted(t *testing.T) {
+	// Set up orchestrator session with a group
+	orchSession := orchestrator.NewSession("test", "/test-repo")
+	mainGroup := orchestrator.NewInstanceGroup("Main Group")
+	mainGroup.AddInstance("planner-1")
+	orchSession.AddGroup(mainGroup)
+
+	session := &InlinePlanSession{
+		GroupID:             mainGroup.ID,
+		PlanningInstanceIDs: []string{"planner-1"},
+	}
+
+	m := &Model{
+		session: orchSession,
+	}
+
+	m.collapsePlannersToSubGroup(session)
+
+	// Verify sub-group has completed phase (planners are done)
+	subGroup := mainGroup.SubGroups[0]
+	if subGroup.Phase != orchestrator.GroupPhaseCompleted {
+		t.Errorf("expected sub-group phase to be completed, got %s", subGroup.Phase)
+	}
+}
+
+func TestCollapsePlannersToSubGroup_ParentIDSet(t *testing.T) {
+	// Set up orchestrator session with a group
+	orchSession := orchestrator.NewSession("test", "/test-repo")
+	mainGroup := orchestrator.NewInstanceGroup("Main Group")
+	mainGroup.AddInstance("planner-1")
+	orchSession.AddGroup(mainGroup)
+
+	session := &InlinePlanSession{
+		GroupID:             mainGroup.ID,
+		PlanningInstanceIDs: []string{"planner-1"},
+	}
+
+	m := &Model{
+		session: orchSession,
+	}
+
+	m.collapsePlannersToSubGroup(session)
+
+	// Verify sub-group has correct parent ID
+	subGroup := mainGroup.SubGroups[0]
+	if subGroup.ParentID != mainGroup.ID {
+		t.Errorf("expected sub-group ParentID to be %s, got %s", mainGroup.ID, subGroup.ParentID)
+	}
+}
+
+func TestCollapsePlannersToSubGroup_NilOrchestratorSession(t *testing.T) {
+	session := &InlinePlanSession{
+		GroupID:             "test-group",
+		PlanningInstanceIDs: []string{"planner-1"},
+	}
+	m := &Model{
+		session: nil, // Nil orchestrator session
+	}
+	// Should not panic when orchestrator session is nil
+	m.collapsePlannersToSubGroup(session)
+}
+
+func TestCollapsePlannersToSubGroup_PlannerNotInMainGroup(t *testing.T) {
+	orchSession := orchestrator.NewSession("test", "/test-repo")
+	mainGroup := orchestrator.NewInstanceGroup("Main Group")
+	// Only add planner-1 to the group, but reference planner-2 in session
+	mainGroup.AddInstance("planner-1")
+	orchSession.AddGroup(mainGroup)
+
+	session := &InlinePlanSession{
+		GroupID:             mainGroup.ID,
+		PlanningInstanceIDs: []string{"planner-1", "planner-2"}, // planner-2 not in group
+	}
+
+	m := &Model{
+		session: orchSession,
+	}
+
+	// Should not panic and should still create sub-group
+	m.collapsePlannersToSubGroup(session)
+
+	// Verify sub-group was created
+	if len(mainGroup.SubGroups) != 1 {
+		t.Fatalf("expected 1 sub-group, got %d", len(mainGroup.SubGroups))
+	}
+
+	// Verify both planners are in sub-group (even the one not in main group)
+	subGroup := mainGroup.SubGroups[0]
+	if len(subGroup.Instances) != 2 {
+		t.Errorf("expected 2 instances in sub-group, got %d", len(subGroup.Instances))
+	}
+
+	// Verify only planner-1 was removed from main group (planner-2 was never there)
+	if len(mainGroup.Instances) != 0 {
+		t.Errorf("expected 0 instances in main group, got %d", len(mainGroup.Instances))
+	}
+}
+
+// newTestGroupViewState creates a GroupViewState for testing
+func newTestGroupViewState() *view.GroupViewState {
+	return view.NewGroupViewState()
+}

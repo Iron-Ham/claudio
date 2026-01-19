@@ -629,6 +629,9 @@ func (m *Model) startInlineMultiPlanManagerForSession(session *InlinePlanSession
 	session.AwaitingPlanCreation = false
 	session.AwaitingPlanManager = true
 
+	// Collapse the planner instances into a sub-group now that manager is starting
+	m.collapsePlannersToSubGroup(session)
+
 	// Build the plan manager prompt
 	managerPrompt := m.buildInlineMultiPlanManagerPromptForSession(session)
 
@@ -663,6 +666,78 @@ func (m *Model) startInlineMultiPlanManagerForSession(session *InlinePlanSession
 		m.logger.Info("started multiplan manager instance",
 			"instance_id", inst.ID,
 			"candidate_plans", len(session.CandidatePlans))
+	}
+}
+
+// collapsePlannersToSubGroup moves planner instances into a collapsed sub-group
+// when the plan manager starts evaluating. This keeps the UI clean while preserving
+// access to the planner instances if needed.
+func (m *Model) collapsePlannersToSubGroup(session *InlinePlanSession) {
+	if session == nil || session.GroupID == "" || len(session.PlanningInstanceIDs) == 0 {
+		return
+	}
+
+	if m.session == nil {
+		if m.logger != nil {
+			m.logger.Warn("collapsePlannersToSubGroup: orchestrator session is nil")
+		}
+		return
+	}
+
+	orchGroup := m.session.GetGroup(session.GroupID)
+	if orchGroup == nil {
+		if m.logger != nil {
+			m.logger.Warn("collapsePlannersToSubGroup: group not found, cannot collapse planners",
+				"group_id", session.GroupID,
+				"planner_count", len(session.PlanningInstanceIDs))
+		}
+		return
+	}
+
+	// Create a sub-group for the planner instances
+	subGroupID := orchestrator.GenerateID()
+	subGroup := &orchestrator.InstanceGroup{
+		ID:        subGroupID,
+		Name:      "Planning Instances",
+		Phase:     orchestrator.GroupPhaseCompleted, // Planners are done
+		Instances: make([]string, 0, len(session.PlanningInstanceIDs)),
+		SubGroups: make([]*orchestrator.InstanceGroup, 0),
+		DependsOn: make([]string, 0),
+		ParentID:  orchGroup.ID,
+	}
+
+	// Move planner instance IDs from main group to sub-group
+	for _, plannerID := range session.PlanningInstanceIDs {
+		// Add to sub-group
+		subGroup.AddInstance(plannerID)
+		// Remove from main group (warn if not found, which indicates state inconsistency)
+		if !orchGroup.HasInstance(plannerID) {
+			if m.logger != nil {
+				m.logger.Warn("planner instance not found in main group during collapse",
+					"planner_id", plannerID,
+					"group_id", session.GroupID)
+			}
+		}
+		orchGroup.RemoveInstance(plannerID)
+	}
+
+	// Add sub-group to main group
+	orchGroup.AddSubGroup(subGroup)
+
+	// Store the sub-group ID in the session for reference
+	session.PlannerSubGroupID = subGroupID
+
+	// Auto-collapse the sub-group in the UI
+	if m.groupViewState == nil {
+		m.groupViewState = view.NewGroupViewState()
+	}
+	m.groupViewState.CollapsedGroups[subGroupID] = true
+
+	if m.logger != nil {
+		m.logger.Info("collapsed planner instances to sub-group",
+			"main_group_id", session.GroupID,
+			"sub_group_id", subGroupID,
+			"planner_count", len(session.PlanningInstanceIDs))
 	}
 }
 

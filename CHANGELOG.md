@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated CLI reference with adversarial command documentation
   - Updated guide index with links to new guides
 
+- **MultiPlan Planner Collapse** - When the plan manager/evaluator starts in a MultiPlan session, the three planner instances are automatically collapsed into a sub-group called "Planning Instances". This keeps the sidebar clean during evaluation while preserving access to planner instances if needed. The sub-group is auto-collapsed in the UI but can be expanded to view the individual planners.
+
 ### Changed
 
 - **System Alert Sound** - Notification sound now uses the macOS system alert sound (configured in System Settings > Sound) instead of the hardcoded Glass.aiff chime. Users who prefer a specific sound can still set `ultraplan.notifications.sound_path` to a custom audio file.
