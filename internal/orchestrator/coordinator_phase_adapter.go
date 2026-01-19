@@ -604,6 +604,8 @@ func newBaseSessionAdapter(c *Coordinator) *baseSessionAdapter {
 }
 
 // GetGroupBySessionType returns the instance group for a session type.
+// For ultraplan/plan_multi session types, this returns a SubgroupRouter that
+// automatically routes instances to the correct subgroup based on session state.
 func (a *baseSessionAdapter) GetGroupBySessionType(sessionType string) phase.InstanceGroupInterface {
 	if a.c == nil || a.c.baseSession == nil {
 		return nil
@@ -612,6 +614,16 @@ func (a *baseSessionAdapter) GetGroupBySessionType(sessionType string) phase.Ins
 	if group == nil {
 		return nil
 	}
+
+	// For ultraplan or plan_multi sessions, return a SubgroupRouter to route
+	// instances to appropriate subgroups (Planning, Group N, Synthesis, etc.)
+	if sessionType == string(SessionTypeUltraPlan) || sessionType == string(SessionTypePlanMulti) {
+		ultraSession := a.c.Session()
+		if ultraSession != nil {
+			return NewSubgroupRouter(group, ultraSession)
+		}
+	}
+
 	return &instanceGroupAdapter{group: group}
 }
 
@@ -1126,7 +1138,13 @@ func (a *executionCoordinatorAdapter) FinishExecution() {
 	// This method is kept for interface compatibility but is a no-op.
 }
 
-// AddInstanceToGroup adds an instance to the appropriate ultra-plan group.
+// AddInstanceToGroup adds an instance to the appropriate ultra-plan subgroup.
+// Instances are organized into subgroups based on their role:
+// - Planning: Planning coordinators and plan managers
+// - Group N: Task instances and their group consolidators
+// - Synthesis: Synthesis reviewer instance
+// - Revision: Revision coordinator instance
+// - Consolidation: Final consolidation agent
 func (a *executionCoordinatorAdapter) AddInstanceToGroup(instanceID string, isMultiPass bool) {
 	if a.c == nil || a.c.baseSession == nil {
 		return
@@ -1135,7 +1153,22 @@ func (a *executionCoordinatorAdapter) AddInstanceToGroup(instanceID string, isMu
 	if isMultiPass {
 		sessionType = SessionTypePlanMulti
 	}
-	if ultraGroup := a.c.baseSession.GetGroupBySessionType(sessionType); ultraGroup != nil {
+	ultraGroup := a.c.baseSession.GetGroupBySessionType(sessionType)
+	if ultraGroup == nil {
+		return
+	}
+
+	// Get the UltraPlanSession to determine subgroup routing
+	ultraSession := a.c.Session()
+	if ultraSession == nil {
+		// Fallback: add to main group if no session
+		ultraGroup.AddInstance(instanceID)
+		return
+	}
+
+	// Add instance to the appropriate subgroup
+	if !addInstanceToSubgroup(ultraGroup, ultraSession, instanceID) {
+		// Fallback: add to main group if subgroup routing fails
 		ultraGroup.AddInstance(instanceID)
 	}
 }

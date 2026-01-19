@@ -335,15 +335,6 @@ type GroupedInstance struct {
 	AbsoluteIdx int  // Absolute index in session.Instances for stable display numbering
 }
 
-// UltraPlanContentItem represents ultraplan phase content to be rendered inline within a group.
-// When an ultraplan group is expanded, this item replaces the individual instance items,
-// allowing the phase-based ultraplan sidebar to be rendered within the group.
-type UltraPlanContentItem struct {
-	UltraPlan *UltraPlanState
-	GroupID   string
-	Depth     int
-}
-
 // FlattenGroupsForDisplay flattens groups into a list of renderable items.
 // This respects collapsed state - collapsed groups won't have their instances expanded.
 // Returns both the group headers and the instances in display order.
@@ -388,103 +379,6 @@ type GroupHeaderItem struct {
 	Collapsed  bool
 	IsSelected bool
 	Depth      int
-}
-
-// FlattenGroupsForDisplayWithUltraPlan is like FlattenGroupsForDisplay but handles
-// ultraplan groups specially. When an ultraplan group is expanded, instead of showing
-// individual instances, it returns a single UltraPlanContentItem that will render
-// the phase-based ultraplan content.
-func FlattenGroupsForDisplayWithUltraPlan(session *orchestrator.Session, state *GroupViewState, ultraPlanGroupID string, ultraPlan *UltraPlanState) []any {
-	if session == nil {
-		return nil
-	}
-
-	var items []any
-	globalIdx := 0
-
-	// Build grouped sidebar data to identify ungrouped instances
-	data := BuildGroupedSidebarData(session)
-
-	// Add ungrouped instances first (they don't have a group header)
-	for i, inst := range data.UngroupedInstances {
-		isLast := i == len(data.UngroupedInstances)-1 && !session.HasGroups()
-		items = append(items, GroupedInstance{
-			Instance:    inst,
-			GroupID:     "", // No group
-			Depth:       -1, // Special depth to indicate ungrouped (no tree connector)
-			IsLast:      isLast,
-			GlobalIdx:   globalIdx,
-			AbsoluteIdx: findInstanceIndex(session, inst.ID),
-		})
-		globalIdx++
-	}
-
-	// Add groups (thread-safe)
-	for _, group := range session.GetGroups() {
-		items = append(items, flattenGroupRecursiveWithUltraPlan(group, session, state, 0, &globalIdx, ultraPlanGroupID, ultraPlan)...)
-	}
-
-	return items
-}
-
-// flattenGroupRecursiveWithUltraPlan is like flattenGroupRecursive but handles
-// ultraplan groups specially by returning UltraPlanContentItem instead of instances.
-func flattenGroupRecursiveWithUltraPlan(group *orchestrator.InstanceGroup, session *orchestrator.Session, state *GroupViewState, depth int, globalIdx *int, ultraPlanGroupID string, ultraPlan *UltraPlanState) []any {
-	var items []any
-
-	// Add group header
-	progress := CalculateGroupProgress(group, session)
-	collapsed := state.IsCollapsed(group.ID)
-	isSelected := state.SelectedGroupID == group.ID
-
-	items = append(items, GroupHeaderItem{
-		Group:      group,
-		Progress:   progress,
-		Collapsed:  collapsed,
-		IsSelected: isSelected,
-		Depth:      depth,
-	})
-
-	// If collapsed, don't add instances or sub-groups
-	if collapsed {
-		return items
-	}
-
-	// Check if this is the ultraplan group
-	if group.ID == ultraPlanGroupID && ultraPlan != nil {
-		// Instead of showing individual instances, show the ultraplan content
-		items = append(items, UltraPlanContentItem{
-			UltraPlan: ultraPlan,
-			GroupID:   group.ID,
-			Depth:     depth,
-		})
-		return items
-	}
-
-	// Add instances from this group (normal path)
-	for i, instID := range group.Instances {
-		inst := session.GetInstance(instID)
-		if inst == nil {
-			continue
-		}
-		isLast := i == len(group.Instances)-1 && len(group.SubGroups) == 0
-		items = append(items, GroupedInstance{
-			Instance:    inst,
-			GroupID:     group.ID,
-			Depth:       depth,
-			IsLast:      isLast,
-			GlobalIdx:   *globalIdx,
-			AbsoluteIdx: findInstanceIndex(session, instID),
-		})
-		*globalIdx++
-	}
-
-	// Add sub-groups
-	for _, subGroup := range group.SubGroups {
-		items = append(items, flattenGroupRecursiveWithUltraPlan(subGroup, session, state, depth+1, globalIdx, ultraPlanGroupID, ultraPlan)...)
-	}
-
-	return items
 }
 
 func flattenGroupRecursive(group *orchestrator.InstanceGroup, session *orchestrator.Session, state *GroupViewState, depth int, globalIdx *int) []any {

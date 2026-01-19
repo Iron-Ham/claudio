@@ -847,14 +847,7 @@ func (m Model) getInstanceDisplayOrder() []string {
 
 	// In grouped mode, get the flattened display order
 	// Use the same logic as the sidebar rendering
-	var ultraPlanGroupID string
-	if m.ultraPlan != nil && m.ultraPlan.Coordinator != nil {
-		if upSession := m.ultraPlan.Coordinator.Session(); upSession != nil {
-			ultraPlanGroupID = upSession.GroupID
-		}
-	}
-
-	items := view.FlattenGroupsForDisplayWithUltraPlan(m.session, m.groupViewState, ultraPlanGroupID, m.ultraPlan)
+	items := view.FlattenGroupsForDisplay(m.session, m.groupViewState)
 	ids := make([]string, 0, len(m.session.Instances))
 	for _, item := range items {
 		if gi, ok := item.(view.GroupedInstance); ok {
