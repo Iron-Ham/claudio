@@ -973,17 +973,8 @@ func (m Model) View() string {
 
 	var b strings.Builder
 
-	// Header - use mode-specific header if applicable
-	var header string
-	if m.IsUltraPlanMode() {
-		header = m.renderUltraPlanHeader()
-	} else if m.IsTripleShotMode() {
-		header = m.renderTripleShotHeader()
-	} else if m.IsAdversarialMode() {
-		header = m.renderAdversarialHeader()
-	} else {
-		header = m.renderHeader()
-	}
+	// Header - unified header shows all active workflows
+	header := m.renderUnifiedHeader()
 	b.WriteString(header)
 	b.WriteString("\n")
 
@@ -1074,10 +1065,22 @@ func (m Model) View() string {
 	return b.String()
 }
 
-// renderHeader renders the header bar
-func (m Model) renderHeader() string {
+// renderUnifiedHeader renders the header with unified workflow status.
+// This shows all active workflows (ultraplan, tripleshot, adversarial) simultaneously,
+// solving the problem where only one workflow type was visible at a time.
+func (m Model) renderUnifiedHeader() string {
+	// Build workflow status state from all active workflows
+	workflowState := m.buildWorkflowStatusState()
+
+	// Build title - include ultraplan objective if ultraplan is active
 	title := "Claudio"
-	if m.session != nil && m.session.Name != "" {
+	if objective := workflowState.GetUltraPlanObjective(); objective != "" {
+		// Truncate objective to fit header
+		if len(objective) > 40 {
+			objective = objective[:37] + "..."
+		}
+		title = fmt.Sprintf("Claudio Ultra-Plan: %s", objective)
+	} else if m.session != nil && m.session.Name != "" {
 		title = fmt.Sprintf("Claudio: %s", m.session.Name)
 	}
 
@@ -1091,21 +1094,31 @@ func (m Model) renderHeader() string {
 		AddingTask:      m.addingTask,
 	}
 
-	// Get the mode indicator
+	// Get the workflow status and mode indicator
+	workflowStatus := view.RenderWorkflowStatus(workflowState)
 	modeIndicator := view.RenderModeIndicator(modeState)
 
 	// Calculate available width for layout
 	termWidth := m.terminalManager.Width()
 
-	// If no mode indicator, render simple header
-	if modeIndicator == "" {
+	// If no workflow status and no mode indicator, render simple header
+	if workflowStatus == "" && modeIndicator == "" {
 		return styles.Header.Width(termWidth).Render(title)
 	}
 
+	// Build the right side content (workflow status + mode indicator)
+	var rightContent string
+	if workflowStatus != "" && modeIndicator != "" {
+		rightContent = workflowStatus + "  " + modeIndicator
+	} else if workflowStatus != "" {
+		rightContent = workflowStatus
+	} else {
+		rightContent = modeIndicator
+	}
+
 	// Calculate widths for left-right layout
-	// lipgloss.Width accounts for ANSI escape codes
-	modeWidth := lipgloss.Width(modeIndicator)
-	titleWidth := termWidth - modeWidth - 2 // 2 for spacing
+	rightWidth := lipgloss.Width(rightContent)
+	titleWidth := termWidth - rightWidth - 2 // 2 for spacing
 
 	// Style for title (left side)
 	titleStyled := lipgloss.NewStyle().
@@ -1114,8 +1127,8 @@ func (m Model) renderHeader() string {
 		Width(titleWidth).
 		Render(title)
 
-	// Join title and mode indicator
-	content := lipgloss.JoinHorizontal(lipgloss.Center, titleStyled, " ", modeIndicator)
+	// Join title and right content
+	content := lipgloss.JoinHorizontal(lipgloss.Center, titleStyled, " ", rightContent)
 
 	// Apply the header border styling
 	return lipgloss.NewStyle().
@@ -1126,6 +1139,15 @@ func (m Model) renderHeader() string {
 		PaddingBottom(1).
 		Width(termWidth).
 		Render(content)
+}
+
+// buildWorkflowStatusState builds the workflow status state from the model.
+func (m Model) buildWorkflowStatusState() *view.WorkflowStatusState {
+	return &view.WorkflowStatusState{
+		UltraPlan:   m.ultraPlan,
+		TripleShot:  m.tripleShot,
+		Adversarial: m.adversarial,
+	}
 }
 
 // renderTerminalPane renders the terminal pane at the bottom of the screen.
@@ -1478,19 +1500,6 @@ func (m Model) renderStatsPanel(width int) string {
 	return statsPanel.RenderWithBox(state, styles.ContentBox)
 }
 
-// renderTripleShotHeader renders the header for triple-shot mode
-func (m Model) renderTripleShotHeader() string {
-	ctx := view.TripleShotRenderContext{
-		Orchestrator: m.orchestrator,
-		Session:      m.session,
-		TripleShot:   m.tripleShot,
-		ActiveTab:    m.activeTab,
-		Width:        m.terminalManager.Width(),
-		Height:       m.terminalManager.Height(),
-	}
-	return view.RenderTripleShotHeader(ctx)
-}
-
 // renderTripleShotSidebar renders the sidebar for triple-shot mode.
 // Uses normal sidebar view to ensure instances created during triple-shot are visible.
 func (m Model) renderTripleShotSidebar(width, height int) string {
@@ -1501,58 +1510,6 @@ func (m Model) renderTripleShotSidebar(width, height int) string {
 // Delegates to view.RenderTripleShotHelp for the actual rendering.
 func (m Model) renderTripleShotHelp() string {
 	return view.RenderTripleShotHelp(m.buildHelpBarState())
-}
-
-// renderAdversarialHeader renders the header for adversarial mode.
-// Delegates to view.RenderAdversarialHeader for the actual rendering.
-func (m Model) renderAdversarialHeader() string {
-	title := "Claudio"
-	if m.session != nil && m.session.Name != "" {
-		title = fmt.Sprintf("Claudio: %s", m.session.Name)
-	}
-
-	// Build the context for adversarial header rendering
-	ctx := view.AdversarialRenderContext{
-		Orchestrator: m.orchestrator,
-		Session:      m.session,
-		Adversarial:  m.adversarial,
-		ActiveTab:    m.activeTab,
-	}
-
-	// Render the adversarial status part
-	advHeader := view.RenderAdversarialHeader(ctx)
-
-	// Calculate available width for layout
-	termWidth := m.terminalManager.Width()
-
-	// If no adversarial header, render simple header
-	if advHeader == "" {
-		return styles.Header.Width(termWidth).Render(title)
-	}
-
-	// Calculate widths for left-right layout
-	advWidth := lipgloss.Width(advHeader)
-	titleWidth := termWidth - advWidth - 2 // 2 for spacing
-
-	// Style for title (left side)
-	titleStyled := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(styles.PrimaryColor).
-		Width(titleWidth).
-		Render(title)
-
-	// Join title and adversarial status
-	content := lipgloss.JoinHorizontal(lipgloss.Center, titleStyled, " ", advHeader)
-
-	// Apply the header border styling
-	return lipgloss.NewStyle().
-		BorderStyle(lipgloss.NormalBorder()).
-		BorderBottom(true).
-		BorderForeground(styles.BorderColor).
-		MarginBottom(1).
-		PaddingBottom(1).
-		Width(termWidth).
-		Render(content)
 }
 
 // renderAdversarialHelp renders the help bar for adversarial mode.

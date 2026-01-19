@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Removed `CreateStackedPR` from `pr/pr.go`
   - Removed `DefaultConfig` from `plan/plan.go`
 
+### Fixed
+
+- **Unified Multi-Workflow Header** - The header now displays status indicators for all active workflow types (UltraPlan, TripleShot, Adversarial) simultaneously. Previously, the header used exclusive priority-based selection, which meant users lost visibility into other running workflows when multiple task types were active.
+
 ## [0.11.0] - 2026-01-18
 
 This release brings **Major Architecture Refactoring & Platform Guides** - a comprehensive refactoring of the Coordinator into a thin facade with specialized orchestrators, plus detailed platform-specific documentation for all major development environments.
