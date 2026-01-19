@@ -57,10 +57,12 @@ func NotifyUser() tea.Cmd {
 		if runtime.GOOS == "darwin" && viper.GetBool("ultraplan.notifications.use_sound") {
 			soundPath := viper.GetString("ultraplan.notifications.sound_path")
 			if soundPath == "" {
-				soundPath = "/System/Library/Sounds/Glass.aiff"
+				// Use system alert sound (user's configured sound in System Settings)
+				_ = exec.Command("osascript", "-e", "beep").Start()
+			} else {
+				// Use custom sound file
+				_ = exec.Command("afplay", soundPath).Start()
 			}
-			// Start in background so it doesn't block
-			_ = exec.Command("afplay", soundPath).Start()
 		}
 		return nil
 	}

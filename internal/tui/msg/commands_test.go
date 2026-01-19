@@ -312,7 +312,7 @@ func TestNotifyUserWithSoundPath(t *testing.T) {
 		}
 	})
 
-	t.Run("empty sound path uses default", func(t *testing.T) {
+	t.Run("empty sound path uses system alert sound", func(t *testing.T) {
 		viper.Set("ultraplan.notifications.enabled", true)
 		viper.Set("ultraplan.notifications.use_sound", true)
 		viper.Set("ultraplan.notifications.sound_path", "")
@@ -322,7 +322,7 @@ func TestNotifyUserWithSoundPath(t *testing.T) {
 			t.Fatal("NotifyUser() returned nil command")
 		}
 
-		// Execute - should use default Glass.aiff path
+		// Execute - should use system alert sound via osascript
 		result := cmd()
 		if result != nil {
 			t.Errorf("NotifyUser() returned %v, want nil", result)

@@ -1,0 +1,1 @@
+Currently, we play a "Chime" sound from time to time. We should defer to the system sound, not a chime.
