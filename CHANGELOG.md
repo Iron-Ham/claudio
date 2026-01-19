@@ -59,6 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Semantic Validation**: Ensures non-empty values for required fields when status is "ready_for_review" (summary, approach, files_modified), while allowing empty fields for "failed" status
   - **Enhanced Prompts**: Updated implementer prompt with explicit field requirements, type specifications, and a "COMMON MISTAKES TO AVOID" section to prevent issues at the source
 
+- **Documentation Bullet Rendering** - Fixed tutorial section lists in the home page not rendering bullets correctly due to missing blank lines between bold headers and list items.
+
 ## [0.11.0] - 2026-01-18
 
 This release brings **Major Architecture Refactoring & Platform Guides** - a comprehensive refactoring of the Coordinator into a thin facade with specialized orchestrators, plus detailed platform-specific documentation for all major development environments.
