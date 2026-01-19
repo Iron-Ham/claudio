@@ -5,6 +5,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
+	"github.com/Iron-Ham/claudio/internal/tui/view"
 )
 
 // Helper to create a session-based InlinePlanState for tests
@@ -446,5 +447,93 @@ func TestInlinePlanState_GetAwaitingObjectiveSession(t *testing.T) {
 	result := state.GetAwaitingObjectiveSession()
 	if result != session2 {
 		t.Error("should return session awaiting objective")
+	}
+}
+
+func TestToggleGraphView_FromFlatToGraph(t *testing.T) {
+	m := &Model{
+		sidebarMode: view.SidebarModeFlat,
+	}
+
+	m.toggleGraphView()
+
+	if m.sidebarMode != view.SidebarModeGraph {
+		t.Errorf("sidebarMode = %v, want %v", m.sidebarMode, view.SidebarModeGraph)
+	}
+	if m.previousSidebarMode != view.SidebarModeFlat {
+		t.Errorf("previousSidebarMode = %v, want %v", m.previousSidebarMode, view.SidebarModeFlat)
+	}
+	if m.infoMessage != "Dependency graph view enabled" {
+		t.Errorf("infoMessage = %q, want %q", m.infoMessage, "Dependency graph view enabled")
+	}
+}
+
+func TestToggleGraphView_FromGroupedToGraph(t *testing.T) {
+	m := &Model{
+		sidebarMode: view.SidebarModeGrouped,
+	}
+
+	m.toggleGraphView()
+
+	if m.sidebarMode != view.SidebarModeGraph {
+		t.Errorf("sidebarMode = %v, want %v", m.sidebarMode, view.SidebarModeGraph)
+	}
+	if m.previousSidebarMode != view.SidebarModeGrouped {
+		t.Errorf("previousSidebarMode = %v, want %v", m.previousSidebarMode, view.SidebarModeGrouped)
+	}
+	if m.infoMessage != "Dependency graph view enabled" {
+		t.Errorf("infoMessage = %q, want %q", m.infoMessage, "Dependency graph view enabled")
+	}
+}
+
+func TestToggleGraphView_FromGraphBackToFlat(t *testing.T) {
+	m := &Model{
+		sidebarMode:         view.SidebarModeGraph,
+		previousSidebarMode: view.SidebarModeFlat,
+	}
+
+	m.toggleGraphView()
+
+	if m.sidebarMode != view.SidebarModeFlat {
+		t.Errorf("sidebarMode = %v, want %v", m.sidebarMode, view.SidebarModeFlat)
+	}
+	if m.infoMessage != "List view enabled" {
+		t.Errorf("infoMessage = %q, want %q", m.infoMessage, "List view enabled")
+	}
+}
+
+func TestToggleGraphView_FromGraphBackToGrouped(t *testing.T) {
+	m := &Model{
+		sidebarMode:         view.SidebarModeGraph,
+		previousSidebarMode: view.SidebarModeGrouped,
+	}
+
+	m.toggleGraphView()
+
+	if m.sidebarMode != view.SidebarModeGrouped {
+		t.Errorf("sidebarMode = %v, want %v", m.sidebarMode, view.SidebarModeGrouped)
+	}
+	if m.infoMessage != "Grouped view enabled" {
+		t.Errorf("infoMessage = %q, want %q", m.infoMessage, "Grouped view enabled")
+	}
+}
+
+func TestToggleGraphView_RoundTripFromGrouped(t *testing.T) {
+	// This test verifies the full round-trip: grouped -> graph -> grouped
+	// This is the bug scenario reported by the user
+	m := &Model{
+		sidebarMode: view.SidebarModeGrouped,
+	}
+
+	// Toggle to graph view
+	m.toggleGraphView()
+	if m.sidebarMode != view.SidebarModeGraph {
+		t.Errorf("after first toggle: sidebarMode = %v, want %v", m.sidebarMode, view.SidebarModeGraph)
+	}
+
+	// Toggle back - should return to grouped, not flat
+	m.toggleGraphView()
+	if m.sidebarMode != view.SidebarModeGrouped {
+		t.Errorf("after second toggle: sidebarMode = %v, want %v (groups should be preserved)", m.sidebarMode, view.SidebarModeGrouped)
 	}
 }

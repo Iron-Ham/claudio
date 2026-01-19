@@ -251,16 +251,22 @@ func (m *Model) toggleGroupedView() {
 	}
 }
 
-// toggleGraphView toggles between the dependency graph view and flat view.
+// toggleGraphView toggles between the dependency graph view and the previous view mode.
 // The graph view displays instances organized by their dependency levels.
+// When exiting graph view, it restores the previous mode (flat or grouped).
 func (m *Model) toggleGraphView() {
 	switch m.sidebarMode {
 	case view.SidebarModeGraph:
-		// Switch back to flat mode
-		m.sidebarMode = view.SidebarModeFlat
-		m.infoMessage = "List view enabled"
+		// Switch back to previous mode (flat or grouped)
+		m.sidebarMode = m.previousSidebarMode
+		if m.sidebarMode == view.SidebarModeGrouped {
+			m.infoMessage = "Grouped view enabled"
+		} else {
+			m.infoMessage = "List view enabled"
+		}
 	default:
-		// Switch to graph mode
+		// Save current mode and switch to graph mode
+		m.previousSidebarMode = m.sidebarMode
 		m.sidebarMode = view.SidebarModeGraph
 		m.infoMessage = "Dependency graph view enabled"
 	}
