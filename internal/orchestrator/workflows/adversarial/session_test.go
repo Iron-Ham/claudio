@@ -338,11 +338,7 @@ func TestReviewFilePath(t *testing.T) {
 }
 
 func TestParseIncrementFile(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "adversarial-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir := t.TempDir()
 
 	increment := IncrementFile{
 		Round:         2,
@@ -382,49 +378,240 @@ func TestParseIncrementFile(t *testing.T) {
 }
 
 func TestParseIncrementFile_NotFound(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "adversarial-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir := t.TempDir()
 
-	_, err = ParseIncrementFile(tmpDir)
+	_, err := ParseIncrementFile(tmpDir)
 	if err == nil {
 		t.Error("expected error when file doesn't exist")
 	}
 }
 
 func TestParseIncrementFile_InvalidJSON(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "adversarial-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir := t.TempDir()
 
 	incrementPath := filepath.Join(tmpDir, IncrementFileName)
-	if err := os.WriteFile(incrementPath, []byte("{ invalid json }"), 0644); err != nil {
+	if err := os.WriteFile(incrementPath, []byte("not json at all"), 0644); err != nil {
 		t.Fatalf("failed to write invalid increment file: %v", err)
 	}
 
-	_, err = ParseIncrementFile(tmpDir)
+	_, err := ParseIncrementFile(tmpDir)
 	if err == nil {
 		t.Error("expected error when file contains invalid JSON")
 	}
-	if !strings.Contains(err.Error(), "failed to parse adversarial increment JSON") {
-		t.Errorf("error message should mention JSON parsing failure, got: %v", err)
+	if !strings.Contains(err.Error(), "not valid JSON") {
+		t.Errorf("error message should mention 'not valid JSON', got: %v", err)
 	}
 }
 
-func TestParseIncrementFile_InvalidRound(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "adversarial-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+func TestParseIncrementFile_MissingRequiredFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, IncrementFileName)
 
+	tests := []struct {
+		name          string
+		json          string
+		expectedError string
+	}{
+		{
+			name:          "missing round",
+			json:          `{"status": "ready_for_review", "summary": "test", "files_modified": [], "approach": "test"}`,
+			expectedError: "missing required fields: [round]",
+		},
+		{
+			name:          "missing status",
+			json:          `{"round": 1, "summary": "test", "files_modified": [], "approach": "test"}`,
+			expectedError: "missing required fields: [status]",
+		},
+		{
+			name:          "missing summary",
+			json:          `{"round": 1, "status": "ready_for_review", "files_modified": [], "approach": "test"}`,
+			expectedError: "missing required fields: [summary]",
+		},
+		{
+			name:          "missing files_modified",
+			json:          `{"round": 1, "status": "ready_for_review", "summary": "test", "approach": "test"}`,
+			expectedError: "missing required fields: [files_modified]",
+		},
+		{
+			name:          "missing approach",
+			json:          `{"round": 1, "status": "ready_for_review", "summary": "test", "files_modified": []}`,
+			expectedError: "missing required fields: [approach]",
+		},
+		{
+			name:          "missing multiple fields",
+			json:          `{"round": 1}`,
+			expectedError: "missing required fields:",
+		},
+		{
+			name:          "empty object",
+			json:          `{}`,
+			expectedError: "missing required fields:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(tt.json), 0644); err != nil {
+				t.Fatalf("failed to write file: %v", err)
+			}
+
+			_, err := ParseIncrementFile(tmpDir)
+			if err == nil {
+				t.Fatal("ParseIncrementFile should fail for missing required fields")
+			}
+
+			if !strings.Contains(err.Error(), tt.expectedError) {
+				t.Errorf("error should contain %q, got: %v", tt.expectedError, err)
+			}
+		})
+	}
+}
+
+func TestParseIncrementFile_WrongFieldTypes(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, IncrementFileName)
+
+	tests := []struct {
+		name          string
+		json          string
+		expectedError string
+	}{
+		{
+			name:          "round is string",
+			json:          `{"round": "1", "status": "ready_for_review", "summary": "test", "files_modified": [], "approach": "test"}`,
+			expectedError: "'round' must be a number",
+		},
+		{
+			name:          "status is number",
+			json:          `{"round": 1, "status": 123, "summary": "test", "files_modified": [], "approach": "test"}`,
+			expectedError: "'status' must be a string",
+		},
+		{
+			name:          "summary is number",
+			json:          `{"round": 1, "status": "ready_for_review", "summary": 123, "files_modified": [], "approach": "test"}`,
+			expectedError: "'summary' must be a string",
+		},
+		{
+			name:          "files_modified is string",
+			json:          `{"round": 1, "status": "ready_for_review", "summary": "test", "files_modified": "file.go", "approach": "test"}`,
+			expectedError: "'files_modified' must be an array",
+		},
+		{
+			name:          "files_modified contains number",
+			json:          `{"round": 1, "status": "ready_for_review", "summary": "test", "files_modified": [123], "approach": "test"}`,
+			expectedError: "'files_modified[0]' must be a string",
+		},
+		{
+			name:          "approach is array",
+			json:          `{"round": 1, "status": "ready_for_review", "summary": "test", "files_modified": [], "approach": ["test"]}`,
+			expectedError: "'approach' must be a string",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(tt.json), 0644); err != nil {
+				t.Fatalf("failed to write file: %v", err)
+			}
+
+			_, err := ParseIncrementFile(tmpDir)
+			if err == nil {
+				t.Fatal("ParseIncrementFile should fail for wrong field types")
+			}
+
+			if !strings.Contains(err.Error(), tt.expectedError) {
+				t.Errorf("error should contain %q, got: %v", tt.expectedError, err)
+			}
+		})
+	}
+}
+
+func TestParseIncrementFile_InvalidContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, IncrementFileName)
+
+	tests := []struct {
+		name          string
+		json          string
+		expectedError string
+	}{
+		{
+			name:          "round is zero",
+			json:          `{"round": 0, "status": "ready_for_review", "summary": "test", "files_modified": ["f.go"], "approach": "test"}`,
+			expectedError: "round must be >= 1",
+		},
+		{
+			name:          "round is negative",
+			json:          `{"round": -1, "status": "ready_for_review", "summary": "test", "files_modified": ["f.go"], "approach": "test"}`,
+			expectedError: "round must be >= 1",
+		},
+		{
+			name:          "invalid status",
+			json:          `{"round": 1, "status": "done", "summary": "test", "files_modified": ["f.go"], "approach": "test"}`,
+			expectedError: "status must be 'ready_for_review' or 'failed'",
+		},
+		{
+			name:          "empty summary when ready_for_review",
+			json:          `{"round": 1, "status": "ready_for_review", "summary": "", "files_modified": ["f.go"], "approach": "test"}`,
+			expectedError: "summary cannot be empty",
+		},
+		{
+			name:          "whitespace-only summary when ready_for_review",
+			json:          `{"round": 1, "status": "ready_for_review", "summary": "   ", "files_modified": ["f.go"], "approach": "test"}`,
+			expectedError: "summary cannot be empty",
+		},
+		{
+			name:          "empty approach when ready_for_review",
+			json:          `{"round": 1, "status": "ready_for_review", "summary": "test", "files_modified": ["f.go"], "approach": ""}`,
+			expectedError: "approach cannot be empty",
+		},
+		{
+			name:          "empty files_modified when ready_for_review",
+			json:          `{"round": 1, "status": "ready_for_review", "summary": "test", "files_modified": [], "approach": "test"}`,
+			expectedError: "files_modified cannot be empty",
+		},
+		{
+			name:          "empty string in files_modified",
+			json:          `{"round": 1, "status": "ready_for_review", "summary": "test", "files_modified": ["", "main.go"], "approach": "test"}`,
+			expectedError: "files_modified[0] cannot be empty or whitespace",
+		},
+		{
+			name:          "whitespace-only in files_modified",
+			json:          `{"round": 1, "status": "ready_for_review", "summary": "test", "files_modified": ["   "], "approach": "test"}`,
+			expectedError: "files_modified[0] cannot be empty or whitespace",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(tt.json), 0644); err != nil {
+				t.Fatalf("failed to write file: %v", err)
+			}
+
+			_, err := ParseIncrementFile(tmpDir)
+			if err == nil {
+				t.Fatal("ParseIncrementFile should fail for invalid content")
+			}
+
+			if !strings.Contains(err.Error(), tt.expectedError) {
+				t.Errorf("error should contain %q, got: %v", tt.expectedError, err)
+			}
+		})
+	}
+}
+
+func TestParseIncrementFile_FailedStatusAllowsEmptyFields(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// When status is "failed", files_modified and approach can be empty
+	// (the implementer may not have made any changes)
 	increment := IncrementFile{
-		Round:  0, // Invalid - must be >= 1
-		Status: "ready_for_review",
+		Round:         1,
+		Status:        "failed",
+		Summary:       "Could not complete the task due to missing dependencies",
+		FilesModified: []string{}, // Empty is OK for failed status
+		Approach:      "",         // Empty is OK for failed status
+		Notes:         "Need to install package X first",
 	}
 
 	incrementPath := filepath.Join(tmpDir, IncrementFileName)
@@ -433,48 +620,203 @@ func TestParseIncrementFile_InvalidRound(t *testing.T) {
 		t.Fatalf("failed to write increment file: %v", err)
 	}
 
-	_, err = ParseIncrementFile(tmpDir)
-	if err == nil {
-		t.Error("expected error when round is invalid")
+	parsed, err := ParseIncrementFile(tmpDir)
+	if err != nil {
+		t.Errorf("ParseIncrementFile() should succeed for failed status with empty fields, got error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "invalid round number") {
-		t.Errorf("error message should mention invalid round, got: %v", err)
+	if parsed == nil {
+		t.Error("ParseIncrementFile() returned nil for valid failed status")
 	}
 }
 
-func TestParseIncrementFile_InvalidStatus(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "adversarial-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+func TestParseIncrementFile_MultipleErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, IncrementFileName)
 
-	increment := IncrementFile{
-		Round:  1,
-		Status: "invalid_status",
+	// Multiple validation errors should all be reported
+	jsonContent := `{"round": 0, "status": "invalid", "summary": "", "files_modified": [], "approach": ""}`
+	if err := os.WriteFile(path, []byte(jsonContent), 0644); err != nil {
+		t.Fatalf("failed to write file: %v", err)
 	}
 
-	incrementPath := filepath.Join(tmpDir, IncrementFileName)
-	data, _ := json.Marshal(increment)
-	if err := os.WriteFile(incrementPath, data, 0644); err != nil {
-		t.Fatalf("failed to write increment file: %v", err)
-	}
-
-	_, err = ParseIncrementFile(tmpDir)
+	_, err := ParseIncrementFile(tmpDir)
 	if err == nil {
-		t.Error("expected error when status is invalid")
+		t.Fatal("ParseIncrementFile should fail with multiple errors")
 	}
-	if !strings.Contains(err.Error(), "invalid status") {
-		t.Errorf("error message should mention invalid status, got: %v", err)
+
+	// Should contain multiple error messages
+	errStr := err.Error()
+	if !strings.Contains(errStr, "round must be >= 1") {
+		t.Error("error should mention round validation failure")
+	}
+	if !strings.Contains(errStr, "status must be") {
+		t.Error("error should mention status validation failure")
+	}
+}
+
+// Test sanitization of increment files with various LLM quirks
+func TestParseIncrementFile_Sanitization(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		wantErr  bool
+		validate func(*testing.T, *IncrementFile)
+	}{
+		{
+			name: "smart quotes in field values",
+			content: `{
+  "round": 1,
+  "status": "ready_for_review",
+  "summary": "Implemented feature",
+  "files_modified": ["main.go"],
+  "approach": "Used TDD",
+  "notes": "Some notes"
+}`,
+			wantErr: false,
+			validate: func(t *testing.T, inc *IncrementFile) {
+				if inc.Summary != "Implemented feature" {
+					t.Errorf("Summary = %q, want %q", inc.Summary, "Implemented feature")
+				}
+			},
+		},
+		{
+			name: "wrapped in markdown code block",
+			content: "```json\n" + `{
+  "round": 1,
+  "status": "ready_for_review",
+  "summary": "Test summary",
+  "files_modified": ["main.go"],
+  "approach": "Test approach",
+  "notes": ""
+}` + "\n```",
+			wantErr: false,
+			validate: func(t *testing.T, inc *IncrementFile) {
+				if inc.Summary != "Test summary" {
+					t.Errorf("Summary = %q, want %q", inc.Summary, "Test summary")
+				}
+			},
+		},
+		{
+			name: "wrapped in generic code block",
+			content: "```\n" + `{
+  "round": 1,
+  "status": "ready_for_review",
+  "summary": "Generic block",
+  "files_modified": ["main.go"],
+  "approach": "Test approach",
+  "notes": ""
+}` + "\n```",
+			wantErr: false,
+			validate: func(t *testing.T, inc *IncrementFile) {
+				if inc.Summary != "Generic block" {
+					t.Errorf("Summary = %q, want %q", inc.Summary, "Generic block")
+				}
+			},
+		},
+		{
+			name: "extra text before JSON",
+			content: `Here is the increment file:
+{
+  "round": 1,
+  "status": "ready_for_review",
+  "summary": "With prefix text",
+  "files_modified": ["main.go"],
+  "approach": "Test approach",
+  "notes": ""
+}`,
+			wantErr: false,
+			validate: func(t *testing.T, inc *IncrementFile) {
+				if inc.Summary != "With prefix text" {
+					t.Errorf("Summary = %q, want %q", inc.Summary, "With prefix text")
+				}
+			},
+		},
+		{
+			name: "extra text after JSON",
+			content: `{
+  "round": 1,
+  "status": "ready_for_review",
+  "summary": "With suffix text",
+  "files_modified": ["main.go"],
+  "approach": "Test approach",
+  "notes": ""
+}
+I hope this helps!`,
+			wantErr: false,
+			validate: func(t *testing.T, inc *IncrementFile) {
+				if inc.Summary != "With suffix text" {
+					t.Errorf("Summary = %q, want %q", inc.Summary, "With suffix text")
+				}
+			},
+		},
+		{
+			name: "left double quotation mark",
+			content: `{
+  "round": 1,
+  "status": "ready_for_review",
+  "summary": "Left quote test",
+  "files_modified": ["main.go"],
+  "approach": "Test approach",
+  "notes": ""
+}`,
+			wantErr: false,
+			validate: func(t *testing.T, inc *IncrementFile) {
+				if inc.Round != 1 {
+					t.Errorf("Round = %d, want %d", inc.Round, 1)
+				}
+			},
+		},
+		{
+			name: "combination of all issues",
+			content: "Here is my work:\n```json\n" + `{
+  "round": 2,
+  "status": "ready_for_review",
+  "summary": "Full sanitization test",
+  "files_modified": ["file.go"],
+  "approach": "Combined approach",
+  "notes": "All fixed"
+}` + "\n```\nLet me know if you need changes.",
+			wantErr: false,
+			validate: func(t *testing.T, inc *IncrementFile) {
+				if inc.Round != 2 {
+					t.Errorf("Round = %d, want %d", inc.Round, 2)
+				}
+				if inc.Summary != "Full sanitization test" {
+					t.Errorf("Summary = %q, want %q", inc.Summary, "Full sanitization test")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			incrementPath := filepath.Join(tmpDir, IncrementFileName)
+			if err := os.WriteFile(incrementPath, []byte(tt.content), 0644); err != nil {
+				t.Fatalf("failed to write increment file: %v", err)
+			}
+
+			parsed, err := ParseIncrementFile(tmpDir)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseIncrementFile() error = %v", err)
+			}
+
+			if tt.validate != nil {
+				tt.validate(t, parsed)
+			}
+		})
 	}
 }
 
 func TestParseReviewFile(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "adversarial-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir := t.TempDir()
 
 	review := ReviewFile{
 		Round:           2,
@@ -516,31 +858,23 @@ func TestParseReviewFile(t *testing.T) {
 }
 
 func TestParseReviewFile_NotFound(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "adversarial-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir := t.TempDir()
 
-	_, err = ParseReviewFile(tmpDir)
+	_, err := ParseReviewFile(tmpDir)
 	if err == nil {
 		t.Error("expected error when file doesn't exist")
 	}
 }
 
 func TestParseReviewFile_InvalidJSON(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "adversarial-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir := t.TempDir()
 
 	reviewPath := filepath.Join(tmpDir, ReviewFileName)
 	if err := os.WriteFile(reviewPath, []byte("{ invalid json }"), 0644); err != nil {
 		t.Fatalf("failed to write invalid review file: %v", err)
 	}
 
-	_, err = ParseReviewFile(tmpDir)
+	_, err := ParseReviewFile(tmpDir)
 	if err == nil {
 		t.Error("expected error when file contains invalid JSON")
 	}
@@ -550,11 +884,7 @@ func TestParseReviewFile_InvalidJSON(t *testing.T) {
 }
 
 func TestParseReviewFile_InvalidRound(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "adversarial-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	tmpDir := t.TempDir()
 
 	review := ReviewFile{
 		Round: 0, // Invalid - must be >= 1
@@ -567,7 +897,7 @@ func TestParseReviewFile_InvalidRound(t *testing.T) {
 		t.Fatalf("failed to write review file: %v", err)
 	}
 
-	_, err = ParseReviewFile(tmpDir)
+	_, err := ParseReviewFile(tmpDir)
 	if err == nil {
 		t.Error("expected error when round is invalid")
 	}
@@ -588,11 +918,7 @@ func TestParseReviewFile_InvalidScore(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir, err := os.MkdirTemp("", "adversarial-test-*")
-			if err != nil {
-				t.Fatalf("failed to create temp dir: %v", err)
-			}
-			t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+			tmpDir := t.TempDir()
 
 			review := ReviewFile{
 				Round: 1,
@@ -605,12 +931,224 @@ func TestParseReviewFile_InvalidScore(t *testing.T) {
 				t.Fatalf("failed to write review file: %v", err)
 			}
 
-			_, err = ParseReviewFile(tmpDir)
+			_, err := ParseReviewFile(tmpDir)
 			if err == nil {
 				t.Error("expected error when score is invalid")
 			}
 			if !strings.Contains(err.Error(), "invalid score") {
 				t.Errorf("error message should mention invalid score, got: %v", err)
+			}
+		})
+	}
+}
+
+// Test sanitization of review files with various LLM quirks
+func TestParseReviewFile_Sanitization(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		wantErr  bool
+		validate func(*testing.T, *ReviewFile)
+	}{
+		{
+			name: "wrapped in markdown code block",
+			content: "```json\n" + `{
+  "round": 1,
+  "approved": true,
+  "score": 9,
+  "strengths": ["Good code"],
+  "issues": [],
+  "suggestions": [],
+  "summary": "Test review",
+  "required_changes": []
+}` + "\n```",
+			wantErr: false,
+			validate: func(t *testing.T, r *ReviewFile) {
+				if r.Score != 9 {
+					t.Errorf("Score = %d, want %d", r.Score, 9)
+				}
+				if r.Summary != "Test review" {
+					t.Errorf("Summary = %q, want %q", r.Summary, "Test review")
+				}
+			},
+		},
+		{
+			name: "smart quotes around values",
+			content: `{
+  "round": 1,
+  "approved": false,
+  "score": 5,
+  "strengths": ["One strength"],
+  "issues": ["One issue"],
+  "suggestions": [],
+  "summary": "Needs work",
+  "required_changes": ["Fix the bug"]
+}`,
+			wantErr: false,
+			validate: func(t *testing.T, r *ReviewFile) {
+				if r.Score != 5 {
+					t.Errorf("Score = %d, want %d", r.Score, 5)
+				}
+			},
+		},
+		{
+			name: "prefix and suffix text with code block",
+			content: "After reviewing the implementation:\n```json\n" + `{
+  "round": 3,
+  "approved": true,
+  "score": 8,
+  "strengths": [],
+  "issues": [],
+  "suggestions": [],
+  "summary": "Approved",
+  "required_changes": []
+}` + "\n```\nPlease proceed.",
+			wantErr: false,
+			validate: func(t *testing.T, r *ReviewFile) {
+				if r.Round != 3 {
+					t.Errorf("Round = %d, want %d", r.Round, 3)
+				}
+				if !r.Approved {
+					t.Error("Approved should be true")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			reviewPath := filepath.Join(tmpDir, ReviewFileName)
+			if err := os.WriteFile(reviewPath, []byte(tt.content), 0644); err != nil {
+				t.Fatalf("failed to write review file: %v", err)
+			}
+
+			parsed, err := ParseReviewFile(tmpDir)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error but got none")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseReviewFile() error = %v", err)
+			}
+
+			if tt.validate != nil {
+				tt.validate(t, parsed)
+			}
+		})
+	}
+}
+
+// Test that sanitizeJSONContent function handles edge cases
+func TestSanitizeJSONContent(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "already valid JSON",
+			input:    `{"key": "value"}`,
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "left double quotation mark",
+			input:    `{"key": "value"}`,
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "right double quotation mark",
+			input:    `{"key": "value"}`,
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "both curly quotes",
+			input:    `{"key": "value"}`,
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "code block json",
+			input:    "```json\n{\"key\": \"value\"}\n```",
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "code block no language",
+			input:    "```\n{\"key\": \"value\"}\n```",
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "text before JSON",
+			input:    "Here is some text\n{\"key\": \"value\"}",
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "text after JSON",
+			input:    "{\"key\": \"value\"}\nMore text here",
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "text before and after",
+			input:    "Prefix {\"key\": \"value\"} Suffix",
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "guillemets",
+			input:    `{«key»: «value»}`,
+			expected: `{"key": "value"}`,
+		},
+		{
+			name:     "single curly quotes",
+			input:    `{"key": 'value'}`,
+			expected: `{"key": 'value'}`,
+		},
+		{
+			name:     "fullwidth quotation mark",
+			input:    `{＂key＂: ＂value＂}`,
+			expected: `{"key": "value"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := string(sanitizeJSONContent([]byte(tt.input)))
+			if got != tt.expected {
+				t.Errorf("sanitizeJSONContent() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestValidateIncrementJSON_HelpsDebugErrors(t *testing.T) {
+	// Test that error messages are helpful for debugging
+	tests := []struct {
+		name     string
+		json     string
+		contains string
+	}{
+		{
+			name:     "shows content prefix for non-JSON",
+			json:     "This is not JSON, it's plain text describing something",
+			contains: "Content starts with",
+		},
+		{
+			name:     "shows expected structure for missing fields",
+			json:     `{"round": 1}`,
+			contains: "Expected JSON structure",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateIncrementJSON([]byte(tt.json))
+			if err == nil {
+				t.Fatal("expected error")
+			}
+
+			if !strings.Contains(err.Error(), tt.contains) {
+				t.Errorf("error should contain %q for debugging, got: %v", tt.contains, err)
 			}
 		})
 	}
@@ -659,7 +1197,6 @@ func TestRound_Fields(t *testing.T) {
 
 func TestEvent_Fields(t *testing.T) {
 	now := time.Now()
-
 	event := Event{
 		Type:       EventApproved,
 		Round:      2,
@@ -679,5 +1216,8 @@ func TestEvent_Fields(t *testing.T) {
 	}
 	if event.Message != "Work approved" {
 		t.Errorf("Message = %q, want %q", event.Message, "Work approved")
+	}
+	if event.Timestamp != now {
+		t.Errorf("Timestamp = %v, want %v", event.Timestamp, now)
 	}
 }

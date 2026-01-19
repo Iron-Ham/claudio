@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **View Mode Preservation** - Switching from dependency graph view back to list view now correctly restores the previous sidebar mode (flat or grouped). Previously, toggling the dependency view always returned to flat mode, causing users to lose their grouped view state.
 
+- **Adversarial Increment File Validation** - Added comprehensive defense-in-depth validation for the implementer's increment file to prevent malformed submissions from causing workflow failures:
+  - **JSON Sanitization**: Automatically handles common LLM output quirks including smart/curly quotes (" " ' '), markdown code blocks (```json ... ```), extra text before/after JSON, and various Unicode quote characters
+  - **Structural Validation**: Validates that the file is valid JSON with correct field types before parsing, catching missing or malformed fields with detailed error messages showing the expected JSON structure
+  - **Semantic Validation**: Ensures non-empty values for required fields when status is "ready_for_review" (summary, approach, files_modified), while allowing empty fields for "failed" status
+  - **Enhanced Prompts**: Updated implementer prompt with explicit field requirements, type specifications, and a "COMMON MISTAKES TO AVOID" section to prevent issues at the source
+
 ## [0.11.0] - 2026-01-18
 
 This release brings **Major Architecture Refactoring & Platform Guides** - a comprehensive refactoring of the Coordinator into a thin facade with specialized orchestrators, plus detailed platform-specific documentation for all major development environments.

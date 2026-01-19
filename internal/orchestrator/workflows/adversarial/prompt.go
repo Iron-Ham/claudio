@@ -29,7 +29,7 @@ The reviewer is waiting for this file. You MUST write it when your implementatio
 
 **File:** ` + "`" + IncrementFileName + "`" + ` (in your worktree root)
 
-**Required JSON structure:**
+**Required JSON structure (ALL fields are REQUIRED):**
 ` + "```json" + `
 {
   "round": %d,
@@ -41,11 +41,26 @@ The reviewer is waiting for this file. You MUST write it when your implementatio
 }
 ` + "```" + `
 
+**Field Requirements:**
+- ` + "`round`" + `: MUST be the number %d (the current round)
+- ` + "`status`" + `: MUST be exactly "ready_for_review" or "failed" (no other values)
+- ` + "`summary`" + `: MUST be a non-empty string describing your changes
+- ` + "`files_modified`" + `: MUST be a JSON array of strings, e.g., ["file1.go", "file2.go"] - NOT empty when status is "ready_for_review"
+- ` + "`approach`" + `: MUST be a non-empty string explaining your approach
+- ` + "`notes`" + `: A string for any notes (can be empty string "")
+
+**COMMON MISTAKES TO AVOID:**
+- Do NOT write markdown or plain text - the file MUST be valid JSON
+- Do NOT forget the "files_modified" field - it is REQUIRED
+- Do NOT use files_modified: "file.go" - it MUST be an array: ["file.go"]
+- Do NOT leave summary or approach empty when status is "ready_for_review"
+- Do NOT use any status other than "ready_for_review" or "failed"
+
 **Rules:**
 - Set status to "ready_for_review" when your implementation is complete
 - Set status to "failed" if you cannot complete the task
 - Be thorough in your summary - the reviewer will read it before examining code
-- List ALL files you modified
+- List ALL files you modified in the files_modified array
 
 **REMINDER: Write ` + "`" + IncrementFileName + "`" + ` when ready for review.**`
 
@@ -161,7 +176,7 @@ func FormatImplementerPrompt(task string, round int, previousReview *ReviewFile)
 		)
 	}
 
-	return fmt.Sprintf(ImplementerPromptTemplate, task, round, previousFeedback, round)
+	return fmt.Sprintf(ImplementerPromptTemplate, task, round, previousFeedback, round, round)
 }
 
 // FormatReviewerPrompt creates the full prompt for the reviewer
