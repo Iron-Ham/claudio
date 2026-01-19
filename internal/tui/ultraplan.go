@@ -98,21 +98,6 @@ func (m *Model) createUltraplanView() *view.UltraplanView {
 	return view.NewUltraplanView(ctx)
 }
 
-// renderUltraPlanHeader renders the ultra-plan header with phase and progress
-func (m Model) renderUltraPlanHeader() string {
-	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
-		return m.renderHeader()
-	}
-
-	session := m.ultraPlan.Coordinator.Session()
-	if session == nil {
-		return m.renderHeader()
-	}
-
-	v := m.createUltraplanView()
-	return v.RenderHeader()
-}
-
 // isInstanceSelected checks if the given instance ID is currently selected in the TUI
 func (m Model) isInstanceSelected(instanceID string) bool {
 	if instanceID == "" {
