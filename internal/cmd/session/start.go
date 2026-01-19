@@ -14,6 +14,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	orchsession "github.com/Iron-Ham/claudio/internal/orchestrator/session"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/Iron-Ham/claudio/internal/session"
 	"github.com/Iron-Ham/claudio/internal/tmux"
@@ -237,6 +238,11 @@ func AttachToSession(cwd, sessionID string, cfg *config.Config) error {
 		return launchTUIWithTripleshots(cwd, orch, sess, logger)
 	}
 
+	// Check for active adversarial sessions and restore them
+	if len(sess.AdversarialSessions) > 0 {
+		return launchTUIWithAdversarials(cwd, orch, sess, logger)
+	}
+
 	return launchTUI(cwd, orch, sess, logger)
 }
 
@@ -375,6 +381,68 @@ func launchTUIWithTripleshots(cwd string, orch *orchestrator.Orchestrator, sess 
 		app = tui.NewWithTripleShots(orch, sess, coordinators, logger.WithSession(sess.ID))
 	} else {
 		// All tripleshots completed, just launch normal TUI
+		app = tui.New(orch, sess, logger.WithSession(sess.ID))
+	}
+
+	if err := app.Run(); err != nil {
+		return fmt.Errorf("TUI error: %w", err)
+	}
+
+	return nil
+}
+
+// launchTUIWithAdversarials restores adversarial sessions and launches the TUI.
+// This is called when a session has active AdversarialSessions that need to be restored.
+func launchTUIWithAdversarials(cwd string, orch *orchestrator.Orchestrator, sess *orchestrator.Session, logger *logging.Logger) error {
+	// Get terminal dimensions and set them on the orchestrator before launching TUI
+	if termWidth, termHeight, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+		contentWidth, contentHeight := tui.CalculateContentDimensions(termWidth, termHeight)
+		if contentWidth > 0 && contentHeight > 0 {
+			orch.SetDisplayDimensions(contentWidth, contentHeight)
+		}
+	}
+
+	// Restore adversarial coordinators from persisted sessions
+	var coordinators []*adversarial.Coordinator
+	for _, advSession := range sess.AdversarialSessions {
+		// Skip completed or failed adversarial sessions
+		if advSession.Phase == adversarial.PhaseComplete ||
+			advSession.Phase == adversarial.PhaseFailed {
+			continue
+		}
+
+		coordinator := orchestrator.NewAdversarialCoordinator(orch, sess, advSession, logger)
+
+		// Restore worktree path from the implementer instance
+		// The worktree path is not persisted in the adversarial session, but the
+		// implementer instance ID is, and instances store their worktree paths
+		if advSession.ImplementerID != "" {
+			if inst := sess.GetInstance(advSession.ImplementerID); inst != nil {
+				coordinator.SetWorktrees(inst.WorktreePath)
+				logger.Info("restored adversarial worktree path",
+					"adversarial_id", advSession.ID,
+					"implementer_id", advSession.ImplementerID,
+					"worktree_path", inst.WorktreePath,
+				)
+			}
+		}
+
+		coordinators = append(coordinators, coordinator)
+		logger.Info("restored adversarial session",
+			"adversarial_id", advSession.ID,
+			"group_id", advSession.GroupID,
+			"phase", string(advSession.Phase),
+			"round", advSession.CurrentRound,
+		)
+	}
+
+	// If we have active coordinators, launch with all of them restored
+	var app *tui.App
+	if len(coordinators) > 0 {
+		fmt.Printf("Resuming %d active adversarial session(s)\n", len(coordinators))
+		app = tui.NewWithAdversarials(orch, sess, coordinators, logger.WithSession(sess.ID))
+	} else {
+		// All adversarial sessions completed, just launch normal TUI
 		app = tui.New(orch, sess, logger.WithSession(sess.ID))
 	}
 

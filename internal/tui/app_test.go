@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	"github.com/Iron-Ham/claudio/internal/util"
@@ -94,6 +95,117 @@ func TestNewWithTripleShots_CreatesGroupsForLegacySessions(t *testing.T) {
 	// Verify the session has no groups
 	if len(session.Groups) != 0 {
 		t.Errorf("expected 0 groups initially, got %d", len(session.Groups))
+	}
+}
+
+// TestNewWithAdversarial_CreatesGroupForCLIStartedSession tests the initial state
+// when an adversarial session is started from CLI without a pre-existing group.
+// Note: We don't call NewWithAdversarial directly because it requires a fully
+// initialized Coordinator with orchestrator dependencies. Instead, we verify
+// the initial conditions and test the group creation pattern separately in
+// TestAdversarialGroupID_MustBeSetOnCreation.
+func TestNewWithAdversarial_CreatesGroupForCLIStartedSession(t *testing.T) {
+	// Create minimal orchestrator session
+	session := &orchestrator.Session{
+		ID:     "test-session",
+		Groups: nil, // No groups yet (CLI startup)
+	}
+
+	// Create adversarial session without a GroupID (simulates CLI startup)
+	advSession := &adversarial.Session{
+		ID:   "adv-1",
+		Task: "Test task for adversarial review",
+	}
+
+	// Test: Verify session starts with no groups
+	if len(session.Groups) != 0 {
+		t.Errorf("expected 0 groups initially, got %d", len(session.Groups))
+	}
+
+	// Test: Verify GroupID is empty initially
+	if advSession.GroupID != "" {
+		t.Errorf("expected empty GroupID initially, got %q", advSession.GroupID)
+	}
+}
+
+// TestNewWithAdversarials_CreatesGroupsForLegacySessions tests the initial state
+// for multiple adversarial sessions without GroupIDs (legacy sessions).
+// Note: We don't call NewWithAdversarials directly because it requires fully
+// initialized Coordinators. The group creation logic is tested in
+// TestAdversarialGroupID_MustBeSetOnCreation.
+func TestNewWithAdversarials_CreatesGroupsForLegacySessions(t *testing.T) {
+	// Create minimal orchestrator session
+	session := &orchestrator.Session{
+		ID:     "test-session",
+		Groups: nil, // No groups yet
+	}
+
+	// Create multiple adversarial sessions without GroupIDs (legacy sessions)
+	session1 := &adversarial.Session{
+		ID:   "adv-1",
+		Task: "Task 1",
+	}
+	session2 := &adversarial.Session{
+		ID:   "adv-2",
+		Task: "Task 2",
+	}
+
+	// Verify both sessions start with no GroupID
+	if session1.GroupID != "" {
+		t.Errorf("expected empty GroupID for session1, got %q", session1.GroupID)
+	}
+	if session2.GroupID != "" {
+		t.Errorf("expected empty GroupID for session2, got %q", session2.GroupID)
+	}
+
+	// Verify the session has no groups
+	if len(session.Groups) != 0 {
+		t.Errorf("expected 0 groups initially, got %d", len(session.Groups))
+	}
+}
+
+// TestAdversarialGroupID_MustBeSetOnCreation verifies that when an adversarial group
+// is created, the advSession.GroupID must be set to link them together.
+func TestAdversarialGroupID_MustBeSetOnCreation(t *testing.T) {
+	// Create a mock session and adversarial session
+	session := &orchestrator.Session{
+		ID:     "test-session",
+		Groups: nil,
+	}
+	advSession := &adversarial.Session{
+		ID:   "adv-1",
+		Task: "Test task",
+	}
+
+	// Simulate the pattern: create group and link it
+	advGroup := orchestrator.NewInstanceGroupWithType(
+		"Test Group",
+		orchestrator.SessionTypeAdversarial,
+		advSession.Task,
+	)
+	session.AddGroup(advGroup)
+	advSession.GroupID = advGroup.ID // This is the critical line being tested
+
+	// Verify the group was added to session
+	if len(session.Groups) != 1 {
+		t.Fatalf("expected 1 group in session, got %d", len(session.Groups))
+	}
+
+	// Verify GroupID is correctly set
+	if advSession.GroupID == "" {
+		t.Error("advSession.GroupID must be set when group is created")
+	}
+	if advSession.GroupID != advGroup.ID {
+		t.Errorf("advSession.GroupID = %q, want %q", advSession.GroupID, advGroup.ID)
+	}
+
+	// Verify we can retrieve the group by its ID
+	retrievedGroup := session.GetGroup(advSession.GroupID)
+	if retrievedGroup == nil {
+		t.Fatal("session.GetGroup(advSession.GroupID) should return the group")
+	}
+	if orchestrator.GetSessionType(retrievedGroup) != orchestrator.SessionTypeAdversarial {
+		t.Errorf("group.SessionType = %v, want %v", orchestrator.GetSessionType(retrievedGroup), orchestrator.SessionTypeAdversarial)
 	}
 }
 

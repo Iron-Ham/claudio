@@ -184,6 +184,48 @@ func NewWithTripleShots(orch *orchestrator.Orchestrator, session *orchestrator.S
 	}
 }
 
+// NewWithAdversarials creates a new TUI application with multiple adversarial coordinators.
+// This is used when restoring a session that had multiple concurrent adversarial sessions.
+func NewWithAdversarials(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinators []*adversarial.Coordinator, logger *logging.Logger) *App {
+	model := NewModel(orch, session, logger)
+	model.adversarial = &view.AdversarialState{
+		Coordinators: make(map[string]*adversarial.Coordinator),
+	}
+
+	// Add all coordinators to the map keyed by their group IDs
+	createdGroup := false
+	for _, coordinator := range coordinators {
+		if coordinator != nil {
+			advSession := coordinator.Session()
+			if advSession != nil {
+				// Create a group if one doesn't exist (legacy sessions)
+				if advSession.GroupID == "" {
+					advGroup := orchestrator.NewInstanceGroupWithType(
+						util.TruncateString(advSession.Task, 30),
+						orchestrator.SessionTypeAdversarial,
+						advSession.Task,
+					)
+					session.AddGroup(advGroup)
+					advSession.GroupID = advGroup.ID
+					createdGroup = true
+				}
+				model.adversarial.Coordinators[advSession.GroupID] = coordinator
+			}
+		}
+	}
+
+	// Auto-enable grouped sidebar mode if we created any groups
+	if createdGroup {
+		model.autoEnableGroupedMode()
+	}
+
+	return &App{
+		model:        model,
+		orchestrator: orch,
+		session:      session,
+	}
+}
+
 // Run starts the TUI application
 func (a *App) Run() error {
 	// Ensure session lock is released when TUI exits (both normal and signal-based)
