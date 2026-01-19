@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Adversarial Increment Filename** - Renamed the implementer's sentinel file from `.claudio-adversarial-increment.json` to `.claudio-adversarial-incremental.json` for consistent naming with agent search patterns.
 
+- **View Mode Preservation** - Switching from dependency graph view back to list view now correctly restores the previous sidebar mode (flat or grouped). Previously, toggling the dependency view always returned to flat mode, causing users to lose their grouped view state.
+
 ## [0.11.0] - 2026-01-18
 
 This release brings **Major Architecture Refactoring & Platform Guides** - a comprehensive refactoring of the Coordinator into a thin facade with specialized orchestrators, plus detailed platform-specific documentation for all major development environments.

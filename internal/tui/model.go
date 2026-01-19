@@ -331,8 +331,9 @@ type Model struct {
 	sidebarScrollOffset int // Index of the first visible instance in sidebar
 
 	// Grouped sidebar view state
-	groupViewState *view.GroupViewState // State for group collapse/selection (nil until grouped mode is used)
-	sidebarMode    view.SidebarMode     // Current sidebar display mode (flat or grouped)
+	groupViewState      *view.GroupViewState // State for group collapse/selection (nil until grouped mode is used)
+	sidebarMode         view.SidebarMode     // Current sidebar display mode (flat or grouped)
+	previousSidebarMode view.SidebarMode     // Mode to restore when exiting graph view
 
 	// Resource metrics display
 	showStats bool // When true, show the stats panel
