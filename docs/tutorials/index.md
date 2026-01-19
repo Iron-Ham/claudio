@@ -9,6 +9,9 @@ Step-by-step guides for common Claudio workflows.
 
 ## Development Workflows
 
+### [Choosing Orchestration Modes](choosing-orchestration-modes.md)
+**10-15 minutes** - Learn when to use Plan, Ultra-Plan, TripleShot, and Adversarial modes. Includes decision guide and practical examples.
+
 ### [Feature Development](feature-development.md)
 **15-20 minutes** - Build a complete feature by breaking it into parallel tasks. Learn to coordinate multiple instances working on different components.
 

@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dependency Graph View** - New sidebar visualization mode that displays instances organized by their dependency levels. Toggle with `d` key to see a DAG (Directed Acyclic Graph) view showing root tasks, intermediate levels, and final tasks. Features include topological sorting, status indicators, and dependency relationship arrows.
 
+- **Comprehensive Orchestration Mode Documentation** - Added complete documentation for all orchestration modes:
+  - **Plan Mode Guide** (`docs/guide/plan.md`) - Task decomposition and GitHub Issues generation
+  - **TripleShot Guide** (`docs/guide/tripleshot.md`) - Parallel implementation with judge evaluation
+  - **Adversarial Review Guide** (`docs/guide/adversarial.md`) - Iterative implementation with reviewer feedback
+  - **Choosing Orchestration Modes Tutorial** (`docs/tutorials/choosing-orchestration-modes.md`) - Decision guide with practical examples
+  - Updated CLI reference with adversarial command documentation
+  - Updated guide index with links to new guides
+
 ### Changed
 
 - **Consolidation Module Extraction** - Refactored `internal/orchestrator/consolidation.go` into a modular package structure:

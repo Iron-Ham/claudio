@@ -435,11 +435,14 @@ claudio plan [objective] [flags]
 | `objective` | The goal or feature to plan (optional, can be interactive) |
 
 **Flags:**
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Show the plan without executing |
-| `--output-format` | Output format: `json`, `issues`, or `both` |
-| `--multi-pass` | Use 3 independent strategies to generate plans |
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--dry-run` | Show the plan without executing | `false` |
+| `--output-format` | Output format: `json`, `issues`, or `both` | `issues` |
+| `--multi-pass` | Use 3 independent strategies to generate plans | `false` |
+| `--no-confirm` | Skip confirmation prompt | `false` |
+| `--output` | Write plan JSON to a specific file path | `.claudio-plan.json` |
+| `--labels` | Labels to add to GitHub Issues (comma-separated) | - |
 
 **Examples:**
 ```bash
@@ -460,6 +463,8 @@ claudio plan --multi-pass "Redesign the data model"
 - `json` - Outputs a structured JSON plan file
 - `issues` - Creates GitHub issues for each task
 - `both` - Creates both JSON file and GitHub issues
+
+See [Plan Mode Guide](../guide/plan.md) for detailed documentation.
 
 ---
 
@@ -520,7 +525,7 @@ See [Ultra-Plan Guide](../guide/ultra-plan.md) for detailed documentation.
 
 ### claudio tripleshot
 
-Execute a task with 3 parallel attempts, then judge selects the best (experimental).
+Execute a task with 3 parallel attempts, then judge selects the best.
 
 ```bash
 claudio tripleshot [task] [flags]
@@ -534,15 +539,15 @@ claudio tripleshot [task] [flags]
 **Flags:**
 | Flag | Description |
 |------|-------------|
-| `--multi-pass` | Use different strategies for each attempt |
+| `--auto-approve` | Auto-approve applying the winning solution |
 
 **Examples:**
 ```bash
 # Basic tripleshot
 claudio tripleshot "Optimize the database query in users.go"
 
-# With different strategies
-claudio tripleshot --multi-pass "Implement caching layer"
+# With auto-approve to apply the winning solution automatically
+claudio tripleshot --auto-approve "Implement caching layer"
 ```
 
 **How it works:**
@@ -551,7 +556,51 @@ claudio tripleshot --multi-pass "Implement caching layer"
 3. The best solution is selected based on quality criteria
 4. Optional revision phase if the judge identifies improvements
 
-> **Note:** This is an experimental feature. Enable with `experimental.triple_shot: true` in your config.
+See [TripleShot Guide](../guide/tripleshot.md) for detailed documentation.
+
+---
+
+### claudio adversarial
+
+Iterative implementation with reviewer feedback loop.
+
+```bash
+claudio adversarial [task] [flags]
+```
+
+**Arguments:**
+| Argument | Description |
+|----------|-------------|
+| `task` | The task to implement with review cycles |
+
+**Flags:**
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--max-iterations` | Maximum implement-review cycles (0 = unlimited) | 10 |
+| `--min-passing-score` | Minimum score (1-10) required for approval | 8 |
+
+**Examples:**
+```bash
+# Basic adversarial review
+claudio adversarial "Implement user authentication with JWT"
+
+# Limit review cycles
+claudio adversarial --max-iterations 5 "Refactor the API layer"
+
+# Strict quality requirements
+claudio adversarial --min-passing-score 9 "Implement encryption module"
+
+# Combined for critical code
+claudio adversarial --max-iterations 5 --min-passing-score 9 "Implement auth tokens"
+```
+
+**How it works:**
+1. An IMPLEMENTER instance works on the task
+2. When ready, submits work for review
+3. A REVIEWER instance examines the code and provides feedback
+4. Loop continues until approved with passing score, or max iterations reached
+
+See [Adversarial Review Guide](../guide/adversarial.md) for detailed documentation.
 
 ---
 
