@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **System Alert Sound** - Notification sound now uses the macOS system alert sound (configured in System Settings > Sound) instead of the hardcoded Glass.aiff chime. Users who prefer a specific sound can still set `ultraplan.notifications.sound_path` to a custom audio file.
+
 - **Consolidation Module Extraction** - Refactored `internal/orchestrator/consolidation.go` into a modular package structure:
   - Created `internal/orchestrator/consolidation/` package with shared types and interfaces
   - Extracted `prbuilder/` subpackage for PR content generation (pure data transformation)

@@ -162,7 +162,7 @@ type NotificationConfig struct {
 	Enabled bool `mapstructure:"enabled"`
 	// UseSound plays system sound on macOS in addition to bell (default: false)
 	UseSound bool `mapstructure:"use_sound"`
-	// SoundPath custom sound file path (macOS only, default: system Glass sound)
+	// SoundPath custom sound file path (macOS only, default: system alert sound)
 	SoundPath string `mapstructure:"sound_path"`
 }
 
