@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Dead Code Removal** - Removed unreachable code identified by static analysis to improve codebase maintainability:
+  - Removed unused `Consolidator` type and all methods from `orchestrator/consolidation.go` (replaced by `group/consolidate/` package)
+  - Deleted `orchestrator/consolidation_util.go` entirely (unused `BranchNameGenerator`, `Slugify`, `DeduplicateStrings`)
+  - Removed `ExtractInstanceIDFromSession` and `ListSessionTmuxSessions` from `instance/manager.go`
+  - Removed unused test helpers from `testutil/testutil.go` (`SetupTestRepoWithContent`, `SetupTestRepoWithRemote`, `CheckoutBranch`, `GetCurrentBranch`, `GetCommitCount`, `HasUncommittedChanges`, `ListWorktrees`, `SkipIfNoTmux`, `SkipIfNoGolangciLint`)
+  - Removed `FindUnlockedSessions` from `session/discovery.go`
+  - Removed `CreateStackedPR` from `pr/pr.go`
+  - Removed `DefaultConfig` from `plan/plan.go`
+
 ## [0.11.0] - 2026-01-18
 
 This release brings **Major Architecture Refactoring & Platform Guides** - a comprehensive refactoring of the Coordinator into a thin facade with specialized orchestrators, plus detailed platform-specific documentation for all major development environments.

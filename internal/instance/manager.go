@@ -1262,32 +1262,6 @@ func ListClaudioTmuxSessionsWithSocket() ([]TmuxSessionInfo, error) {
 	return allSessions, nil
 }
 
-// ExtractInstanceIDFromSession extracts the instance ID from a claudio tmux session name.
-// Supports both legacy format (claudio-{instanceID}) and new format (claudio-{sessionID}-{instanceID}).
-// For PR workflow sessions (claudio-{id}-pr or claudio-{sessionID}-{id}-pr), removes the -pr suffix first.
-func ExtractInstanceIDFromSession(sessionName string) string {
-	if !strings.HasPrefix(sessionName, "claudio-") {
-		return ""
-	}
-
-	// Remove "claudio-" prefix
-	rest := strings.TrimPrefix(sessionName, "claudio-")
-
-	// Remove -pr suffix if present (PR workflow sessions)
-	rest = strings.TrimSuffix(rest, "-pr")
-
-	// Check if this is new format (claudio-{sessionID}-{instanceID})
-	// by looking for a second hyphen after the session ID
-	parts := strings.SplitN(rest, "-", 2)
-	if len(parts) == 2 && len(parts[0]) == 8 && len(parts[1]) >= 8 {
-		// Likely new format: first part is sessionID (8 chars), second is instanceID
-		return parts[1]
-	}
-
-	// Legacy format or instance ID only
-	return rest
-}
-
 // ExtractSessionAndInstanceID extracts both session ID and instance ID from a tmux session name.
 // Returns (sessionID, instanceID). For legacy format, sessionID will be empty.
 // For PR workflow sessions, removes the -pr suffix first.
@@ -1311,28 +1285,6 @@ func ExtractSessionAndInstanceID(sessionName string) (sessionID, instanceID stri
 
 	// Legacy format: no session ID, just instance ID
 	return "", rest
-}
-
-// ListSessionTmuxSessions returns tmux sessions for a specific Claudio session.
-// Filters by session ID prefix in the tmux session name.
-func ListSessionTmuxSessions(sessionID string) ([]string, error) {
-	allSessions, err := ListClaudioTmuxSessions()
-	if err != nil {
-		return nil, err
-	}
-
-	if sessionID == "" {
-		return allSessions, nil
-	}
-
-	prefix := fmt.Sprintf("claudio-%s-", sessionID)
-	var sessions []string
-	for _, s := range allSessions {
-		if strings.HasPrefix(s, prefix) {
-			sessions = append(sessions, s)
-		}
-	}
-	return sessions, nil
 }
 
 // SetLifecycleManager sets an optional lifecycle manager for coordinated operations.
