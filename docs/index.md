@@ -61,12 +61,14 @@ Comprehensive documentation covering concepts, workflows, and configuration.
 Step-by-step guides for common workflows.
 
 **Workflow Tutorials:**
+
 - [Quick Start](tutorials/quick-start.md) - 5-minute introduction
 - [Feature Development](tutorials/feature-development.md) - Build features in parallel
 - [Code Review Workflow](tutorials/code-review-workflow.md) - Parallel reviews
 - [Large Refactor](tutorials/large-refactor.md) - Coordinate major changes
 
 **Platform-Specific Guides:**
+
 - [Web Development](tutorials/web-development.md) - Node.js, React, Vue, Angular
 - [Go Development](tutorials/go-development.md) - Go modules and workspaces
 - [Python Development](tutorials/python-development.md) - Django, Flask, FastAPI
@@ -75,6 +77,7 @@ Step-by-step guides for common workflows.
 - [Android Development](tutorials/android-development.md) - Gradle and Kotlin
 
 **Architecture Guides:**
+
 - [Full-Stack Development](tutorials/fullstack-development.md) - Docker and microservices
 - [Monorepo Development](tutorials/monorepo-development.md) - Turborepo, Nx, sparse checkout
 - [Data Science & ML](tutorials/datascience-development.md) - Jupyter, experiments, GPUs
