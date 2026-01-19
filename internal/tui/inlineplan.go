@@ -251,6 +251,21 @@ func (m *Model) toggleGroupedView() {
 	}
 }
 
+// toggleGraphView toggles between the dependency graph view and flat view.
+// The graph view displays instances organized by their dependency levels.
+func (m *Model) toggleGraphView() {
+	switch m.sidebarMode {
+	case view.SidebarModeGraph:
+		// Switch back to flat mode
+		m.sidebarMode = view.SidebarModeFlat
+		m.infoMessage = "List view enabled"
+	default:
+		// Switch to graph mode
+		m.sidebarMode = view.SidebarModeGraph
+		m.infoMessage = "Dependency graph view enabled"
+	}
+}
+
 // handleInlinePlanObjectiveSubmit handles submission of the plan objective.
 // Called when user presses enter after typing an objective in inline plan mode.
 // Called from the task input handler in app.go when a session has AwaitingObjective true.

@@ -557,6 +557,11 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Clear search
 		m.SearchHandler().Clear()
 		return m, nil
+
+	case "d":
+		// Toggle dependency graph view
+		m.toggleGraphView()
+		return m, nil
 	}
 
 	return m, nil

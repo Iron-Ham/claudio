@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dependency Graph View** - New sidebar visualization mode that displays instances organized by their dependency levels. Toggle with `d` key to see a DAG (Directed Acyclic Graph) view showing root tasks, intermediate levels, and final tasks. Features include topological sorting, status indicators, and dependency relationship arrows.
+
 ### Changed
 
 - **Dead Code Removal** - Removed unreachable code identified by static analysis to improve codebase maintainability:

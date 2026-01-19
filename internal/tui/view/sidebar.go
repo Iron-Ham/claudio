@@ -18,6 +18,8 @@ const (
 	SidebarModeFlat SidebarMode = iota
 	// SidebarModeGrouped displays instances organized by groups.
 	SidebarModeGrouped
+	// SidebarModeGraph displays instances as a dependency graph (DAG).
+	SidebarModeGraph
 )
 
 // SidebarState provides the state needed for sidebar rendering with group support.
@@ -65,24 +67,41 @@ func NewSidebarView() *SidebarView {
 
 // RenderSidebar renders the sidebar based on the current mode.
 // If the state implements SidebarState and is in grouped mode, renders grouped view.
+// If in graph mode, renders the dependency graph view.
 // Otherwise, falls back to the flat dashboard view.
 func (sv *SidebarView) RenderSidebar(state DashboardState, width, height int) string {
 	// Check if we have a SidebarState with group support
 	ss, ok := state.(SidebarState)
-	if !ok || ss.SidebarMode() != SidebarModeGrouped || ss.GroupViewState() == nil {
+	if !ok {
 		// Fall back to flat view
 		return sv.dashboard.RenderSidebar(state, width, height)
 	}
 
-	// Check if session has groups
-	session := state.Session()
-	if session == nil || !session.HasGroups() {
+	// Handle different sidebar modes
+	switch ss.SidebarMode() {
+	case SidebarModeGraph:
+		// Render dependency graph view
+		session := state.Session()
+		if session != nil && len(session.Instances) > 0 {
+			graphView := NewGraphView(session)
+			return graphView.RenderGraphSidebar(state, width, height)
+		}
+		// No instances, fall back to flat view
+		return sv.dashboard.RenderSidebar(state, width, height)
+
+	case SidebarModeGrouped:
+		// Check if session has groups
+		session := state.Session()
+		if ss.GroupViewState() != nil && session != nil && session.HasGroups() {
+			return sv.RenderGroupedSidebar(ss, width, height)
+		}
 		// No groups defined, fall back to flat view
 		return sv.dashboard.RenderSidebar(state, width, height)
-	}
 
-	// Render grouped view
-	return sv.RenderGroupedSidebar(ss, width, height)
+	default:
+		// SidebarModeFlat or unknown
+		return sv.dashboard.RenderSidebar(state, width, height)
+	}
 }
 
 // RenderGroupedSidebar renders the sidebar with groups.

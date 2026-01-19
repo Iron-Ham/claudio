@@ -1651,3 +1651,64 @@ func TestRenderGroupedInstance_GroupedInstance(t *testing.T) {
 		t.Errorf("grouped last instance should have corner connector, got: %s", result)
 	}
 }
+
+func TestSidebarView_GraphMode(t *testing.T) {
+	// Test that graph mode renders the dependency graph view
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Root Task", Status: orchestrator.StatusCompleted, Dependents: []string{"inst-2"}},
+			{ID: "inst-2", Task: "Child Task", Status: orchestrator.StatusWorking, DependsOn: []string{"inst-1"}},
+		},
+	}
+
+	state := &mockSidebarState{
+		session:        session,
+		activeTab:      0,
+		terminalWidth:  80,
+		terminalHeight: 30,
+		sidebarMode:    SidebarModeGraph,
+		groupViewState: nil,
+	}
+
+	sv := NewSidebarView()
+	result := sv.RenderSidebar(state, 40, 25)
+
+	// Should contain "Dependency Graph" title
+	if !strings.Contains(result, "Dependency Graph") {
+		t.Errorf("graph mode should show 'Dependency Graph' title, got:\n%s", result)
+	}
+
+	// Should contain instance tasks
+	if !strings.Contains(result, "Root Task") {
+		t.Errorf("graph mode should show root task, got:\n%s", result)
+	}
+	if !strings.Contains(result, "Child Task") {
+		t.Errorf("graph mode should show child task, got:\n%s", result)
+	}
+
+	// Should contain level headers
+	if !strings.Contains(result, "Root Tasks") {
+		t.Errorf("graph mode should show 'Root Tasks' header, got:\n%s", result)
+	}
+}
+
+func TestSidebarView_GraphModeEmptySession(t *testing.T) {
+	// Test that graph mode falls back to flat view when no instances
+	state := &mockSidebarState{
+		session:        &orchestrator.Session{Instances: []*orchestrator.Instance{}},
+		activeTab:      0,
+		terminalWidth:  80,
+		terminalHeight: 30,
+		sidebarMode:    SidebarModeGraph,
+		groupViewState: nil,
+	}
+
+	sv := NewSidebarView()
+	result := sv.RenderSidebar(state, 40, 25)
+
+	// Should fall back to flat view (showing "No instances" or similar)
+	// The sidebar should still render without crashing
+	if result == "" {
+		t.Error("graph mode with empty session should still render something")
+	}
+}
