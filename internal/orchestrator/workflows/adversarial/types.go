@@ -56,7 +56,7 @@ type Round struct {
 }
 
 // IncrementFileName is the sentinel file the implementer writes when ready for review
-const IncrementFileName = ".claudio-adversarial-increment.json"
+const IncrementFileName = ".claudio-adversarial-incremental.json"
 
 // IncrementFile represents the implementer's work submission
 type IncrementFile struct {
