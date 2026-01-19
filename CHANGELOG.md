@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Unified Multi-Workflow Header** - The header now displays status indicators for all active workflow types (UltraPlan, TripleShot, Adversarial) simultaneously. Previously, the header used exclusive priority-based selection, which meant users lost visibility into other running workflows when multiple task types were active.
 
+- **Adversarial Increment Filename** - Renamed the implementer's sentinel file from `.claudio-adversarial-increment.json` to `.claudio-adversarial-incremental.json` for consistent naming with agent search patterns.
+
 ## [0.11.0] - 2026-01-18
 
 This release brings **Major Architecture Refactoring & Platform Guides** - a comprehensive refactoring of the Coordinator into a thin facade with specialized orchestrators, plus detailed platform-specific documentation for all major development environments.

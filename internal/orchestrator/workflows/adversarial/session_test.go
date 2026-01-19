@@ -323,7 +323,7 @@ func TestManager_Session(t *testing.T) {
 
 func TestIncrementFilePath(t *testing.T) {
 	path := IncrementFilePath("/tmp/worktree")
-	expected := "/tmp/worktree/.claudio-adversarial-increment.json"
+	expected := "/tmp/worktree/.claudio-adversarial-incremental.json"
 	if path != expected {
 		t.Errorf("IncrementFilePath() = %q, want %q", path, expected)
 	}
