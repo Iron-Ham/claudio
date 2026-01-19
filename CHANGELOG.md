@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **UltraPlan Sidebar Subgroups** - Refactored UltraPlan sidebar rendering to use actual InstanceGroup subgroups instead of custom inline rendering. Planning, execution groups (Group 1, Group 2, etc.), Synthesis, Revision, and Consolidation phases now each have their own subgroup within the main UltraPlan group. This aligns with how tripleshot and adversarial modes render their content and enables standard group navigation and collapse/expand behavior. Added `SubgroupRouter` to automatically route instances to the correct subgroup based on session state.
+
 - **Dead Code Removal** - Removed unreachable code identified by static analysis to improve codebase maintainability:
   - Removed unused `Consolidator` type and all methods from `orchestrator/consolidation.go` (replaced by `group/consolidate/` package)
   - Deleted `orchestrator/consolidation_util.go` entirely (unused `BranchNameGenerator`, `Slugify`, `DeduplicateStrings`)

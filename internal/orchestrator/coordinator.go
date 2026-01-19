@@ -238,14 +238,20 @@ func (c *Coordinator) RunPlanning() error {
 	}
 
 	// Provide callbacks for group management and session state updates
+	// Use SubgroupRouter to route planning instances to the Planning subgroup
 	getGroup := func() any {
 		// Use session.GroupID (set by TUI) for reliable group lookup
+		var parentGroup *InstanceGroup
 		if session.GroupID != "" {
-			if g := c.baseSession.GetGroup(session.GroupID); g != nil {
-				return g
-			}
+			parentGroup = c.baseSession.GetGroup(session.GroupID)
 		}
-		return c.baseSession.GetGroupBySessionType(SessionTypeUltraPlan)
+		if parentGroup == nil {
+			parentGroup = c.baseSession.GetGroupBySessionType(SessionTypeUltraPlan)
+		}
+		if parentGroup == nil {
+			return nil
+		}
+		return NewSubgroupRouter(parentGroup, session)
 	}
 	setCoordinatorID := func(id string) {
 		session.CoordinatorID = id
