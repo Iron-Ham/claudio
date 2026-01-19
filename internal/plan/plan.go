@@ -24,17 +24,6 @@ type Config struct {
 	OutputFormat string // "json", "issues", or "both"
 }
 
-// DefaultConfig returns the default configuration
-func DefaultConfig() Config {
-	return Config{
-		MultiPass:    false,
-		Labels:       nil,
-		DryRun:       false,
-		OutputFile:   "",
-		OutputFormat: "issues",
-	}
-}
-
 // PlanningPrompt is the prompt template for CLI-based planning
 // This is a simplified version of ultraplan's prompt for synchronous execution
 const PlanningPrompt = `You are a senior software architect planning a complex task.

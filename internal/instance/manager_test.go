@@ -29,54 +29,6 @@ func newTestManagerWithConfig(id, workdir, task string, cfg ManagerConfig) *Mana
 	})
 }
 
-func TestExtractInstanceIDFromSession(t *testing.T) {
-	tests := []struct {
-		name        string
-		sessionName string
-		expected    string
-	}{
-		{
-			name:        "valid claudio session",
-			sessionName: "claudio-abc123",
-			expected:    "abc123",
-		},
-		{
-			name:        "valid claudio session with longer ID",
-			sessionName: "claudio-a1b2c3d4",
-			expected:    "a1b2c3d4",
-		},
-		{
-			name:        "non-claudio session",
-			sessionName: "other-session",
-			expected:    "",
-		},
-		{
-			name:        "empty string",
-			sessionName: "",
-			expected:    "",
-		},
-		{
-			name:        "just prefix",
-			sessionName: "claudio-",
-			expected:    "",
-		},
-		{
-			name:        "similar but not claudio prefix",
-			sessionName: "claudio2-abc",
-			expected:    "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ExtractInstanceIDFromSession(tt.sessionName)
-			if result != tt.expected {
-				t.Errorf("ExtractInstanceIDFromSession(%q) = %q, want %q", tt.sessionName, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestNewManagerWithDeps_CustomConfig(t *testing.T) {
 	cfg := ManagerConfig{
 		OutputBufferSize:  1000,

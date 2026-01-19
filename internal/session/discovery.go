@@ -123,23 +123,6 @@ func SessionExists(baseDir, sessionID string) bool {
 	return err == nil
 }
 
-// FindUnlockedSessions returns all sessions that are not currently locked.
-func FindUnlockedSessions(baseDir string) ([]*Info, error) {
-	sessions, err := ListSessions(baseDir)
-	if err != nil {
-		return nil, err
-	}
-
-	var unlocked []*Info
-	for _, s := range sessions {
-		if !s.IsLocked {
-			unlocked = append(unlocked, s)
-		}
-	}
-
-	return unlocked, nil
-}
-
 // CleanupStaleLocks iterates through all sessions and removes stale lock files.
 // Returns the IDs of sessions that had stale locks cleaned.
 func CleanupStaleLocks(baseDir string) ([]string, error) {
