@@ -125,6 +125,10 @@ type InlinePlanSession struct {
 
 	// AwaitingPlanManager indicates we're waiting for the plan manager to complete
 	AwaitingPlanManager bool
+
+	// PlannerSubGroupID is the ID of the sub-group containing planner instances
+	// Set when the plan manager starts and planners are collapsed into a sub-group
+	PlannerSubGroupID string
 }
 
 // InlinePlanState holds the state for inline plan mode.
