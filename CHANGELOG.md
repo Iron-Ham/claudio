@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Consolidation Module Extraction** - Refactored `internal/orchestrator/consolidation.go` into a modular package structure:
+  - Created `internal/orchestrator/consolidation/` package with shared types and interfaces
+  - Extracted `prbuilder/` subpackage for PR content generation (pure data transformation)
+  - Extracted `branch/` subpackage for git branch operations with `NamingStrategy`
+  - Extracted `conflict/` subpackage for merge conflict detection and handling
+  - Extracted `strategy/` subpackage with `Stacked` and `Single` consolidation strategies
+  - Added comprehensive tests with 100% coverage for prbuilder, high coverage elsewhere
+  - Follows Go best practices: interface segregation, dependency injection, adapter pattern
+
 - **UltraPlan Sidebar Subgroups** - Refactored UltraPlan sidebar rendering to use actual InstanceGroup subgroups instead of custom inline rendering. Planning, execution groups (Group 1, Group 2, etc.), Synthesis, Revision, and Consolidation phases now each have their own subgroup within the main UltraPlan group. This aligns with how tripleshot and adversarial modes render their content and enables standard group navigation and collapse/expand behavior. Added `SubgroupRouter` to automatically route instances to the correct subgroup based on session state.
 
 - **Dead Code Removal** - Removed unreachable code identified by static analysis to improve codebase maintainability:
