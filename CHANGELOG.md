@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Documentation Bullet Rendering** - Fixed tutorial section lists in the home page not rendering bullets correctly due to missing blank lines between bold headers and list items.
 
+- **Adversarial Session Restoration** - Fixed incremental file detection failing after session resume. The adversarial coordinator's worktree paths were not being restored when a session was loaded from disk, causing the file detection checks to silently return false. Sessions with active adversarial workflows now properly restore the coordinator's worktree paths from the implementer instance, enabling detection of `.claudio-adversarial-incremental.json` files.
+
 ## [0.11.0] - 2026-01-18
 
 This release brings **Major Architecture Refactoring & Platform Guides** - a comprehensive refactoring of the Coordinator into a thin facade with specialized orchestrators, plus detailed platform-specific documentation for all major development environments.
