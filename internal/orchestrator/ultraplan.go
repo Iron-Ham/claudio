@@ -1082,27 +1082,92 @@ func ParsePlanFromOutput(output string, objective string) (*PlanSpec, error) {
 	return plan, nil
 }
 
-// ParsePlanFromFile reads and parses a plan from a JSON file
+// ParsePlanFromFile reads and parses a plan from a JSON file.
+// It supports two formats:
+//  1. Root-level format: {"summary": "...", "tasks": [...]}
+//  2. Nested format: {"plan": {"summary": "...", "tasks": [...]}}
+//
+// It also handles alternative field names that Claude may generate:
+//   - "depends" as alias for "depends_on"
+//   - "complexity" as alias for "est_complexity"
 func ParsePlanFromFile(filepath string, objective string) (*PlanSpec, error) {
 	data, err := os.ReadFile(filepath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read plan file: %w", err)
 	}
 
-	// Parse the JSON
-	var rawPlan struct {
-		Summary     string        `json:"summary"`
-		Tasks       []PlannedTask `json:"tasks"`
-		Insights    []string      `json:"insights"`
-		Constraints []string      `json:"constraints"`
+	// flexibleTask handles alternative field names that Claude may generate
+	type flexibleTask struct {
+		ID            string   `json:"id"`
+		Title         string   `json:"title"`
+		Description   string   `json:"description"`
+		Files         []string `json:"files,omitempty"`
+		DependsOn     []string `json:"depends_on"`
+		Depends       []string `json:"depends"` // Alternative name
+		Priority      int      `json:"priority"`
+		EstComplexity string   `json:"est_complexity"`
+		Complexity    string   `json:"complexity"`          // Alternative name
+		IssueURL      string   `json:"issue_url,omitempty"` // External issue tracker URL
+		NoCode        bool     `json:"no_code,omitempty"`   // Task doesn't require code changes
 	}
 
+	type planContent struct {
+		Summary     string         `json:"summary"`
+		Tasks       []flexibleTask `json:"tasks"`
+		Insights    []string       `json:"insights"`
+		Constraints []string       `json:"constraints"`
+	}
+
+	// Try parsing as root-level format first
+	var rawPlan planContent
 	if err := json.Unmarshal(data, &rawPlan); err != nil {
 		return nil, fmt.Errorf("failed to parse plan JSON: %w", err)
 	}
 
+	// If no tasks found, try nested "plan" wrapper format
 	if len(rawPlan.Tasks) == 0 {
-		return nil, fmt.Errorf("plan contains no tasks")
+		var wrapped struct {
+			Plan planContent `json:"plan"`
+		}
+		nestedErr := json.Unmarshal(data, &wrapped)
+		if nestedErr == nil && len(wrapped.Plan.Tasks) > 0 {
+			rawPlan = wrapped.Plan
+		} else if nestedErr != nil {
+			// Both formats failed - provide more context about the nested parse failure
+			return nil, fmt.Errorf("failed to parse plan JSON (tried both root-level and nested formats): %w", nestedErr)
+		}
+	}
+
+	if len(rawPlan.Tasks) == 0 {
+		return nil, fmt.Errorf("plan contains no tasks (checked both root-level and nested 'plan' wrapper formats)")
+	}
+
+	// Convert flexible tasks to PlannedTask, handling alternative field names
+	tasks := make([]PlannedTask, len(rawPlan.Tasks))
+	for i, ft := range rawPlan.Tasks {
+		// Use depends_on if set, otherwise fall back to depends
+		dependsOn := ft.DependsOn
+		if len(dependsOn) == 0 && len(ft.Depends) > 0 {
+			dependsOn = ft.Depends
+		}
+
+		// Use est_complexity if set, otherwise fall back to complexity
+		complexity := ft.EstComplexity
+		if complexity == "" && ft.Complexity != "" {
+			complexity = ft.Complexity
+		}
+
+		tasks[i] = PlannedTask{
+			ID:            ft.ID,
+			Title:         ft.Title,
+			Description:   ft.Description,
+			Files:         ft.Files,
+			DependsOn:     dependsOn,
+			Priority:      ft.Priority,
+			EstComplexity: TaskComplexity(complexity),
+			IssueURL:      ft.IssueURL,
+			NoCode:        ft.NoCode,
+		}
 	}
 
 	// Build the PlanSpec
@@ -1110,7 +1175,7 @@ func ParsePlanFromFile(filepath string, objective string) (*PlanSpec, error) {
 		ID:              generateID(),
 		Objective:       objective,
 		Summary:         rawPlan.Summary,
-		Tasks:           rawPlan.Tasks,
+		Tasks:           tasks,
 		Insights:        rawPlan.Insights,
 		Constraints:     rawPlan.Constraints,
 		DependencyGraph: make(map[string][]string),
