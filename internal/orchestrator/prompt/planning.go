@@ -258,4 +258,14 @@ Before the plan file, output your reasoning in this format:
 }
 </plan_decision>
 
-Then write the final plan file.`
+Then write the final plan file.
+
+## Validation
+
+After writing the plan file, **validate it** by running:
+` + "```bash" + `
+claudio validate ` + PlanFileName + `
+` + "```" + `
+
+This ensures your plan has valid JSON syntax, correct structure, and no dependency cycles.
+If validation fails, fix the issues and run validation again until it passes.`

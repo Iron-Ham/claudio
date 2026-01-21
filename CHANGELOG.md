@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Validate Command** - New `claudio validate` command to validate ultraplan JSON files before execution. Checks for valid JSON syntax, required fields, task dependency validity (no cycles, no missing references), file conflicts between parallel tasks, and provides warnings for high complexity tasks. Supports both human-readable and JSON output formats (`--json` flag) for integration with CI/CD pipelines. Planning prompts now instruct Claude to run validation after generating a plan file, ensuring correct JSON structure before execution begins.
+
 ### Changed
 
 - **Adversarial Review Score Threshold** - Updated the reviewer prompt to make the minimum score threshold a mandatory requirement for approval. The prompt now uses emphatic language ("CRITICAL: Approval MUST meet a minimum score of X") to clearly communicate that the score threshold is a hard requirement, not a suggestion.
