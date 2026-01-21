@@ -555,3 +555,378 @@ func TestAttempt_Timestamps(t *testing.T) {
 		t.Error("CompletedAt should be after StartedAt")
 	}
 }
+
+func TestFindCompletionFile_InWorktreeRoot(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create completion file in the worktree root
+	completionPath := filepath.Join(tmpDir, CompletionFileName)
+	if err := os.WriteFile(completionPath, []byte(`{"status":"complete"}`), 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	foundPath, err := FindCompletionFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindCompletionFile() error = %v", err)
+	}
+	if foundPath != completionPath {
+		t.Errorf("FindCompletionFile() = %q, want %q", foundPath, completionPath)
+	}
+}
+
+func TestFindCompletionFile_InSubdirectory(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create a subdirectory (simulating a monorepo with nested project)
+	subDir := filepath.Join(tmpDir, "mail-ios")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	// Create completion file in the subdirectory (not in worktree root)
+	completionPath := filepath.Join(subDir, CompletionFileName)
+	if err := os.WriteFile(completionPath, []byte(`{"status":"complete"}`), 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	foundPath, err := FindCompletionFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindCompletionFile() error = %v", err)
+	}
+	if foundPath != completionPath {
+		t.Errorf("FindCompletionFile() = %q, want %q", foundPath, completionPath)
+	}
+}
+
+func TestFindCompletionFile_NotFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	_, err = FindCompletionFile(tmpDir)
+	if err == nil {
+		t.Error("expected error when completion file doesn't exist")
+	}
+	if !os.IsNotExist(err) {
+		t.Errorf("expected os.ErrNotExist, got %v", err)
+	}
+}
+
+func TestFindCompletionFile_SkipsHiddenDirectories(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create .git directory with a completion file (should be ignored)
+	gitDir := filepath.Join(tmpDir, ".git")
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+	gitCompletionPath := filepath.Join(gitDir, CompletionFileName)
+	if err := os.WriteFile(gitCompletionPath, []byte(`{"status":"complete"}`), 0644); err != nil {
+		t.Fatalf("failed to write completion file in .git: %v", err)
+	}
+
+	// Should not find the file in .git
+	_, err = FindCompletionFile(tmpDir)
+	if err == nil {
+		t.Error("expected error when completion file is only in hidden directory")
+	}
+}
+
+func TestFindCompletionFile_PrefersWorktreeRoot(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create completion file in worktree root
+	rootCompletionPath := filepath.Join(tmpDir, CompletionFileName)
+	if err := os.WriteFile(rootCompletionPath, []byte(`{"status":"complete","summary":"root"}`), 0644); err != nil {
+		t.Fatalf("failed to write root completion file: %v", err)
+	}
+
+	// Also create completion file in subdirectory
+	subDir := filepath.Join(tmpDir, "subproject")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+	subCompletionPath := filepath.Join(subDir, CompletionFileName)
+	if err := os.WriteFile(subCompletionPath, []byte(`{"status":"complete","summary":"sub"}`), 0644); err != nil {
+		t.Fatalf("failed to write sub completion file: %v", err)
+	}
+
+	// Should find the root completion file (preferred)
+	foundPath, err := FindCompletionFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindCompletionFile() error = %v", err)
+	}
+	if foundPath != rootCompletionPath {
+		t.Errorf("FindCompletionFile() = %q, want %q (should prefer root)", foundPath, rootCompletionPath)
+	}
+}
+
+func TestCompletionFileExists(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Initially should not exist
+	if CompletionFileExists(tmpDir) {
+		t.Error("CompletionFileExists() = true, want false (file doesn't exist)")
+	}
+
+	// Create completion file
+	completionPath := filepath.Join(tmpDir, CompletionFileName)
+	if err := os.WriteFile(completionPath, []byte(`{"status":"complete"}`), 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	// Now should exist
+	if !CompletionFileExists(tmpDir) {
+		t.Error("CompletionFileExists() = false, want true")
+	}
+}
+
+func TestParseCompletionFile_FromSubdirectory(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create subdirectory
+	subDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	// Write completion file in subdirectory
+	completion := CompletionFile{
+		AttemptIndex:  0,
+		Status:        "complete",
+		Summary:       "Found in subdirectory",
+		FilesModified: []string{"file.go"},
+		Approach:      "Test approach",
+	}
+	completionPath := filepath.Join(subDir, CompletionFileName)
+	data, err := json.MarshalIndent(completion, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to marshal completion: %v", err)
+	}
+	if err := os.WriteFile(completionPath, data, 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	// Parse from worktree root - should find it in subdirectory
+	parsed, err := ParseCompletionFile(tmpDir)
+	if err != nil {
+		t.Fatalf("ParseCompletionFile() error = %v", err)
+	}
+	if parsed.Summary != completion.Summary {
+		t.Errorf("Summary = %q, want %q", parsed.Summary, completion.Summary)
+	}
+}
+
+func TestFindEvaluationFile_NotFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	_, err = FindEvaluationFile(tmpDir)
+	if err == nil {
+		t.Error("expected error when evaluation file doesn't exist")
+	}
+	if !os.IsNotExist(err) {
+		t.Errorf("expected os.ErrNotExist, got %v", err)
+	}
+}
+
+func TestFindEvaluationFile_SkipsHiddenDirectories(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create .git directory with an evaluation file (should be ignored)
+	gitDir := filepath.Join(tmpDir, ".git")
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+	gitEvalPath := filepath.Join(gitDir, EvaluationFileName)
+	if err := os.WriteFile(gitEvalPath, []byte(`{"winner_index":0}`), 0644); err != nil {
+		t.Fatalf("failed to write evaluation file in .git: %v", err)
+	}
+
+	// Should not find the file in .git
+	_, err = FindEvaluationFile(tmpDir)
+	if err == nil {
+		t.Error("expected error when evaluation file is only in hidden directory")
+	}
+}
+
+func TestFindEvaluationFile_PrefersWorktreeRoot(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create evaluation file in worktree root
+	rootEvalPath := filepath.Join(tmpDir, EvaluationFileName)
+	if err := os.WriteFile(rootEvalPath, []byte(`{"winner_index":0,"reasoning":"root"}`), 0644); err != nil {
+		t.Fatalf("failed to write root evaluation file: %v", err)
+	}
+
+	// Also create evaluation file in subdirectory
+	subDir := filepath.Join(tmpDir, "subproject")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+	subEvalPath := filepath.Join(subDir, EvaluationFileName)
+	if err := os.WriteFile(subEvalPath, []byte(`{"winner_index":1,"reasoning":"sub"}`), 0644); err != nil {
+		t.Fatalf("failed to write sub evaluation file: %v", err)
+	}
+
+	// Should find the root evaluation file (preferred)
+	foundPath, err := FindEvaluationFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindEvaluationFile() error = %v", err)
+	}
+	if foundPath != rootEvalPath {
+		t.Errorf("FindEvaluationFile() = %q, want %q (should prefer root)", foundPath, rootEvalPath)
+	}
+}
+
+func TestFindEvaluationFile_InWorktreeRoot(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create evaluation file in the worktree root
+	evalPath := filepath.Join(tmpDir, EvaluationFileName)
+	if err := os.WriteFile(evalPath, []byte(`{"winner_index":0}`), 0644); err != nil {
+		t.Fatalf("failed to write evaluation file: %v", err)
+	}
+
+	foundPath, err := FindEvaluationFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindEvaluationFile() error = %v", err)
+	}
+	if foundPath != evalPath {
+		t.Errorf("FindEvaluationFile() = %q, want %q", foundPath, evalPath)
+	}
+}
+
+func TestFindEvaluationFile_InSubdirectory(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create subdirectory
+	subDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	// Create evaluation file in subdirectory
+	evalPath := filepath.Join(subDir, EvaluationFileName)
+	if err := os.WriteFile(evalPath, []byte(`{"winner_index":1}`), 0644); err != nil {
+		t.Fatalf("failed to write evaluation file: %v", err)
+	}
+
+	foundPath, err := FindEvaluationFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindEvaluationFile() error = %v", err)
+	}
+	if foundPath != evalPath {
+		t.Errorf("FindEvaluationFile() = %q, want %q", foundPath, evalPath)
+	}
+}
+
+func TestEvaluationFileExists(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Initially should not exist
+	if EvaluationFileExists(tmpDir) {
+		t.Error("EvaluationFileExists() = true, want false")
+	}
+
+	// Create evaluation file
+	evalPath := filepath.Join(tmpDir, EvaluationFileName)
+	if err := os.WriteFile(evalPath, []byte(`{"winner_index":0}`), 0644); err != nil {
+		t.Fatalf("failed to write evaluation file: %v", err)
+	}
+
+	// Now should exist
+	if !EvaluationFileExists(tmpDir) {
+		t.Error("EvaluationFileExists() = false, want true")
+	}
+}
+
+func TestParseEvaluationFile_FromSubdirectory(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create subdirectory
+	subDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	// Write evaluation file in subdirectory
+	evaluation := Evaluation{
+		WinnerIndex:   2,
+		MergeStrategy: MergeStrategySelect,
+		Reasoning:     "Found in subdirectory",
+	}
+	evalPath := filepath.Join(subDir, EvaluationFileName)
+	data, err := json.MarshalIndent(evaluation, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to marshal evaluation: %v", err)
+	}
+	if err := os.WriteFile(evalPath, data, 0644); err != nil {
+		t.Fatalf("failed to write evaluation file: %v", err)
+	}
+
+	// Parse from worktree root - should find it in subdirectory
+	parsed, err := ParseEvaluationFile(tmpDir)
+	if err != nil {
+		t.Fatalf("ParseEvaluationFile() error = %v", err)
+	}
+	if parsed.WinnerIndex != evaluation.WinnerIndex {
+		t.Errorf("WinnerIndex = %d, want %d", parsed.WinnerIndex, evaluation.WinnerIndex)
+	}
+	if parsed.Reasoning != evaluation.Reasoning {
+		t.Errorf("Reasoning = %q, want %q", parsed.Reasoning, evaluation.Reasoning)
+	}
+}
