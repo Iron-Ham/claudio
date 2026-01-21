@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"context"
 	"os/exec"
 	"slices"
 	"strings"
@@ -11,10 +12,11 @@ import (
 
 // mockCommandRunner records all tmux commands for verification in tests.
 type mockCommandRunner struct {
-	commands     []mockCommand // recorded commands
-	runErr       error         // error to return from Run
-	outputResult []byte        // result to return from Output
-	outputErr    error         // error to return from Output
+	commands              []mockCommand // recorded commands
+	runErr                error         // error to return from Run
+	outputResult          []byte        // result to return from Output
+	outputErr             error         // error to return from Output
+	blockUntilContextDone bool          // if true, OutputWithContext blocks until context is done
 }
 
 // mockCommand represents a recorded tmux command.
@@ -37,6 +39,23 @@ func (m *mockCommandRunner) Output(socketName string, args ...string) ([]byte, e
 		socketName: socketName,
 		args:       args,
 	})
+	return m.outputResult, m.outputErr
+}
+
+func (m *mockCommandRunner) OutputWithContext(ctx context.Context, socketName string, args ...string) ([]byte, error) {
+	m.commands = append(m.commands, mockCommand{
+		socketName: socketName,
+		args:       args,
+	})
+
+	// If blockUntilContextDone is set, wait for the context to be done.
+	// This simulates a tmux command that hangs until the timeout expires,
+	// which is the real-world scenario where ctx.Err() returns DeadlineExceeded.
+	if m.blockUntilContextDone {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
 	return m.outputResult, m.outputErr
 }
 
@@ -374,4 +393,214 @@ func TestNewProcessWithRunner(t *testing.T) {
 	if got := p.SessionName(); got != expectedSession {
 		t.Errorf("SessionName() = %q, want %q", got, expectedSession)
 	}
+}
+
+func TestProcess_CaptureOutput_UsesContextForTimeout(t *testing.T) {
+	mock := &mockCommandRunner{
+		outputResult: []byte("terminal output"),
+	}
+	p := NewProcessWithRunner("test", "socket", "/tmp", 100, 50, mock)
+
+	// Mark as running so capture is attempted
+	p.mu.Lock()
+	p.running = true
+	p.mu.Unlock()
+
+	output, err := p.CaptureOutput()
+	if err != nil {
+		t.Fatalf("CaptureOutput() returned unexpected error: %v", err)
+	}
+
+	if output != "terminal output" {
+		t.Errorf("CaptureOutput() = %q, want %q", output, "terminal output")
+	}
+
+	// Verify capture-pane command was called
+	found := false
+	for _, cmd := range mock.commands {
+		if slices.Contains(cmd.args, "capture-pane") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected capture-pane command to be called")
+	}
+}
+
+func TestProcess_CaptureOutput_ReturnsErrCaptureTimeout(t *testing.T) {
+	// To properly test ErrCaptureTimeout, the mock must block until the context
+	// times out. This causes ctx.Err() to return context.DeadlineExceeded, which
+	// triggers the ErrCaptureTimeout code path.
+	mock := &mockCommandRunner{
+		blockUntilContextDone: true,
+	}
+	p := NewProcessWithRunner("test", "socket", "/tmp", 100, 50, mock)
+
+	// Mark as running so capture is attempted
+	p.mu.Lock()
+	p.running = true
+	p.mu.Unlock()
+
+	// CaptureOutput has a 500ms timeout (captureTimeout constant).
+	// The mock will block until that timeout expires, then return ctx.Err().
+	_, err := p.CaptureOutput()
+	if err != ErrCaptureTimeout {
+		t.Errorf("CaptureOutput() error = %v, want ErrCaptureTimeout", err)
+	}
+}
+
+func TestProcess_CaptureOutput_NotRunning(t *testing.T) {
+	mock := &mockCommandRunner{}
+	p := NewProcessWithRunner("test", "socket", "/tmp", 100, 50, mock)
+
+	// Process not running - should return ErrNotRunning
+	output, err := p.CaptureOutput()
+	if err != ErrNotRunning {
+		t.Errorf("CaptureOutput() error = %v, want ErrNotRunning", err)
+	}
+	if output != "" {
+		t.Errorf("CaptureOutput() = %q, want empty string", output)
+	}
+}
+
+func TestProcess_CaptureOutputWithHistory_UsesContextForTimeout(t *testing.T) {
+	mock := &mockCommandRunner{
+		outputResult: []byte("terminal output with history"),
+	}
+	p := NewProcessWithRunner("test", "socket", "/tmp", 100, 50, mock)
+
+	// Mark as running so capture is attempted
+	p.mu.Lock()
+	p.running = true
+	p.mu.Unlock()
+
+	output, err := p.CaptureOutputWithHistory(100)
+	if err != nil {
+		t.Fatalf("CaptureOutputWithHistory() returned unexpected error: %v", err)
+	}
+
+	if output != "terminal output with history" {
+		t.Errorf("CaptureOutputWithHistory() = %q, want %q", output, "terminal output with history")
+	}
+
+	// Verify capture-pane command was called with history flag
+	found := false
+	for _, cmd := range mock.commands {
+		if slices.Contains(cmd.args, "capture-pane") && slices.Contains(cmd.args, "-S") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected capture-pane command with -S flag to be called")
+	}
+}
+
+func TestProcess_CaptureOutput_ReturnsErrCaptureKilled(t *testing.T) {
+	// Create a real exec.ExitError with exit code -1 by running a process
+	// that gets killed by a signal. This simulates what happens when tmux
+	// capture-pane is killed due to context cancellation.
+	killedErr := createSignalKilledError(t)
+	if killedErr == nil {
+		t.Skip("Could not create signal-killed error on this platform")
+	}
+
+	mock := &mockCommandRunner{
+		outputErr: killedErr,
+	}
+	p := NewProcessWithRunner("test", "socket", "/tmp", 100, 50, mock)
+
+	// Mark as running so capture is attempted
+	p.mu.Lock()
+	p.running = true
+	p.mu.Unlock()
+
+	_, err := p.CaptureOutput()
+	if err != ErrCaptureKilled {
+		t.Errorf("CaptureOutput() error = %v, want ErrCaptureKilled", err)
+	}
+}
+
+func TestProcess_CaptureOutputWithHistory_ReturnsErrCaptureTimeout(t *testing.T) {
+	// Test that CaptureOutputWithHistory also returns ErrCaptureTimeout when
+	// the context times out.
+	mock := &mockCommandRunner{
+		blockUntilContextDone: true,
+	}
+	p := NewProcessWithRunner("test", "socket", "/tmp", 100, 50, mock)
+
+	// Mark as running so capture is attempted
+	p.mu.Lock()
+	p.running = true
+	p.mu.Unlock()
+
+	_, err := p.CaptureOutputWithHistory(100)
+	if err != ErrCaptureTimeout {
+		t.Errorf("CaptureOutputWithHistory() error = %v, want ErrCaptureTimeout", err)
+	}
+}
+
+func TestProcess_CaptureOutputWithHistory_ReturnsErrCaptureKilled(t *testing.T) {
+	killedErr := createSignalKilledError(t)
+	if killedErr == nil {
+		t.Skip("Could not create signal-killed error on this platform")
+	}
+
+	mock := &mockCommandRunner{
+		outputErr: killedErr,
+	}
+	p := NewProcessWithRunner("test", "socket", "/tmp", 100, 50, mock)
+
+	// Mark as running so capture is attempted
+	p.mu.Lock()
+	p.running = true
+	p.mu.Unlock()
+
+	_, err := p.CaptureOutputWithHistory(100)
+	if err != ErrCaptureKilled {
+		t.Errorf("CaptureOutputWithHistory() error = %v, want ErrCaptureKilled", err)
+	}
+}
+
+func TestProcess_CaptureOutputWithHistory_NotRunning(t *testing.T) {
+	mock := &mockCommandRunner{}
+	p := NewProcessWithRunner("test", "socket", "/tmp", 100, 50, mock)
+
+	// Process not running - should return ErrNotRunning
+	output, err := p.CaptureOutputWithHistory(100)
+	if err != ErrNotRunning {
+		t.Errorf("CaptureOutputWithHistory() error = %v, want ErrNotRunning", err)
+	}
+	if output != "" {
+		t.Errorf("CaptureOutputWithHistory() = %q, want empty string", output)
+	}
+}
+
+// createSignalKilledError creates an exec.ExitError with exit code -1 by running
+// a process that kills itself with a signal. This is used to test the ErrCaptureKilled
+// error path which handles processes killed by context cancellation.
+func createSignalKilledError(t *testing.T) *exec.ExitError {
+	t.Helper()
+
+	// Run a shell command that immediately kills itself with SIGKILL.
+	// This produces an ExitError with ExitCode() == -1.
+	cmd := exec.Command("/bin/sh", "-c", "kill -9 $$")
+	err := cmd.Run()
+	if err == nil {
+		return nil
+	}
+
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		return nil
+	}
+
+	// Verify it has the expected exit code
+	if exitErr.ExitCode() != -1 {
+		t.Logf("Warning: expected exit code -1, got %d", exitErr.ExitCode())
+		return nil
+	}
+
+	return exitErr
 }

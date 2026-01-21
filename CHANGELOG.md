@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Plan File Path in Subdirectories** - Fixed planning coordinators writing `.claudio-plan.json` to incorrect locations when Claudio is started from a repository subdirectory. The planning prompts now explicitly instruct Claude to write the plan file at the repository root, preventing path resolution issues during multi-pass planning.
 
+- **Terminal Pane Freeze** - Fixed an issue where the TUI could freeze when the terminal pane was visible and tmux became unresponsive. The `capture-pane` command now has a 500ms timeout, preventing the entire event loop from blocking. When the capture times out, the previous output is preserved so the display doesn't go blank.
+
 ## [0.12.0] - 2026-01-21
 
 This release brings **Dependency Graph View & Orchestration Guides** - a new DAG-based sidebar visualization for understanding task dependencies at a glance, plus comprehensive documentation for all orchestration modes.

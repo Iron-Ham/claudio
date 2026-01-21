@@ -2,6 +2,7 @@
 package terminal
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -22,6 +23,8 @@ type CommandRunner interface {
 	Run(socketName string, args ...string) error
 	// Output executes a tmux command and returns its output.
 	Output(socketName string, args ...string) ([]byte, error)
+	// OutputWithContext executes a tmux command with context support for cancellation/timeout.
+	OutputWithContext(ctx context.Context, socketName string, args ...string) ([]byte, error)
 	// CommandWithEnv returns an exec.Cmd for commands that need environment customization.
 	CommandWithEnv(socketName string, args ...string) *exec.Cmd
 }
@@ -37,15 +40,26 @@ func (r *defaultCommandRunner) Output(socketName string, args ...string) ([]byte
 	return tmux.CommandWithSocket(socketName, args...).Output()
 }
 
+func (r *defaultCommandRunner) OutputWithContext(ctx context.Context, socketName string, args ...string) ([]byte, error) {
+	return tmux.CommandContextWithSocket(ctx, socketName, args...).Output()
+}
+
 func (r *defaultCommandRunner) CommandWithEnv(socketName string, args ...string) *exec.Cmd {
 	return tmux.CommandWithSocket(socketName, args...)
 }
 
 // Common errors for terminal process management.
 var (
-	ErrAlreadyRunning = errors.New("terminal process is already running")
-	ErrNotRunning     = errors.New("terminal process is not running")
+	ErrAlreadyRunning   = errors.New("terminal process is already running")
+	ErrNotRunning       = errors.New("terminal process is not running")
+	ErrCaptureTimeout   = errors.New("terminal output capture timed out")
+	ErrCaptureKilled    = errors.New("terminal output capture was killed")
+	ErrCaptureCancelled = errors.New("terminal output capture was cancelled")
 )
+
+// captureTimeout is the maximum time to wait for a tmux capture-pane command.
+// This prevents the TUI from freezing if tmux becomes unresponsive.
+const captureTimeout = 500 * time.Millisecond
 
 // Process manages a persistent shell session in a tmux session for the terminal pane.
 // Unlike the instance TmuxProcess, this runs a plain shell (no Claude command).
@@ -323,6 +337,7 @@ func (p *Process) SendPaste(text string) error {
 }
 
 // CaptureOutput captures the current visible content of the terminal pane.
+// Uses a timeout to prevent blocking the TUI if tmux is unresponsive.
 func (p *Process) CaptureOutput() (string, error) {
 	p.mu.RLock()
 	running := p.running
@@ -333,10 +348,31 @@ func (p *Process) CaptureOutput() (string, error) {
 		return "", ErrNotRunning
 	}
 
+	// Create a context with timeout to prevent blocking the TUI event loop
+	// if tmux becomes unresponsive (e.g., due to socket issues, session not found)
+	ctx, cancel := context.WithTimeout(context.Background(), captureTimeout)
+	defer cancel()
+
 	// Capture visible pane content with escape sequences preserved (-e flag)
 	// The -e flag preserves ANSI color codes and other escape sequences
-	output, err := p.cmdRunner.Output(p.socketName, "capture-pane", "-t", sessionName, "-p", "-e")
+	output, err := p.cmdRunner.OutputWithContext(ctx, p.socketName, "capture-pane", "-t", sessionName, "-p", "-e")
 	if err != nil {
+		// Distinguish between timeout and other errors for better diagnostics
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", ErrCaptureTimeout
+		}
+		// Coverage: ErrCaptureCancelled is defensive code. Currently unreachable because
+		// the context is created from context.Background() (which cannot be cancelled)
+		// and context.WithTimeout only triggers context.DeadlineExceeded on expiry.
+		// Kept for future-proofing if this function is refactored to accept an external context.
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return "", ErrCaptureCancelled
+		}
+		// Check if the process was killed (happens when context times out)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == -1 {
+			return "", ErrCaptureKilled
+		}
 		return "", fmt.Errorf("failed to capture terminal output: %w", err)
 	}
 
@@ -344,6 +380,7 @@ func (p *Process) CaptureOutput() (string, error) {
 }
 
 // CaptureOutputWithHistory captures terminal content including scrollback history.
+// Uses a timeout to prevent blocking the TUI if tmux is unresponsive.
 func (p *Process) CaptureOutputWithHistory(lines int) (string, error) {
 	p.mu.RLock()
 	running := p.running
@@ -354,10 +391,29 @@ func (p *Process) CaptureOutputWithHistory(lines int) (string, error) {
 		return "", ErrNotRunning
 	}
 
+	// Create a context with timeout to prevent blocking the TUI event loop
+	ctx, cancel := context.WithTimeout(context.Background(), captureTimeout)
+	defer cancel()
+
 	// Capture with history (-S for start line, negative means history)
 	// The -e flag preserves ANSI color codes and other escape sequences
-	output, err := p.cmdRunner.Output(p.socketName, "capture-pane", "-t", sessionName, "-p", "-e", "-S", fmt.Sprintf("-%d", lines))
+	output, err := p.cmdRunner.OutputWithContext(ctx, p.socketName, "capture-pane", "-t", sessionName, "-p", "-e", "-S", fmt.Sprintf("-%d", lines))
 	if err != nil {
+		// Distinguish between timeout and other errors for better diagnostics
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", ErrCaptureTimeout
+		}
+		// Coverage: ErrCaptureCancelled is defensive code. Currently unreachable because
+		// the context is created from context.Background() (which cannot be cancelled)
+		// and context.WithTimeout only triggers context.DeadlineExceeded on expiry.
+		// Kept for future-proofing if this function is refactored to accept an external context.
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return "", ErrCaptureCancelled
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == -1 {
+			return "", ErrCaptureKilled
+		}
 		return "", fmt.Errorf("failed to capture terminal output with history: %w", err)
 	}
 
