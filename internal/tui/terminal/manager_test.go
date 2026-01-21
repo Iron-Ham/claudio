@@ -716,6 +716,34 @@ func TestOutput(t *testing.T) {
 	}
 }
 
+func TestUpdateOutput_PreservesPreviousOnError(t *testing.T) {
+	m := NewManager()
+
+	// Simulate having previous output
+	m.output = "previous output"
+
+	// Create a mock process that returns a timeout error when capture is attempted
+	mock := &mockCommandRunner{
+		blockUntilContextDone: true, // This causes OutputWithContext to block until timeout
+	}
+	p := NewProcessWithRunner("test", "socket", "/tmp", 100, 50, mock)
+
+	// Mark as running so UpdateOutput actually attempts capture
+	p.mu.Lock()
+	p.running = true
+	p.mu.Unlock()
+
+	m.process = p
+
+	// UpdateOutput should preserve previous output when capture fails (times out)
+	m.UpdateOutput()
+
+	// Previous output should be preserved
+	if m.Output() != "previous output" {
+		t.Errorf("Output() = %q, want %q (should preserve previous on error)", m.Output(), "previous output")
+	}
+}
+
 func TestResize_NoProcess(t *testing.T) {
 	m := NewManager()
 

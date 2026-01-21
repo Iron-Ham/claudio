@@ -2,6 +2,8 @@
 package terminal
 
 import (
+	"errors"
+	"log"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -398,6 +400,7 @@ func (m *Manager) SetDirMode(mode DirMode) {
 }
 
 // UpdateOutput captures current terminal output.
+// If the capture times out (e.g., tmux is unresponsive), the previous output is preserved.
 func (m *Manager) UpdateOutput() {
 	if m.process == nil || !m.process.IsRunning() {
 		return
@@ -405,9 +408,21 @@ func (m *Manager) UpdateOutput() {
 
 	output, err := m.process.CaptureOutput()
 	if err != nil {
-		if m.logger != nil {
-			m.logger.Warn("failed to capture terminal output", "error", err)
+		// Log at debug level for expected interruptions (timeout, cancelled, killed)
+		// since they don't require user attention. Other errors are logged as warnings.
+		if errors.Is(err, ErrCaptureTimeout) || errors.Is(err, ErrCaptureCancelled) || errors.Is(err, ErrCaptureKilled) {
+			if m.logger != nil {
+				m.logger.Debug("terminal output capture interrupted", "error", err)
+			}
+		} else {
+			// Unexpected errors should always be logged, even without a configured logger
+			if m.logger != nil {
+				m.logger.Warn("failed to capture terminal output", "error", err)
+			} else {
+				log.Printf("WARNING: failed to capture terminal output: %v", err)
+			}
 		}
+		// On error, preserve the previous output so the display doesn't go blank
 		return
 	}
 	m.output = output
