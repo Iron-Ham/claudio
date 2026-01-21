@@ -72,6 +72,12 @@ func NotifyUser() tea.Cmd {
 // This prevents the UI from blocking while git creates the worktree.
 func AddTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string) tea.Cmd {
 	return func() tea.Msg {
+		if o == nil {
+			return TaskAddedMsg{Instance: nil, Err: fmt.Errorf("orchestrator is nil")}
+		}
+		if session == nil {
+			return TaskAddedMsg{Instance: nil, Err: fmt.Errorf("session is nil")}
+		}
 		inst, err := o.AddInstance(session, task)
 		return TaskAddedMsg{Instance: inst, Err: err}
 	}
@@ -81,6 +87,12 @@ func AddTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, t
 // The baseBranch parameter specifies which branch the new worktree should be created from.
 func AddTaskFromBranchAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string, baseBranch string) tea.Cmd {
 	return func() tea.Msg {
+		if o == nil {
+			return TaskAddedMsg{Instance: nil, Err: fmt.Errorf("orchestrator is nil")}
+		}
+		if session == nil {
+			return TaskAddedMsg{Instance: nil, Err: fmt.Errorf("session is nil")}
+		}
 		inst, err := o.AddInstanceFromBranch(session, task, baseBranch)
 		return TaskAddedMsg{Instance: inst, Err: err}
 	}
@@ -90,6 +102,12 @@ func AddTaskFromBranchAsync(o *orchestrator.Orchestrator, session *orchestrator.
 // The new task will depend on the specified instance and auto-start when it completes.
 func AddDependentTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string, dependsOn string) tea.Cmd {
 	return func() tea.Msg {
+		if o == nil {
+			return DependentTaskAddedMsg{Instance: nil, DependsOn: dependsOn, Err: fmt.Errorf("orchestrator is nil")}
+		}
+		if session == nil {
+			return DependentTaskAddedMsg{Instance: nil, DependsOn: dependsOn, Err: fmt.Errorf("session is nil")}
+		}
 		inst, err := o.AddInstanceWithDependencies(session, task, []string{dependsOn}, true)
 		return DependentTaskAddedMsg{Instance: inst, DependsOn: dependsOn, Err: err}
 	}

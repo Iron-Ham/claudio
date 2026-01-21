@@ -98,31 +98,84 @@ func TestNotifyUser(t *testing.T) {
 }
 
 func TestAddTaskAsync(t *testing.T) {
-	// Test with nil orchestrator and session - should not panic
-	cmd := AddTaskAsync(nil, nil, "test task")
+	t.Run("returns non-nil command", func(t *testing.T) {
+		cmd := AddTaskAsync(nil, nil, "test task")
+		if cmd == nil {
+			t.Fatal("AddTaskAsync() returned nil command")
+		}
+	})
 
-	if cmd == nil {
-		t.Fatal("AddTaskAsync() returned nil command")
-	}
+	t.Run("returns error when orchestrator is nil", func(t *testing.T) {
+		cmd := AddTaskAsync(nil, nil, "test task")
+		msg := cmd()
 
-	// Note: We can't fully test this without a real orchestrator,
-	// but we verify the command is constructed
+		taskMsg, ok := msg.(TaskAddedMsg)
+		if !ok {
+			t.Fatalf("AddTaskAsync()() returned %T, want TaskAddedMsg", msg)
+		}
+
+		if taskMsg.Err == nil {
+			t.Error("expected error when orchestrator is nil")
+		}
+		if taskMsg.Instance != nil {
+			t.Error("expected nil instance on error")
+		}
+	})
 }
 
 func TestAddTaskFromBranchAsync(t *testing.T) {
-	cmd := AddTaskFromBranchAsync(nil, nil, "test task", "main")
+	t.Run("returns non-nil command", func(t *testing.T) {
+		cmd := AddTaskFromBranchAsync(nil, nil, "test task", "main")
+		if cmd == nil {
+			t.Fatal("AddTaskFromBranchAsync() returned nil command")
+		}
+	})
 
-	if cmd == nil {
-		t.Fatal("AddTaskFromBranchAsync() returned nil command")
-	}
+	t.Run("returns error when orchestrator is nil", func(t *testing.T) {
+		cmd := AddTaskFromBranchAsync(nil, nil, "test task", "main")
+		msg := cmd()
+
+		taskMsg, ok := msg.(TaskAddedMsg)
+		if !ok {
+			t.Fatalf("AddTaskFromBranchAsync()() returned %T, want TaskAddedMsg", msg)
+		}
+
+		if taskMsg.Err == nil {
+			t.Error("expected error when orchestrator is nil")
+		}
+		if taskMsg.Instance != nil {
+			t.Error("expected nil instance on error")
+		}
+	})
 }
 
 func TestAddDependentTaskAsync(t *testing.T) {
-	cmd := AddDependentTaskAsync(nil, nil, "test task", "parent-id")
+	t.Run("returns non-nil command", func(t *testing.T) {
+		cmd := AddDependentTaskAsync(nil, nil, "test task", "parent-id")
+		if cmd == nil {
+			t.Fatal("AddDependentTaskAsync() returned nil command")
+		}
+	})
 
-	if cmd == nil {
-		t.Fatal("AddDependentTaskAsync() returned nil command")
-	}
+	t.Run("returns error when orchestrator is nil", func(t *testing.T) {
+		cmd := AddDependentTaskAsync(nil, nil, "test task", "parent-id")
+		msg := cmd()
+
+		depMsg, ok := msg.(DependentTaskAddedMsg)
+		if !ok {
+			t.Fatalf("AddDependentTaskAsync()() returned %T, want DependentTaskAddedMsg", msg)
+		}
+
+		if depMsg.Err == nil {
+			t.Error("expected error when orchestrator is nil")
+		}
+		if depMsg.Instance != nil {
+			t.Error("expected nil instance on error")
+		}
+		if depMsg.DependsOn != "parent-id" {
+			t.Errorf("DependsOn = %q, want %q", depMsg.DependsOn, "parent-id")
+		}
+	})
 }
 
 func TestCheckTripleShotCompletionAsync(t *testing.T) {
