@@ -878,35 +878,37 @@ func (m Model) findInstanceIndexByID(id string) int {
 
 // ensureActiveVisible adjusts sidebarScrollOffset to keep activeTab visible
 func (m *Model) ensureActiveVisible() {
-	// Calculate visible slots (same calculation as in renderSidebar)
+	// Calculate available lines (not slots - actual lines!)
 	// Reserve: 1 for title, 1 for blank line, 1 for add hint, 2 for scroll indicators, plus border padding
 	reservedLines := 6
 	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
-	availableSlots := dims.MainAreaHeight - reservedLines
-	if availableSlots < 3 {
-		availableSlots = 3
+	availableLines := max(dims.MainAreaHeight-reservedLines, 3)
+
+	// Estimate lines per item based on sidebar mode
+	// Grouped view: each instance takes ~3 lines (name + status + newline)
+	// Flat view: each instance takes 1-2 lines (expandable names may wrap)
+	// Use a conservative estimate to ensure active item stays visible
+	linesPerItem := 1
+	if m.sidebarMode == view.SidebarModeGrouped {
+		linesPerItem = 3 // Group headers: 1-2, Instances: 2-3
 	}
+
+	// Calculate how many items can fit
+	visibleItems := max(availableLines/linesPerItem, 1)
 
 	// Adjust scroll offset to keep active instance visible
 	if m.activeTab < m.sidebarScrollOffset {
 		// Active is above visible area, scroll up
 		m.sidebarScrollOffset = m.activeTab
-	} else if m.activeTab >= m.sidebarScrollOffset+availableSlots {
+	} else if m.activeTab >= m.sidebarScrollOffset+visibleItems {
 		// Active is below visible area, scroll down
-		m.sidebarScrollOffset = m.activeTab - availableSlots + 1
+		m.sidebarScrollOffset = m.activeTab - visibleItems + 1
 	}
 
 	// Ensure scroll offset is within valid bounds
-	if m.sidebarScrollOffset < 0 {
-		m.sidebarScrollOffset = 0
-	}
-	maxOffset := m.instanceCount() - availableSlots
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
-	if m.sidebarScrollOffset > maxOffset {
-		m.sidebarScrollOffset = maxOffset
-	}
+	m.sidebarScrollOffset = max(m.sidebarScrollOffset, 0)
+	maxOffset := max(m.instanceCount()-visibleItems, 0)
+	m.sidebarScrollOffset = min(m.sidebarScrollOffset, maxOffset)
 }
 
 // Output scroll helper methods

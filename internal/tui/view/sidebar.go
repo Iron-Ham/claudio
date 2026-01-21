@@ -120,13 +120,13 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 	conflicts := state.Conflicts()
 	conflictingInstances := sv.buildConflictMap(conflicts)
 
-	// Calculate available slots for content
+	// Calculate available lines for content (not slots - actual lines!)
 	// Reserve: 1 for title, 1 for blank line, 1 for hint, 2 for scroll indicators, plus padding
 	reservedLines := 6
 	if isAddingTask {
-		reservedLines++
+		reservedLines += 2 // "New Task" entry takes 2 lines
 	}
-	availableSlots := max(height-reservedLines, 5)
+	availableLines := max(height-reservedLines, 5)
 
 	// Get flattened items for display
 	items := FlattenGroupsForDisplay(session, groupState)
@@ -138,50 +138,69 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 		// Calculate scroll offset for grouped view
 		scrollOffset := state.SidebarScrollOffset()
 		hasMoreAbove := scrollOffset > 0
-		hasMoreBelow := scrollOffset+availableSlots < len(items)
 
-		// Show scroll up indicator
+		// Show scroll up indicator (counts as 1 line)
 		if hasMoreAbove {
 			scrollUp := styles.Muted.Render(fmt.Sprintf("\u25b2 %d more above", scrollOffset))
 			b.WriteString(scrollUp)
 			b.WriteString("\n")
+			availableLines-- // Account for scroll indicator line
 		}
 
-		// Calculate visible range
-		startIdx := scrollOffset
-		endIdx := min(scrollOffset+availableSlots, len(items))
+		// Reserve space for scroll down indicator (1 line)
+		availableLines--
 
-		// Render visible items
+		// Track actual lines used and where we stop rendering
+		linesUsed := 0
+		lastRenderedIdx := scrollOffset - 1 // Will be updated as we render
+
+		// Render visible items, tracking actual line usage
 		// ActiveTab returns the index in session.Instances, so compare with AbsoluteIdx
 		// When adding a task, no instance should be highlighted (use -1 to match nothing)
 		activeInstanceIdx := -1
 		if !isAddingTask {
 			activeInstanceIdx = state.ActiveTab()
 		}
-		for i := startIdx; i < endIdx; i++ {
+
+		for i := scrollOffset; i < len(items); i++ {
 			item := items[i]
+
+			// Calculate how many lines this item will take
+			var itemLines int
+			var renderedContent string
+
 			switch v := item.(type) {
 			case GroupHeaderItem:
-				// Render group header
 				indent := strings.Repeat("  ", v.Depth)
 				header := RenderGroupHeader(v.Group, v.Progress, v.Collapsed, v.IsSelected, width-len(indent))
-				b.WriteString(indent)
-				b.WriteString(header)
-				b.WriteString("\n")
+				renderedContent = indent + header
+				// Count lines: header can be multi-line due to word wrapping
+				itemLines = strings.Count(renderedContent, "\n") + 1 // +1 for the line itself
 
 			case GroupedInstance:
-				// Render instance - use AbsoluteIdx to match against activeInstanceIdx
 				isActive := v.AbsoluteIdx == activeInstanceIdx
 				hasConflict := conflictingInstances[v.Instance.ID]
-				line := RenderGroupedInstance(v, isActive, hasConflict, width)
-				b.WriteString(line)
-				b.WriteString("\n")
+				renderedContent = RenderGroupedInstance(v, isActive, hasConflict, width)
+				// RenderGroupedInstance returns 2 lines (name + status with internal \n)
+				itemLines = strings.Count(renderedContent, "\n") + 1
 			}
+
+			// Check if adding this item would exceed available lines
+			if linesUsed+itemLines > availableLines {
+				break
+			}
+
+			// Render the item
+			b.WriteString(renderedContent)
+			b.WriteString("\n")
+			linesUsed += itemLines
+			lastRenderedIdx = i
 		}
 
-		// Show scroll down indicator
+		// Show scroll down indicator if there are more items
+		hasMoreBelow := lastRenderedIdx < len(items)-1
 		if hasMoreBelow {
-			remaining := len(items) - endIdx
+			remaining := len(items) - lastRenderedIdx - 1
 			scrollDown := styles.Muted.Render(fmt.Sprintf("\u25bc %d more below", remaining))
 			b.WriteString(scrollDown)
 			b.WriteString("\n")

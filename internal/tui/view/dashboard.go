@@ -71,47 +71,65 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 		b.WriteString("\n")
 		b.WriteString(styles.Muted.Render("Press [:a] to add"))
 	} else {
-		// Calculate available slots for instances
+		// Calculate available lines for content (not slots - actual lines!)
 		// Reserve: 1 for title, 1 for blank line, 1 for add hint, 2 for scroll indicators, plus border padding
 		reservedLines := 6
 		if isAddingTask {
-			reservedLines++
+			reservedLines += 2 // "New Task" entry takes 2 lines
 		}
-		availableSlots := max(height-reservedLines, 3) // Minimum to show at least a few instances
+		availableLines := max(height-reservedLines, 3) // Minimum to show at least a few lines
 
 		scrollOffset := state.SidebarScrollOffset()
 		hasMoreAbove := scrollOffset > 0
-		hasMoreBelow := scrollOffset+availableSlots < instanceCount
 
-		// Show scroll up indicator if there are instances above
+		// Show scroll up indicator if there are instances above (counts as 1 line)
 		if hasMoreAbove {
 			scrollUp := styles.Muted.Render(fmt.Sprintf("▲ %d more above", scrollOffset))
 			b.WriteString(scrollUp)
 			b.WriteString("\n")
+			availableLines-- // Account for scroll indicator line
 		}
+
+		// Reserve space for scroll down indicator (1 line)
+		availableLines--
 
 		// Build a set of instance IDs that have conflicts
 		conflictingInstances := dv.buildConflictMap(state.Conflicts())
 
-		// Calculate the visible range
-		startIdx := scrollOffset
-		endIdx := min(scrollOffset+availableSlots, instanceCount)
+		// Track actual lines used and where we stop rendering
+		linesUsed := 0
+		lastRenderedIdx := scrollOffset - 1 // Will be updated as we render
 
-		// Render visible instances
+		// Render visible instances, tracking actual line usage
 		activeTab := -1 // No instance highlighted when adding
 		if !isAddingTask {
 			activeTab = state.ActiveTab()
 		}
 		intelligentNaming := state.IntelligentNamingEnabled()
-		for i := startIdx; i < endIdx; i++ {
+
+		for i := scrollOffset; i < instanceCount; i++ {
 			inst := session.Instances[i]
-			b.WriteString(dv.renderSidebarInstance(i, inst, conflictingInstances, activeTab, width, intelligentNaming))
+			renderedContent := dv.renderSidebarInstance(i, inst, conflictingInstances, activeTab, width, intelligentNaming)
+
+			// Calculate how many lines this item will take
+			itemLines := strings.Count(renderedContent, "\n") + 1
+
+			// Check if adding this item would exceed available lines
+			if linesUsed+itemLines > availableLines {
+				break
+			}
+
+			// Render the item
+			b.WriteString(renderedContent)
 			b.WriteString("\n")
+			linesUsed += itemLines
+			lastRenderedIdx = i
 		}
 
-		// Show scroll down indicator if there are instances below
+		// Show scroll down indicator if there are more instances
+		hasMoreBelow := lastRenderedIdx < instanceCount-1
 		if hasMoreBelow {
-			remaining := instanceCount - endIdx
+			remaining := instanceCount - lastRenderedIdx - 1
 			scrollDown := styles.Muted.Render(fmt.Sprintf("▼ %d more below", remaining))
 			b.WriteString(scrollDown)
 			b.WriteString("\n")

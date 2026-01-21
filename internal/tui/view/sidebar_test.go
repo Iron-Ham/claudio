@@ -1712,3 +1712,378 @@ func TestSidebarView_GraphModeEmptySession(t *testing.T) {
 		t.Error("graph mode with empty session should still render something")
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Overflow handling tests - regression tests for UI duplication bug
+// These tests verify that the sidebar correctly handles overflow scenarios
+// where there are more items than can fit in the available height.
+// -----------------------------------------------------------------------------
+
+func TestSidebarView_GroupedModeOverflowHandling(t *testing.T) {
+	// Create a session with many instances spread across multiple groups
+	// to test overflow handling with constrained height
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Task Alpha", Status: orchestrator.StatusCompleted},
+			{ID: "inst-2", Task: "Task Beta", Status: orchestrator.StatusCompleted},
+			{ID: "inst-3", Task: "Task Gamma", Status: orchestrator.StatusWorking},
+			{ID: "inst-4", Task: "Task Delta", Status: orchestrator.StatusPending},
+			{ID: "inst-5", Task: "Task Epsilon", Status: orchestrator.StatusPending},
+			{ID: "inst-6", Task: "Task Zeta", Status: orchestrator.StatusPending},
+			{ID: "inst-7", Task: "Task Eta", Status: orchestrator.StatusPending},
+			{ID: "inst-8", Task: "Task Theta", Status: orchestrator.StatusPending},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Name:      "Group 1: Setup",
+				Phase:     orchestrator.GroupPhaseCompleted,
+				Instances: []string{"inst-1", "inst-2"},
+			},
+			{
+				ID:        "group-2",
+				Name:      "Group 2: Core",
+				Phase:     orchestrator.GroupPhaseExecuting,
+				Instances: []string{"inst-3", "inst-4"},
+			},
+			{
+				ID:        "group-3",
+				Name:      "Group 3: Extensions",
+				Phase:     orchestrator.GroupPhasePending,
+				Instances: []string{"inst-5", "inst-6"},
+			},
+			{
+				ID:        "group-4",
+				Name:      "Group 4: Polish",
+				Phase:     orchestrator.GroupPhasePending,
+				Instances: []string{"inst-7", "inst-8"},
+			},
+		},
+	}
+
+	state := &mockSidebarState{
+		session:        session,
+		activeTab:      0,
+		terminalWidth:  80,
+		terminalHeight: 15, // Very small height to force overflow
+		sidebarMode:    SidebarModeGrouped,
+		groupViewState: NewGroupViewState(),
+	}
+
+	sv := NewSidebarView()
+	// Height of 12 with 4 groups + 8 instances = 12 items (headers + instances)
+	// Each instance takes 2-3 lines, headers take 1 line
+	// This should trigger overflow handling
+	result := sv.RenderSidebar(state, 40, 12)
+
+	// Test 1: Verify "more below" indicator is present when there's overflow
+	if !strings.Contains(result, "more below") {
+		t.Errorf("should show 'more below' indicator when content overflows, got:\n%s", result)
+	}
+
+	// Test 2: Verify the count in "more below" is non-zero
+	// The format is "▼ N more below" where N > 0
+	if strings.Contains(result, "0 more below") {
+		t.Errorf("'more below' count should be non-zero when there's overflow, got:\n%s", result)
+	}
+
+	// Test 3: Verify no content duplication
+	// Count occurrences of each unique task name - should appear at most once
+	taskCounts := make(map[string]int)
+	tasks := []string{"Task Alpha", "Task Beta", "Task Gamma", "Task Delta",
+		"Task Epsilon", "Task Zeta", "Task Eta", "Task Theta"}
+	for _, task := range tasks {
+		taskCounts[task] = strings.Count(result, task)
+		if taskCounts[task] > 1 {
+			t.Errorf("task %q appears %d times (duplication detected), got:\n%s",
+				task, taskCounts[task], result)
+		}
+	}
+
+	// Test 4: Verify line count doesn't exceed the available height
+	// Count actual newlines in the rendered output
+	// The sidebar box wrapping adds some overhead, but the content inside
+	// should respect the height constraint
+	lines := strings.Split(result, "\n")
+	// Allow for box borders and styling overhead (approximately 4 lines)
+	maxExpectedLines := 12 + 4
+	if len(lines) > maxExpectedLines {
+		t.Errorf("rendered output has %d lines, expected at most %d, got:\n%s",
+			len(lines), maxExpectedLines, result)
+	}
+}
+
+func TestSidebarView_GroupedModeOverflowCountAccuracy(t *testing.T) {
+	// Test that the "more below" count is accurate
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Task 1", Status: orchestrator.StatusCompleted},
+			{ID: "inst-2", Task: "Task 2", Status: orchestrator.StatusWorking},
+			{ID: "inst-3", Task: "Task 3", Status: orchestrator.StatusPending},
+			{ID: "inst-4", Task: "Task 4", Status: orchestrator.StatusPending},
+			{ID: "inst-5", Task: "Task 5", Status: orchestrator.StatusPending},
+			{ID: "inst-6", Task: "Task 6", Status: orchestrator.StatusPending},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Name:      "Group A",
+				Phase:     orchestrator.GroupPhaseCompleted,
+				Instances: []string{"inst-1", "inst-2", "inst-3"},
+			},
+			{
+				ID:        "group-2",
+				Name:      "Group B",
+				Phase:     orchestrator.GroupPhasePending,
+				Instances: []string{"inst-4", "inst-5", "inst-6"},
+			},
+		},
+	}
+
+	state := &mockSidebarState{
+		session:        session,
+		activeTab:      0,
+		terminalWidth:  80,
+		terminalHeight: 15,
+		sidebarMode:    SidebarModeGrouped,
+		groupViewState: NewGroupViewState(),
+	}
+
+	sv := NewSidebarView()
+	// Very small height to only show a few items
+	result := sv.RenderSidebar(state, 40, 10)
+
+	// Count how many items are visible in the output
+	items := FlattenGroupsForDisplay(session, state.groupViewState)
+	visibleCount := 0
+	for _, item := range items {
+		switch v := item.(type) {
+		case GroupHeaderItem:
+			if strings.Contains(result, v.Group.Name) {
+				visibleCount++
+			}
+		case GroupedInstance:
+			if strings.Contains(result, v.Instance.Task) {
+				visibleCount++
+			}
+		}
+	}
+
+	// If there's a "more below" indicator, verify the math
+	// Total items = visible + hidden
+	totalItems := len(items)
+	if strings.Contains(result, "more below") {
+		hiddenCount := totalItems - visibleCount
+		if hiddenCount <= 0 {
+			t.Errorf("'more below' shown but no items are hidden: total=%d, visible=%d",
+				totalItems, visibleCount)
+		}
+	}
+}
+
+func TestSidebarView_GroupedModeNoDuplicationOnSmallHeight(t *testing.T) {
+	// Specific regression test for UI duplication bug
+	// With extremely small height, rendering should stop cleanly without duplicating content
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Unique Task AAA", Status: orchestrator.StatusWorking},
+			{ID: "inst-2", Task: "Unique Task BBB", Status: orchestrator.StatusPending},
+			{ID: "inst-3", Task: "Unique Task CCC", Status: orchestrator.StatusPending},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Name:      "Test Group",
+				Phase:     orchestrator.GroupPhaseExecuting,
+				Instances: []string{"inst-1", "inst-2", "inst-3"},
+			},
+		},
+	}
+
+	state := &mockSidebarState{
+		session:        session,
+		activeTab:      0,
+		terminalWidth:  80,
+		terminalHeight: 10,
+		sidebarMode:    SidebarModeGrouped,
+		groupViewState: NewGroupViewState(),
+	}
+
+	sv := NewSidebarView()
+	// Extremely small height - only room for maybe 1-2 items
+	result := sv.RenderSidebar(state, 35, 8)
+
+	// Verify no duplication of unique identifiers
+	uniqueStrings := []string{"Unique Task AAA", "Unique Task BBB", "Unique Task CCC", "Test Group"}
+	for _, s := range uniqueStrings {
+		count := strings.Count(result, s)
+		if count > 1 {
+			t.Errorf("'%s' appears %d times (should be at most 1), indicating UI duplication:\n%s",
+				s, count, result)
+		}
+	}
+}
+
+func TestSidebarView_GroupedModeWithScrollOffsetNoDuplication(t *testing.T) {
+	// Test that scrolling with offset doesn't cause duplication
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "First Task", Status: orchestrator.StatusCompleted},
+			{ID: "inst-2", Task: "Second Task", Status: orchestrator.StatusCompleted},
+			{ID: "inst-3", Task: "Third Task", Status: orchestrator.StatusWorking},
+			{ID: "inst-4", Task: "Fourth Task", Status: orchestrator.StatusPending},
+			{ID: "inst-5", Task: "Fifth Task", Status: orchestrator.StatusPending},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-1",
+				Name:      "Group Alpha",
+				Phase:     orchestrator.GroupPhaseCompleted,
+				Instances: []string{"inst-1", "inst-2"},
+			},
+			{
+				ID:        "group-2",
+				Name:      "Group Beta",
+				Phase:     orchestrator.GroupPhaseExecuting,
+				Instances: []string{"inst-3", "inst-4", "inst-5"},
+			},
+		},
+	}
+
+	state := &mockSidebarState{
+		session:             session,
+		activeTab:           3, // inst-4 is active
+		sidebarScrollOffset: 2, // Scroll past first 2 items
+		terminalWidth:       80,
+		terminalHeight:      15,
+		sidebarMode:         SidebarModeGrouped,
+		groupViewState:      NewGroupViewState(),
+	}
+
+	sv := NewSidebarView()
+	result := sv.RenderSidebar(state, 40, 12)
+
+	// Test 1: When scrolled, should show "more above" indicator
+	if !strings.Contains(result, "more above") {
+		t.Errorf("should show 'more above' indicator when scrolled down, got:\n%s", result)
+	}
+
+	// Test 2: Verify no duplication even with scroll offset
+	allTasks := []string{"First Task", "Second Task", "Third Task", "Fourth Task", "Fifth Task"}
+	for _, task := range allTasks {
+		count := strings.Count(result, task)
+		if count > 1 {
+			t.Errorf("task '%s' appears %d times with scroll offset (duplication), got:\n%s",
+				task, count, result)
+		}
+	}
+
+	// Test 3: Verify group names aren't duplicated
+	groupNames := []string{"Group Alpha", "Group Beta"}
+	for _, name := range groupNames {
+		count := strings.Count(result, name)
+		if count > 1 {
+			t.Errorf("group '%s' appears %d times (duplication), got:\n%s",
+				name, count, result)
+		}
+	}
+}
+
+func TestSidebarView_FlatModeOverflowHandling(t *testing.T) {
+	// Test overflow handling in flat mode (DashboardView)
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Flat Task One", Status: orchestrator.StatusCompleted},
+			{ID: "inst-2", Task: "Flat Task Two", Status: orchestrator.StatusCompleted},
+			{ID: "inst-3", Task: "Flat Task Three", Status: orchestrator.StatusWorking},
+			{ID: "inst-4", Task: "Flat Task Four", Status: orchestrator.StatusPending},
+			{ID: "inst-5", Task: "Flat Task Five", Status: orchestrator.StatusPending},
+			{ID: "inst-6", Task: "Flat Task Six", Status: orchestrator.StatusPending},
+		},
+	}
+
+	state := &mockSidebarState{
+		session:        session,
+		activeTab:      0,
+		terminalWidth:  80,
+		terminalHeight: 12,
+		sidebarMode:    SidebarModeFlat,
+		groupViewState: nil,
+	}
+
+	sv := NewSidebarView()
+	// Small height that can't fit all 6 instances
+	result := sv.RenderSidebar(state, 35, 10)
+
+	// Test 1: Should show "more below" when there's overflow
+	if !strings.Contains(result, "more below") {
+		t.Errorf("flat mode should show 'more below' on overflow, got:\n%s", result)
+	}
+
+	// Test 2: Verify no task duplication
+	tasks := []string{"Flat Task One", "Flat Task Two", "Flat Task Three",
+		"Flat Task Four", "Flat Task Five", "Flat Task Six"}
+	for _, task := range tasks {
+		count := strings.Count(result, task)
+		if count > 1 {
+			t.Errorf("task '%s' appears %d times in flat mode (duplication), got:\n%s",
+				task, count, result)
+		}
+	}
+}
+
+func TestSidebarView_GroupedModeCollapsedGroupOverflow(t *testing.T) {
+	// Test that collapsing groups properly affects overflow calculation
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Task A1", Status: orchestrator.StatusCompleted},
+			{ID: "inst-2", Task: "Task A2", Status: orchestrator.StatusCompleted},
+			{ID: "inst-3", Task: "Task B1", Status: orchestrator.StatusWorking},
+			{ID: "inst-4", Task: "Task B2", Status: orchestrator.StatusPending},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:        "group-a",
+				Name:      "Group A",
+				Phase:     orchestrator.GroupPhaseCompleted,
+				Instances: []string{"inst-1", "inst-2"},
+			},
+			{
+				ID:        "group-b",
+				Name:      "Group B",
+				Phase:     orchestrator.GroupPhaseExecuting,
+				Instances: []string{"inst-3", "inst-4"},
+			},
+		},
+	}
+
+	groupState := NewGroupViewState()
+	groupState.CollapsedGroups["group-a"] = true // Collapse first group
+
+	state := &mockSidebarState{
+		session:        session,
+		activeTab:      0,
+		terminalWidth:  80,
+		terminalHeight: 15,
+		sidebarMode:    SidebarModeGrouped,
+		groupViewState: groupState,
+	}
+
+	sv := NewSidebarView()
+	result := sv.RenderSidebar(state, 40, 12)
+
+	// With group-a collapsed, its instances (Task A1, Task A2) should not appear
+	if strings.Contains(result, "Task A1") || strings.Contains(result, "Task A2") {
+		t.Errorf("collapsed group instances should not appear, got:\n%s", result)
+	}
+
+	// Group header should still appear
+	if !strings.Contains(result, "Group A") {
+		t.Errorf("collapsed group header should still appear, got:\n%s", result)
+	}
+
+	// Group B instances should be visible
+	if !strings.Contains(result, "Task B1") {
+		t.Errorf("expanded group instances should appear, got:\n%s", result)
+	}
+}
