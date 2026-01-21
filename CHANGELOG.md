@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Ultraplan File Loading** - Fixed an issue where loading an ultraplan from a file (`:ultraplan --plan <file>`) would silently drop the `issue_url` and `no_code` fields during plan parsing. These optional fields are now correctly preserved, ensuring that external issue tracker links work properly and no-code tasks (verification/testing tasks) are handled correctly.
+
 - **Sidebar UI Duplication** - Fixed a bug where sidebar content could be duplicated or overflow when adding/removing tasks or groups. The issue was caused by a mismatch between item count and actual rendered line count in the sidebar. The sidebar now properly tracks actual line usage, preventing content from overflowing its container and causing visual artifacts.
 
 - **Plan File Path in Subdirectories** - Fixed planning coordinators writing `.claudio-plan.json` to incorrect locations when Claudio is started from a repository subdirectory. The planning prompts now explicitly instruct Claude to write the plan file at the repository root, preventing path resolution issues during multi-pass planning.
