@@ -19,6 +19,12 @@ type GroupViewState struct {
 	// when the user navigates away from them (unlike manually expanded groups).
 	AutoExpandedGroups map[string]bool
 
+	// LockedCollapsed tracks groups that are programmatically collapsed and should
+	// NOT be auto-expanded during navigation. This is used for groups like the
+	// "Planning Instances" sub-group in multiplan mode, where the instances should
+	// remain hidden and not be navigable via tab/shift-tab.
+	LockedCollapsed map[string]bool
+
 	// SelectedGroupID is the ID of the currently focused group (for J/K navigation).
 	// Empty string means no group is selected (instance navigation mode).
 	SelectedGroupID string
@@ -33,17 +39,21 @@ func NewGroupViewState() *GroupViewState {
 	return &GroupViewState{
 		CollapsedGroups:     make(map[string]bool),
 		AutoExpandedGroups:  make(map[string]bool),
+		LockedCollapsed:     make(map[string]bool),
 		SelectedGroupID:     "",
 		SelectedInstanceIdx: 0,
 	}
 }
 
 // ToggleCollapse toggles the collapsed state of a group.
-// When manually toggled, the group is no longer considered auto-expanded.
+// When manually toggled, the group is no longer considered auto-expanded,
+// and any locked-collapsed state is also cleared (user action takes precedence).
 func (s *GroupViewState) ToggleCollapse(groupID string) {
 	s.CollapsedGroups[groupID] = !s.CollapsedGroups[groupID]
 	// Clear auto-expanded state since this is a manual toggle
 	delete(s.AutoExpandedGroups, groupID)
+	// Clear locked state - manual user action unlocks the group
+	delete(s.LockedCollapsed, groupID)
 }
 
 // IsCollapsed returns whether a group is collapsed.
@@ -53,10 +63,15 @@ func (s *GroupViewState) IsCollapsed(groupID string) bool {
 
 // AutoExpand expands a collapsed group and marks it as auto-expanded.
 // Auto-expanded groups will automatically collapse when navigating away.
-// Returns true if the group was expanded (was collapsed), false if already expanded.
+// Returns true if the group was expanded (was collapsed), false if already expanded
+// or if the group is locked collapsed (cannot be auto-expanded).
 func (s *GroupViewState) AutoExpand(groupID string) bool {
 	if !s.CollapsedGroups[groupID] {
 		return false // Already expanded
+	}
+	// Don't auto-expand locked collapsed groups (like multiplan planner sub-groups)
+	if s.IsLockedCollapsed(groupID) {
+		return false
 	}
 	s.CollapsedGroups[groupID] = false
 	s.AutoExpandedGroups[groupID] = true
@@ -78,6 +93,32 @@ func (s *GroupViewState) AutoCollapse(groupID string) bool {
 // IsAutoExpanded returns whether a group was auto-expanded.
 func (s *GroupViewState) IsAutoExpanded(groupID string) bool {
 	return s.AutoExpandedGroups[groupID]
+}
+
+// SetLockedCollapsed marks a group as locked collapsed. Locked collapsed groups
+// cannot be auto-expanded during navigation - they remain collapsed until
+// explicitly unlocked. This is used for groups like multiplan "Planning Instances"
+// sub-groups where the instances should not be navigable via tab/shift-tab.
+func (s *GroupViewState) SetLockedCollapsed(groupID string, locked bool) {
+	if s.LockedCollapsed == nil {
+		s.LockedCollapsed = make(map[string]bool)
+	}
+	if locked {
+		s.LockedCollapsed[groupID] = true
+		// Ensure the group is also collapsed
+		s.CollapsedGroups[groupID] = true
+	} else {
+		delete(s.LockedCollapsed, groupID)
+	}
+}
+
+// IsLockedCollapsed returns whether a group is locked collapsed.
+// Locked collapsed groups cannot be auto-expanded during navigation.
+func (s *GroupViewState) IsLockedCollapsed(groupID string) bool {
+	if s.LockedCollapsed == nil {
+		return false
+	}
+	return s.LockedCollapsed[groupID]
 }
 
 // GroupProgress holds the completion progress for a group.

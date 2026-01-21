@@ -727,11 +727,13 @@ func (m *Model) collapsePlannersToSubGroup(session *InlinePlanSession) {
 	// Store the sub-group ID in the session for reference
 	session.PlannerSubGroupID = subGroupID
 
-	// Auto-collapse the sub-group in the UI
+	// Auto-collapse and lock the sub-group in the UI.
+	// Using SetLockedCollapsed ensures the group cannot be auto-expanded during
+	// tab/shift-tab navigation - the planner instances should remain hidden.
 	if m.groupViewState == nil {
 		m.groupViewState = view.NewGroupViewState()
 	}
-	m.groupViewState.CollapsedGroups[subGroupID] = true
+	m.groupViewState.SetLockedCollapsed(subGroupID, true)
 
 	if m.logger != nil {
 		m.logger.Info("collapsed planner instances to sub-group",
