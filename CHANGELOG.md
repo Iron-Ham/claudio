@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-01-21
+
 ### Fixed
 
 - **TUI Freeze on `:D` and `:d` Commands** - Fixed the TUI freezing when using the `:D` (remove instance) and `:d` (show diff) commands. These commands now execute git operations asynchronously, keeping the UI responsive while the worktree removal or diff computation runs in the background.
@@ -732,6 +734,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.12.3]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.3
 [0.12.2]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.2
 [0.12.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.0
 [0.11.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.11.0
