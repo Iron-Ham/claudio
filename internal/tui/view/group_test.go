@@ -409,6 +409,165 @@ func TestGroupViewState_ToggleCollapse_ClearsAutoExpanded(t *testing.T) {
 	}
 }
 
+func TestGroupViewState_ToggleCollapse_ClearsLockedCollapsed(t *testing.T) {
+	state := NewGroupViewState()
+	state.SetLockedCollapsed("group-1", true)
+
+	// Verify initial locked state
+	if !state.IsLockedCollapsed("group-1") {
+		t.Error("expected group to be locked collapsed initially")
+	}
+	if !state.IsCollapsed("group-1") {
+		t.Error("expected group to be collapsed initially")
+	}
+
+	// Manual toggle should expand AND clear locked state (user action takes precedence)
+	state.ToggleCollapse("group-1")
+
+	if state.IsCollapsed("group-1") {
+		t.Error("expected group to be expanded after manual toggle")
+	}
+	if state.IsLockedCollapsed("group-1") {
+		t.Error("expected locked state to be cleared after manual toggle")
+	}
+
+	// After unlocking via toggle, AutoExpand should work normally
+	state.CollapsedGroups["group-1"] = true // Collapse it again
+	result := state.AutoExpand("group-1")
+	if !result {
+		t.Error("expected AutoExpand to succeed after group was unlocked via manual toggle")
+	}
+}
+
+func TestGroupViewState_LockedCollapsed(t *testing.T) {
+	tests := []struct {
+		name              string
+		setup             func(*GroupViewState)
+		groupID           string
+		expectedLocked    bool
+		expectedCollapsed bool
+	}{
+		{
+			name: "SetLockedCollapsed sets both locked and collapsed state",
+			setup: func(s *GroupViewState) {
+				s.SetLockedCollapsed("group-1", true)
+			},
+			groupID:           "group-1",
+			expectedLocked:    true,
+			expectedCollapsed: true,
+		},
+		{
+			name: "SetLockedCollapsed(false) unlocks but does not expand",
+			setup: func(s *GroupViewState) {
+				s.SetLockedCollapsed("group-1", true)
+				s.SetLockedCollapsed("group-1", false)
+			},
+			groupID:           "group-1",
+			expectedLocked:    false,
+			expectedCollapsed: true, // Still collapsed, just not locked
+		},
+		{
+			name: "IsLockedCollapsed returns false for never-locked group",
+			setup: func(s *GroupViewState) {
+				// No setup, group was never locked
+			},
+			groupID:           "group-1",
+			expectedLocked:    false,
+			expectedCollapsed: false,
+		},
+		{
+			name: "locked collapsed with nil map is handled",
+			setup: func(s *GroupViewState) {
+				s.LockedCollapsed = nil
+				s.SetLockedCollapsed("group-1", true)
+			},
+			groupID:           "group-1",
+			expectedLocked:    true,
+			expectedCollapsed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := NewGroupViewState()
+			tt.setup(state)
+
+			if state.IsLockedCollapsed(tt.groupID) != tt.expectedLocked {
+				t.Errorf("IsLockedCollapsed() = %v, want %v", state.IsLockedCollapsed(tt.groupID), tt.expectedLocked)
+			}
+			if state.IsCollapsed(tt.groupID) != tt.expectedCollapsed {
+				t.Errorf("IsCollapsed() = %v, want %v", state.IsCollapsed(tt.groupID), tt.expectedCollapsed)
+			}
+		})
+	}
+}
+
+func TestGroupViewState_AutoExpand_RespectsLockedCollapsed(t *testing.T) {
+	tests := []struct {
+		name            string
+		initialState    func() *GroupViewState
+		groupID         string
+		expectedReturn  bool
+		expectCollapsed bool
+		expectAutoExp   bool
+	}{
+		{
+			name: "does not auto-expand locked collapsed group",
+			initialState: func() *GroupViewState {
+				s := NewGroupViewState()
+				s.SetLockedCollapsed("group-1", true)
+				return s
+			},
+			groupID:         "group-1",
+			expectedReturn:  false, // Should NOT expand
+			expectCollapsed: true,  // Should remain collapsed
+			expectAutoExp:   false, // Should not be marked as auto-expanded
+		},
+		{
+			name: "auto-expands regular collapsed group",
+			initialState: func() *GroupViewState {
+				s := NewGroupViewState()
+				s.CollapsedGroups["group-1"] = true // Collapsed but not locked
+				return s
+			},
+			groupID:         "group-1",
+			expectedReturn:  true,  // Should expand
+			expectCollapsed: false, // Should be expanded
+			expectAutoExp:   true,  // Should be marked as auto-expanded
+		},
+		{
+			name: "auto-expand after unlock works",
+			initialState: func() *GroupViewState {
+				s := NewGroupViewState()
+				s.SetLockedCollapsed("group-1", true)
+				s.SetLockedCollapsed("group-1", false) // Unlock but leave collapsed
+				return s
+			},
+			groupID:         "group-1",
+			expectedReturn:  true,  // Should now expand
+			expectCollapsed: false, // Should be expanded
+			expectAutoExp:   true,  // Should be marked as auto-expanded
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := tt.initialState()
+			result := state.AutoExpand(tt.groupID)
+
+			if result != tt.expectedReturn {
+				t.Errorf("AutoExpand() = %v, want %v", result, tt.expectedReturn)
+			}
+			if state.IsCollapsed(tt.groupID) != tt.expectCollapsed {
+				t.Errorf("IsCollapsed() = %v, want %v", state.IsCollapsed(tt.groupID), tt.expectCollapsed)
+			}
+			if state.IsAutoExpanded(tt.groupID) != tt.expectAutoExp {
+				t.Errorf("IsAutoExpanded() = %v, want %v", state.IsAutoExpanded(tt.groupID), tt.expectAutoExp)
+			}
+		})
+	}
+}
+
 func TestFindGroupContainingInstance(t *testing.T) {
 	tests := []struct {
 		name       string
