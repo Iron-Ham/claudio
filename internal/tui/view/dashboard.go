@@ -158,6 +158,13 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 	return styles.Sidebar.Width(width - 2).Render(b.String())
 }
 
+// renderStatusLine renders a status indicator line with proper indentation.
+// The indent parameter specifies how many spaces to add before the status dot.
+func renderStatusLine(status orchestrator.InstanceStatus, statusColor lipgloss.Color, indent int) string {
+	return strings.Repeat(" ", indent) +
+		lipgloss.NewStyle().Foreground(statusColor).Render("●"+instanceStatusAbbrev(status))
+}
+
 // renderSidebarInstance renders a single instance item in the sidebar.
 // When intelligentNaming is enabled and this instance is selected (i == activeTab),
 // the instance name is expanded to show more characters (up to ExpandedNameMaxLen),
@@ -191,7 +198,6 @@ func (dv *DashboardView) renderSidebarInstance(
 	}
 
 	// Choose style - only differentiate active (selected) vs inactive
-	// Status is already shown via the colored status indicator
 	var itemStyle lipgloss.Style
 	if i == activeTab {
 		itemStyle = styles.SidebarItemActive
@@ -200,29 +206,36 @@ func (dv *DashboardView) renderSidebarInstance(
 	}
 
 	// Calculate maximum task length based on context
-	// When intelligent naming is on and this is the selected instance, expand the name
 	effectiveName := inst.EffectiveName()
 	normalMaxLen := max(width-8-prefixLen, 10) // Account for number, dot, prefix, padding
 	isSelected := i == activeTab
 
+	// Calculate status line indent: "● " (2 chars) + number + " " + prefix
+	statusIndent := 2 + len(fmt.Sprintf("%d ", i+1)) + prefixLen
+
 	if intelligentNaming && isSelected && len([]rune(effectiveName)) > normalMaxLen {
 		// Expand the selected instance name, potentially wrapping to multiple lines
-		return dv.renderExpandedInstance(i, effectiveName, prefix, prefixLen, dot, itemStyle, width)
+		return dv.renderExpandedInstance(i, inst, effectiveName, prefix, dot, statusColor, itemStyle, statusIndent, width)
 	}
 
-	// Standard single-line rendering
+	// Standard rendering with status on second line
 	label := fmt.Sprintf("%d %s%s", i+1, prefix, truncate(effectiveName, normalMaxLen))
-	return dot + " " + itemStyle.Render(label)
+	firstLine := dot + " " + itemStyle.Render(label)
+	statusLine := renderStatusLine(inst.Status, statusColor, statusIndent)
+
+	return firstLine + "\n" + statusLine
 }
 
 // renderExpandedInstance renders an instance with an expanded name that may wrap to multiple lines.
 func (dv *DashboardView) renderExpandedInstance(
 	i int,
+	inst *orchestrator.Instance,
 	effectiveName string,
 	prefix string,
-	prefixLen int,
 	dot string,
+	statusColor lipgloss.Color,
 	itemStyle lipgloss.Style,
+	statusIndent int,
 	width int,
 ) string {
 	// Cap at maximum expanded length
@@ -238,13 +251,14 @@ func (dv *DashboardView) renderExpandedInstance(
 	// - 2 chars: sidebar Padding(1, 1) horizontal
 	// - 2 chars: itemStyle Padding(0, 1) horizontal (from SidebarItemActive)
 	// - 2 chars: safety buffer for border/edge alignment
-	firstLineOverhead := 2 + len(fmt.Sprintf("%d ", i+1)) + prefixLen // "● " + "N " + prefix
-	firstLineAvailable := max(width-firstLineOverhead-6, 10)
+	firstLineAvailable := max(width-statusIndent-6, 10)
 
 	if len(nameRunes) <= firstLineAvailable {
 		// Fits on one line even when expanded
 		label := fmt.Sprintf("%d %s%s", i+1, prefix, displayName)
-		return dot + " " + itemStyle.Render(label)
+		firstLine := dot + " " + itemStyle.Render(label)
+		statusLine := renderStatusLine(inst.Status, statusColor, statusIndent)
+		return firstLine + "\n" + statusLine
 	}
 
 	// Need to wrap to multiple lines with word-boundary awareness
@@ -261,10 +275,8 @@ func (dv *DashboardView) renderExpandedInstance(
 	for len(remaining) > 0 && remaining[0] == ' ' {
 		remaining = remaining[1:]
 	}
-	// Use firstLineOverhead as indent to align continuation text with the name start position
-	continuationIndent := firstLineOverhead
 	// Same width deductions as first line: sidebar padding (2) + item padding (2) + buffer (2)
-	continuationAvailable := max(width-continuationIndent-6, 10)
+	continuationAvailable := max(width-statusIndent-6, 10)
 
 	for len(remaining) > 0 {
 		chunk := wrapAtWordBoundary(remaining, continuationAvailable)
@@ -285,9 +297,12 @@ func (dv *DashboardView) renderExpandedInstance(
 		if chunkLen < continuationAvailable {
 			paddedChunk = chunk + strings.Repeat(" ", continuationAvailable-chunkLen)
 		}
-		indent := strings.Repeat(" ", continuationIndent)
+		indent := strings.Repeat(" ", statusIndent)
 		lines = append(lines, indent+itemStyle.Render(paddedChunk))
 	}
+
+	// Add status line at the end
+	lines = append(lines, renderStatusLine(inst.Status, statusColor, statusIndent))
 
 	return strings.Join(lines, "\n")
 }
