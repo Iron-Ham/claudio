@@ -118,13 +118,13 @@ The system is waiting for this file to continue the workflow.
 ` + "```" + `
 
 **Rules:**
-- Set approved to true ONLY if the implementation is truly ready (score >= %d, no critical issues)
+- **CRITICAL: Approval MUST meet a minimum score of %[5]d.** Set approved to true ONLY when BOTH conditions are met: (1) score >= %[5]d AND (2) no critical issues remain.
 - Score from 1-10: 1-4 = major problems, 5-6 = needs work, 7-8 = good, 9-10 = excellent
 - Issues should list specific problems that MUST be fixed
 - Suggestions are optional improvements (not required for approval)
 - required_changes should be specific and actionable
 
-**IMPORTANT:** Do NOT approve work that has any significant issues. The implementer can iterate.
+**IMPORTANT:** Do NOT approve work that has any significant issues or scores below %[5]d. The implementer can iterate.
 
 **REMINDER: Write ` + "`" + ReviewFileName + "`" + ` when your review is complete.**`
 
