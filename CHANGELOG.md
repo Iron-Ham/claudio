@@ -15,7 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Adversarial Review Score Threshold** - Updated the reviewer prompt to make the minimum score threshold a mandatory requirement for approval. The prompt now uses emphatic language ("CRITICAL: Approval MUST meet a minimum score of X") to clearly communicate that the score threshold is a hard requirement, not a suggestion.
 
+- **Adversarial Increment File Schema Enforcement** - Strengthened the implementer prompt to prevent custom JSON schemas in increment files. The prompt now explicitly forbids adding custom fields, shows a "WRONG" example with common mistakes (like `phases_completed`, `modules_created`), and provides a "CORRECT" example demonstrating how to include detailed information in the standard string fields.
+
 ### Fixed
+
+- **Adversarial Worktree Path Restoration** - Fixed an issue where adversarial sessions could fail to detect increment/review files after session restoration. The worktree path is now persisted directly in the adversarial session (not just looked up from instances), making restoration more reliable. Added warning logs when worktree path restoration fails.
 
 - **MultiPlan Planner Navigation** - Auto-collapsed multiplan planner instances are no longer navigable via tab/shift-tab or h/l keys. Previously, navigating to a collapsed instance would auto-expand the group, unintentionally exposing the planner instances. Now, locked-collapsed groups (like the "Planning Instances" sub-group) remain collapsed during navigation, keeping the sidebar clean. Users can still manually expand locked groups via group toggle (gc), which clears the lock and allows normal navigation afterward.
 

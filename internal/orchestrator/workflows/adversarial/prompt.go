@@ -29,7 +29,7 @@ The reviewer is waiting for this file. You MUST write it when your implementatio
 
 **File:** ` + "`" + IncrementFileName + "`" + ` (in your worktree root)
 
-**Required JSON structure (ALL fields are REQUIRED):**
+**USE THIS EXACT JSON STRUCTURE - NO MODIFICATIONS:**
 ` + "```json" + `
 {
   "round": %d,
@@ -41,28 +41,49 @@ The reviewer is waiting for this file. You MUST write it when your implementatio
 }
 ` + "```" + `
 
-**Field Requirements:**
-- ` + "`round`" + `: MUST be the number %d (the current round)
-- ` + "`status`" + `: MUST be exactly "ready_for_review" or "failed" (no other values)
-- ` + "`summary`" + `: MUST be a non-empty string describing your changes
-- ` + "`files_modified`" + `: MUST be a JSON array of strings, e.g., ["file1.go", "file2.go"] - NOT empty when status is "ready_for_review"
-- ` + "`approach`" + `: MUST be a non-empty string explaining your approach
-- ` + "`notes`" + `: A string for any notes (can be empty string "")
+**STRICT SCHEMA REQUIREMENTS - VALIDATION WILL FAIL OTHERWISE:**
 
-**COMMON MISTAKES TO AVOID:**
-- Do NOT write markdown or plain text - the file MUST be valid JSON
-- Do NOT forget the "files_modified" field - it is REQUIRED
-- Do NOT use files_modified: "file.go" - it MUST be an array: ["file.go"]
-- Do NOT leave summary or approach empty when status is "ready_for_review"
-- Do NOT use any status other than "ready_for_review" or "failed"
+The system performs automated JSON validation. If your file does not match the EXACT schema above, the workflow will fail and you will need to start over.
 
-**Rules:**
-- Set status to "ready_for_review" when your implementation is complete
-- Set status to "failed" if you cannot complete the task
-- Be thorough in your summary - the reviewer will read it before examining code
-- List ALL files you modified in the files_modified array
+- ` + "`round`" + `: REQUIRED - Must be the number %d
+- ` + "`status`" + `: REQUIRED - Must be exactly "ready_for_review" or "failed"
+- ` + "`summary`" + `: REQUIRED - Non-empty string describing your changes
+- ` + "`files_modified`" + `: REQUIRED - JSON array of file paths, e.g., ["file1.go", "file2.go"]
+- ` + "`approach`" + `: REQUIRED - Non-empty string explaining your approach
+- ` + "`notes`" + `: REQUIRED - String for notes (can be empty "")
 
-**REMINDER: Write ` + "`" + IncrementFileName + "`" + ` when ready for review.**`
+**DO NOT:**
+- Add custom fields (like "phases_completed", "modules_created", "technical_decisions", etc.)
+- Create your own schema structure
+- Nest objects inside the JSON
+- Omit any of the required fields
+- Use markdown or plain text instead of JSON
+
+**WRONG - Custom schema will FAIL validation:**
+` + "```json" + `
+{
+  "status": "ready_for_review",
+  "phases_completed": [...],
+  "modules_created": [...],
+  "technical_decisions": [...]
+}
+` + "```" + `
+
+**CORRECT - Use ONLY these six fields:**
+` + "```json" + `
+{
+  "round": %d,
+  "status": "ready_for_review",
+  "summary": "Implemented X by doing Y. Created modules A, B, C.",
+  "files_modified": ["path/to/file1.go", "path/to/file2.go"],
+  "approach": "Used approach X because Y. Technical decisions: ...",
+  "notes": "Any additional context for the reviewer"
+}
+` + "```" + `
+
+Put detailed information in the ` + "`summary`" + `, ` + "`approach`" + `, and ` + "`notes`" + ` fields as strings - do NOT create custom JSON structures.
+
+**REMINDER: Write ` + "`" + IncrementFileName + "`" + ` with the EXACT schema shown above.**`
 
 // ReviewerPromptTemplate is the prompt for the reviewer instance
 const ReviewerPromptTemplate = `You are a CRITICAL REVIEWER in an adversarial review workflow.
@@ -176,7 +197,7 @@ func FormatImplementerPrompt(task string, round int, previousReview *ReviewFile)
 		)
 	}
 
-	return fmt.Sprintf(ImplementerPromptTemplate, task, round, previousFeedback, round, round)
+	return fmt.Sprintf(ImplementerPromptTemplate, task, round, previousFeedback, round, round, round)
 }
 
 // FormatReviewerPrompt creates the full prompt for the reviewer

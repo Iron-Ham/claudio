@@ -413,18 +413,34 @@ func launchTUIWithAdversarials(cwd string, orch *orchestrator.Orchestrator, sess
 
 		coordinator := orchestrator.NewAdversarialCoordinator(orch, sess, advSession, logger)
 
-		// Restore worktree path from the implementer instance
-		// The worktree path is not persisted in the adversarial session, but the
-		// implementer instance ID is, and instances store their worktree paths
-		if advSession.ImplementerID != "" {
+		// Restore worktree path - prefer the directly persisted WorktreePath,
+		// fall back to looking up the implementer instance if needed
+		if advSession.WorktreePath != "" {
+			coordinator.SetWorktrees(advSession.WorktreePath)
+			logger.Info("restored adversarial worktree path from session",
+				"adversarial_id", advSession.ID,
+				"worktree_path", advSession.WorktreePath,
+			)
+		} else if advSession.ImplementerID != "" {
+			// Legacy fallback: look up from implementer instance
 			if inst := sess.GetInstance(advSession.ImplementerID); inst != nil {
 				coordinator.SetWorktrees(inst.WorktreePath)
-				logger.Info("restored adversarial worktree path",
+				logger.Info("restored adversarial worktree path from instance",
 					"adversarial_id", advSession.ID,
 					"implementer_id", advSession.ImplementerID,
 					"worktree_path", inst.WorktreePath,
 				)
+			} else {
+				logger.Warn("failed to restore adversarial worktree path: implementer instance not found",
+					"adversarial_id", advSession.ID,
+					"implementer_id", advSession.ImplementerID,
+				)
 			}
+		} else {
+			logger.Warn("failed to restore adversarial worktree path: no worktree path or implementer ID",
+				"adversarial_id", advSession.ID,
+				"phase", string(advSession.Phase),
+			)
 		}
 
 		coordinators = append(coordinators, coordinator)
