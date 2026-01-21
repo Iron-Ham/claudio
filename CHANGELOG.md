@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-01-21
+
 ### Added
 
 - **Validate Command** - New `claudio validate` command to validate ultraplan JSON files before execution. Checks for valid JSON syntax, required fields, task dependency validity (no cycles, no missing references), file conflicts between parallel tasks, and provides warnings for high complexity tasks. Supports both human-readable and JSON output formats (`--json` flag) for integration with CI/CD pipelines. Planning prompts now instruct Claude to run validation after generating a plan file, ensuring correct JSON structure before execution begins.
@@ -720,6 +722,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.12.2]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.2
 [0.12.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.0
 [0.11.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.11.0
 [0.10.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.10.0
