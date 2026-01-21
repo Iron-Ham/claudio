@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-01-21
+
 ### Fixed
 
 - **`:D` and `:d` Command Error Display** - Fixed an issue where the `:D` (remove instance) and `:d` (show diff) commands would appear to freeze the TUI with a "Removing instance..." or "Loading diff..." message when an error occurred. The error message was being set but not displayed because the info message wasn't cleared first. Now errors from async operations properly clear the progress message before displaying the error.
