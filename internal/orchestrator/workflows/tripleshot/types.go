@@ -139,9 +139,66 @@ func CompletionFilePath(worktreePath string) string {
 	return filepath.Join(worktreePath, CompletionFileName)
 }
 
-// ParseCompletionFile reads and parses a triple-shot completion file
+// FindCompletionFile searches for the completion file, first in the worktree root,
+// then in immediate subdirectories. This handles cases where Claude instances
+// write the file relative to their current working directory instead of the
+// worktree root.
+func FindCompletionFile(worktreePath string) (string, error) {
+	// First, check the expected location (worktree root)
+	expectedPath := CompletionFilePath(worktreePath)
+	_, err := os.Stat(expectedPath)
+	if err == nil {
+		return expectedPath, nil
+	}
+	// Only fall back to subdirectory search if file doesn't exist.
+	// For other errors (permissions, I/O), propagate them.
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("failed to check completion file: %w", err)
+	}
+
+	// Search immediate subdirectories (depth 1)
+	entries, err := os.ReadDir(worktreePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read worktree directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		// Skip hidden directories (like .git)
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		subPath := filepath.Join(worktreePath, entry.Name(), CompletionFileName)
+		_, err := os.Stat(subPath)
+		if err == nil {
+			return subPath, nil
+		}
+		// Continue searching if file doesn't exist; propagate other errors
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("failed to check completion file in %s: %w", entry.Name(), err)
+		}
+	}
+
+	return "", os.ErrNotExist
+}
+
+// CompletionFileExists checks if a completion file exists for the given worktree,
+// searching both the worktree root and immediate subdirectories.
+func CompletionFileExists(worktreePath string) bool {
+	_, err := FindCompletionFile(worktreePath)
+	return err == nil
+}
+
+// ParseCompletionFile reads and parses a triple-shot completion file.
+// It searches for the file in the worktree root and immediate subdirectories.
 func ParseCompletionFile(worktreePath string) (*CompletionFile, error) {
-	completionPath := CompletionFilePath(worktreePath)
+	completionPath, err := FindCompletionFile(worktreePath)
+	if err != nil {
+		return nil, err
+	}
+
 	data, err := os.ReadFile(completionPath)
 	if err != nil {
 		return nil, err
@@ -163,9 +220,66 @@ func EvaluationFilePath(worktreePath string) string {
 	return filepath.Join(worktreePath, EvaluationFileName)
 }
 
-// ParseEvaluationFile reads and parses the judge's evaluation file
+// FindEvaluationFile searches for the evaluation file, first in the worktree root,
+// then in immediate subdirectories. This handles cases where the judge instance
+// writes the file relative to its current working directory instead of the
+// worktree root.
+func FindEvaluationFile(worktreePath string) (string, error) {
+	// First, check the expected location (worktree root)
+	expectedPath := EvaluationFilePath(worktreePath)
+	_, err := os.Stat(expectedPath)
+	if err == nil {
+		return expectedPath, nil
+	}
+	// Only fall back to subdirectory search if file doesn't exist.
+	// For other errors (permissions, I/O), propagate them.
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("failed to check evaluation file: %w", err)
+	}
+
+	// Search immediate subdirectories (depth 1)
+	entries, err := os.ReadDir(worktreePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read worktree directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		// Skip hidden directories (like .git)
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		subPath := filepath.Join(worktreePath, entry.Name(), EvaluationFileName)
+		_, err := os.Stat(subPath)
+		if err == nil {
+			return subPath, nil
+		}
+		// Continue searching if file doesn't exist; propagate other errors
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("failed to check evaluation file in %s: %w", entry.Name(), err)
+		}
+	}
+
+	return "", os.ErrNotExist
+}
+
+// EvaluationFileExists checks if an evaluation file exists for the given worktree,
+// searching both the worktree root and immediate subdirectories.
+func EvaluationFileExists(worktreePath string) bool {
+	_, err := FindEvaluationFile(worktreePath)
+	return err == nil
+}
+
+// ParseEvaluationFile reads and parses the judge's evaluation file.
+// It searches for the file in the worktree root and immediate subdirectories.
 func ParseEvaluationFile(worktreePath string) (*Evaluation, error) {
-	evalPath := EvaluationFilePath(worktreePath)
+	evalPath, err := FindEvaluationFile(worktreePath)
+	if err != nil {
+		return nil, err
+	}
+
 	data, err := os.ReadFile(evalPath)
 	if err != nil {
 		return nil, err

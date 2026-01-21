@@ -3,7 +3,6 @@ package tripleshot
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -434,7 +433,9 @@ func (c *Coordinator) StartJudge() error {
 	return nil
 }
 
-// CheckAttemptCompletion checks if an attempt has written its completion file
+// CheckAttemptCompletion checks if an attempt has written its completion file.
+// It searches both the worktree root and immediate subdirectories to handle
+// cases where Claude instances write the file from a subdirectory.
 func (c *Coordinator) CheckAttemptCompletion(attemptIndex int) (bool, error) {
 	session := c.Session()
 	if attemptIndex < 0 || attemptIndex >= 3 {
@@ -446,19 +447,12 @@ func (c *Coordinator) CheckAttemptCompletion(attemptIndex int) (bool, error) {
 		return false, nil
 	}
 
-	completionPath := CompletionFilePath(attempt.WorktreePath)
-	_, err := os.Stat(completionPath)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	// Propagate actual errors (permission denied, I/O errors, etc.)
-	return false, fmt.Errorf("failed to check completion file: %w", err)
+	return CompletionFileExists(attempt.WorktreePath), nil
 }
 
-// CheckJudgeCompletion checks if the judge has written its evaluation file
+// CheckJudgeCompletion checks if the judge has written its evaluation file.
+// It searches both the worktree root and immediate subdirectories to handle
+// cases where the judge writes the file from a subdirectory.
 func (c *Coordinator) CheckJudgeCompletion() (bool, error) {
 	session := c.Session()
 	if session.JudgeID == "" {
@@ -471,16 +465,7 @@ func (c *Coordinator) CheckJudgeCompletion() (bool, error) {
 		return false, fmt.Errorf("judge instance %s not found", session.JudgeID)
 	}
 
-	evalPath := EvaluationFilePath(judgeInst.GetWorktreePath())
-	_, err := os.Stat(evalPath)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	// Propagate actual errors (permission denied, I/O errors, etc.)
-	return false, fmt.Errorf("failed to check evaluation file: %w", err)
+	return EvaluationFileExists(judgeInst.GetWorktreePath()), nil
 }
 
 // ProcessAttemptCompletion handles when an attempt completes
