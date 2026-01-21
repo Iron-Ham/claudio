@@ -3,6 +3,7 @@ package conflict
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,6 +38,60 @@ func TestDetector_AddInstance(t *testing.T) {
 	err = d.AddInstance("inst1", tmpDir)
 	if err != nil {
 		t.Fatalf("Failed to add instance: %v", err)
+	}
+}
+
+func TestDetector_AddInstance_NonExistentPath(t *testing.T) {
+	d, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create detector: %v", err)
+	}
+	defer d.Stop()
+
+	d.Start()
+
+	// Try to add an instance with a non-existent path
+	nonExistentPath := filepath.Join(os.TempDir(), "this-path-does-not-exist-"+time.Now().Format("20060102150405"))
+	err = d.AddInstance("inst1", nonExistentPath)
+	if err == nil {
+		t.Fatal("Expected error when adding instance with non-existent path")
+	}
+
+	// Verify the error message mentions the path doesn't exist
+	expectedMsg := "worktree path does not exist"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Error message %q should contain %q", err.Error(), expectedMsg)
+	}
+}
+
+func TestDetector_AddInstance_PathIsFile(t *testing.T) {
+	d, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create detector: %v", err)
+	}
+	defer d.Stop()
+
+	// Create a temp file (not a directory)
+	tmpFile, err := os.CreateTemp("", "conflict-test-file-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tmpFilePath := tmpFile.Name()
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFilePath) }()
+
+	d.Start()
+
+	// Try to add an instance with a file path instead of a directory
+	err = d.AddInstance("inst1", tmpFilePath)
+	if err == nil {
+		t.Fatal("Expected error when adding instance with file path instead of directory")
+	}
+
+	// Verify the error message mentions it's not a directory
+	expectedMsg := "worktree path is not a directory"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Error message %q should contain %q", err.Error(), expectedMsg)
 	}
 }
 

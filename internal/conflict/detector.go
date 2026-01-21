@@ -1,6 +1,7 @@
 package conflict
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,7 +88,23 @@ func (d *Detector) SetLogger(logger *logging.Logger) {
 // AddInstance starts watching files for an instance's worktree.
 // The root directory is watched immediately, but subdirectories are watched
 // asynchronously in the background to avoid blocking instance creation.
+// Returns an error if the worktree path does not exist or is not a directory.
 func (d *Detector) AddInstance(instanceID, worktreePath string) error {
+	// Validate the worktree path exists and is a directory before acquiring lock.
+	// This provides a clearer error message than the one from fsnotify.Watcher.Add().
+	info, err := os.Stat(worktreePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("worktree path does not exist: %q", worktreePath)
+		}
+		// Coverage: This branch handles permission denied and other stat errors which
+		// are difficult to reliably test in a cross-platform manner.
+		return fmt.Errorf("cannot access worktree path %q: %w", worktreePath, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("worktree path is not a directory: %q", worktreePath)
+	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
