@@ -1701,7 +1701,13 @@ func (m Model) initiateAdversarialMode(task string) (Model, tea.Cmd) {
 
 // handleInstanceRemoved processes the result of async instance removal.
 func (m Model) handleInstanceRemoved(msg tuimsg.InstanceRemovedMsg) (tea.Model, tea.Cmd) {
+	// Clear "Removing instance..." message since operation completed
+	m.infoMessage = ""
+
 	if msg.Err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to remove instance", "instance_id", msg.InstanceID, "error", msg.Err)
+		}
 		m.errorMessage = fmt.Sprintf("Failed to remove instance: %v", msg.Err)
 		return m, nil
 	}
@@ -1724,7 +1730,13 @@ func (m Model) handleInstanceRemoved(msg tuimsg.InstanceRemovedMsg) (tea.Model, 
 
 // handleDiffLoaded processes the result of async diff loading.
 func (m Model) handleDiffLoaded(msg tuimsg.DiffLoadedMsg) (tea.Model, tea.Cmd) {
+	// Clear "Loading diff..." message since operation completed
+	m.infoMessage = ""
+
 	if msg.Err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to load diff", "instance_id", msg.InstanceID, "error", msg.Err)
+		}
 		m.errorMessage = fmt.Sprintf("Failed to get diff: %v", msg.Err)
 		return m, nil
 	}
@@ -1737,7 +1749,6 @@ func (m Model) handleDiffLoaded(msg tuimsg.DiffLoadedMsg) (tea.Model, tea.Cmd) {
 	m.showDiff = true
 	m.diffContent = msg.DiffContent
 	m.diffScroll = 0
-	m.infoMessage = "" // Clear "Loading diff..." message
 
 	return m, nil
 }
