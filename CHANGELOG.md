@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **TripleShot Completion File Detection** - Fixed an issue where tripleshot completion files were not detected when Claude instances wrote them to a subdirectory instead of the worktree root. This could happen in monorepos where Claude `cd`'d into a project subdirectory before writing the completion file. The detection now searches immediate subdirectories as a fallback, ensuring completion files are found regardless of where they were written.
 
+- **Session Attachment Instance Manager Creation** - Fixed a critical bug where attaching to an existing session would not create instance managers for loaded instances. This caused instances to appear in the TUI but be non-functional - they couldn't be restarted, and their output wouldn't be captured. The fix adds `EnsureInstanceManagers()` which is called after loading a session to ensure all instances have proper managers. Additionally, `ReconnectInstance` and `ResumeInstance` now always call `ClearTimeout()` to prevent stale detection from immediately re-triggering after restart.
+
 ## [0.12.2] - 2026-01-21
 
 ### Added

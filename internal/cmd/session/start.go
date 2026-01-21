@@ -169,6 +169,11 @@ func AttachToSession(cwd, sessionID string, cfg *config.Config) error {
 		return fmt.Errorf("failed to load session: %w", err)
 	}
 
+	// Create instance managers for all instances in the session.
+	// This is necessary because LoadSession only loads the session data from disk
+	// but doesn't create the instance managers needed for interaction.
+	orch.EnsureInstanceManagers()
+
 	// Check for interrupted session that needs recovery
 	needsRecovery := sess.NeedsRecovery()
 	if needsRecovery {
