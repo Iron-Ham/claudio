@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Plan File Path in Subdirectories** - Fixed planning coordinators writing `.claudio-plan.json` to incorrect locations when Claudio is started from a repository subdirectory. The planning prompts now explicitly instruct Claude to write the plan file at the repository root, preventing path resolution issues during multi-pass planning.
+
 ## [0.12.0] - 2026-01-21
 
 This release brings **Dependency Graph View & Orchestration Guides** - a new DAG-based sidebar visualization for understanding task dependencies at a glance, plus comprehensive documentation for all orchestration modes.

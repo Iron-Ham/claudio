@@ -17,7 +17,7 @@ const PlanningPromptTemplate = `You are a senior software architect planning a c
 
 1. **Explore** the codebase to understand its structure and patterns
 2. **Decompose** the objective into discrete, parallelizable tasks
-3. **Write your plan** to the file ` + "`" + PlanFileName + "`" + ` in JSON format
+3. **Write your plan** to ` + "`" + PlanFileName + "`" + ` **at the repository root** (not in any subdirectory) in JSON format
 
 ## Plan JSON Schema
 
