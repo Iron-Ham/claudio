@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Sidebar UI Duplication** - Fixed a bug where sidebar content could be duplicated or overflow when adding/removing tasks or groups. The issue was caused by a mismatch between item count and actual rendered line count in the sidebar. The sidebar now properly tracks actual line usage, preventing content from overflowing its container and causing visual artifacts.
+
 - **Plan File Path in Subdirectories** - Fixed planning coordinators writing `.claudio-plan.json` to incorrect locations when Claudio is started from a repository subdirectory. The planning prompts now explicitly instruct Claude to write the plan file at the repository root, preventing path resolution issues during multi-pass planning.
 
 - **Terminal Pane Freeze** - Fixed an issue where the TUI could freeze when the terminal pane was visible and tmux became unresponsive. The `capture-pane` command now has a 500ms timeout, preventing the entire event loop from blocking. When the capture times out, the previous output is preserved so the display doesn't go blank.
