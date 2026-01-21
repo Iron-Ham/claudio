@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-01-21
+
+This release brings **Dependency Graph View & Orchestration Guides** - a new DAG-based sidebar visualization for understanding task dependencies at a glance, plus comprehensive documentation for all orchestration modes.
+
 ### Added
 
 - **Dependency Graph View** - New sidebar visualization mode that displays instances organized by their dependency levels. Toggle with `d` key to see a DAG (Directed Acyclic Graph) view showing root tasks, intermediate levels, and final tasks. Features include topological sorting, status indicators, and dependency relationship arrows.
@@ -690,6 +694,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.12.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.0
 [0.11.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.11.0
 [0.10.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.10.0
 [0.9.2]: https://github.com/Iron-Ham/claudio/releases/tag/v0.9.2
