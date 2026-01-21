@@ -58,6 +58,19 @@ type DependentTaskAddedMsg struct {
 	Err       error
 }
 
+// InstanceRemovedMsg is sent when async instance removal completes.
+type InstanceRemovedMsg struct {
+	InstanceID string
+	Err        error
+}
+
+// DiffLoadedMsg is sent when async diff loading completes.
+type DiffLoadedMsg struct {
+	InstanceID  string
+	DiffContent string
+	Err         error
+}
+
 // UltraPlanInitMsg signals that ultra-plan mode should initialize.
 type UltraPlanInitMsg struct{}
 

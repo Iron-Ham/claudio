@@ -669,3 +669,97 @@ func TestInlineMultiPlanFileCheckResultMsg(t *testing.T) {
 		})
 	}
 }
+
+func TestInstanceRemovedMsg(t *testing.T) {
+	tests := []struct {
+		name       string
+		instanceID string
+		err        error
+	}{
+		{
+			name:       "successful removal",
+			instanceID: "inst-123",
+			err:        nil,
+		},
+		{
+			name:       "failed removal",
+			instanceID: "inst-456",
+			err:        errors.New("worktree still in use"),
+		},
+		{
+			name:       "empty instance ID",
+			instanceID: "",
+			err:        errors.New("instance not found"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := InstanceRemovedMsg{
+				InstanceID: tt.instanceID,
+				Err:        tt.err,
+			}
+
+			if msg.InstanceID != tt.instanceID {
+				t.Errorf("InstanceRemovedMsg.InstanceID = %q, want %q", msg.InstanceID, tt.instanceID)
+			}
+			if msg.Err != tt.err {
+				t.Errorf("InstanceRemovedMsg.Err = %v, want %v", msg.Err, tt.err)
+			}
+		})
+	}
+}
+
+func TestDiffLoadedMsg(t *testing.T) {
+	tests := []struct {
+		name        string
+		instanceID  string
+		diffContent string
+		err         error
+	}{
+		{
+			name:        "successful with content",
+			instanceID:  "inst-123",
+			diffContent: "diff --git a/foo.go b/foo.go\n--- a/foo.go\n+++ b/foo.go",
+			err:         nil,
+		},
+		{
+			name:        "successful empty diff (no changes)",
+			instanceID:  "inst-456",
+			diffContent: "",
+			err:         nil,
+		},
+		{
+			name:        "failed to get diff",
+			instanceID:  "inst-789",
+			diffContent: "",
+			err:         errors.New("not a git repository"),
+		},
+		{
+			name:        "large diff content",
+			instanceID:  "inst-large",
+			diffContent: "diff --git a/large.go b/large.go\n" + string(make([]byte, 10000)),
+			err:         nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := DiffLoadedMsg{
+				InstanceID:  tt.instanceID,
+				DiffContent: tt.diffContent,
+				Err:         tt.err,
+			}
+
+			if msg.InstanceID != tt.instanceID {
+				t.Errorf("DiffLoadedMsg.InstanceID = %q, want %q", msg.InstanceID, tt.instanceID)
+			}
+			if msg.DiffContent != tt.diffContent {
+				t.Errorf("DiffLoadedMsg.DiffContent length = %d, want %d", len(msg.DiffContent), len(tt.diffContent))
+			}
+			if msg.Err != tt.err {
+				t.Errorf("DiffLoadedMsg.Err = %v, want %v", msg.Err, tt.err)
+			}
+		})
+	}
+}

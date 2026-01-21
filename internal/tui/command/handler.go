@@ -13,6 +13,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator/prworkflow"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
+	"github.com/Iron-Ham/claudio/internal/tui/msg"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/viper"
 )
@@ -693,14 +694,9 @@ func cmdRemove(deps Dependencies) Result {
 	}
 
 	instanceID := inst.ID
-	if err := orch.RemoveInstance(session, instanceID, true); err != nil {
-		return Result{ErrorMessage: fmt.Sprintf("Failed to remove instance: %v", err)}
-	}
-
 	return Result{
-		InfoMessage:         fmt.Sprintf("Removed instance %s", instanceID),
-		ActiveTabAdjustment: -1,
-		EnsureActiveVisible: true,
+		InfoMessage: fmt.Sprintf("Removing instance %s...", instanceID),
+		TeaCmd:      msg.RemoveInstanceAsync(orch, session, instanceID),
 	}
 }
 
@@ -757,7 +753,7 @@ func cmdClearCompleted(deps Dependencies) Result {
 }
 
 func cmdDiff(deps Dependencies) Result {
-	// If diff is currently visible, hide it
+	// If diff is currently visible, hide it (no I/O needed)
 	if deps.IsDiffVisible() {
 		showDiff := false
 		diffContent := ""
@@ -769,7 +765,7 @@ func cmdDiff(deps Dependencies) Result {
 		}
 	}
 
-	// Otherwise, show diff for active instance
+	// Otherwise, start async loading
 	inst := deps.ActiveInstance()
 	if inst == nil {
 		return Result{InfoMessage: "No instance selected"}
@@ -780,20 +776,9 @@ func cmdDiff(deps Dependencies) Result {
 		return Result{ErrorMessage: "No orchestrator available"}
 	}
 
-	diff, err := orch.GetInstanceDiff(inst.WorktreePath)
-	if err != nil {
-		return Result{ErrorMessage: fmt.Sprintf("Failed to get diff: %v", err)}
-	}
-	if diff == "" {
-		return Result{InfoMessage: "No changes to show"}
-	}
-
-	showDiff := true
-	diffScroll := 0
 	return Result{
-		ShowDiff:    &showDiff,
-		DiffContent: &diff,
-		DiffScroll:  &diffScroll,
+		InfoMessage: "Loading diff...",
+		TeaCmd:      msg.LoadDiffAsync(orch, inst.WorktreePath, inst.ID),
 	}
 }
 

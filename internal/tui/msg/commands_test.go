@@ -348,3 +348,58 @@ func TestCommandsAreIdempotent(t *testing.T) {
 // Note: Testing with an uninitialized Coordinator that returns nil session
 // requires complex internal setup as the Session() method accesses internal
 // pointers. The nil coordinator cases above verify nil-safety at the outer level.
+
+func TestRemoveInstanceAsync(t *testing.T) {
+	t.Run("returns non-nil command", func(t *testing.T) {
+		cmd := RemoveInstanceAsync(nil, nil, "test-instance-id")
+		if cmd == nil {
+			t.Fatal("RemoveInstanceAsync() returned nil command")
+		}
+	})
+
+	t.Run("returns error when orchestrator is nil", func(t *testing.T) {
+		cmd := RemoveInstanceAsync(nil, nil, "test-instance-id")
+		msg := cmd()
+
+		removedMsg, ok := msg.(InstanceRemovedMsg)
+		if !ok {
+			t.Fatalf("RemoveInstanceAsync()() returned %T, want InstanceRemovedMsg", msg)
+		}
+
+		if removedMsg.Err == nil {
+			t.Error("expected error when orchestrator is nil")
+		}
+		if removedMsg.InstanceID != "test-instance-id" {
+			t.Errorf("InstanceID = %q, want %q", removedMsg.InstanceID, "test-instance-id")
+		}
+	})
+}
+
+func TestLoadDiffAsync(t *testing.T) {
+	t.Run("returns non-nil command", func(t *testing.T) {
+		cmd := LoadDiffAsync(nil, "/path/to/worktree", "test-instance-id")
+		if cmd == nil {
+			t.Fatal("LoadDiffAsync() returned nil command")
+		}
+	})
+
+	t.Run("returns error when orchestrator is nil", func(t *testing.T) {
+		cmd := LoadDiffAsync(nil, "/path/to/worktree", "test-instance-id")
+		msg := cmd()
+
+		diffMsg, ok := msg.(DiffLoadedMsg)
+		if !ok {
+			t.Fatalf("LoadDiffAsync()() returned %T, want DiffLoadedMsg", msg)
+		}
+
+		if diffMsg.Err == nil {
+			t.Error("expected error when orchestrator is nil")
+		}
+		if diffMsg.InstanceID != "test-instance-id" {
+			t.Errorf("InstanceID = %q, want %q", diffMsg.InstanceID, "test-instance-id")
+		}
+		if diffMsg.DiffContent != "" {
+			t.Errorf("DiffContent = %q, want empty string on error", diffMsg.DiffContent)
+		}
+	})
+}

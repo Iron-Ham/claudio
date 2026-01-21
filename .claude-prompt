@@ -1,0 +1,1 @@
+When a user types `:D`, the TUI can stall. This seems like a synchronous operation?

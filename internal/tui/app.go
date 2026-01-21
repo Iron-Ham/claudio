@@ -623,6 +623,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuimsg.RalphCompletionProcessedMsg:
 		return m.handleRalphCompletionProcessed(msg)
+
+	// Async instance operation message handlers
+	case tuimsg.InstanceRemovedMsg:
+		return m.handleInstanceRemoved(msg)
+
+	case tuimsg.DiffLoadedMsg:
+		return m.handleDiffLoaded(msg)
 	}
 
 	return m, nil
@@ -1690,4 +1697,47 @@ func (m Model) initiateAdversarialMode(task string) (Model, tea.Cmd) {
 		}
 		return tuimsg.AdversarialStartedMsg{}
 	}
+}
+
+// handleInstanceRemoved processes the result of async instance removal.
+func (m Model) handleInstanceRemoved(msg tuimsg.InstanceRemovedMsg) (tea.Model, tea.Cmd) {
+	if msg.Err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to remove instance: %v", msg.Err)
+		return m, nil
+	}
+
+	m.infoMessage = fmt.Sprintf("Removed instance %s", msg.InstanceID)
+
+	// Adjust active tab if needed (instance count decreased)
+	if m.activeTab >= m.instanceCount() {
+		m.activeTab = m.instanceCount() - 1
+		if m.activeTab < 0 {
+			m.activeTab = 0
+		}
+	}
+
+	m.resumeActiveInstance()
+	m.ensureActiveVisible()
+
+	return m, nil
+}
+
+// handleDiffLoaded processes the result of async diff loading.
+func (m Model) handleDiffLoaded(msg tuimsg.DiffLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.Err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to get diff: %v", msg.Err)
+		return m, nil
+	}
+
+	if msg.DiffContent == "" {
+		m.infoMessage = "No changes to show"
+		return m, nil
+	}
+
+	m.showDiff = true
+	m.diffContent = msg.DiffContent
+	m.diffScroll = 0
+	m.infoMessage = "" // Clear "Loading diff..." message
+
+	return m, nil
 }

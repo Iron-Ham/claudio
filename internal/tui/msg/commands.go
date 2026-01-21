@@ -95,6 +95,41 @@ func AddDependentTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.S
 	}
 }
 
+// RemoveInstanceAsync returns a command that removes an instance asynchronously.
+// This prevents the UI from blocking while git removes the worktree and branch.
+func RemoveInstanceAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, instanceID string) tea.Cmd {
+	return func() tea.Msg {
+		if o == nil {
+			return InstanceRemovedMsg{InstanceID: instanceID, Err: fmt.Errorf("orchestrator is nil")}
+		}
+		if session == nil {
+			return InstanceRemovedMsg{InstanceID: instanceID, Err: fmt.Errorf("session is nil")}
+		}
+		err := o.RemoveInstance(session, instanceID, true)
+		return InstanceRemovedMsg{InstanceID: instanceID, Err: err}
+	}
+}
+
+// LoadDiffAsync returns a command that loads a git diff asynchronously.
+// This prevents the UI from blocking while git computes the diff.
+func LoadDiffAsync(o *orchestrator.Orchestrator, worktreePath string, instanceID string) tea.Cmd {
+	return func() tea.Msg {
+		if o == nil {
+			return DiffLoadedMsg{
+				InstanceID:  instanceID,
+				DiffContent: "",
+				Err:         fmt.Errorf("orchestrator is nil"),
+			}
+		}
+		diff, err := o.GetInstanceDiff(worktreePath)
+		return DiffLoadedMsg{
+			InstanceID:  instanceID,
+			DiffContent: diff,
+			Err:         err,
+		}
+	}
+}
+
 // CheckTripleShotCompletionAsync returns a command that checks tripleshot completion files
 // in a goroutine, avoiding blocking the UI event loop with file I/O.
 func CheckTripleShotCompletionAsync(
