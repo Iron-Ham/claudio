@@ -17,6 +17,7 @@ type Session struct {
 	Config        Config     `json:"config"`
 	ImplementerID string     `json:"implementer_id,omitempty"` // Instance ID of implementer
 	ReviewerID    string     `json:"reviewer_id,omitempty"`    // Instance ID of reviewer
+	WorktreePath  string     `json:"worktree_path,omitempty"`  // Worktree path for implementer/reviewer
 	CurrentRound  int        `json:"current_round"`            // Current implement-review cycle (1-based)
 	Created       time.Time  `json:"created"`
 	StartedAt     *time.Time `json:"started_at,omitempty"`

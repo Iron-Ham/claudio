@@ -321,6 +321,8 @@ func (c *Coordinator) StartImplementer() error {
 		}
 		c.implementerWorktree = inst.GetWorktreePath()
 		c.reviewerWorktree = inst.GetWorktreePath() // Reviewer will use same worktree
+		// Persist worktree path in session for reliable restoration
+		session.WorktreePath = c.implementerWorktree
 	} else {
 		// Subsequent rounds - reuse the same worktree
 		inst, err = c.orch.AddInstanceToWorktree(c.baseSession, prompt, c.implementerWorktree, "")
