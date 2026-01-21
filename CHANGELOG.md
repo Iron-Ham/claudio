@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **TUI Freeze on `:D` and `:d` Commands** - Fixed the TUI freezing when using the `:D` (remove instance) and `:d` (show diff) commands. These commands now execute git operations asynchronously, keeping the UI responsive while the worktree removal or diff computation runs in the background.
+
 ## [0.12.2] - 2026-01-21
 
 ### Added
