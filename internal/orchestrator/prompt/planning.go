@@ -227,7 +227,7 @@ You must either:
 
 ## Output
 
-Write your final plan to ` + "`" + PlanFileName + "`" + ` using the JSON schema below.
+Write your final plan to ` + "`" + PlanFileName + "`" + ` **at the repository root** (not in any subdirectory) using the JSON schema below.
 
 ### Plan JSON Schema
 
