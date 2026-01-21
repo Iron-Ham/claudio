@@ -42,7 +42,17 @@ Write a JSON file with this structure:
 - Prefer granular tasks that can run in parallel over large sequential ones
 - Assign clear file ownership to avoid merge conflicts
 - Each task description should be complete enough for independent execution
-- Use Write tool to create the plan file when ready`
+- Use Write tool to create the plan file when ready
+
+## Validation
+
+After writing the plan file, **validate it** by running:
+` + "```bash" + `
+claudio validate ` + PlanFileName + `
+` + "```" + `
+
+This ensures your plan has valid JSON syntax, correct structure, and no dependency cycles.
+If validation fails, fix the issues and run validation again until it passes.`
 
 // PlanningStrategy defines a strategic approach for multi-pass planning.
 type PlanningStrategy struct {
