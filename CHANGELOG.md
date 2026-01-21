@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Adversarial Review Score Threshold** - Updated the reviewer prompt to make the minimum score threshold a mandatory requirement for approval. The prompt now uses emphatic language ("CRITICAL: Approval MUST meet a minimum score of X") to clearly communicate that the score threshold is a hard requirement, not a suggestion.
+
 ### Fixed
 
 - **Ultraplan File Loading** - Fixed an issue where loading an ultraplan from a file (`:ultraplan --plan <file>`) would silently drop the `issue_url` and `no_code` fields during plan parsing. These optional fields are now correctly preserved, ensuring that external issue tracker links work properly and no-code tasks (verification/testing tasks) are handled correctly.
