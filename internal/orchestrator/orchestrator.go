@@ -1252,6 +1252,31 @@ func (o *Orchestrator) GetInstanceManager(id string) *instance.Manager {
 	return o.instances[id]
 }
 
+// EnsureInstanceManagers creates instance managers for all instances in the session
+// that don't already have managers. This is necessary when attaching to an existing
+// session since LoadSession doesn't create managers.
+func (o *Orchestrator) EnsureInstanceManagers() {
+	if o.session == nil {
+		return
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	for _, inst := range o.session.Instances {
+		if _, exists := o.instances[inst.ID]; !exists {
+			mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
+			o.instances[inst.ID] = mgr
+			if o.logger != nil {
+				o.logger.Debug("created instance manager for loaded instance",
+					"instance_id", inst.ID,
+					"worktree_path", inst.WorktreePath,
+				)
+			}
+		}
+	}
+}
+
 // Config returns the orchestrator's configuration
 func (o *Orchestrator) Config() *config.Config {
 	return o.config
@@ -2170,6 +2195,10 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 		o.mu.Unlock()
 	}
 
+	// Always clear timeout state when reconnecting to prevent
+	// stale detection from immediately triggering again
+	mgr.ClearTimeout()
+
 	// Configure all callbacks
 	o.configureInstanceCallbacks(mgr)
 
@@ -2235,6 +2264,10 @@ func (o *Orchestrator) ResumeInstance(inst *Instance) error {
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
 	}
+
+	// Always clear timeout state when resuming to prevent
+	// stale detection from immediately triggering again
+	mgr.ClearTimeout()
 
 	// Configure all callbacks
 	o.configureInstanceCallbacks(mgr)

@@ -529,4 +529,86 @@ func TestOrchestrator_ClearCompletedInstances_NoneCompleted(t *testing.T) {
 	}
 }
 
+func TestOrchestrator_EnsureInstanceManagers(t *testing.T) {
+	testutil.SkipIfNoGit(t)
+
+	repoDir := testutil.SetupTestRepo(t)
+	orch, err := New(repoDir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// Start a session and add instances
+	session, err := orch.StartSession("test")
+	if err != nil {
+		t.Fatalf("StartSession() error = %v", err)
+	}
+
+	// Add an instance - this creates a manager
+	inst, err := orch.AddInstance(session, "test task")
+	if err != nil {
+		t.Fatalf("AddInstance() error = %v", err)
+	}
+
+	// Verify manager exists
+	if orch.GetInstanceManager(inst.ID) == nil {
+		t.Error("manager should exist after AddInstance")
+	}
+
+	// Create a new orchestrator (simulating session reload)
+	orch2, err := New(repoDir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// Load the session
+	_, err = orch2.LoadSession()
+	if err != nil {
+		t.Fatalf("LoadSession() error = %v", err)
+	}
+
+	// Verify manager doesn't exist yet (LoadSession doesn't create managers)
+	if orch2.GetInstanceManager(inst.ID) != nil {
+		t.Error("manager should not exist after LoadSession")
+	}
+
+	// Call EnsureInstanceManagers
+	orch2.EnsureInstanceManagers()
+
+	// Verify manager now exists
+	mgr := orch2.GetInstanceManager(inst.ID)
+	if mgr == nil {
+		t.Fatal("manager should exist after EnsureInstanceManagers")
+	}
+
+	// Verify manager has correct properties
+	if mgr.ID() != inst.ID {
+		t.Errorf("manager ID = %q, want %q", mgr.ID(), inst.ID)
+	}
+
+	// Test idempotency - calling again should not create new managers
+	orch2.EnsureInstanceManagers()
+	mgr2 := orch2.GetInstanceManager(inst.ID)
+	if mgr2 != mgr {
+		t.Error("EnsureInstanceManagers should be idempotent - same manager expected")
+	}
+}
+
+func TestOrchestrator_EnsureInstanceManagers_NilSession(t *testing.T) {
+	testutil.SkipIfNoGit(t)
+
+	repoDir := testutil.SetupTestRepo(t)
+	orch, err := New(repoDir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// Don't start or load any session - session is nil
+	// EnsureInstanceManagers should not panic
+	orch.EnsureInstanceManagers()
+
+	// Verify no managers were created (nothing to create)
+	// This is a no-op when session is nil
+}
+
 // TestSlugify moved to branch_test.go
