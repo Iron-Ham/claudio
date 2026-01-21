@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **TUI Freeze on `:D` and `:d` Commands** - Fixed the TUI freezing when using the `:D` (remove instance) and `:d` (show diff) commands. These commands now execute git operations asynchronously, keeping the UI responsive while the worktree removal or diff computation runs in the background.
 
+- **Async Command Nil Safety** - Added nil-safety checks to all async task commands (`AddTaskAsync`, `AddTaskFromBranchAsync`, `AddDependentTaskAsync`, `RemoveInstanceAsync`, `LoadDiffAsync`) to prevent panics if orchestrator or session is nil. These edge cases now return proper error messages instead of crashing.
+
 - **TripleShot Completion File Detection** - Fixed an issue where tripleshot completion files were not detected when Claude instances wrote them to a subdirectory instead of the worktree root. This could happen in monorepos where Claude `cd`'d into a project subdirectory before writing the completion file. The detection now searches immediate subdirectories as a fallback, ensuring completion files are found regardless of where they were written.
 
 ## [0.12.2] - 2026-01-21
