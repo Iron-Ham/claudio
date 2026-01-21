@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Terminal Pane Freeze** - Fixed an issue where the TUI could freeze when the terminal pane was visible and tmux became unresponsive. The `capture-pane` command now has a 500ms timeout, preventing the entire event loop from blocking. When the capture times out, the previous output is preserved so the display doesn't go blank.
 
+- **Conflict Detector Missing Worktree Path** - Fixed a warning that appeared when opening projects with stale session data: "failed to watch instance for conflicts: ... no such file or directory". The conflict detector now validates that the worktree path exists and is a directory before attempting to watch it, providing clearer error messages when sessions reference worktrees that have been deleted.
+
 ## [0.12.0] - 2026-01-21
 
 This release brings **Dependency Graph View & Orchestration Guides** - a new DAG-based sidebar visualization for understanding task dependencies at a glance, plus comprehensive documentation for all orchestration modes.
