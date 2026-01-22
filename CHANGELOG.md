@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.6] - 2026-01-22
+
 ### Fixed
 
 - **Multi-Pass Planning Session Resume** - Fixed a critical bug where resuming an ultraplan session in multi-pass mode (`:ultraplan --multi-pass`) would fail to trigger the plan evaluator. When the TUI was closed while the 3 parallel planners were running, re-attaching to the session would incorrectly check `CoordinatorID` (which is not used in multi-pass mode) and restart planning from scratch, overwriting `PlanCoordinatorIDs` with new instance IDs. The original planners' completion events would then be orphaned, causing the evaluator to never kick off. The fix adds proper multi-pass handling in session resume: it now correctly checks for existing planners in `PlanCoordinatorIDs`, collects any completed plans from worktrees, and triggers the evaluator when all planners have finished. Also fixed an edge case where missing planner instances (GetInstance returning nil) would cause false negatives in the all-processed check, preventing the evaluator from being triggered.
@@ -764,6 +766,9 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.12.6]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.6
+[0.12.5]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.5
+[0.12.4]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.4
 [0.12.3]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.3
 [0.12.2]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.2
 [0.12.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.0
