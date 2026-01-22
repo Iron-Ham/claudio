@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Multi-Pass Planning Session Resume** - Fixed a critical bug where resuming an ultraplan session in multi-pass mode (`:ultraplan --multi-pass`) would fail to trigger the plan evaluator. When the TUI was closed while the 3 parallel planners were running, re-attaching to the session would incorrectly check `CoordinatorID` (which is not used in multi-pass mode) and restart planning from scratch, overwriting `PlanCoordinatorIDs` with new instance IDs. The original planners' completion events would then be orphaned, causing the evaluator to never kick off. The fix adds proper multi-pass handling in session resume: it now correctly checks for existing planners in `PlanCoordinatorIDs`, collects any completed plans from worktrees, and triggers the evaluator when all planners have finished. Also fixed an edge case where missing planner instances (GetInstance returning nil) would cause false negatives in the all-processed check, preventing the evaluator from being triggered.
+
 ### Changed
 
 - **Instance Manager Callbacks Required at Construction** - Callbacks (OnStateChange, OnMetrics, OnTimeout, OnBell) are now passed via `ManagerCallbacks` struct in `ManagerOptions` at construction time, rather than being set separately via setter methods. This prevents the "leaky abstraction" bug where `Start()`/`Reconnect()` could be called without callbacks configured. The callback setter methods are now deprecated.

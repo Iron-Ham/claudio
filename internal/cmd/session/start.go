@@ -514,13 +514,20 @@ func resumeUltraplanSession(orch *orchestrator.Orchestrator, sess *orchestrator.
 	// Resume based on current phase
 	switch ultraSession.Phase {
 	case orchestrator.PhasePlanning:
-		// Check if planning coordinator instance exists and is still running
-		if ultraSession.CoordinatorID != "" && orch.GetInstance(ultraSession.CoordinatorID) != nil {
-			fmt.Println("Planning in progress...")
+		// Handle multi-pass planning mode separately
+		if ultraSession.Config.MultiPass {
+			if err := resumeMultiPassPlanning(orch, coordinator, ultraSession, logger); err != nil {
+				return fmt.Errorf("failed to resume multi-pass planning: %w", err)
+			}
 		} else {
-			fmt.Println("Restarting planning...")
-			if err := coordinator.RunPlanning(); err != nil {
-				return fmt.Errorf("failed to restart planning: %w", err)
+			// Single-pass planning: check if planning coordinator instance exists and is still running
+			if ultraSession.CoordinatorID != "" && orch.GetInstance(ultraSession.CoordinatorID) != nil {
+				fmt.Println("Planning in progress...")
+			} else {
+				fmt.Println("Restarting planning...")
+				if err := coordinator.RunPlanning(); err != nil {
+					return fmt.Errorf("failed to restart planning: %w", err)
+				}
 			}
 		}
 
@@ -590,6 +597,214 @@ func resumeUltraplanSession(orch *orchestrator.Orchestrator, sess *orchestrator.
 	// Launch TUI in ultraplan mode
 	app := tui.NewWithUltraPlan(orch, sess, coordinator, logger.WithSession(sess.ID))
 	return app.Run()
+}
+
+// multiPassResumeDeps encapsulates dependencies for resumeMultiPassPlanning
+// to enable testing with mocked implementations. This follows Go's dependency
+// injection pattern for testability.
+type multiPassResumeDeps struct {
+	// getInstance returns the instance for the given ID, or nil if not found
+	getInstance func(id string) *orchestrator.Instance
+	// isTmuxRunning returns true if the tmux session for the given instance ID exists
+	isTmuxRunning func(id string) bool
+	// saveSession persists the current session state
+	saveSession func() error
+	// runPlanning starts fresh multi-pass planning
+	runPlanning func() error
+	// runPlanManager starts the plan evaluator
+	runPlanManager func() error
+	// parsePlan parses a plan from the given worktree path
+	parsePlan func(worktreePath, objective string) (*orchestrator.PlanSpec, error)
+	// logWarn logs a warning message
+	logWarn func(msg string, args ...any)
+	// logInfo logs an info message
+	logInfo func(msg string, args ...any)
+}
+
+// resumeMultiPassPlanning handles resuming multi-pass planning mode.
+// In multi-pass mode, 3 parallel planners generate candidate plans which are then
+// evaluated by a plan manager (evaluator). This function handles the case where
+// the TUI was closed while planners were running and needs to:
+// 1. Check if planners are still running
+// 2. Collect any plans from completed planners
+// 3. Trigger the evaluator if all planners have completed
+func resumeMultiPassPlanning(
+	orch *orchestrator.Orchestrator,
+	coordinator *orchestrator.Coordinator,
+	ultraSession *orchestrator.UltraPlanSession,
+	logger *logging.Logger,
+) error {
+	// Create dependencies from concrete types
+	deps := multiPassResumeDeps{
+		getInstance: orch.GetInstance,
+		isTmuxRunning: func(id string) bool {
+			mgr := orch.GetInstanceManager(id)
+			return mgr != nil && mgr.TmuxSessionExists()
+		},
+		saveSession:    orch.SaveSession,
+		runPlanning:    coordinator.RunPlanning,
+		runPlanManager: coordinator.RunPlanManager,
+		parsePlan: func(worktreePath, objective string) (*orchestrator.PlanSpec, error) {
+			planPath := orchestrator.PlanFilePath(worktreePath)
+			return orchestrator.ParsePlanFromFile(planPath, objective)
+		},
+		logWarn: logger.Warn,
+		logInfo: logger.Info,
+	}
+	return resumeMultiPassPlanningInternal(deps, ultraSession)
+}
+
+// resumeMultiPassPlanningInternal is the testable core logic for resuming
+// multi-pass planning. It accepts dependencies explicitly to enable unit testing
+// without requiring real orchestrator, coordinator, or logger instances.
+func resumeMultiPassPlanningInternal(
+	deps multiPassResumeDeps,
+	ultraSession *orchestrator.UltraPlanSession,
+) error {
+	numCoordinators := len(ultraSession.PlanCoordinatorIDs)
+
+	// No planners means we need to start fresh
+	if numCoordinators == 0 {
+		fmt.Println("No existing planners found, starting multi-pass planning...")
+		return deps.runPlanning()
+	}
+
+	// Check the status of each planner
+	var runningPlanners []string
+	var completedPlanners []int
+
+	for i, plannerID := range ultraSession.PlanCoordinatorIDs {
+		inst := deps.getInstance(plannerID)
+		if inst == nil {
+			deps.logWarn("planner instance not found in session",
+				"planner_index", i,
+				"planner_id", plannerID,
+			)
+			// Treat missing instances as completed - they're not running and
+			// we need to mark them as processed to avoid false negatives in
+			// the all-processed check
+			completedPlanners = append(completedPlanners, i)
+			continue
+		}
+
+		if deps.isTmuxRunning(plannerID) {
+			runningPlanners = append(runningPlanners, plannerID)
+			deps.logInfo("planner still running",
+				"planner_index", i,
+				"planner_id", plannerID,
+			)
+		} else {
+			completedPlanners = append(completedPlanners, i)
+			deps.logInfo("planner completed",
+				"planner_index", i,
+				"planner_id", plannerID,
+			)
+		}
+	}
+
+	// If some planners are still running, just monitor them
+	if len(runningPlanners) > 0 {
+		fmt.Printf("Multi-pass planning in progress (%d/%d planners completed)...\n",
+			len(completedPlanners), numCoordinators)
+		return nil
+	}
+
+	// All planners have completed - check if we need to collect plans and trigger evaluator
+	fmt.Printf("All %d multi-pass planners completed. Checking plan collection...\n", numCoordinators)
+
+	// Ensure CandidatePlans is properly sized
+	if len(ultraSession.CandidatePlans) < numCoordinators {
+		newPlans := make([]*orchestrator.PlanSpec, numCoordinators)
+		copy(newPlans, ultraSession.CandidatePlans)
+		ultraSession.CandidatePlans = newPlans
+	}
+
+	// Ensure ProcessedCoordinators is initialized
+	if ultraSession.ProcessedCoordinators == nil {
+		ultraSession.ProcessedCoordinators = make(map[int]bool)
+	}
+
+	// Collect plans from completed planners that we haven't processed yet
+	for _, idx := range completedPlanners {
+		// Skip if already processed
+		if ultraSession.ProcessedCoordinators[idx] {
+			continue
+		}
+
+		plannerID := ultraSession.PlanCoordinatorIDs[idx]
+		inst := deps.getInstance(plannerID)
+		if inst == nil {
+			ultraSession.ProcessedCoordinators[idx] = true
+			continue
+		}
+
+		// Try to parse plan from the planner's worktree
+		plan, err := deps.parsePlan(inst.WorktreePath, ultraSession.Objective)
+		if err != nil {
+			deps.logWarn("failed to parse plan from completed planner",
+				"planner_index", idx,
+				"planner_id", plannerID,
+				"error", err.Error(),
+			)
+			// Mark as processed even if parsing failed - we don't want to retry forever
+			ultraSession.ProcessedCoordinators[idx] = true
+			continue
+		}
+
+		// Store the plan
+		ultraSession.CandidatePlans[idx] = plan
+		ultraSession.ProcessedCoordinators[idx] = true
+		deps.logInfo("collected plan from completed planner",
+			"planner_index", idx,
+			"planner_id", plannerID,
+			"task_count", len(plan.Tasks),
+		)
+	}
+
+	// Count valid plans
+	validPlans := 0
+	for _, p := range ultraSession.CandidatePlans {
+		if p != nil {
+			validPlans++
+		}
+	}
+
+	// Check if all planners have been processed
+	processedCount := len(ultraSession.ProcessedCoordinators)
+	if processedCount < numCoordinators {
+		// Some planners haven't been processed - this shouldn't happen if all tmux sessions are gone
+		deps.logWarn("not all planners processed despite all tmux sessions being gone",
+			"processed", processedCount,
+			"total", numCoordinators,
+		)
+		fmt.Printf("Waiting for plan collection (%d/%d processed)...\n", processedCount, numCoordinators)
+		return nil
+	}
+
+	// All planners processed - check if evaluator already started or needs to be triggered
+	if ultraSession.PlanManagerID != "" {
+		fmt.Println("Plan evaluator already running...")
+		return nil
+	}
+
+	if validPlans == 0 {
+		return fmt.Errorf("all multi-pass planners completed but no valid plans were produced")
+	}
+
+	// Trigger the evaluator
+	fmt.Printf("Starting plan evaluator with %d/%d valid plans...\n", validPlans, numCoordinators)
+	if err := deps.runPlanManager(); err != nil {
+		return fmt.Errorf("failed to start plan evaluator: %w", err)
+	}
+
+	// Save session to persist the updated state
+	if err := deps.saveSession(); err != nil {
+		deps.logWarn("failed to save session after triggering evaluator",
+			"error", err.Error(),
+		)
+	}
+
+	return nil
 }
 
 // CreateLogger creates a logger if logging is enabled in config.
