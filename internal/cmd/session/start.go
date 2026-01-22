@@ -196,14 +196,13 @@ func AttachToSession(cwd, sessionID string, cfg *config.Config) error {
 
 		if mgr.TmuxSessionExists() {
 			// Tmux session still exists - reconnect to it
-			if err := mgr.Reconnect(); err != nil {
+			// Use ReconnectInstance to ensure callbacks are configured properly
+			if err := orch.ReconnectInstance(inst); err != nil {
 				logger.Warn("failed to reconnect to tmux session",
 					"instance_id", inst.ID,
 					"error", err.Error(),
 				)
 			} else {
-				inst.Status = orchestrator.StatusWorking
-				inst.PID = mgr.PID()
 				reconnected = append(reconnected, inst.ID)
 			}
 		} else if needsRecovery && inst.ClaudeSessionID != "" &&

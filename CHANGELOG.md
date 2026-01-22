@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Session Attachment Output Capture** - Fixed a critical bug where attaching to an existing session would not configure instance callbacks, causing all instances to appear frozen with no output updates. The previous fix (#564) created instance managers but the reconnection code called `mgr.Reconnect()` directly instead of `orch.ReconnectInstance()`, which skipped the callback configuration (state changes, metrics, timeouts, bells). Now uses the proper high-level reconnection method that configures all necessary callbacks.
+
 ## [0.12.4] - 2026-01-21
 
 ### Fixed
