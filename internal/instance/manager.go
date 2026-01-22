@@ -39,6 +39,10 @@ const (
 // At 100ms per tick, 50 ticks = 5 seconds between full refreshes.
 const fullRefreshInterval = 50
 
+// ErrManagerNotConfigured is returned when Start, StartWithResume, or Reconnect
+// is called on a manager that was not properly constructed with NewManagerWithDeps.
+var ErrManagerNotConfigured = fmt.Errorf("manager not properly configured: use NewManagerWithDeps with Callbacks")
+
 // pausedHeartbeatInterval is the number of ticks between session existence checks
 // when an instance is paused. This allows detecting completion of background instances
 // without the overhead of full capture. At 100ms per tick, 50 ticks = 5 seconds.
@@ -83,6 +87,23 @@ func DefaultManagerConfig() ManagerConfig {
 // MetricsChangeCallback is called when metrics are updated
 type MetricsChangeCallback func(instanceID string, metrics *metrics.ParsedMetrics)
 
+// ManagerCallbacks holds all callbacks required for a properly configured Manager.
+// These must be provided at construction time to ensure the Manager can communicate
+// state changes, metrics, timeouts, and bells to the orchestrator.
+//
+// All callbacks are optional for testing purposes, but in production use at least
+// OnStateChange should be set to handle instance completion and waiting states.
+type ManagerCallbacks struct {
+	// OnStateChange is called when the detected waiting state changes (completed, waiting input, etc.)
+	OnStateChange StateChangeCallback
+	// OnMetrics is called when token/cost metrics are updated
+	OnMetrics MetricsChangeCallback
+	// OnTimeout is called when activity, completion, or stale timeout is detected
+	OnTimeout TimeoutCallback
+	// OnBell is called when a terminal bell is detected
+	OnBell BellCallback
+}
+
 // ManagerOptions holds explicit dependencies for creating a Manager.
 // Use NewManagerWithDeps to create a Manager with these options.
 type ManagerOptions struct {
@@ -91,6 +112,7 @@ type ManagerOptions struct {
 	WorkDir          string
 	Task             string
 	Config           ManagerConfig
+	Callbacks        ManagerCallbacks   // Callbacks for state changes, metrics, timeouts, bells
 	StateMonitor     *state.Monitor     // Optional - if nil, an internal monitor is created
 	LifecycleManager *lifecycle.Manager // Optional - if set, delegates Start/Stop/Reconnect
 	ClaudeSessionID  string             // Optional - Claude's internal session UUID for resume capability
@@ -113,6 +135,11 @@ type Manager struct {
 	doneChan        chan struct{}
 	captureTick     *time.Ticker
 	config          ManagerConfig
+
+	// configured tracks whether the manager was properly constructed with callbacks.
+	// This prevents the "leaky abstraction" bug where Start/Reconnect could be called
+	// without callbacks configured, resulting in frozen output display.
+	configured bool
 
 	// State detection - delegated to stateMonitor
 	stateCallback StateChangeCallback
@@ -211,7 +238,12 @@ func NewManagerWithDeps(opts ManagerOptions) *Manager {
 		outputBuf:       capture.NewRingBuffer(cfg.OutputBufferSize),
 		doneChan:        make(chan struct{}),
 		config:          cfg,
+		configured:      true, // Mark as properly constructed
+		stateCallback:   opts.Callbacks.OnStateChange,
 		metricsParser:   metrics.NewMetricsParser(),
+		metricsCallback: opts.Callbacks.OnMetrics,
+		timeoutCallback: opts.Callbacks.OnTimeout,
+		bellCallback:    opts.Callbacks.OnBell,
 		inputHandler: input.NewHandler(
 			input.WithPersistentSender(sessionName, socketName),
 			input.WithBatching(sessionName, input.DefaultBatchConfig()),
@@ -221,28 +253,40 @@ func NewManagerWithDeps(opts ManagerOptions) *Manager {
 	}
 }
 
-// SetStateCallback sets a callback that will be invoked when the detected state changes
+// SetStateCallback sets a callback that will be invoked when the detected state changes.
+//
+// Deprecated: Use ManagerOptions.Callbacks.OnStateChange at construction time instead.
+// This setter exists only for backward compatibility and testing.
 func (m *Manager) SetStateCallback(cb StateChangeCallback) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stateCallback = cb
 }
 
-// SetMetricsCallback sets a callback that will be invoked when metrics are updated
+// SetMetricsCallback sets a callback that will be invoked when metrics are updated.
+//
+// Deprecated: Use ManagerOptions.Callbacks.OnMetrics at construction time instead.
+// This setter exists only for backward compatibility and testing.
 func (m *Manager) SetMetricsCallback(cb MetricsChangeCallback) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.metricsCallback = cb
 }
 
-// SetTimeoutCallback sets a callback that will be invoked when a timeout is detected
+// SetTimeoutCallback sets a callback that will be invoked when a timeout is detected.
+//
+// Deprecated: Use ManagerOptions.Callbacks.OnTimeout at construction time instead.
+// This setter exists only for backward compatibility and testing.
 func (m *Manager) SetTimeoutCallback(cb TimeoutCallback) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.timeoutCallback = cb
 }
 
-// SetBellCallback sets a callback that will be invoked when a terminal bell is detected
+// SetBellCallback sets a callback that will be invoked when a terminal bell is detected.
+//
+// Deprecated: Use ManagerOptions.Callbacks.OnBell at construction time instead.
+// This setter exists only for backward compatibility and testing.
 func (m *Manager) SetBellCallback(cb BellCallback) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -307,7 +351,13 @@ func (m *Manager) ClearTimeout() {
 
 // Start launches the Claude Code process in a tmux session.
 // If a LifecycleManager is configured, delegates to it for tmux session management.
+//
+// Returns ErrManagerNotConfigured if the manager was not created via NewManagerWithDeps.
 func (m *Manager) Start() error {
+	if !m.configured {
+		return ErrManagerNotConfigured
+	}
+
 	// Delegate to lifecycle manager if available
 	if m.lifecycleManager != nil {
 		return m.lifecycleManager.Start(m)
@@ -429,7 +479,13 @@ func (m *Manager) Start() error {
 // StartWithResume launches Claude Code with --resume to continue a previous session.
 // This requires a valid ClaudeSessionID to be set (either via ManagerOptions or SetClaudeSessionID).
 // The resumed session will continue from where it left off.
+//
+// Returns ErrManagerNotConfigured if the manager was not created via NewManagerWithDeps.
 func (m *Manager) StartWithResume() error {
+	if !m.configured {
+		return ErrManagerNotConfigured
+	}
+
 	// Delegate to lifecycle manager if available
 	if m.lifecycleManager != nil {
 		return m.lifecycleManager.Start(m)
@@ -1159,9 +1215,15 @@ func (m *Manager) TmuxSessionExists() bool {
 	return cmd.Run() == nil
 }
 
-// Reconnect attempts to reconnect to an existing tmux session
-// This is used for session recovery after a restart
+// Reconnect attempts to reconnect to an existing tmux session.
+// This is used for session recovery after a restart.
+//
+// Returns ErrManagerNotConfigured if the manager was not created via NewManagerWithDeps.
 func (m *Manager) Reconnect() error {
+	if !m.configured {
+		return ErrManagerNotConfigured
+	}
+
 	// Delegate to lifecycle manager if available
 	if m.lifecycleManager != nil {
 		return m.lifecycleManager.Reconnect(m)
@@ -1181,7 +1243,13 @@ func (m *Manager) Reconnect() error {
 
 	// Ensure monitor-bell is enabled for bell detection (may not be set if session was created before this feature)
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxCommandTimeout)
-	_ = m.tmuxCmdCtx(ctx, "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
+	if err := m.tmuxCmdCtx(ctx, "set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run(); err != nil {
+		if m.logger != nil {
+			m.logger.Warn("failed to enable monitor-bell on reconnect (bells may not be detected)",
+				"session_name", m.sessionName,
+				"error", err.Error())
+		}
+	}
 	cancel()
 
 	m.running = true

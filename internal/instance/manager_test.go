@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -278,6 +279,64 @@ func TestManager_Reconnect_NoSession(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "does not exist") {
 		t.Errorf("Reconnect() error should mention session doesn't exist, got: %v", err)
+	}
+}
+
+// Tests for the "configured" guard that prevents leaky abstraction bugs.
+// These tests verify that Start/StartWithResume/Reconnect fail if the Manager
+// was not properly constructed via NewManagerWithDeps.
+
+func TestManager_Start_ReturnsErrorIfNotConfigured(t *testing.T) {
+	// Create an unconfigured manager (bypass NewManagerWithDeps)
+	mgr := &Manager{
+		id:         "test",
+		configured: false,
+	}
+
+	err := mgr.Start()
+	if err == nil {
+		t.Fatal("Start() should return error for unconfigured manager")
+	}
+	if !errors.Is(err, ErrManagerNotConfigured) {
+		t.Errorf("expected ErrManagerNotConfigured, got: %v", err)
+	}
+}
+
+func TestManager_StartWithResume_ReturnsErrorIfNotConfigured(t *testing.T) {
+	mgr := &Manager{
+		id:         "test",
+		configured: false,
+	}
+
+	err := mgr.StartWithResume()
+	if err == nil {
+		t.Fatal("StartWithResume() should return error for unconfigured manager")
+	}
+	if !errors.Is(err, ErrManagerNotConfigured) {
+		t.Errorf("expected ErrManagerNotConfigured, got: %v", err)
+	}
+}
+
+func TestManager_Reconnect_ReturnsErrorIfNotConfigured(t *testing.T) {
+	mgr := &Manager{
+		id:         "test",
+		configured: false,
+	}
+
+	err := mgr.Reconnect()
+	if err == nil {
+		t.Fatal("Reconnect() should return error for unconfigured manager")
+	}
+	if !errors.Is(err, ErrManagerNotConfigured) {
+		t.Errorf("expected ErrManagerNotConfigured, got: %v", err)
+	}
+}
+
+func TestManager_ProperlyConfiguredViaNewManagerWithDeps(t *testing.T) {
+	// Verify that NewManagerWithDeps sets configured = true
+	mgr := newTestManager("test", "/tmp", "task")
+	if !mgr.configured {
+		t.Error("NewManagerWithDeps should set configured = true")
 	}
 }
 

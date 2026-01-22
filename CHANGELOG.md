@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Instance Manager Callbacks Required at Construction** - Callbacks (OnStateChange, OnMetrics, OnTimeout, OnBell) are now passed via `ManagerCallbacks` struct in `ManagerOptions` at construction time, rather than being set separately via setter methods. This prevents the "leaky abstraction" bug where `Start()`/`Reconnect()` could be called without callbacks configured. The callback setter methods are now deprecated.
+
+- **Runtime Guards on Instance Lifecycle Methods** - `Start()`, `StartWithResume()`, and `Reconnect()` now return `ErrManagerNotConfigured` if the Manager was not properly constructed via `NewManagerWithDeps`. This provides defense-in-depth against misconfigured managers.
+
+- **Improved Error Handling** - The `Reconnect()` method now logs a warning if enabling monitor-bell fails, instead of silently ignoring the error. The `ReconnectInstance()` fallback logic now properly propagates configuration errors instead of masking them.
+
+### Removed
+
+- **Dead Code Cleanup** - Removed unused `RecoverSession()` method from orchestrator that had duplicate (and incomplete) callback configuration code, which was missing the metrics callback. Also removed the now-unused `configureInstanceCallbacks()` method since callbacks are configured at construction time.
+
 ## [0.12.5] - 2026-01-22
 
 ### Fixed
