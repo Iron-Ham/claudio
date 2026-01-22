@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -419,73 +420,6 @@ func (o *Orchestrator) LoadSessionWithLock() (*Session, error) {
 	return o.LoadSession()
 }
 
-// RecoverSession loads a session and attempts to reconnect to running tmux sessions
-// Returns a list of instance IDs that were successfully reconnected
-func (o *Orchestrator) RecoverSession() (*Session, []string, error) {
-	session, err := o.LoadSession()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var reconnected []string
-	for _, inst := range session.Instances {
-		// Create instance manager (with Claude session ID for resume capability)
-		mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
-
-		// Try to reconnect if the tmux session still exists
-		if mgr.TmuxSessionExists() {
-			// Configure state change callback
-			mgr.SetStateCallback(func(id string, state detect.WaitingState) {
-				switch state {
-				case detect.StateCompleted:
-					o.handleInstanceExit(id)
-				case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
-					o.handleInstanceWaitingInput(id)
-				case detect.StatePROpened:
-					o.handleInstancePROpened(id)
-				}
-			})
-
-			// Configure timeout callback
-			mgr.SetTimeoutCallback(func(id string, timeoutType instance.TimeoutType) {
-				o.handleInstanceTimeout(id, timeoutType)
-			})
-
-			// Configure bell callback to forward terminal bells
-			mgr.SetBellCallback(func(id string) {
-				o.handleInstanceBell(id)
-			})
-
-			if err := mgr.Reconnect(); err == nil {
-				inst.Status = StatusWorking
-				inst.PID = mgr.PID()
-				reconnected = append(reconnected, inst.ID)
-			}
-		} else {
-			// Tmux session doesn't exist - mark as paused if it was working
-			if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
-				inst.Status = StatusPaused
-				inst.PID = 0
-			}
-		}
-
-		o.mu.Lock()
-		o.instances[inst.ID] = mgr
-		o.mu.Unlock()
-	}
-
-	// Save updated session state
-	if err := o.saveSession(); err != nil {
-		if o.logger != nil {
-			o.logger.Warn("failed to save session after recovery",
-				"error", err,
-			)
-		}
-	}
-
-	return session, reconnected, nil
-}
-
 // HasExistingSession checks if there's an existing session file
 func (o *Orchestrator) HasExistingSession() bool {
 	var sessionFile string
@@ -898,9 +832,6 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 		mgr.SetClaudeSessionID(inst.ClaudeSessionID)
 	}
 
-	// Configure all callbacks
-	o.configureInstanceCallbacks(mgr)
-
 	if err := mgr.Start(); err != nil {
 		if o.logger != nil {
 			o.logger.Error("failed to start instance",
@@ -1303,10 +1234,36 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 // Uses the shared StateMonitor for centralized state tracking.
 // The manager is automatically registered with the display manager to receive resize events.
 //
+// Callbacks are configured at construction time to prevent the "leaky abstraction" bug
+// where Start/Reconnect could be called without callbacks, resulting in frozen output.
+//
 // Note: LifecycleManager delegation is available but not enabled by default.
 // The instance Manager's Start/Stop/Reconnect use their internal implementation.
 func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessionID string) *instance.Manager {
 	cfg := o.instanceManagerConfig()
+
+	// Build callbacks that route to orchestrator handlers
+	callbacks := instance.ManagerCallbacks{
+		OnStateChange: func(id string, state detect.WaitingState) {
+			switch state {
+			case detect.StateCompleted:
+				o.handleInstanceExit(id)
+			case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
+				o.handleInstanceWaitingInput(id)
+			case detect.StatePROpened:
+				o.handleInstancePROpened(id)
+			}
+		},
+		OnMetrics: func(id string, m *instmetrics.ParsedMetrics) {
+			o.handleInstanceMetrics(id, m)
+		},
+		OnTimeout: func(id string, timeoutType instance.TimeoutType) {
+			o.handleInstanceTimeout(id, timeoutType)
+		},
+		OnBell: func(id string) {
+			o.handleInstanceBell(id)
+		},
+	}
 
 	mgr := instance.NewManagerWithDeps(instance.ManagerOptions{
 		ID:              instanceID,
@@ -1314,6 +1271,7 @@ func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessi
 		WorkDir:         workdir,
 		Task:            task,
 		Config:          cfg,
+		Callbacks:       callbacks,
 		StateMonitor:    o.stateMonitor,
 		ClaudeSessionID: claudeSessionID,
 		// LifecycleManager not set - instances use internal Start/Stop/Reconnect
@@ -1376,38 +1334,6 @@ func (o *Orchestrator) registerInstance(session *Session, inst *Instance) error 
 	}
 
 	return nil
-}
-
-// configureInstanceCallbacks sets up all necessary callbacks on an instance manager.
-// This centralizes callback configuration to avoid duplication between StartInstance
-// and ReconnectInstance.
-func (o *Orchestrator) configureInstanceCallbacks(mgr *instance.Manager) {
-	// Configure state change callback for notifications
-	mgr.SetStateCallback(func(id string, state detect.WaitingState) {
-		switch state {
-		case detect.StateCompleted:
-			o.handleInstanceExit(id)
-		case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
-			o.handleInstanceWaitingInput(id)
-		case detect.StatePROpened:
-			o.handleInstancePROpened(id)
-		}
-	})
-
-	// Configure metrics callback for resource tracking
-	mgr.SetMetricsCallback(func(id string, m *instmetrics.ParsedMetrics) {
-		o.handleInstanceMetrics(id, m)
-	})
-
-	// Configure timeout callback
-	mgr.SetTimeoutCallback(func(id string, timeoutType instance.TimeoutType) {
-		o.handleInstanceTimeout(id, timeoutType)
-	})
-
-	// Configure bell callback to forward terminal bells
-	mgr.SetBellCallback(func(id string) {
-		o.handleInstanceBell(id)
-	})
 }
 
 // Session returns the current session
@@ -2199,25 +2125,25 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 	// stale detection from immediately triggering again
 	mgr.ClearTimeout()
 
-	// Configure all callbacks
-	o.configureInstanceCallbacks(mgr)
-
 	// Check if the tmux session still exists
 	if mgr.TmuxSessionExists() {
-		// Reconnect to the existing session
 		if err := mgr.Reconnect(); err != nil {
 			return fmt.Errorf("failed to reconnect to existing session: %w", err)
 		}
 	} else if inst.ClaudeSessionID != "" {
 		// Tmux session gone but we have a Claude session ID - resume Claude's conversation
 		if err := mgr.StartWithResume(); err != nil {
+			// Configuration errors are programming bugs - propagate them immediately
+			if errors.Is(err, instance.ErrManagerNotConfigured) {
+				return fmt.Errorf("failed to resume instance: %w", err)
+			}
 			if o.logger != nil {
 				o.logger.Warn("failed to resume with claude session, falling back to fresh start",
 					"instance_id", inst.ID,
 					"claude_session_id", inst.ClaudeSessionID,
 					"error", err.Error())
 			}
-			// Fall back to fresh start if resume fails
+			// Fall back to fresh start if resume fails (e.g., Claude session expired)
 			if err := mgr.Start(); err != nil {
 				return fmt.Errorf("failed to restart instance: %w", err)
 			}
@@ -2265,14 +2191,9 @@ func (o *Orchestrator) ResumeInstance(inst *Instance) error {
 		o.mu.Unlock()
 	}
 
-	// Always clear timeout state when resuming to prevent
-	// stale detection from immediately triggering again
+	// Clear timeout state when resuming to prevent stale detection from immediately triggering
 	mgr.ClearTimeout()
 
-	// Configure all callbacks
-	o.configureInstanceCallbacks(mgr)
-
-	// Start with resume
 	if err := mgr.StartWithResume(); err != nil {
 		if o.logger != nil {
 			o.logger.Error("failed to resume instance",
