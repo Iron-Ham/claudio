@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.7] - 2026-01-23
+
 ### Fixed
 
 - **Frozen Output from Transient Tmux Errors** - Fixed a critical bug where tmux sessions would appear frozen (no output updates, input not showing) due to transient tmux errors being misinterpreted as "session doesn't exist". Previously, any non-timeout error from tmux `display-message` or `has-session` commands would cause the capture loop to think the session had ended, setting `running = false` and stopping all output updates. Now, only definitive "session gone" errors (socket doesn't exist, session not found, no server running, tmux not installed) are treated as terminal—all other errors (broken pipe, signal killed, generic exit status) are assumed to be transient and the capture loop continues retrying. Also fixed `checkSessionExists` to properly capture stderr using `CombinedOutput()` for accurate error message detection.
