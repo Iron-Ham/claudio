@@ -558,6 +558,77 @@ func TestManager_CheckSessionExists_NoSession(t *testing.T) {
 	}
 }
 
+// TestSessionGoneErrorPatterns documents which tmux error messages indicate
+// that a session is definitively gone vs transient errors that should be retried.
+// This test verifies our understanding of tmux error messages.
+func TestSessionGoneErrorPatterns(t *testing.T) {
+	// These error patterns indicate the session is definitively gone
+	sessionGonePatterns := []struct {
+		name     string
+		errorMsg string
+	}{
+		{
+			name:     "socket doesn't exist",
+			errorMsg: "error connecting to /tmp/tmux-501/claudio-test (No such file or directory)",
+		},
+		{
+			name:     "session not found",
+			errorMsg: "can't find session: test-session",
+		},
+		{
+			name:     "no server running on socket",
+			errorMsg: "no server running on /tmp/tmux-501/claudio-test",
+		},
+		{
+			name:     "tmux not installed",
+			errorMsg: `exec: "tmux": executable file not found in $PATH`,
+		},
+	}
+
+	for _, tt := range sessionGonePatterns {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionGone := strings.Contains(tt.errorMsg, "error connecting to") ||
+				strings.Contains(tt.errorMsg, "can't find session:") ||
+				strings.Contains(tt.errorMsg, "no server running") ||
+				strings.Contains(tt.errorMsg, "executable file not found")
+			if !sessionGone {
+				t.Errorf("expected %q to be recognized as session-gone error", tt.errorMsg)
+			}
+		})
+	}
+
+	// These errors should NOT indicate the session is gone (transient errors)
+	transientPatterns := []struct {
+		name     string
+		errorMsg string
+	}{
+		{
+			name:     "generic exit status",
+			errorMsg: "exit status 1",
+		},
+		{
+			name:     "broken pipe",
+			errorMsg: "write: broken pipe",
+		},
+		{
+			name:     "signal killed",
+			errorMsg: "signal: killed",
+		},
+	}
+
+	for _, tt := range transientPatterns {
+		t.Run("transient/"+tt.name, func(t *testing.T) {
+			sessionGone := strings.Contains(tt.errorMsg, "error connecting to") ||
+				strings.Contains(tt.errorMsg, "can't find session:") ||
+				strings.Contains(tt.errorMsg, "no server running") ||
+				strings.Contains(tt.errorMsg, "executable file not found")
+			if sessionGone {
+				t.Errorf("expected %q to NOT be recognized as session-gone error", tt.errorMsg)
+			}
+		})
+	}
+}
+
 func TestListClaudioTmuxSessions_NoTmuxServer(t *testing.T) {
 	// This test may return nil or an empty list depending on whether tmux is running
 	// The important thing is it should not error in a way that causes a panic

@@ -824,11 +824,12 @@ func (m *Manager) getSessionStatus(sessionName string) sessionStatus {
 	cmd := m.tmuxCmdCtx(ctx, "display-message", "-t", sessionName, "-p", "#{history_size}|#{window_bell_flag}")
 	output, err := cmd.Output()
 	if err != nil {
+		m.mu.RLock()
+		logger := m.logger
+		m.mu.RUnlock()
+
 		// Check if this was a timeout - session may still exist
 		if ctx.Err() == context.DeadlineExceeded {
-			m.mu.RLock()
-			logger := m.logger
-			m.mu.RUnlock()
 			if logger != nil {
 				logger.Warn("tmux display-message timed out, will retry next tick",
 					"session_name", sessionName)
@@ -836,8 +837,40 @@ func (m *Manager) getSessionStatus(sessionName string) sessionStatus {
 			return sessionStatus{historySize: -1, bellActive: false, sessionExists: true}
 		}
 
-		// Any non-timeout error means session doesn't exist or can't be verified
-		return sessionStatus{historySize: -1, bellActive: false, sessionExists: false}
+		// Check if this is a definitive "session doesn't exist" error.
+		// Only treat session as non-existent for specific error patterns:
+		// - "error connecting to" - socket doesn't exist
+		// - "can't find session:" - session not found
+		// - "no server running" - tmux server not running
+		// - "executable file not found" - tmux not installed
+		// For all other errors (transient failures, pipe errors, etc.),
+		// assume the session still exists and retry on next tick.
+		errStr := err.Error()
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			// Include stderr in the error check
+			errStr = string(exitErr.Stderr)
+		}
+		sessionGone := strings.Contains(errStr, "error connecting to") ||
+			strings.Contains(errStr, "can't find session:") ||
+			strings.Contains(errStr, "no server running") ||
+			strings.Contains(errStr, "executable file not found")
+
+		if sessionGone {
+			if logger != nil {
+				logger.Debug("tmux session confirmed not found",
+					"session_name", sessionName,
+					"error", errStr)
+			}
+			return sessionStatus{historySize: -1, bellActive: false, sessionExists: false}
+		}
+
+		// For other errors (transient), assume session exists and retry
+		if logger != nil {
+			logger.Warn("tmux display-message failed with transient error, will retry",
+				"session_name", sessionName,
+				"error", errStr)
+		}
+		return sessionStatus{historySize: -1, bellActive: false, sessionExists: true}
 	}
 
 	// Parse the response using the extracted helper
@@ -881,7 +914,8 @@ func (m *Manager) checkSessionExists(sessionName string) bool {
 	defer cancel()
 
 	cmd := m.tmuxCmdCtx(ctx, "has-session", "-t", sessionName)
-	err := cmd.Run()
+	// Use CombinedOutput to capture stderr which contains the error message
+	output, err := cmd.CombinedOutput()
 
 	// If timeout, assume session still exists (retry on next heartbeat)
 	if ctx.Err() == context.DeadlineExceeded {
@@ -896,9 +930,43 @@ func (m *Manager) checkSessionExists(sessionName string) bool {
 	}
 
 	if err != nil {
-		// Any error means session doesn't exist or can't be verified
-		// This is consistent with TmuxSessionExists() which uses `cmd.Run() == nil`
-		return false
+		m.mu.RLock()
+		logger := m.logger
+		m.mu.RUnlock()
+
+		// Check if this is a definitive "session doesn't exist" error.
+		// Only return false for specific error patterns:
+		// - "error connecting to" - socket doesn't exist
+		// - "can't find session:" - session not found
+		// - "no server running" - tmux server not running
+		// - "executable file not found" - tmux not installed
+		// For transient errors, assume the session still exists.
+		// Note: With CombinedOutput, error messages are in the output bytes, not ExitError.Stderr
+		errStr := string(output)
+		if errStr == "" {
+			errStr = err.Error()
+		}
+		sessionGone := strings.Contains(errStr, "error connecting to") ||
+			strings.Contains(errStr, "can't find session:") ||
+			strings.Contains(errStr, "no server running") ||
+			strings.Contains(errStr, "executable file not found")
+
+		if sessionGone {
+			if logger != nil {
+				logger.Debug("tmux session confirmed not found during heartbeat",
+					"session_name", sessionName,
+					"error", errStr)
+			}
+			return false
+		}
+
+		// For transient errors, assume session exists and retry
+		if logger != nil {
+			logger.Warn("tmux has-session failed with transient error, assuming session exists",
+				"session_name", sessionName,
+				"error", errStr)
+		}
+		return true
 	}
 
 	return true
