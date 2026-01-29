@@ -264,6 +264,81 @@ func TestDependentTaskAddedMsg(t *testing.T) {
 	}
 }
 
+func TestInstanceStubCreatedMsg(t *testing.T) {
+	tests := []struct {
+		name     string
+		instance *orchestrator.Instance
+		err      error
+	}{
+		{
+			name:     "successful stub creation",
+			instance: &orchestrator.Instance{ID: "stub-1", Status: orchestrator.StatusPreparing},
+			err:      nil,
+		},
+		{
+			name:     "failed stub creation",
+			instance: nil,
+			err:      errors.New("failed to create stub"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := InstanceStubCreatedMsg{
+				Instance: tt.instance,
+				Err:      tt.err,
+			}
+
+			if msg.Instance != tt.instance {
+				t.Errorf("InstanceStubCreatedMsg.Instance = %v, want %v", msg.Instance, tt.instance)
+			}
+			if msg.Err != tt.err {
+				t.Errorf("InstanceStubCreatedMsg.Err = %v, want %v", msg.Err, tt.err)
+			}
+		})
+	}
+}
+
+func TestInstanceSetupCompleteMsg(t *testing.T) {
+	tests := []struct {
+		name       string
+		instanceID string
+		err        error
+	}{
+		{
+			name:       "successful setup completion",
+			instanceID: "inst-1",
+			err:        nil,
+		},
+		{
+			name:       "failed setup completion",
+			instanceID: "inst-2",
+			err:        errors.New("worktree creation failed"),
+		},
+		{
+			name:       "empty instance ID on early error",
+			instanceID: "",
+			err:        errors.New("instance is nil"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := InstanceSetupCompleteMsg{
+				InstanceID: tt.instanceID,
+				Err:        tt.err,
+			}
+
+			if msg.InstanceID != tt.instanceID {
+				t.Errorf("InstanceSetupCompleteMsg.InstanceID = %q, want %q", msg.InstanceID, tt.instanceID)
+			}
+			if msg.Err != tt.err {
+				t.Errorf("InstanceSetupCompleteMsg.Err = %v, want %v", msg.Err, tt.err)
+			}
+		})
+	}
+}
+
 func TestUltraPlanInitMsg(t *testing.T) {
 	// This is a zero-value struct used as a signal
 	msg := UltraPlanInitMsg{}

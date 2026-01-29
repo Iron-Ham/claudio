@@ -51,6 +51,22 @@ type TaskAddedMsg struct {
 	Err      error
 }
 
+// InstanceStubCreatedMsg is sent when the fast first phase of async task
+// addition completes. The instance is now visible in the UI with StatusPreparing,
+// but the worktree is not yet created.
+type InstanceStubCreatedMsg struct {
+	Instance *orchestrator.Instance
+	Err      error
+}
+
+// InstanceSetupCompleteMsg is sent when the slow second phase of async task
+// addition completes. The worktree is now created and the instance is ready
+// to be started (status changed to StatusPending).
+type InstanceSetupCompleteMsg struct {
+	InstanceID string
+	Err        error
+}
+
 // DependentTaskAddedMsg is sent when async dependent task addition completes.
 type DependentTaskAddedMsg struct {
 	Instance  *orchestrator.Instance

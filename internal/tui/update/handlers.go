@@ -230,3 +230,90 @@ func HandleDependentTaskAdded(ctx Context, m msg.DependentTaskAddedMsg) {
 		)
 	}
 }
+
+// HandleInstanceStubCreated processes an InstanceStubCreatedMsg when the fast
+// first phase of async task addition completes. The instance now appears in the
+// UI with StatusPreparing, and we kick off the slow worktree creation.
+func HandleInstanceStubCreated(ctx Context, m msg.InstanceStubCreatedMsg) {
+	ctx.ClearInfoMessage()
+
+	if m.Err != nil {
+		ctx.SetErrorMessage(m.Err.Error())
+		if logger := ctx.Logger(); logger != nil {
+			logger.Error("failed to create instance stub", "error", m.Err.Error())
+		}
+		return
+	}
+
+	// Pause the old active instance before switching
+	if oldInst := ctx.ActiveInstance(); oldInst != nil {
+		ctx.PauseInstance(oldInst.ID)
+	}
+
+	// Switch to the newly added task and ensure it's visible in sidebar
+	ctx.SetActiveTab(ctx.InstanceCount() - 1)
+	ctx.EnsureActiveVisible()
+
+	// Show preparing message and log stub creation
+	if m.Instance != nil {
+		ctx.SetInfoMessage(fmt.Sprintf("Preparing instance %s...", m.Instance.ID))
+		if logger := ctx.Logger(); logger != nil {
+			logger.Info("instance stub created", "task", m.Instance.Task)
+		}
+	}
+}
+
+// HandleInstanceSetupComplete processes an InstanceSetupCompleteMsg when the slow
+// second phase of async task addition completes. The worktree is now ready and
+// we can optionally auto-start the instance.
+func HandleInstanceSetupComplete(ctx Context, m msg.InstanceSetupCompleteMsg) {
+	if m.Err != nil {
+		ctx.SetErrorMessage(fmt.Sprintf("Failed to setup instance %s: %v", m.InstanceID, m.Err))
+		if logger := ctx.Logger(); logger != nil {
+			logger.Error("failed to complete instance setup",
+				"instance_id", m.InstanceID,
+				"error", m.Err.Error(),
+			)
+		}
+		return
+	}
+
+	session := ctx.Session()
+	if session == nil {
+		return
+	}
+
+	inst := session.GetInstance(m.InstanceID)
+	if inst == nil {
+		return
+	}
+
+	// Log setup completion
+	if logger := ctx.Logger(); logger != nil {
+		logger.Info("instance setup completed", "instance_id", m.InstanceID)
+	}
+
+	// Auto-start the instance if configured (default: true)
+	if !viper.GetBool("session.auto_start_on_add") {
+		ctx.SetInfoMessage(fmt.Sprintf("Instance %s ready", inst.ID))
+		return
+	}
+
+	orch := ctx.Orchestrator()
+	if orch == nil {
+		return
+	}
+
+	if err := orch.StartInstance(inst); err != nil {
+		ctx.SetErrorMessage(fmt.Sprintf("Failed to auto-start instance: %v", err))
+		if logger := ctx.Logger(); logger != nil {
+			logger.Error("failed to auto-start instance", "error", err.Error())
+		}
+		return
+	}
+
+	ctx.SetInfoMessage(fmt.Sprintf("Started instance %s", inst.ID))
+	if logger := ctx.Logger(); logger != nil {
+		logger.Info("auto-started instance", "task", inst.Task)
+	}
+}

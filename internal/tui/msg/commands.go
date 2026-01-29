@@ -70,6 +70,10 @@ func NotifyUser() tea.Cmd {
 
 // AddTaskAsync returns a command that adds a task asynchronously.
 // This prevents the UI from blocking while git creates the worktree.
+//
+// DEPRECATED: Use AddTaskStubAsync + CompleteInstanceSetupAsync for better UX
+// when auto_start_on_add is enabled. This function still works but blocks the
+// UI during worktree creation.
 func AddTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string) tea.Cmd {
 	return func() tea.Msg {
 		if o == nil {
@@ -80,6 +84,47 @@ func AddTaskAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, t
 		}
 		inst, err := o.AddInstance(session, task)
 		return TaskAddedMsg{Instance: inst, Err: err}
+	}
+}
+
+// AddTaskStubAsync returns a command that creates an instance stub asynchronously.
+// This is the fast first phase of async task addition - it creates minimal instance
+// metadata immediately so it appears in the UI with StatusPreparing.
+//
+// Use with CompleteInstanceSetupAsync for responsive task addition:
+// 1. AddTaskStubAsync creates the stub (fast)
+// 2. User sees instance immediately with "preparing" status
+// 3. CompleteInstanceSetupAsync creates worktree (slow, background)
+// 4. Instance becomes ready when worktree is done
+func AddTaskStubAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string) tea.Cmd {
+	return func() tea.Msg {
+		if o == nil {
+			return InstanceStubCreatedMsg{Instance: nil, Err: fmt.Errorf("orchestrator is nil")}
+		}
+		if session == nil {
+			return InstanceStubCreatedMsg{Instance: nil, Err: fmt.Errorf("session is nil")}
+		}
+		inst, err := o.AddInstanceStub(session, task)
+		return InstanceStubCreatedMsg{Instance: inst, Err: err}
+	}
+}
+
+// CompleteInstanceSetupAsync returns a command that completes instance setup asynchronously.
+// This is the slow second phase - it creates the worktree and registers the instance.
+// Should be called after receiving InstanceStubCreatedMsg.
+func CompleteInstanceSetupAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, inst *orchestrator.Instance) tea.Cmd {
+	return func() tea.Msg {
+		if o == nil {
+			return InstanceSetupCompleteMsg{InstanceID: "", Err: fmt.Errorf("orchestrator is nil")}
+		}
+		if session == nil {
+			return InstanceSetupCompleteMsg{InstanceID: "", Err: fmt.Errorf("session is nil")}
+		}
+		if inst == nil {
+			return InstanceSetupCompleteMsg{InstanceID: "", Err: fmt.Errorf("instance is nil")}
+		}
+		err := o.CompleteInstanceSetup(session, inst)
+		return InstanceSetupCompleteMsg{InstanceID: inst.ID, Err: err}
 	}
 }
 

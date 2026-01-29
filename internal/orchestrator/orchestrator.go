@@ -813,6 +813,11 @@ func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, base
 
 // StartInstance starts a Claude process for an instance
 func (o *Orchestrator) StartInstance(inst *Instance) error {
+	// Validate instance is ready to start - cannot start if still preparing
+	if inst.Status == StatusPreparing {
+		return fmt.Errorf("instance is still preparing (worktree being created)")
+	}
+
 	// Generate a Claude session ID if not already present (for resume capability)
 	if inst.ClaudeSessionID == "" {
 		inst.ClaudeSessionID = GenerateUUID()
@@ -2109,6 +2114,11 @@ func (o *Orchestrator) GetMainBranch() string {
 // If the tmux session still exists, it reconnects to it
 // If not, it restarts Claude with the same task in the existing worktree
 func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
+	// Validate instance is ready - cannot reconnect if still preparing
+	if inst.Status == StatusPreparing {
+		return fmt.Errorf("instance is still preparing (worktree being created)")
+	}
+
 	o.mu.Lock()
 	mgr, ok := o.instances[inst.ID]
 	o.mu.Unlock()
@@ -2257,4 +2267,134 @@ func (o *Orchestrator) ClearCompletedInstances(session *Session) (int, error) {
 	}
 
 	return removed, nil
+}
+
+// AddInstanceStub creates a new Claude instance stub with StatusPreparing.
+// This is the fast first phase of async instance creation - it creates the
+// instance metadata immediately so it can be displayed in the UI.
+// The worktree is NOT created yet - call CompleteInstanceSetup to finish setup.
+//
+// This enables responsive UI during task addition: the stub appears immediately
+// while the slow worktree creation happens in the background.
+func (o *Orchestrator) AddInstanceStub(session *Session, task string) (*Instance, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Create instance with preparing status
+	inst := NewInstance(task)
+	inst.Status = StatusPreparing
+
+	// Generate branch name from task using configured naming convention
+	branchSlug := slugify(task)
+	inst.Branch = o.generateBranchName(inst.ID, branchSlug)
+
+	// Set the worktree path (but don't create it yet)
+	inst.WorktreePath = filepath.Join(o.worktreeDir, inst.ID)
+
+	// Add to session immediately so it shows in the UI
+	session.Instances = append(session.Instances, inst)
+
+	// Save session with the stub
+	if err := o.saveSession(); err != nil {
+		// Remove from session on failure
+		session.Instances = session.Instances[:len(session.Instances)-1]
+		if o.logger != nil {
+			o.logger.Error("failed to save session after adding stub",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
+		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
+	// Log stub creation
+	if o.logger != nil {
+		o.logger.Info("instance stub added",
+			"instance_id", inst.ID,
+			"task", util.TruncateString(task, 100),
+			"branch", inst.Branch,
+		)
+	}
+
+	return inst, nil
+}
+
+// CompleteInstanceSetup finishes the async setup for a stub instance.
+// This is the slow second phase - it creates the worktree and registers
+// the instance with managers. Should be called from a goroutine.
+//
+// On success, the instance status changes from StatusPreparing to StatusPending.
+// On failure, the instance status changes to StatusError.
+func (o *Orchestrator) CompleteInstanceSetup(session *Session, inst *Instance) error {
+	// Create the worktree (this is the slow operation)
+	if err := o.wt.Create(inst.WorktreePath, inst.Branch); err != nil {
+		o.mu.Lock()
+		inst.Status = StatusError
+		_ = o.saveSession()
+		o.mu.Unlock()
+
+		if o.logger != nil {
+			o.logger.Error("failed to create worktree during async setup",
+				"instance_id", inst.ID,
+				"worktree_path", inst.WorktreePath,
+				"error", err,
+			)
+		}
+		return fmt.Errorf("failed to create worktree: %w", err)
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Copy local Claude configuration files to the worktree
+	o.copyLocalClaudeFilesToWorktree(inst.ID, inst.WorktreePath)
+
+	// Create instance manager with config
+	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
+	o.instances[inst.ID] = mgr
+
+	// Register with conflict detector
+	if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
+		if o.logger != nil {
+			o.logger.Debug("failed to watch instance for conflicts",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
+	}
+
+	// Update shared context
+	if err := o.updateContext(); err != nil {
+		if o.logger != nil {
+			o.logger.Warn("failed to update context",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
+	}
+
+	// Update status to pending (ready to start)
+	inst.Status = StatusPending
+
+	// Save session
+	if err := o.saveSession(); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to save session after completing setup",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
+		return fmt.Errorf("failed to save session: %w", err)
+	}
+
+	// Log completion
+	if o.logger != nil {
+		o.logger.Info("instance setup completed",
+			"instance_id", inst.ID,
+			"task", util.TruncateString(inst.Task, 100),
+			"branch", inst.Branch,
+		)
+	}
+
+	return nil
 }

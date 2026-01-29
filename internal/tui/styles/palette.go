@@ -87,6 +87,7 @@ type ColorPalette struct {
 	// Status-specific colors
 	StatusWorking     lipgloss.Color
 	StatusPending     lipgloss.Color
+	StatusPreparing   lipgloss.Color
 	StatusInput       lipgloss.Color
 	StatusPaused      lipgloss.Color
 	StatusComplete    lipgloss.Color
@@ -132,6 +133,7 @@ func DefaultPalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#10B981"), // Green
 		StatusPending:     lipgloss.Color("#9CA3AF"), // Gray
+		StatusPreparing:   lipgloss.Color("#60A5FA"), // Blue - async setup
 		StatusInput:       lipgloss.Color("#F59E0B"), // Amber
 		StatusPaused:      lipgloss.Color("#60A5FA"), // Blue
 		StatusComplete:    lipgloss.Color("#A78BFA"), // Purple
@@ -175,6 +177,7 @@ func MonokaiPalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#A6E22E"), // Green
 		StatusPending:     lipgloss.Color("#75715E"), // Comment gray
+		StatusPreparing:   lipgloss.Color("#66D9EF"), // Cyan - async setup
 		StatusInput:       lipgloss.Color("#E6DB74"), // Yellow
 		StatusPaused:      lipgloss.Color("#66D9EF"), // Cyan
 		StatusComplete:    lipgloss.Color("#AE81FF"), // Purple
@@ -218,6 +221,7 @@ func DraculaPalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#50FA7B"), // Green
 		StatusPending:     lipgloss.Color("#6272A4"), // Comment
+		StatusPreparing:   lipgloss.Color("#8BE9FD"), // Cyan - async setup
 		StatusInput:       lipgloss.Color("#F1FA8C"), // Yellow
 		StatusPaused:      lipgloss.Color("#8BE9FD"), // Cyan
 		StatusComplete:    lipgloss.Color("#BD93F9"), // Purple
@@ -261,6 +265,7 @@ func NordPalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#A3BE8C"), // Green
 		StatusPending:     lipgloss.Color("#4C566A"), // Gray
+		StatusPreparing:   lipgloss.Color("#81A1C1"), // Frost blue - async setup
 		StatusInput:       lipgloss.Color("#EBCB8B"), // Yellow
 		StatusPaused:      lipgloss.Color("#81A1C1"), // Frost blue
 		StatusComplete:    lipgloss.Color("#B48EAD"), // Aurora purple
@@ -304,6 +309,7 @@ func ClaudeCodePalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#7DCEA0"), // Green
 		StatusPending:     lipgloss.Color("#7F8C8D"), // Gray
+		StatusPreparing:   lipgloss.Color("#5DADE2"), // Blue - async setup
 		StatusInput:       lipgloss.Color("#F5B041"), // Amber
 		StatusPaused:      lipgloss.Color("#5DADE2"), // Blue
 		StatusComplete:    lipgloss.Color("#DA7756"), // Orange
@@ -347,6 +353,7 @@ func SolarizedDarkPalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#859900"), // Green
 		StatusPending:     lipgloss.Color("#586E75"), // Gray
+		StatusPreparing:   lipgloss.Color("#2AA198"), // Cyan - async setup
 		StatusInput:       lipgloss.Color("#B58900"), // Yellow
 		StatusPaused:      lipgloss.Color("#2AA198"), // Cyan
 		StatusComplete:    lipgloss.Color("#6C71C4"), // Violet
@@ -390,6 +397,7 @@ func SolarizedLightPalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#859900"), // Green
 		StatusPending:     lipgloss.Color("#93A1A1"), // Gray
+		StatusPreparing:   lipgloss.Color("#2AA198"), // Cyan - async setup
 		StatusInput:       lipgloss.Color("#B58900"), // Yellow
 		StatusPaused:      lipgloss.Color("#2AA198"), // Cyan
 		StatusComplete:    lipgloss.Color("#6C71C4"), // Violet
@@ -433,6 +441,7 @@ func OneDarkPalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#98C379"), // Green
 		StatusPending:     lipgloss.Color("#5C6370"), // Gray
+		StatusPreparing:   lipgloss.Color("#56B6C2"), // Cyan - async setup
 		StatusInput:       lipgloss.Color("#E5C07B"), // Yellow
 		StatusPaused:      lipgloss.Color("#56B6C2"), // Cyan
 		StatusComplete:    lipgloss.Color("#C678DD"), // Purple
@@ -476,6 +485,7 @@ func GitHubDarkPalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#3FB950"), // Green
 		StatusPending:     lipgloss.Color("#8B949E"), // Gray
+		StatusPreparing:   lipgloss.Color("#58A6FF"), // Blue - async setup
 		StatusInput:       lipgloss.Color("#D29922"), // Yellow
 		StatusPaused:      lipgloss.Color("#58A6FF"), // Blue
 		StatusComplete:    lipgloss.Color("#A371F7"), // Purple
@@ -519,6 +529,7 @@ func GruvboxPalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#B8BB26"), // Green
 		StatusPending:     lipgloss.Color("#928374"), // Gray
+		StatusPreparing:   lipgloss.Color("#83A598"), // Aqua - async setup
 		StatusInput:       lipgloss.Color("#FABD2F"), // Yellow
 		StatusPaused:      lipgloss.Color("#83A598"), // Aqua
 		StatusComplete:    lipgloss.Color("#D3869B"), // Purple
@@ -562,6 +573,7 @@ func TokyoNightPalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#9ECE6A"), // Green
 		StatusPending:     lipgloss.Color("#565F89"), // Gray
+		StatusPreparing:   lipgloss.Color("#7DCFFF"), // Cyan - async setup
 		StatusInput:       lipgloss.Color("#E0AF68"), // Yellow
 		StatusPaused:      lipgloss.Color("#7DCFFF"), // Cyan
 		StatusComplete:    lipgloss.Color("#BB9AF7"), // Purple
@@ -605,6 +617,7 @@ func CatppuccinPalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#A6E3A1"), // Green
 		StatusPending:     lipgloss.Color("#6C7086"), // Gray
+		StatusPreparing:   lipgloss.Color("#94E2D5"), // Teal - async setup
 		StatusInput:       lipgloss.Color("#F9E2AF"), // Yellow
 		StatusPaused:      lipgloss.Color("#94E2D5"), // Teal
 		StatusComplete:    lipgloss.Color("#CBA6F7"), // Mauve
@@ -648,6 +661,7 @@ func SynthwavePalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#72F1B8"), // Green
 		StatusPending:     lipgloss.Color("#848BBD"), // Gray
+		StatusPreparing:   lipgloss.Color("#36F9F6"), // Cyan - async setup
 		StatusInput:       lipgloss.Color("#FEDE5D"), // Yellow
 		StatusPaused:      lipgloss.Color("#36F9F6"), // Cyan
 		StatusComplete:    lipgloss.Color("#FF7EDB"), // Pink
@@ -691,6 +705,7 @@ func AyuPalette() *ColorPalette {
 
 		StatusWorking:     lipgloss.Color("#7FD962"), // Green
 		StatusPending:     lipgloss.Color("#626A73"), // Gray
+		StatusPreparing:   lipgloss.Color("#39BAE6"), // Blue - async setup
 		StatusInput:       lipgloss.Color("#E6B450"), // Yellow
 		StatusPaused:      lipgloss.Color("#39BAE6"), // Blue
 		StatusComplete:    lipgloss.Color("#D2A6FF"), // Purple

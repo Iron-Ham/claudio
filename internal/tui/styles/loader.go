@@ -57,6 +57,7 @@ type ThemeColors struct {
 type ThemeStatusColors struct {
 	Working     string `yaml:"working,omitempty"`
 	Pending     string `yaml:"pending,omitempty"`
+	Preparing   string `yaml:"preparing,omitempty"`
 	Input       string `yaml:"input,omitempty"`
 	Paused      string `yaml:"paused,omitempty"`
 	Complete    string `yaml:"complete,omitempty"`
@@ -209,6 +210,7 @@ func (t *ThemeFile) ToPalette() *ColorPalette {
 	// Apply status colors (with defaults)
 	p.StatusWorking = colorOrDefault(t.Colors.Status.Working, t.Colors.Secondary)
 	p.StatusPending = colorOrDefault(t.Colors.Status.Pending, t.Colors.Muted)
+	p.StatusPreparing = colorOrDefault(t.Colors.Status.Preparing, t.Colors.Primary)
 	p.StatusInput = colorOrDefault(t.Colors.Status.Input, t.Colors.Warning)
 	p.StatusPaused = colorOrDefault(t.Colors.Status.Paused, t.Colors.Primary)
 	p.StatusComplete = colorOrDefault(t.Colors.Status.Complete, t.Colors.Primary)
@@ -406,6 +408,7 @@ func paletteToThemeFile(name string, p *ColorPalette) *ThemeFile {
 			Status: ThemeStatusColors{
 				Working:     string(p.StatusWorking),
 				Pending:     string(p.StatusPending),
+				Preparing:   string(p.StatusPreparing),
 				Input:       string(p.StatusInput),
 				Paused:      string(p.StatusPaused),
 				Complete:    string(p.StatusComplete),

@@ -17,6 +17,7 @@ type InstanceStatus string
 
 const (
 	StatusPending      InstanceStatus = "pending"
+	StatusPreparing    InstanceStatus = "preparing" // Worktree creation in progress (async setup)
 	StatusWorking      InstanceStatus = "working"
 	StatusWaitingInput InstanceStatus = "waiting_input"
 	StatusPaused       InstanceStatus = "paused"
@@ -292,6 +293,11 @@ func (s *Session) MarkInstancesInterrupted() {
 		if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
 			inst.Status = StatusInterrupted
 			inst.InterruptedAt = &now
+		}
+		// StatusPreparing instances have incomplete worktrees - mark as error
+		// so they can be cleaned up or retried
+		if inst.Status == StatusPreparing {
+			inst.Status = StatusError
 		}
 	}
 	s.InterruptedAt = &now
