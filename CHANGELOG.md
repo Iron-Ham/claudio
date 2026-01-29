@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Hash and Tilde Characters in Input** - Fixed an issue where hash (`#`) and tilde (`~`) characters were not being sent correctly to underlying Claude sessions when using tmux control mode. These characters are now properly quoted to prevent tmux from interpreting them as format specifiers or tilde expansion. Unicode characters like `£`, `€`, and emoji continue to work correctly.
 
+- **Adversarial Mode False Positive Stuck Detection** - Fixed a race condition in adversarial mode where the implementer or reviewer would be incorrectly marked as "stuck" immediately after completion. The issue occurred because the TUI detected the instance as "completed" before Claude had finished writing the sentinel file (`.claudio-adversarial-incremental.json` or `.claudio-adversarial-review.json`). A 3-second grace period is now applied before declaring an instance stuck, allowing time for the file write to complete.
+
 ## [0.13.0] - 2026-01-29
 
 This release introduces **Adversarial Review Mode** and **Color Themes** - two major features that enhance workflow quality and user experience.

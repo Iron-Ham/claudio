@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 )
 
 // Mock implementations for testing
@@ -1634,11 +1635,24 @@ func TestCoordinator_HandleInstanceCompletion_ImplementerStuck(t *testing.T) {
 	}
 	coord.SetCallbacks(cb)
 
-	// Simulate implementer completion without writing increment file
+	// First call starts the grace period - should NOT be stuck yet
 	wasStuck := coord.HandleInstanceCompletion("impl-123", true, false)
+	if wasStuck {
+		t.Error("first call should return false (grace period started)")
+	}
+	if stuckCallbackCalled {
+		t.Error("OnStuck callback should not be called during grace period")
+	}
+
+	// Simulate grace period elapsed by setting first completion time to the past
+	pastTime := time.Now().Add(-StuckDetectionGracePeriod - time.Second)
+	coord.implementerFirstCompleted = &pastTime
+
+	// Second call after grace period - should be stuck now
+	wasStuck = coord.HandleInstanceCompletion("impl-123", true, false)
 
 	if !wasStuck {
-		t.Error("expected HandleInstanceCompletion to return true for stuck condition")
+		t.Error("expected HandleInstanceCompletion to return true for stuck condition after grace period")
 	}
 
 	if !stuckCallbackCalled {
@@ -1689,11 +1703,24 @@ func TestCoordinator_HandleInstanceCompletion_ReviewerStuck(t *testing.T) {
 	}
 	coord.SetCallbacks(cb)
 
-	// Simulate reviewer completion without writing review file
+	// First call starts the grace period - should NOT be stuck yet
 	wasStuck := coord.HandleInstanceCompletion("reviewer-123", true, false)
+	if wasStuck {
+		t.Error("first call should return false (grace period started)")
+	}
+	if stuckCallbackCalled {
+		t.Error("OnStuck callback should not be called during grace period")
+	}
+
+	// Simulate grace period elapsed by setting first completion time to the past
+	pastTime := time.Now().Add(-StuckDetectionGracePeriod - time.Second)
+	coord.reviewerFirstCompleted = &pastTime
+
+	// Second call after grace period - should be stuck now
+	wasStuck = coord.HandleInstanceCompletion("reviewer-123", true, false)
 
 	if !wasStuck {
-		t.Error("expected HandleInstanceCompletion to return true for stuck condition")
+		t.Error("expected HandleInstanceCompletion to return true for stuck condition after grace period")
 	}
 
 	if !stuckCallbackCalled {
@@ -1773,6 +1800,98 @@ func TestCoordinator_HandleInstanceCompletion_UnrelatedInstance(t *testing.T) {
 
 	if wasStuck {
 		t.Error("expected HandleInstanceCompletion to return false for unrelated instance")
+	}
+}
+
+func TestCoordinator_HandleInstanceCompletion_GracePeriodResetOnFileAppear(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "adversarial-grace-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.ImplementerID = "impl-123"
+	advSession.Phase = PhaseImplementing
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	// First call starts the grace period
+	wasStuck := coord.HandleInstanceCompletion("impl-123", true, false)
+	if wasStuck {
+		t.Error("first call should return false (grace period started)")
+	}
+	if coord.implementerFirstCompleted == nil {
+		t.Error("implementerFirstCompleted should be set after first call")
+	}
+
+	// Now write the increment file
+	increment := IncrementFile{
+		Round:         1,
+		Status:        "ready_for_review",
+		Summary:       "Implemented feature",
+		FilesModified: []string{"file.go"},
+		Approach:      "Test approach",
+		Notes:         "Test notes",
+	}
+	data, _ := json.MarshalIndent(increment, "", "  ")
+	if err := os.WriteFile(IncrementFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write increment file: %v", err)
+	}
+
+	// Call again - should reset grace period since file now exists
+	wasStuck = coord.HandleInstanceCompletion("impl-123", true, false)
+	if wasStuck {
+		t.Error("should not be stuck when file exists")
+	}
+	if coord.implementerFirstCompleted != nil {
+		t.Error("implementerFirstCompleted should be reset when file appears")
+	}
+}
+
+func TestCoordinator_HandleInstanceCompletion_GracePeriodResetOnNotCompleted(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "adversarial-grace-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.ImplementerID = "impl-123"
+	advSession.Phase = PhaseImplementing
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	// First call with completed=true starts the grace period
+	wasStuck := coord.HandleInstanceCompletion("impl-123", true, false)
+	if wasStuck {
+		t.Error("first call should return false (grace period started)")
+	}
+	if coord.implementerFirstCompleted == nil {
+		t.Error("implementerFirstCompleted should be set after first call")
+	}
+
+	// Call again with completed=false (instance is working again) - should reset
+	wasStuck = coord.HandleInstanceCompletion("impl-123", false, false)
+	if wasStuck {
+		t.Error("should not be stuck when not completed")
+	}
+	if coord.implementerFirstCompleted != nil {
+		t.Error("implementerFirstCompleted should be reset when instance is not completed")
 	}
 }
 
