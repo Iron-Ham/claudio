@@ -460,6 +460,9 @@ func (m *Model) autoEnableGroupedMode() {
 
 // enterPlanEditor initializes the plan editor state when entering edit mode
 func (m *Model) enterPlanEditor() {
+	// Exit input mode so keystrokes go to the plan editor, not the tmux session
+	m.inputMode = false
+
 	m.planEditor = &PlanEditorState{
 		active:              true,
 		inlineMode:          false, // Default to ultraplan mode
@@ -477,6 +480,9 @@ func (m *Model) enterPlanEditor() {
 
 // enterInlinePlanEditor initializes the plan editor for inline plan mode
 func (m *Model) enterInlinePlanEditor() {
+	// Exit input mode so keystrokes go to the plan editor, not the tmux session
+	m.inputMode = false
+
 	m.planEditor = &PlanEditorState{
 		active:              true,
 		inlineMode:          true,

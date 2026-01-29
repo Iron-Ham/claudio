@@ -1163,6 +1163,7 @@ func TestIsPlanEditorActive(t *testing.T) {
 func TestEnterPlanEditor(t *testing.T) {
 	m := Model{
 		planEditor: nil,
+		inputMode:  true, // Start in input mode to verify it gets disabled
 	}
 
 	m.enterPlanEditor()
@@ -1181,6 +1182,10 @@ func TestEnterPlanEditor(t *testing.T) {
 
 	if !m.planEditor.showValidationPanel {
 		t.Error("expected showValidationPanel to be true by default")
+	}
+
+	if m.inputMode {
+		t.Error("expected inputMode to be false after entering plan editor")
 	}
 }
 
@@ -1533,6 +1538,7 @@ func TestEnterInlinePlanEditor(t *testing.T) {
 	m := Model{
 		inlinePlan:      state,
 		terminalManager: terminal.NewManager(),
+		inputMode:       true, // Start in input mode to verify it gets disabled
 	}
 
 	m.enterInlinePlanEditor()
@@ -1548,6 +1554,9 @@ func TestEnterInlinePlanEditor(t *testing.T) {
 	}
 	if m.planEditor.selectedTaskIdx != 0 {
 		t.Error("expected selectedTaskIdx to be 0")
+	}
+	if m.inputMode {
+		t.Error("expected inputMode to be false after entering inline plan editor")
 	}
 }
 
