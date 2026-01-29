@@ -272,8 +272,16 @@ func TestTaskBuilder_CompletionProtocol(t *testing.T) {
 
 	// Verify completion protocol structure
 	expectedParts := []string{
-		"## Completion Protocol",
-		"MUST write a completion file",
+		// Emphatic completion protocol wording
+		"## Completion Protocol - FINAL MANDATORY STEP",
+		"FINAL MANDATORY ACTION",
+		"orchestrator is BLOCKED waiting",
+		"DO NOT",
+		"wait for user prompting",
+		"Write this file AUTOMATICALLY",
+		"REMEMBER",
+		"Your task is NOT complete until you write this file",
+		// Structural elements
 		TaskCompletionFileName,
 		`"task_id": "unique-task-id"`,
 		`"status": "complete"`,

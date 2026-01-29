@@ -380,6 +380,102 @@ func TestNewGroupConsolidatorBuilder(t *testing.T) {
 	}
 }
 
+func TestConsolidationBuilder_CompletionProtocol(t *testing.T) {
+	builder := NewConsolidationBuilder()
+
+	ctx := &Context{
+		Phase:     PhaseConsolidation,
+		SessionID: "test-session",
+		Objective: "Test consolidation",
+		Plan: &PlanInfo{
+			Summary:        "Test plan",
+			ExecutionOrder: [][]string{{"t1"}},
+		},
+		Consolidation: &ConsolidationInfo{
+			Mode:         "stacked",
+			BranchPrefix: "test",
+			MainBranch:   "main",
+		},
+	}
+
+	result, err := builder.Build(ctx)
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+
+	// Verify emphatic completion protocol wording
+	expectedParts := []string{
+		"## Completion Protocol - FINAL MANDATORY STEP",
+		"FINAL MANDATORY ACTION",
+		"orchestrator is BLOCKED waiting",
+		"DO NOT",
+		"wait for user prompting",
+		"Write this file AUTOMATICALLY",
+		"REMEMBER",
+		"Your consolidation is NOT complete until you write this file",
+		// Structural elements
+		ConsolidationCompletionFileName,
+		`"status": "complete"`,
+		`"mode":`,
+		`"branches_created":`,
+		`"prs_created":`,
+		`"verification":`,
+	}
+
+	for _, part := range expectedParts {
+		if !strings.Contains(result, part) {
+			t.Errorf("Completion protocol missing %q", part)
+		}
+	}
+}
+
+func TestGroupConsolidatorBuilder_CompletionProtocol(t *testing.T) {
+	builder := NewGroupConsolidatorBuilder()
+
+	ctx := &Context{
+		Phase:      PhaseConsolidation,
+		SessionID:  "test-session",
+		GroupIndex: 0,
+		Plan: &PlanInfo{
+			Summary:        "Test plan",
+			ExecutionOrder: [][]string{{"t1"}},
+		},
+		Consolidation: &ConsolidationInfo{
+			MainBranch: "main",
+		},
+	}
+
+	result, err := builder.Build(ctx)
+	if err != nil {
+		t.Fatalf("Build() error: %v", err)
+	}
+
+	// Verify emphatic completion protocol wording
+	expectedParts := []string{
+		"## Completion Protocol - FINAL MANDATORY STEP",
+		"FINAL MANDATORY ACTION",
+		"orchestrator is BLOCKED waiting",
+		"DO NOT",
+		"wait for user prompting",
+		"Write this file AUTOMATICALLY",
+		"REMEMBER",
+		"Your consolidation is NOT complete until you write this file",
+		// Structural elements
+		GroupConsolidationCompletionFileName,
+		`"group_index":`,
+		`"status": "complete"`,
+		`"branch_name":`,
+		`"tasks_consolidated":`,
+		`"verification":`,
+	}
+
+	for _, part := range expectedParts {
+		if !strings.Contains(result, part) {
+			t.Errorf("Completion protocol missing %q", part)
+		}
+	}
+}
+
 func TestConsolidationCompletionFileNames(t *testing.T) {
 	if ConsolidationCompletionFileName == "" {
 		t.Error("ConsolidationCompletionFileName should not be empty")

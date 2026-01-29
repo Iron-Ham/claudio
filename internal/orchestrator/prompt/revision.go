@@ -117,12 +117,19 @@ All previous changes from this task are already present.
 
 Focus only on addressing the identified issues. Do not refactor or make other changes unless directly related to fixing the issues.
 
-## Completion Protocol
+## Completion Protocol - FINAL MANDATORY STEP
+
+**IMPORTANT**: Writing the completion file is your FINAL MANDATORY ACTION.
+The orchestrator is BLOCKED waiting for this file.
+Without it, your revision work will NOT be recorded and the workflow cannot proceed.
+
+**DO NOT** wait for user prompting or confirmation.
+Write this file AUTOMATICALLY as soon as you have finished your revision work and committed your changes.
 
 **CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.
 If you changed directories during the task, use an absolute path or navigate back to the root first.
 
-When your revision is complete, you MUST write a completion file:
+You MUST write a completion file:
 
 1. Use Write tool to create ` + "`" + RevisionCompletionFileName + "`" + ` in your worktree root
 2. Include this JSON structure:
@@ -146,4 +153,6 @@ When your revision is complete, you MUST write a completion file:
 3. Use status "partial" if some issues couldn't be fully resolved
 4. Use status "blocked" if you need input or can't proceed
 
-This file signals that your revision work is complete.`
+This file signals that your revision work is complete.
+
+**REMEMBER**: Your revision is NOT complete until you write this file. Do it NOW after finishing your work.`

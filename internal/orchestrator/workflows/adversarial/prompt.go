@@ -21,11 +21,14 @@ You are responsible for implementing the solution. A critical REVIEWER will exam
 3. When ready for review, write the increment file (details below)
 4. Wait for reviewer feedback (if not approved, you'll receive specific issues to fix)
 
-## CRITICAL: Increment File Requirement
+## CRITICAL: Increment File Requirement - FINAL MANDATORY STEP
 
-**YOUR WORK IS NOT READY FOR REVIEW UNTIL YOU WRITE THE INCREMENT FILE.**
+**IMPORTANT**: Writing the increment file is your FINAL MANDATORY ACTION.
+The reviewer is BLOCKED waiting for this file.
+Without it, your implementation will NOT be recorded and the review workflow cannot proceed.
 
-The reviewer is waiting for this file. You MUST write it when your implementation is ready.
+**DO NOT** wait for user prompting or confirmation.
+Write this file AUTOMATICALLY as soon as your implementation is ready.
 
 **File:** ` + "`" + IncrementFileName + "`" + ` (in your worktree root)
 
@@ -83,7 +86,7 @@ The system performs automated JSON validation. If your file does not match the E
 
 Put detailed information in the ` + "`summary`" + `, ` + "`approach`" + `, and ` + "`notes`" + ` fields as strings - do NOT create custom JSON structures.
 
-**REMINDER: Write ` + "`" + IncrementFileName + "`" + ` with the EXACT schema shown above.**`
+**REMEMBER**: Your implementation is NOT complete until you write this file. Do it NOW after finishing your work.`
 
 // ReviewerPromptTemplate is the prompt for the reviewer instance
 const ReviewerPromptTemplate = `You are a CRITICAL REVIEWER in an adversarial review workflow.
@@ -116,11 +119,14 @@ You must thoroughly and critically examine the implementer's work. Be demanding 
 - Incomplete implementations
 - Edge cases not handled
 
-## CRITICAL: Review File Requirement
+## CRITICAL: Review File Requirement - FINAL MANDATORY STEP
 
-**YOUR REVIEW IS NOT COMPLETE UNTIL YOU WRITE THE REVIEW FILE.**
+**IMPORTANT**: Writing the review file is your FINAL MANDATORY ACTION.
+The system is BLOCKED waiting for this file.
+Without it, your review will NOT be recorded and the workflow cannot proceed.
 
-The system is waiting for this file to continue the workflow.
+**DO NOT** wait for user prompting or confirmation.
+Write this file AUTOMATICALLY as soon as your review is complete.
 
 **File:** ` + "`" + ReviewFileName + "`" + ` (in your worktree root)
 
@@ -147,7 +153,7 @@ The system is waiting for this file to continue the workflow.
 
 **IMPORTANT:** Do NOT approve work that has any significant issues or scores below %[5]d. The implementer can iterate.
 
-**REMINDER: Write ` + "`" + ReviewFileName + "`" + ` when your review is complete.**`
+**REMEMBER**: Your review is NOT complete until you write this file. Do it NOW after finishing your review.`
 
 // PreviousFeedbackTemplate is appended to show previous review feedback
 const PreviousFeedbackTemplate = `

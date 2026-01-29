@@ -130,12 +130,19 @@ const synthesisPromptTemplate = `You are reviewing the results of a parallel exe
 3. **Verify** that all pieces work together correctly
 4. **Check** for any missing functionality or incomplete implementations
 
-## Completion Protocol
+## Completion Protocol - FINAL MANDATORY STEP
+
+**IMPORTANT**: Writing the completion file is your FINAL MANDATORY ACTION.
+The orchestrator is BLOCKED waiting for this file.
+Without it, your review will NOT be recorded and the workflow cannot proceed.
+
+**DO NOT** wait for user prompting or confirmation.
+Write this file AUTOMATICALLY as soon as you have finished your review.
 
 **CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.
 If you changed directories during the task, use an absolute path or navigate back to the root first.
 
-When your review is complete, you MUST write a completion file to signal the orchestrator:
+You MUST write a completion file to signal the orchestrator:
 
 1. Use Write tool to create ` + "`" + SynthesisCompletionFileName + "`" + ` in your worktree root
 2. Include this JSON structure:
@@ -163,4 +170,6 @@ When your review is complete, you MUST write a completion file to signal the orc
 5. Include integration_notes with observations about cross-task integration
 6. Add recommendations for the consolidation phase (merge order, potential conflicts, etc.)
 
-This file signals that your review is done and provides context for subsequent phases.`
+This file signals that your review is done and provides context for subsequent phases.
+
+**REMEMBER**: Your review is NOT complete until you write this file. Do it NOW after finishing your review.`

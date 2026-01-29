@@ -236,7 +236,16 @@ func TestRevisionBuilder_CompletionProtocol(t *testing.T) {
 	}
 
 	expectedParts := []string{
-		"## Completion Protocol",
+		// Emphatic completion protocol wording
+		"## Completion Protocol - FINAL MANDATORY STEP",
+		"FINAL MANDATORY ACTION",
+		"orchestrator is BLOCKED waiting",
+		"DO NOT",
+		"wait for user prompting",
+		"Write this file AUTOMATICALLY",
+		"REMEMBER",
+		"Your revision is NOT complete until you write this file",
+		// Structural elements
 		RevisionCompletionFileName,
 		`"task_id": "unique-task"`,
 		`"revision_round": 2`,
