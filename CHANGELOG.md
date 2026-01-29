@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`claudio tripleshot` CLI Command** - The standalone `claudio tripleshot` command has been removed. TripleShot mode is now exclusively accessed through the TUI via the `:tripleshot` command (or aliases `:triple`, `:3shot`). This consolidates all tripleshot functionality within the standard TUI, providing a more consistent user experience. To use tripleshot, run `claudio start` and then use `:tripleshot` in command mode.
+
 ### Fixed
 
 - **TUI Tripleshot Config Settings** - The `:tripleshot` command in the TUI now properly respects the `tripleshot.auto_approve` and `tripleshot.adversarial` settings from the config file. Previously, starting a tripleshot from the TUI always used hardcoded defaults, ignoring user configuration.

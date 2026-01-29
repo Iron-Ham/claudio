@@ -33,7 +33,7 @@ Generate structured task plans from high-level objectives. Create execution plan
 Orchestrate complex tasks with intelligent planning. Let Claude analyze your codebase, create an execution plan, and coordinate parallel task execution automatically.
 
 ### [TripleShot Mode](tripleshot.md)
-Run three parallel implementations and let a judge select the best. Ideal for tasks with multiple valid approaches or when optimal solution is unclear.
+Run three parallel implementations and let a judge select the best. Ideal for tasks with multiple valid approaches or when optimal solution is unclear. Access via `:tripleshot` command in the TUI.
 
 ### [Adversarial Review](adversarial.md)
 Iterative implementation with critical reviewer feedback. The implementer and reviewer loop until the code meets quality thresholds.

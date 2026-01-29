@@ -4,7 +4,7 @@
 //
 // Subpackage organization:
 //   - session/: Session lifecycle (start, stop, sessions, cleanup)
-//   - planning/: Planning modes (plan, ultraplan, tripleshot)
+//   - planning/: Planning modes (plan, ultraplan, adversarial)
 //   - instance/: Instance management (add, remove, status, stats)
 //   - observability/: Monitoring (logs, harvest)
 //   - project/: Project-level operations (init, pr)

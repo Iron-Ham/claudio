@@ -523,43 +523,6 @@ See [Ultra-Plan Guide](../guide/ultra-plan.md) for detailed documentation.
 
 ---
 
-### claudio tripleshot
-
-Execute a task with 3 parallel attempts, then judge selects the best.
-
-```bash
-claudio tripleshot [task] [flags]
-```
-
-**Arguments:**
-| Argument | Description |
-|----------|-------------|
-| `task` | The task to execute with multiple attempts |
-
-**Flags:**
-| Flag | Description |
-|------|-------------|
-| `--auto-approve` | Auto-approve applying the winning solution |
-
-**Examples:**
-```bash
-# Basic tripleshot
-claudio tripleshot "Optimize the database query in users.go"
-
-# With auto-approve to apply the winning solution automatically
-claudio tripleshot --auto-approve "Implement caching layer"
-```
-
-**How it works:**
-1. Three parallel instances work on the same task with variant instructions
-2. A judge instance evaluates all three completions
-3. The best solution is selected based on quality criteria
-4. Optional revision phase if the judge identifies improvements
-
-See [TripleShot Guide](../guide/tripleshot.md) for detailed documentation.
-
----
-
 ### claudio adversarial
 
 Iterative implementation with reviewer feedback loop.

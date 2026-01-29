@@ -36,40 +36,38 @@ TripleShot runs three Claude instances in parallel on the same task, then uses a
 
 ## Quick Start
 
-```bash
-# Start tripleshot with a task
-claudio tripleshot "Implement a rate limiter for the API endpoints"
-
-# Auto-approve the winning solution
-claudio tripleshot --auto-approve "Optimize the database queries"
-```
-
-## CLI Options
+TripleShot is accessed through the standard TUI. Start a Claudio session and use the `:tripleshot` command:
 
 ```bash
-claudio tripleshot [task] [flags]
+# Start Claudio TUI
+claudio start
+
+# Then use the :tripleshot command
+:tripleshot
 ```
 
-### Flags
+You'll be prompted to enter your task, and three instances will begin working in parallel.
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--auto-approve` | Automatically apply winning solution | false |
+## TUI Commands
+
+| Command | Description |
+|---------|-------------|
+| `:tripleshot` | Start a new tripleshot session |
+| `:triple` | Alias for `:tripleshot` |
+| `:3shot` | Alias for `:tripleshot` |
 
 ### Examples
 
-```bash
-# Basic tripleshot
-claudio tripleshot "Create a caching layer for API responses"
+```
+# Start tripleshot from command mode
+:tripleshot
 
-# Complex optimization task
-claudio tripleshot "Optimize the user search algorithm for large datasets"
+# Enter your task when prompted:
+# "Create a caching layer for API responses"
 
-# Refactoring with multiple valid approaches
-claudio tripleshot "Refactor the authentication module for better testability"
-
-# Auto-approve for automated workflows
-claudio tripleshot --auto-approve "Implement input validation"
+# You can start multiple tripleshot sessions
+:tripleshot
+# "Optimize the user search algorithm"
 ```
 
 ## How It Works
@@ -218,26 +216,34 @@ Switch between attempt outputs to compare approaches:
 ### Ideal Scenarios
 
 **Algorithm Selection**
-```bash
-claudio tripleshot "Implement efficient search for the product catalog"
+```
+# In the TUI, enter command mode and run:
+:tripleshot
+# Then enter your task: "Implement efficient search for the product catalog"
 ```
 Different algorithms (binary search, hash map, trie) can be compared.
 
 **Architecture Decisions**
-```bash
-claudio tripleshot "Refactor auth module - consider middleware vs decorator pattern"
+```
+# In the TUI, enter command mode and run:
+:tripleshot
+# Then enter your task: "Refactor auth module - consider middleware vs decorator pattern"
 ```
 Multiple architectural approaches evaluated objectively.
 
 **Optimization Tasks**
-```bash
-claudio tripleshot "Optimize the report generation for large datasets"
+```
+# In the TUI, enter command mode and run:
+:tripleshot
+# Then enter your task: "Optimize the report generation for large datasets"
 ```
 Trade-offs between memory, speed, and readability become visible.
 
 **Complex Implementations**
-```bash
-claudio tripleshot "Implement retry logic with exponential backoff and circuit breaker"
+```
+# In the TUI, enter command mode and run:
+:tripleshot
+# Then enter your task: "Implement retry logic with exponential backoff and circuit breaker"
 ```
 Complex logic benefits from multiple implementation attempts.
 
@@ -254,13 +260,14 @@ Complex logic benefits from multiple implementation attempts.
 
 Be specific about what you want to achieve:
 
-```bash
+```
 # Good: Clear scope with flexibility for approaches
-claudio tripleshot "Implement caching for API responses.
+# In the TUI, use :tripleshot and enter:
+"Implement caching for API responses.
   Consider TTL management, cache invalidation, and memory limits."
 
 # Avoid: Too vague
-claudio tripleshot "Make the API faster"
+"Make the API faster"
 ```
 
 ### Evaluating Results
@@ -314,9 +321,10 @@ If merge/combine doesn't produce expected results:
 
 ### Step 1: Identify a Good Candidate Task
 
-```bash
+```
 # Tasks with multiple valid approaches work best
-claudio tripleshot "Implement user session management with proper security"
+# In the TUI, use :tripleshot and enter:
+"Implement user session management with proper security"
 ```
 
 ### Step 2: Monitor Progress
@@ -339,7 +347,7 @@ Attempt 0's session serialization for better performance.
 
 ### Step 4: Apply Solution
 
-If using `--auto-approve`, the winner is applied automatically. Otherwise:
+If `tripleshot.auto_approve` is enabled in your config, the winner is applied automatically. Otherwise:
 
 1. Review the winning solution in its worktree
 2. Create a PR from that branch

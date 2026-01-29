@@ -1,5 +1,5 @@
 // Package planning provides CLI commands for planning and orchestration modes.
-// This includes the plan, ultraplan, and tripleshot commands.
+// This includes the plan, ultraplan, and adversarial commands.
 package planning
 
 import (
