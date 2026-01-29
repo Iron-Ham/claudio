@@ -8,7 +8,6 @@ import "github.com/spf13/cobra"
 func Register(parent *cobra.Command) {
 	RegisterPlanCmd(parent)
 	RegisterUltraplanCmd(parent)
-	RegisterTripleshotCmd(parent)
 	RegisterAdversarialCmd(parent)
 	RegisterValidateCmd(parent)
 }

@@ -117,7 +117,6 @@ claudio add "Update API documentation"
 | `claudio plan "objective"` | Generate a structured task plan from an objective |
 | `claudio ultraplan "objective"` | 4-phase hierarchical planning with parallel execution |
 | `claudio ultraplan --multi-pass "objective"` | Use 3 competing strategies to find the best plan |
-| `claudio tripleshot "task"` | Execute with 3 parallel attempts and judge selection |
 
 ### TUI Keyboard Shortcuts
 

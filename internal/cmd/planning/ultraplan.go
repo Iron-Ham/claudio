@@ -310,7 +310,7 @@ func loadUltraplanFile(path string) (*orchestrator.PlanSpec, error) {
 }
 
 // SlugifyWords creates a slug from words.
-// Exported for use by tripleshot.
+// Exported for use by adversarial.
 func SlugifyWords(words []string) string {
 	joined := strings.ToLower(strings.Join(words, "-"))
 	var result strings.Builder

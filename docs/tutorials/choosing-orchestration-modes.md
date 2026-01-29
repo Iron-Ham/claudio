@@ -35,7 +35,7 @@ Claudio offers several orchestration modes for different scenarios. This tutoria
 | **Basic** (`claudio start`) | 1+ manual | Simple tasks, full control | Manual coordination |
 | **Plan** (`claudio plan`) | 1 | Task decomposition, GitHub issues | Planning only, no execution |
 | **Ultra-Plan** (`claudio ultraplan`) | 1 coordinator + N workers | Large features, parallel work | More setup overhead |
-| **TripleShot** (`claudio tripleshot`) | 3 + 1 judge | Uncertain approaches | 4x resource usage |
+| **TripleShot** (TUI: `:tripleshot`) | 3 + 1 judge | Uncertain approaches | 4x resource usage |
 | **Adversarial** (`claudio adversarial`) | 1 implementer + 1 reviewer | Quality-critical code | Iterative, slower |
 
 ## Tutorial: Authentication System
@@ -99,12 +99,16 @@ claudio ultraplan "Implement OAuth2 authentication with:
 Multiple valid algorithms exist:
 
 ```bash
-claudio tripleshot "Implement rate limiting for API endpoints.
-  The solution should handle:
-  - Per-user limits
-  - Distributed deployment (multi-server)
-  - Burst allowance
-  - Clear error responses"
+# Start the TUI
+claudio start
+
+# Then use the :tripleshot command and enter your task:
+# "Implement rate limiting for API endpoints.
+#   The solution should handle:
+#   - Per-user limits
+#   - Distributed deployment (multi-server)
+#   - Burst allowance
+#   - Clear error responses"
 ```
 
 **Why tripleshot?**
@@ -284,7 +288,9 @@ claudio adversarial --min-passing-score 9 "Implement auth"
 
 ### Performance Optimization
 ```bash
-claudio tripleshot "Optimize database queries"
+# Start the TUI, then use :tripleshot command with task:
+# "Optimize database queries"
+claudio start
 ```
 
 ### Team Roadmap
