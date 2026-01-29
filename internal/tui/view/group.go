@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/charmbracelet/lipgloss"
@@ -528,9 +529,40 @@ func RenderGroupedInstance(gi GroupedInstance, isActiveInstance bool, hasConflic
 	b.WriteString(nameStyle.Render(displayName))
 	b.WriteString("\n")
 
-	// Second line: status aligned under the name
+	// Second line: status aligned under the name, with context info
 	b.WriteString(strings.Repeat(" ", overhead))
-	b.WriteString(lipgloss.NewStyle().Foreground(statusColor).Render("●" + instanceStatusAbbrev(inst.Status)))
+	statusStr := lipgloss.NewStyle().Foreground(statusColor).Render("●" + instanceStatusAbbrev(inst.Status))
+	b.WriteString(statusStr)
+
+	// Add context info (duration, cost, files) for more informative display
+	contextParts := []string{}
+
+	// Add duration for running/completed instances
+	if inst.Metrics != nil && inst.Metrics.Duration() > 0 {
+		contextParts = append(contextParts, FormatDurationCompact(inst.Metrics.Duration()))
+	}
+
+	// Add cost if significant
+	if inst.Metrics != nil && inst.Metrics.Cost > 0.01 {
+		contextParts = append(contextParts, instmetrics.FormatCost(inst.Metrics.Cost))
+	}
+
+	// Add files modified count (abbreviated for compact display)
+	if len(inst.FilesModified) > 0 {
+		contextParts = append(contextParts, fmt.Sprintf("%df", len(inst.FilesModified)))
+	}
+
+	// Render context info if we have any and there's space
+	if len(contextParts) > 0 {
+		contextStr := strings.Join(contextParts, "|")
+		// Calculate available space
+		statusLen := len("●") + len(instanceStatusAbbrev(inst.Status))
+		available := width - overhead - statusLen - 2
+		if available > 5 && len(contextStr) <= available {
+			b.WriteString(" ")
+			b.WriteString(styles.Muted.Render(contextStr))
+		}
+	}
 
 	return b.String()
 }

@@ -154,6 +154,18 @@ type RenderState struct {
 	// IntelligentNamingEnabled indicates if intelligent naming feature is enabled.
 	// Used to expand the selected instance name in the sidebar.
 	IntelligentNamingEnabled bool
+
+	// RecoveryState indicates if the session was recovered from an interruption.
+	// Used by the stats panel to show recovery status.
+	RecoveryState orchestrator.RecoveryState
+
+	// RecoveryAttempt is the number of times the session has been recovered.
+	// Used by the stats panel to show recovery count.
+	RecoveryAttempt int
+
+	// TotalAPICalls is the aggregated API call count across all instances.
+	// Used by the stats panel for API usage display.
+	TotalAPICalls int
 }
 
 // Validate checks that the RenderState has valid values for rendering.

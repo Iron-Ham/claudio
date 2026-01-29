@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
+	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/util"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -64,6 +65,30 @@ func (p *StatsPanel) Render(state *RenderState) string {
 		b.WriteString(fmt.Sprintf("  Session Started: %s\n",
 			state.SessionCreated.Format("2006-01-02 15:04:05")))
 	}
+
+	// Show recovery state if applicable
+	switch state.RecoveryState {
+	case orchestrator.RecoveryRecovered:
+		recoveryText := fmt.Sprintf("  Status: Recovered (attempt %d)", state.RecoveryAttempt)
+		if state.Theme != nil {
+			recoveryText = state.Theme.Warning().Render(recoveryText)
+		}
+		b.WriteString(recoveryText)
+		b.WriteString("\n")
+	case orchestrator.RecoveryInterrupted:
+		interruptText := "  Status: Interrupted - press 'r' to resume"
+		if state.Theme != nil {
+			interruptText = state.Theme.Warning().Render(interruptText)
+		}
+		b.WriteString(interruptText)
+		b.WriteString("\n")
+	}
+
+	// Show total API calls if available
+	if state.TotalAPICalls > 0 {
+		b.WriteString(fmt.Sprintf("  Total API Calls: %d\n", state.TotalAPICalls))
+	}
+
 	b.WriteString("\n")
 
 	// Token usage

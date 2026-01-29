@@ -1543,6 +1543,17 @@ func (m Model) renderStatsPanel(width int) string {
 		state.SessionCreated = m.session.Created
 		state.SessionMetrics = m.orchestrator.GetSessionMetrics()
 		state.Instances = m.session.Instances
+		state.RecoveryState = m.session.RecoveryState
+		state.RecoveryAttempt = m.session.RecoveryAttempt
+
+		// Calculate total API calls across all instances
+		totalAPICalls := 0
+		for _, inst := range m.session.Instances {
+			if inst.Metrics != nil {
+				totalAPICalls += inst.Metrics.APICalls
+			}
+		}
+		state.TotalAPICalls = totalAPICalls
 	}
 
 	statsPanel := panel.NewStatsPanel()
