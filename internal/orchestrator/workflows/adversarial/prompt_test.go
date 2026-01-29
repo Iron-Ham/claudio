@@ -40,7 +40,7 @@ func TestFormatImplementerPrompt_FirstRound(t *testing.T) {
 	task := "Implement a rate limiter"
 	round := 1
 
-	prompt := FormatImplementerPrompt(task, round, nil)
+	prompt := FormatImplementerPrompt(task, round, nil, "")
 
 	if !strings.Contains(prompt, task) {
 		t.Error("prompt should contain the task")
@@ -68,7 +68,7 @@ func TestFormatImplementerPrompt_WithPreviousFeedback(t *testing.T) {
 		Summary: "Good start but needs improvement",
 	}
 
-	prompt := FormatImplementerPrompt(task, round, previousReview)
+	prompt := FormatImplementerPrompt(task, round, previousReview, "")
 
 	if !strings.Contains(prompt, task) {
 		t.Error("prompt should contain the task")
@@ -105,7 +105,7 @@ func TestFormatImplementerPrompt_EmptyIssuesAndChanges(t *testing.T) {
 		Summary:         "Needs work",
 	}
 
-	prompt := FormatImplementerPrompt(task, round, previousReview)
+	prompt := FormatImplementerPrompt(task, round, previousReview, "")
 
 	// Should include "(none specified)" for empty lists
 	if !strings.Contains(prompt, "(none specified)") {
@@ -126,7 +126,7 @@ func TestFormatReviewerPrompt(t *testing.T) {
 	}
 	minPassingScore := 8
 
-	prompt := FormatReviewerPrompt(task, round, increment, minPassingScore)
+	prompt := FormatReviewerPrompt(task, round, increment, minPassingScore, "")
 
 	if !strings.Contains(prompt, task) {
 		t.Error("prompt should contain the original task")
@@ -171,7 +171,7 @@ func TestFormatReviewerPrompt_DifferentMinScores(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.expected, func(t *testing.T) {
-			prompt := FormatReviewerPrompt(task, round, increment, tt.minScore)
+			prompt := FormatReviewerPrompt(task, round, increment, tt.minScore, "")
 			if !strings.Contains(prompt, tt.expected) {
 				t.Errorf("prompt should contain %q", tt.expected)
 			}
@@ -231,5 +231,48 @@ func TestReviewerPromptTemplate_CompletionProtocol(t *testing.T) {
 		if !strings.Contains(ReviewerPromptTemplate, part) {
 			t.Errorf("Completion protocol missing %q", part)
 		}
+	}
+}
+
+func TestFormatImplementerPrompt_WithWorktreePath(t *testing.T) {
+	task := "Implement a feature"
+	round := 1
+	worktreePath := "/path/to/worktree"
+
+	prompt := FormatImplementerPrompt(task, round, nil, worktreePath)
+
+	// Should contain the absolute path to the increment file
+	expectedPath := "/path/to/worktree/" + IncrementFileName
+	if !strings.Contains(prompt, expectedPath) {
+		t.Errorf("prompt should contain absolute path %q", expectedPath)
+	}
+
+	// Should have the warning about writing to the exact path
+	if !strings.Contains(prompt, "EXACT path") {
+		t.Error("prompt should contain warning about writing to exact path")
+	}
+}
+
+func TestFormatReviewerPrompt_WithWorktreePath(t *testing.T) {
+	task := "Review a feature"
+	round := 1
+	increment := &IncrementFile{
+		Round:   1,
+		Status:  "ready_for_review",
+		Summary: "Test",
+	}
+	worktreePath := "/path/to/worktree"
+
+	prompt := FormatReviewerPrompt(task, round, increment, 8, worktreePath)
+
+	// Should contain the absolute path to the review file
+	expectedPath := "/path/to/worktree/" + ReviewFileName
+	if !strings.Contains(prompt, expectedPath) {
+		t.Errorf("prompt should contain absolute path %q", expectedPath)
+	}
+
+	// Should have the warning about writing to the exact path
+	if !strings.Contains(prompt, "EXACT path") {
+		t.Error("prompt should contain warning about writing to exact path")
 	}
 }

@@ -414,7 +414,9 @@ func (c *Coordinator) StartImplementer() error {
 	c.manager.StartRound()
 
 	// Build the implementer prompt
-	prompt := FormatImplementerPrompt(task, round, previousReview)
+	// For round > 1, we know the worktree path from the previous round
+	// For round 1, worktreePath will be empty and get set after instance creation
+	prompt := FormatImplementerPrompt(task, round, previousReview, c.implementerWorktree)
 
 	// Find the adversarial group to add instances to
 	var advGroup GroupInterface
@@ -501,7 +503,8 @@ func (c *Coordinator) StartReviewer(increment *IncrementFile) error {
 	if minPassingScore < 1 || minPassingScore > 10 {
 		minPassingScore = 8 // Fallback to default if invalid
 	}
-	prompt := FormatReviewerPrompt(task, round, increment, minPassingScore)
+	// The reviewer always works in the same worktree as the implementer
+	prompt := FormatReviewerPrompt(task, round, increment, minPassingScore, c.reviewerWorktree)
 
 	// Find the adversarial group
 	var advGroup GroupInterface
@@ -558,14 +561,15 @@ func (c *Coordinator) StartReviewer(increment *IncrementFile) error {
 	return nil
 }
 
-// CheckIncrementReady checks if the implementer has written their increment file
+// CheckIncrementReady checks if the implementer has written their increment file.
+// It searches multiple locations to handle cases where Claude writes the file
+// to the wrong directory (e.g., subdirectory or parent in a monorepo).
 func (c *Coordinator) CheckIncrementReady() (bool, error) {
 	if c.implementerWorktree == "" {
 		return false, nil
 	}
 
-	incrementPath := IncrementFilePath(c.implementerWorktree)
-	_, err := os.Stat(incrementPath)
+	_, err := FindIncrementFile(c.implementerWorktree)
 	if err == nil {
 		return true, nil
 	}
@@ -575,14 +579,15 @@ func (c *Coordinator) CheckIncrementReady() (bool, error) {
 	return false, fmt.Errorf("failed to check increment file: %w", err)
 }
 
-// CheckReviewReady checks if the reviewer has written their review file
+// CheckReviewReady checks if the reviewer has written their review file.
+// It searches multiple locations to handle cases where Claude writes the file
+// to the wrong directory (e.g., subdirectory or parent in a monorepo).
 func (c *Coordinator) CheckReviewReady() (bool, error) {
 	if c.reviewerWorktree == "" {
 		return false, nil
 	}
 
-	reviewPath := ReviewFilePath(c.reviewerWorktree)
-	_, err := os.Stat(reviewPath)
+	_, err := FindReviewFile(c.reviewerWorktree)
 	if err == nil {
 		return true, nil
 	}
@@ -622,9 +627,13 @@ func (c *Coordinator) ProcessIncrementCompletion() error {
 
 	c.notifyIncrementReady(round, increment)
 
-	// Clear the increment file so it's fresh for next round
-	if err := os.Remove(IncrementFilePath(c.implementerWorktree)); err != nil && !os.IsNotExist(err) {
-		c.logger.Warn("failed to remove increment file", "error", err)
+	// Clear the increment file so it's fresh for next round.
+	// Use FindIncrementFile to get the actual path (which may be in a subdirectory
+	// or parent if Claude wrote it to the wrong location).
+	if incrementPath, err := FindIncrementFile(c.implementerWorktree); err == nil {
+		if err := os.Remove(incrementPath); err != nil && !os.IsNotExist(err) {
+			c.logger.Warn("failed to remove increment file", "error", err, "path", incrementPath)
+		}
 	}
 
 	// Start the reviewer
@@ -674,9 +683,13 @@ func (c *Coordinator) ProcessReviewCompletion() error {
 
 	c.notifyReviewReady(round, review)
 
-	// Clear the review file so it's fresh for next round
-	if err := os.Remove(ReviewFilePath(c.reviewerWorktree)); err != nil && !os.IsNotExist(err) {
-		c.logger.Warn("failed to remove review file", "error", err)
+	// Clear the review file so it's fresh for next round.
+	// Use FindReviewFile to get the actual path (which may be in a subdirectory
+	// or parent if Claude wrote it to the wrong location).
+	if reviewPath, err := FindReviewFile(c.reviewerWorktree); err == nil {
+		if err := os.Remove(reviewPath); err != nil && !os.IsNotExist(err) {
+			c.logger.Warn("failed to remove review file", "error", err, "path", reviewPath)
+		}
 	}
 
 	if review.Approved {
@@ -725,9 +738,12 @@ func (c *Coordinator) ProcessRejectionAfterApproval() error {
 		c.logger.Info("review file found after approval but it's still approved, ignoring",
 			"score", review.Score,
 		)
-		// Remove the file so we don't keep re-processing it
-		if err := os.Remove(ReviewFilePath(c.reviewerWorktree)); err != nil && !os.IsNotExist(err) {
-			c.logger.Warn("failed to remove review file", "error", err)
+		// Remove the file so we don't keep re-processing it.
+		// Use FindReviewFile to get the actual path.
+		if reviewPath, err := FindReviewFile(c.reviewerWorktree); err == nil {
+			if err := os.Remove(reviewPath); err != nil && !os.IsNotExist(err) {
+				c.logger.Warn("failed to remove review file", "error", err, "path", reviewPath)
+			}
 		}
 		return nil
 	}
@@ -745,9 +761,12 @@ func (c *Coordinator) ProcessRejectionAfterApproval() error {
 	// Record the rejection
 	c.notifyReviewReady(session.CurrentRound, review)
 
-	// Remove the review file so it's fresh for next round
-	if err := os.Remove(ReviewFilePath(c.reviewerWorktree)); err != nil && !os.IsNotExist(err) {
-		c.logger.Warn("failed to remove review file", "error", err)
+	// Remove the review file so it's fresh for next round.
+	// Use FindReviewFile to get the actual path.
+	if reviewPath, err := FindReviewFile(c.reviewerWorktree); err == nil {
+		if err := os.Remove(reviewPath); err != nil && !os.IsNotExist(err) {
+			c.logger.Warn("failed to remove review file", "error", err, "path", reviewPath)
+		}
 	}
 
 	// Check iteration limits

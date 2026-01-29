@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Sidebar Auto-Scroll on Navigation** - Fixed sidebar not scrolling when navigating to instances or groups that are off-screen. When using h/l (tab/shift+tab) to switch instances or gn/gp to navigate between groups, the sidebar now automatically scrolls to ensure the selected item is visible. This also fixes a bug where `ensureActiveVisible()` used the wrong position in grouped mode due to not accounting for group headers.
 
+- **Adversarial Mode Sentinel File Search** - Improved file detection for adversarial mode's increment and review files. The system now searches multiple locations (worktree root, subdirectories, and parent directory) to handle cases where Claude writes the file to an unexpected location (e.g., monorepo root instead of worktree, or a subdirectory). When the worktree path is known (round > 1), the prompt now includes the absolute file path for clarity.
+
 ## [0.13.0] - 2026-01-29
 
 This release introduces **Adversarial Review Mode** and **Color Themes** - two major features that enhance workflow quality and user experience.
