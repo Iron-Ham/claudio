@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Sidebar Scroll-Only Navigation** - Added `J` (Shift+j) and `K` (Shift+k) keybindings to scroll the sidebar viewport without changing the selected instance. This allows users to view instances "above the fold" (indicated by "▲ N more above") without losing their current selection. Previously, users had to cycle through all instances using `tab`/`h`/`l` to see items outside the viewport.
 
+- **Previous Rounds Container** - Adversarial mode now condenses all completed rounds into a single "Previous Rounds" container group, reducing sidebar clutter when tasks span many rounds. When round 2+ starts, the previous round is automatically moved into the "Previous Rounds" container, which is then collapsed. This means users see only two groups—"Previous Rounds" (collapsed) and the current round (expanded)—instead of navigating through many individual collapsed round groups. Users can expand "Previous Rounds" to access any historical round.
+
 ### Fixed
 
 - **Stale RUNNING Status After Tmux Server Death** - Fixed a race condition where instances would show as "RUNNING" indefinitely after the tmux server died. When the tmux server dies between the session status check and output capture, the capture error was logged but the session existence wasn't re-verified, leaving instances in a stale RUNNING state with no output updates. Now when capture fails, the code verifies the session still exists and properly marks it as completed if the server/session is gone (#403).

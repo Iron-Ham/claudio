@@ -9,13 +9,16 @@ import (
 )
 
 func TestCollapseAdversarialRound(t *testing.T) {
+	// Note: collapseAdversarialRound now collapses the "Previous Rounds" container
+	// instead of individual round sub-groups. The container ID is based on the
+	// session's GroupID (or session ID if GroupID is empty).
 	tests := []struct {
 		name                  string
 		session               *adversarial.Session
 		round                 int
 		initialGroupViewState *view.GroupViewState
 		wantCollapsed         bool
-		wantSubGroupID        string
+		wantContainerID       string
 	}{
 		{
 			name:          "nil session",
@@ -24,20 +27,37 @@ func TestCollapseAdversarialRound(t *testing.T) {
 			wantCollapsed: false,
 		},
 		{
-			name: "valid round with sub-group ID",
+			name: "valid round collapses previous rounds container",
 			session: &adversarial.Session{
 				ID: "test-session",
 				History: []adversarial.Round{
 					{
 						Round:      1,
-						SubGroupID: "adv-123-round-1",
+						SubGroupID: "test-session-round-1",
 						StartedAt:  time.Now(),
 					},
 				},
 			},
-			round:          1,
-			wantCollapsed:  true,
-			wantSubGroupID: "adv-123-round-1",
+			round:           1,
+			wantCollapsed:   true,
+			wantContainerID: "test-session-previous-rounds",
+		},
+		{
+			name: "valid round with GroupID uses GroupID prefix",
+			session: &adversarial.Session{
+				ID:      "test-session",
+				GroupID: "adv-group-123",
+				History: []adversarial.Round{
+					{
+						Round:      1,
+						SubGroupID: "adv-group-123-round-1",
+						StartedAt:  time.Now(),
+					},
+				},
+			},
+			round:           1,
+			wantCollapsed:   true,
+			wantContainerID: "adv-group-123-previous-rounds",
 		},
 		{
 			name: "valid round with existing groupViewState",
@@ -46,7 +66,7 @@ func TestCollapseAdversarialRound(t *testing.T) {
 				History: []adversarial.Round{
 					{
 						Round:      1,
-						SubGroupID: "adv-123-round-1",
+						SubGroupID: "test-session-round-1",
 						StartedAt:  time.Now(),
 					},
 				},
@@ -54,54 +74,32 @@ func TestCollapseAdversarialRound(t *testing.T) {
 			round:                 1,
 			initialGroupViewState: view.NewGroupViewState(),
 			wantCollapsed:         true,
-			wantSubGroupID:        "adv-123-round-1",
+			wantContainerID:       "test-session-previous-rounds",
 		},
 		{
-			name: "round number too low",
+			name: "round number too low does not collapse",
 			session: &adversarial.Session{
 				ID: "test-session",
 				History: []adversarial.Round{
-					{Round: 1, SubGroupID: "adv-123-round-1"},
+					{Round: 1, SubGroupID: "test-session-round-1"},
 				},
 			},
 			round:         0, // Invalid round number
 			wantCollapsed: false,
 		},
 		{
-			name: "round number too high",
+			name: "multiple rounds collapse previous rounds container",
 			session: &adversarial.Session{
 				ID: "test-session",
 				History: []adversarial.Round{
-					{Round: 1, SubGroupID: "adv-123-round-1"},
+					{Round: 1, SubGroupID: "test-session-round-1"},
+					{Round: 2, SubGroupID: "test-session-round-2"},
+					{Round: 3, SubGroupID: "test-session-round-3"},
 				},
 			},
-			round:         5, // Higher than history length
-			wantCollapsed: false,
-		},
-		{
-			name: "empty sub-group ID in history",
-			session: &adversarial.Session{
-				ID: "test-session",
-				History: []adversarial.Round{
-					{Round: 1, SubGroupID: ""}, // Empty sub-group ID
-				},
-			},
-			round:         1,
-			wantCollapsed: false,
-		},
-		{
-			name: "multiple rounds collapse second round",
-			session: &adversarial.Session{
-				ID: "test-session",
-				History: []adversarial.Round{
-					{Round: 1, SubGroupID: "adv-123-round-1"},
-					{Round: 2, SubGroupID: "adv-123-round-2"},
-					{Round: 3, SubGroupID: "adv-123-round-3"},
-				},
-			},
-			round:          2,
-			wantCollapsed:  true,
-			wantSubGroupID: "adv-123-round-2",
+			round:           2,
+			wantCollapsed:   true,
+			wantContainerID: "test-session-previous-rounds",
 		},
 	}
 
@@ -117,13 +115,14 @@ func TestCollapseAdversarialRound(t *testing.T) {
 				if m.groupViewState == nil {
 					t.Fatal("groupViewState should have been initialized")
 				}
-				if !m.groupViewState.CollapsedGroups[tt.wantSubGroupID] {
-					t.Errorf("expected sub-group %q to be collapsed", tt.wantSubGroupID)
+				if !m.groupViewState.CollapsedGroups[tt.wantContainerID] {
+					t.Errorf("expected container %q to be collapsed, got collapsed groups: %v",
+						tt.wantContainerID, m.groupViewState.CollapsedGroups)
 				}
-			} else if tt.wantSubGroupID != "" {
-				// If we expected no collapse but had a sub-group ID, verify it's not collapsed
-				if m.groupViewState != nil && m.groupViewState.CollapsedGroups[tt.wantSubGroupID] {
-					t.Errorf("expected sub-group %q to NOT be collapsed", tt.wantSubGroupID)
+			} else if tt.wantContainerID != "" {
+				// If we expected no collapse but had a container ID, verify it's not collapsed
+				if m.groupViewState != nil && m.groupViewState.CollapsedGroups[tt.wantContainerID] {
+					t.Errorf("expected container %q to NOT be collapsed", tt.wantContainerID)
 				}
 			}
 		})
@@ -138,7 +137,7 @@ func TestCollapseAdversarialRoundInitializesGroupViewState(t *testing.T) {
 	session := &adversarial.Session{
 		ID: "test-session",
 		History: []adversarial.Round{
-			{Round: 1, SubGroupID: "adv-123-round-1"},
+			{Round: 1, SubGroupID: "test-session-round-1"},
 		},
 	}
 
@@ -150,8 +149,10 @@ func TestCollapseAdversarialRoundInitializesGroupViewState(t *testing.T) {
 	if m.groupViewState.CollapsedGroups == nil {
 		t.Fatal("CollapsedGroups map should have been initialized")
 	}
-	if !m.groupViewState.CollapsedGroups["adv-123-round-1"] {
-		t.Error("expected sub-group to be collapsed")
+	// Should collapse the "Previous Rounds" container
+	expectedContainerID := "test-session-previous-rounds"
+	if !m.groupViewState.CollapsedGroups[expectedContainerID] {
+		t.Errorf("expected container %q to be collapsed", expectedContainerID)
 	}
 }
 
@@ -167,7 +168,7 @@ func TestCollapseAdversarialRoundPreservesExistingState(t *testing.T) {
 	session := &adversarial.Session{
 		ID: "test-session",
 		History: []adversarial.Round{
-			{Round: 1, SubGroupID: "adv-123-round-1"},
+			{Round: 1, SubGroupID: "test-session-round-1"},
 		},
 	}
 
@@ -177,7 +178,8 @@ func TestCollapseAdversarialRoundPreservesExistingState(t *testing.T) {
 	if !m.groupViewState.CollapsedGroups["other-group"] {
 		t.Error("existing collapsed group should be preserved")
 	}
-	if !m.groupViewState.CollapsedGroups["adv-123-round-1"] {
-		t.Error("new group should be collapsed")
+	expectedContainerID := "test-session-previous-rounds"
+	if !m.groupViewState.CollapsedGroups[expectedContainerID] {
+		t.Errorf("expected container %q to be collapsed", expectedContainerID)
 	}
 }
