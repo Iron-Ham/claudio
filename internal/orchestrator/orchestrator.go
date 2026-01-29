@@ -2319,6 +2319,17 @@ func (o *Orchestrator) AddInstanceStub(session *Session, task string) (*Instance
 	return inst, nil
 }
 
+// CompleteInstanceSetupByID finds an instance by ID and completes its async setup.
+// This is a convenience wrapper around CompleteInstanceSetup for use by components
+// that only have the instance ID (e.g., tripleshot coordinator).
+func (o *Orchestrator) CompleteInstanceSetupByID(session *Session, instanceID string) error {
+	inst := session.GetInstance(instanceID)
+	if inst == nil {
+		return fmt.Errorf("instance %s not found", instanceID)
+	}
+	return o.CompleteInstanceSetup(session, inst)
+}
+
 // CompleteInstanceSetup finishes the async setup for a stub instance.
 // This is the slow second phase - it creates the worktree and registers
 // the instance with managers. Should be called from a goroutine.

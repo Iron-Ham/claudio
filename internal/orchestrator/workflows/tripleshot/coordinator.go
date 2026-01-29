@@ -18,6 +18,9 @@ type OrchestratorInterface interface {
 	AddInstanceToWorktree(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error)
 	StartInstance(inst InstanceInterface) error
 	SaveSession() error
+	// Async stub methods for responsive UI during worktree creation
+	AddInstanceStub(session SessionInterface, task string) (InstanceInterface, error)
+	CompleteInstanceSetupByID(session SessionInterface, instanceID string) error
 }
 
 // SessionInterface defines the methods needed from the Session.
@@ -191,6 +194,19 @@ func (c *Coordinator) notifyPhaseChange(phase Phase) {
 	}
 }
 
+// findTripleGroup returns the instance group for this triple-shot session.
+// It first checks GroupID for multi-tripleshot support, then falls back
+// to finding the group by session type for backward compatibility.
+func (c *Coordinator) findTripleGroup() GroupInterface {
+	session := c.Session()
+	if session.GroupID != "" {
+		if group := c.baseSession.GetGroup(session.GroupID); group != nil {
+			return group
+		}
+	}
+	return c.baseSession.GetGroupBySessionType(c.sessionType)
+}
+
 // notifyAttemptStart notifies callbacks of attempt start
 func (c *Coordinator) notifyAttemptStart(attemptIndex int, instanceID string) {
 	c.logger.Info("attempt started",
@@ -300,15 +316,7 @@ func (c *Coordinator) StartAttempts() error {
 	now := time.Now()
 	session.StartedAt = &now
 
-	// Find the triple-shot group to add instances to
-	// Use GroupID for multi-tripleshot support; fall back to session type for backward compatibility
-	var tripleGroup GroupInterface
-	if session.GroupID != "" {
-		tripleGroup = c.baseSession.GetGroup(session.GroupID)
-	}
-	if tripleGroup == nil {
-		tripleGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
-	}
+	tripleGroup := c.findTripleGroup()
 
 	// Create and start all three attempts
 	for i := range 3 {
@@ -393,14 +401,7 @@ func (c *Coordinator) StartJudge() error {
 	}
 
 	// Reorganize the triple-shot group: move implementers to a sub-group, add judge to parent
-	// Use GroupID for multi-tripleshot support; fall back to session type for backward compatibility
-	var tripleGroup GroupInterface
-	if session.GroupID != "" {
-		tripleGroup = c.baseSession.GetGroup(session.GroupID)
-	}
-	if tripleGroup == nil {
-		tripleGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
-	}
+	tripleGroup := c.findTripleGroup()
 	if tripleGroup != nil && c.newGroup != nil {
 		// Create a sub-group for the implementers
 		implementersGroup := c.newGroup("Implementers")
@@ -589,14 +590,7 @@ func (c *Coordinator) StartAdversarialReviewer(attemptIndex int, completion *Com
 	attempt.ReviewerID = inst.GetID()
 
 	// Add reviewer to the triple-shot group
-	var tripleGroup GroupInterface
-	if session.GroupID != "" {
-		tripleGroup = c.baseSession.GetGroup(session.GroupID)
-	}
-	if tripleGroup == nil {
-		tripleGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
-	}
-	if tripleGroup != nil {
+	if tripleGroup := c.findTripleGroup(); tripleGroup != nil {
 		tripleGroup.AddInstance(inst.GetID())
 	}
 
@@ -782,6 +776,136 @@ func (c *Coordinator) ProcessJudgeCompletion() error {
 	c.notifyComplete(true, summary)
 
 	return nil
+}
+
+// CreateAttemptStubs creates stub instances for all three attempts immediately.
+// This is the fast first phase of async tripleshot startup - it creates instance
+// metadata without blocking on worktree creation. Returns the instance IDs.
+// The UI can show these instances in "preparing" status while worktrees are created.
+func (c *Coordinator) CreateAttemptStubs() ([3]string, error) {
+	session := c.Session()
+	task := session.Task
+
+	c.logger.Info("creating triple-shot attempt stubs", "task", util.TruncateString(task, 100))
+
+	now := time.Now()
+	session.StartedAt = &now
+
+	tripleGroup := c.findTripleGroup()
+
+	var instanceIDs [3]string
+
+	// Create stub instances for all three attempts
+	for i := range 3 {
+		prompt := fmt.Sprintf(AttemptPromptTemplate, task, i)
+
+		// Create stub instance (fast - no worktree yet)
+		inst, err := c.orch.AddInstanceStub(c.baseSession, prompt)
+		if err != nil {
+			return instanceIDs, fmt.Errorf("failed to create attempt %d stub: %w", i, err)
+		}
+
+		instanceIDs[i] = inst.GetID()
+
+		// Add instance to the triple-shot group for sidebar display
+		if tripleGroup != nil {
+			tripleGroup.AddInstance(inst.GetID())
+		}
+
+		// Record attempt info with preparing status
+		session.Attempts[i] = Attempt{
+			InstanceID: inst.GetID(),
+			Status:     AttemptStatusPreparing,
+			StartedAt:  &now,
+		}
+
+		c.mu.Lock()
+		c.runningAttempts[i] = inst.GetID()
+		c.mu.Unlock()
+	}
+
+	// Persist session state
+	if err := c.orch.SaveSession(); err != nil {
+		c.logger.Error("failed to persist session after creating stubs", "error", err)
+	}
+
+	return instanceIDs, nil
+}
+
+// CompleteAttemptSetup finishes the setup for a single attempt by creating its worktree
+// and starting the instance. This is the slow second phase that should be called from
+// a goroutine for each attempt in parallel.
+func (c *Coordinator) CompleteAttemptSetup(attemptIndex int) error {
+	if attemptIndex < 0 || attemptIndex >= 3 {
+		return fmt.Errorf("invalid attempt index: %d", attemptIndex)
+	}
+
+	session := c.Session()
+	attempt := &session.Attempts[attemptIndex]
+
+	c.logger.Info("completing attempt setup",
+		"attempt_index", attemptIndex,
+		"instance_id", attempt.InstanceID,
+	)
+
+	// markFailed is a helper to set failure status and persist
+	markFailed := func() {
+		attempt.Status = AttemptStatusFailed
+		if saveErr := c.orch.SaveSession(); saveErr != nil {
+			c.logger.Error("failed to persist attempt failure",
+				"attempt_index", attemptIndex,
+				"error", saveErr,
+			)
+		}
+	}
+
+	// Complete the instance setup (creates worktree - slow)
+	if err := c.orch.CompleteInstanceSetupByID(c.baseSession, attempt.InstanceID); err != nil {
+		markFailed()
+		return fmt.Errorf("failed to complete setup for attempt %d: %w", attemptIndex, err)
+	}
+
+	// Get the updated instance info to retrieve worktree path and branch
+	inst := c.baseSession.GetInstance(attempt.InstanceID)
+	if inst == nil {
+		markFailed()
+		return fmt.Errorf("instance %s not found after setup", attempt.InstanceID)
+	}
+
+	// Update attempt with worktree info
+	attempt.WorktreePath = inst.GetWorktreePath()
+	attempt.Branch = inst.GetBranch()
+	attempt.Status = AttemptStatusWorking
+
+	// Start the instance
+	if err := c.orch.StartInstance(inst); err != nil {
+		markFailed()
+		return fmt.Errorf("failed to start attempt %d: %w", attemptIndex, err)
+	}
+
+	c.notifyAttemptStart(attemptIndex, attempt.InstanceID)
+
+	// Persist session state
+	if err := c.orch.SaveSession(); err != nil {
+		c.logger.Error("failed to persist session after completing attempt setup",
+			"attempt_index", attemptIndex,
+			"error", err,
+		)
+	}
+
+	return nil
+}
+
+// AllAttemptsReady returns true when all three attempts have completed their setup
+// (moved from preparing to working or failed status).
+func (c *Coordinator) AllAttemptsReady() bool {
+	session := c.Session()
+	for _, attempt := range session.Attempts {
+		if attempt.Status == AttemptStatusPreparing || attempt.Status == AttemptStatusPending {
+			return false
+		}
+	}
+	return true
 }
 
 // Stop stops the triple-shot execution

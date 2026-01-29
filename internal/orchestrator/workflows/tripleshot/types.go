@@ -35,6 +35,8 @@ type AttemptStatus string
 const (
 	// AttemptStatusPending - attempt has not started yet
 	AttemptStatusPending AttemptStatus = ""
+	// AttemptStatusPreparing - attempt stub created, worktree being set up
+	AttemptStatusPreparing AttemptStatus = "preparing"
 	// AttemptStatusWorking - attempt is actively working on the problem
 	AttemptStatusWorking AttemptStatus = "working"
 	// AttemptStatusUnderReview - implementation complete, awaiting adversarial review approval

@@ -37,6 +37,16 @@ func (a *orchestratorAdapter) SaveSession() error {
 	return a.orch.SaveSession()
 }
 
+func (a *orchestratorAdapter) AddInstanceStub(session tripleshot.SessionInterface, task string) (tripleshot.InstanceInterface, error) {
+	s := session.(*sessionAdapter).session
+	return a.orch.AddInstanceStub(s, task)
+}
+
+func (a *orchestratorAdapter) CompleteInstanceSetupByID(session tripleshot.SessionInterface, instanceID string) error {
+	s := session.(*sessionAdapter).session
+	return a.orch.CompleteInstanceSetupByID(s, instanceID)
+}
+
 // sessionAdapter implements tripleshot.SessionInterface
 type sessionAdapter struct {
 	session *Session

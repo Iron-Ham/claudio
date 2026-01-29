@@ -193,6 +193,42 @@ func LoadDiffAsync(o *orchestrator.Orchestrator, worktreePath string, instanceID
 	}
 }
 
+// CreateTripleShotStubsAsync returns a command that creates stub instances for all three
+// tripleshot attempts. This is the fast first phase - it creates instance metadata
+// immediately so the UI can show "Preparing" status while worktrees are created.
+func CreateTripleShotStubsAsync(
+	coordinator *tripleshot.Coordinator,
+	groupID string,
+) tea.Cmd {
+	return func() tea.Msg {
+		instanceIDs, err := coordinator.CreateAttemptStubs()
+		return TripleShotStubsCreatedMsg{
+			GroupID:     groupID,
+			InstanceIDs: instanceIDs,
+			Err:         err,
+		}
+	}
+}
+
+// CompleteTripleShotAttemptSetupAsync returns a command that completes the setup for a
+// single tripleshot attempt. This is the slow second phase - it creates the worktree
+// and starts the instance. Should be called for each attempt after receiving
+// TripleShotStubsCreatedMsg.
+func CompleteTripleShotAttemptSetupAsync(
+	coordinator *tripleshot.Coordinator,
+	groupID string,
+	attemptIndex int,
+) tea.Cmd {
+	return func() tea.Msg {
+		err := coordinator.CompleteAttemptSetup(attemptIndex)
+		return TripleShotAttemptSetupCompleteMsg{
+			GroupID:      groupID,
+			AttemptIndex: attemptIndex,
+			Err:          err,
+		}
+	}
+}
+
 // CheckTripleShotCompletionAsync returns a command that checks tripleshot completion files
 // in a goroutine, avoiding blocking the UI event loop with file I/O.
 func CheckTripleShotCompletionAsync(
