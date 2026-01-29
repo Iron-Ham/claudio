@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Adversarial Mode UI Enhancement** - Current round instances in adversarial mode now appear directly in the main adversarial group header instead of being nested under a "[Round X]" sub-group. The group header displays round information inline (e.g., "Refactor auth (Round 3) [2/2]"), making it immediately visible which round is active. Previous rounds are still organized under the "Previous Rounds" container for historical reference. This flattens the UI for the current round while preserving full round history navigation.
 
+- **Tripleshot Adversarial Pair Clarity** - Improved the sidebar display for tripleshot with adversarial mode enabled to show clear implementer/reviewer pairs. Each of the three attempts is now displayed as a "Pair N" with both the implementer status and its paired reviewer status visible together. The display includes a phase indicator showing the current workflow phase (Implementing, Under Review, Judging, Complete), reviewer approval status with scores (e.g., "8/10 ✓"), and a count of active pairs during the review phase. This makes it immediately clear which reviewer is reviewing which implementer's work.
+
 ### Removed
 
 - **`claudio tripleshot` CLI Command** - The standalone `claudio tripleshot` command has been removed. TripleShot mode is now exclusively accessed through the TUI via the `:tripleshot` command (or aliases `:triple`, `:3shot`). This consolidates all tripleshot functionality within the standard TUI, providing a more consistent user experience. To use tripleshot, run `claudio start` and then use `:tripleshot` in command mode.

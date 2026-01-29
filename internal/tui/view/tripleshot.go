@@ -252,45 +252,26 @@ func renderSingleTripleShotSection(ctx TripleShotRenderContext, session *triples
 	}
 	lines = append(lines, "")
 
-	// Attempt status
-	lines = append(lines, tsSubtle.Render("Attempts:"))
-	for i, attempt := range session.Attempts {
-		var statusStyle lipgloss.Style
-		var statusText string
-
-		switch attempt.Status {
-		case tripleshot.AttemptStatusWorking:
-			statusStyle = tsHighlight
-			statusText = "working"
-		case tripleshot.AttemptStatusCompleted:
-			statusStyle = tsSuccess
-			statusText = "done"
-		case tripleshot.AttemptStatusFailed:
-			statusStyle = tsError
-			statusText = "failed"
-		default:
-			statusStyle = tsSubtle
-			statusText = "pending"
-		}
-
-		// Highlight if this attempt's instance is currently selected
-		var prefix string
-		if ctx.Session != nil && ctx.ActiveTab < len(ctx.Session.Instances) {
-			activeInst := ctx.Session.Instances[ctx.ActiveTab]
-			if activeInst != nil && activeInst.ID == attempt.InstanceID {
-				prefix = "▶ "
-			} else {
-				prefix = "  "
-			}
-		} else {
-			prefix = "  "
-		}
-
-		lines = append(lines, prefix+fmt.Sprintf("%d: %s", i+1, statusStyle.Render(statusText)))
+	// Show phase and round info for adversarial mode
+	if session.Config.Adversarial {
+		lines = append(lines, renderAdversarialPhaseInfo(session)...)
+		lines = append(lines, "")
 	}
 
-	// Judge status
-	if session.JudgeID != "" || session.Phase == tripleshot.PhaseEvaluating || session.Phase == tripleshot.PhaseComplete {
+	// Render attempts - either as pairs (adversarial) or standalone
+	if session.Config.Adversarial {
+		lines = append(lines, renderAdversarialAttemptPairs(ctx, session)...)
+	} else {
+		lines = append(lines, renderStandardAttempts(ctx, session)...)
+	}
+
+	// Judge status - show for adversarial after review phase, or for standard mode
+	showJudge := session.JudgeID != "" ||
+		session.Phase == tripleshot.PhaseEvaluating ||
+		session.Phase == tripleshot.PhaseComplete ||
+		(session.Config.Adversarial && session.Phase == tripleshot.PhaseAdversarialReview)
+
+	if showJudge {
 		lines = append(lines, "")
 		lines = append(lines, tsSubtle.Render("Judge:"))
 
@@ -299,6 +280,9 @@ func renderSingleTripleShotSection(ctx TripleShotRenderContext, session *triples
 		switch session.Phase {
 		case tripleshot.PhaseWorking:
 			judgeStatus = "waiting"
+			judgeStyle = tsSubtle
+		case tripleshot.PhaseAdversarialReview:
+			judgeStatus = "waiting for reviews"
 			judgeStyle = tsSubtle
 		case tripleshot.PhaseEvaluating:
 			judgeStatus = "evaluating"
@@ -309,6 +293,9 @@ func renderSingleTripleShotSection(ctx TripleShotRenderContext, session *triples
 		case tripleshot.PhaseFailed:
 			judgeStatus = "failed"
 			judgeStyle = tsError
+		default:
+			judgeStatus = "waiting"
+			judgeStyle = tsSubtle
 		}
 
 		var prefix string
@@ -361,9 +348,13 @@ func findTripleShotForActiveInstance(ctx TripleShotRenderContext) *tripleshot.Se
 			continue
 		}
 
-		// Check if active instance is one of the attempts
+		// Check if active instance is one of the attempts or their reviewers
 		for _, attempt := range session.Attempts {
 			if attempt.InstanceID == activeInst.ID {
+				return session
+			}
+			// Also check if active instance is the reviewer for this attempt
+			if attempt.ReviewerID == activeInst.ID {
 				return session
 			}
 		}
@@ -567,4 +558,188 @@ func findGroupByID(groups []*orchestrator.InstanceGroup, id string) *orchestrato
 		}
 	}
 	return nil
+}
+
+// renderAdversarialPhaseInfo renders the current phase info for adversarial mode.
+// This shows users which phase the tripleshot is in and the current round status.
+func renderAdversarialPhaseInfo(session *tripleshot.Session) []string {
+	var lines []string
+
+	// Determine phase text and style
+	var phaseText string
+	var phaseStyle lipgloss.Style
+
+	switch session.Phase {
+	case tripleshot.PhaseWorking:
+		phaseText = "Implementing"
+		phaseStyle = tsHighlight
+	case tripleshot.PhaseAdversarialReview:
+		phaseText = "Under Review"
+		phaseStyle = tsWarning
+	case tripleshot.PhaseEvaluating:
+		phaseText = "Judging"
+		phaseStyle = tsHighlight
+	case tripleshot.PhaseComplete:
+		phaseText = "Complete"
+		phaseStyle = tsSuccess
+	case tripleshot.PhaseFailed:
+		phaseText = "Failed"
+		phaseStyle = tsError
+	default:
+		phaseText = "Starting"
+		phaseStyle = tsSubtle
+	}
+
+	// Build phase line with round info if relevant
+	phaseLine := tsSubtle.Render("Phase: ") + phaseStyle.Render(phaseText)
+
+	// Add round info when in review phase
+	if session.Phase == tripleshot.PhaseAdversarialReview {
+		// Count how many attempts are under review or have reviewers
+		reviewingCount := 0
+		for _, attempt := range session.Attempts {
+			if attempt.ReviewerID != "" {
+				reviewingCount++
+			}
+		}
+		if reviewingCount > 0 {
+			phaseLine += tsSubtle.Render(fmt.Sprintf(" (%d/3 pairs active)", reviewingCount))
+		}
+	}
+
+	lines = append(lines, phaseLine)
+
+	return lines
+}
+
+// renderAdversarialAttemptPairs renders the attempts as implementer/reviewer pairs.
+// Each pair is visually grouped to show the relationship between implementer and reviewer.
+func renderAdversarialAttemptPairs(ctx TripleShotRenderContext, session *tripleshot.Session) []string {
+	var lines []string
+
+	lines = append(lines, tsSubtle.Render("Implementer/Reviewer Pairs:"))
+
+	for i, attempt := range session.Attempts {
+		// Add spacing between pairs
+		if i > 0 {
+			lines = append(lines, "")
+		}
+
+		// Pair header
+		pairLabel := fmt.Sprintf("Pair %d", i+1)
+		lines = append(lines, tsSubtle.Render("  "+pairLabel+":"))
+
+		// Implementer line
+		implStatus, implStyle := getAttemptStatusDisplay(attempt.Status)
+		implPrefix := getInstancePrefix(ctx, attempt.InstanceID)
+		lines = append(lines, implPrefix+"    Impl: "+implStyle.Render(implStatus))
+
+		// Reviewer line - show status based on whether reviewer exists
+		if attempt.ReviewerID != "" {
+			revStatus, revStyle := getReviewerStatusDisplay(ctx, attempt, session.Phase)
+			revPrefix := getInstancePrefix(ctx, attempt.ReviewerID)
+			lines = append(lines, revPrefix+"    Rev:  "+revStyle.Render(revStatus))
+
+			// Show review score if available
+			if attempt.ReviewApproved || attempt.ReviewScore > 0 {
+				scoreText := fmt.Sprintf("%d/10", attempt.ReviewScore)
+				var scoreStyle lipgloss.Style
+				if attempt.ReviewScore >= 8 {
+					scoreStyle = tsSuccess
+				} else if attempt.ReviewScore >= 5 {
+					scoreStyle = tsWarning
+				} else {
+					scoreStyle = tsError
+				}
+				approvalIcon := "✗"
+				if attempt.ReviewApproved {
+					approvalIcon = "✓"
+				}
+				lines = append(lines, "          "+scoreStyle.Render(scoreText)+" "+tsSubtle.Render(approvalIcon))
+			}
+		} else if attempt.Status == tripleshot.AttemptStatusCompleted ||
+			attempt.Status == tripleshot.AttemptStatusUnderReview {
+			// Reviewer not yet assigned but implementation is ready
+			lines = append(lines, "      Rev:  "+tsSubtle.Render("pending"))
+		} else {
+			// Implementation not ready yet, reviewer waiting
+			lines = append(lines, "      Rev:  "+tsSubtle.Render("waiting"))
+		}
+	}
+
+	return lines
+}
+
+// renderStandardAttempts renders the attempts in the standard (non-adversarial) format.
+func renderStandardAttempts(ctx TripleShotRenderContext, session *tripleshot.Session) []string {
+	var lines []string
+
+	lines = append(lines, tsSubtle.Render("Attempts:"))
+	for i, attempt := range session.Attempts {
+		status, style := getAttemptStatusDisplay(attempt.Status)
+		prefix := getInstancePrefix(ctx, attempt.InstanceID)
+		lines = append(lines, prefix+fmt.Sprintf("%d: %s", i+1, style.Render(status)))
+	}
+
+	return lines
+}
+
+// getAttemptStatusDisplay returns the display text and style for an attempt status.
+func getAttemptStatusDisplay(status tripleshot.AttemptStatus) (string, lipgloss.Style) {
+	switch status {
+	case tripleshot.AttemptStatusWorking:
+		return "working", tsHighlight
+	case tripleshot.AttemptStatusUnderReview:
+		return "under review", tsWarning
+	case tripleshot.AttemptStatusCompleted:
+		return "done", tsSuccess
+	case tripleshot.AttemptStatusFailed:
+		return "failed", tsError
+	default:
+		return "pending", tsSubtle
+	}
+}
+
+// getReviewerStatusDisplay returns the display text and style for a reviewer.
+func getReviewerStatusDisplay(ctx TripleShotRenderContext, attempt tripleshot.Attempt, phase tripleshot.Phase) (string, lipgloss.Style) {
+	// Check if attempt has been approved
+	if attempt.ReviewApproved {
+		return "approved", tsSuccess
+	}
+
+	// Check instance status if we have session context
+	if ctx.Session != nil && attempt.ReviewerID != "" {
+		inst := ctx.Session.GetInstance(attempt.ReviewerID)
+		if inst != nil {
+			switch inst.Status {
+			case orchestrator.StatusCompleted:
+				// Reviewer completed but didn't approve - rejected
+				if attempt.ReviewScore > 0 && !attempt.ReviewApproved {
+					return "rejected", tsError
+				}
+				return "done", tsSuccess
+			case orchestrator.StatusWorking:
+				return "reviewing", tsWarning
+			case orchestrator.StatusError, orchestrator.StatusStuck:
+				return "error", tsError
+			}
+		}
+	}
+
+	// Default based on phase
+	if phase == tripleshot.PhaseAdversarialReview {
+		return "reviewing", tsWarning
+	}
+	return "waiting", tsSubtle
+}
+
+// getInstancePrefix returns the prefix for an instance line based on selection state.
+func getInstancePrefix(ctx TripleShotRenderContext, instanceID string) string {
+	if ctx.Session != nil && ctx.ActiveTab < len(ctx.Session.Instances) && instanceID != "" {
+		activeInst := ctx.Session.Instances[ctx.ActiveTab]
+		if activeInst != nil && activeInst.ID == instanceID {
+			return "▶ "
+		}
+	}
+	return "  "
 }
