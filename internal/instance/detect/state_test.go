@@ -219,12 +219,61 @@ func TestDetector_Detect_InputWaiting(t *testing.T) {
 			output: "⏵⏵ bypass permissions",
 		},
 		{
-			name:   "send indicator",
-			output: "> Write a test function ↵ send",
+			name:   "bypass permissions with mode cycling and file stats",
+			output: " ⏵⏵ bypass permissions on (shift+Tab to cycle) · 2 files +5 -3",
 		},
 		{
-			name:   "mode cycling hint",
+			name:   "send button indicator",
+			output: "> Write a test function ↵ send", // Matches via ↵\s*send pattern
+		},
+		{
+			name:   "mode cycling hint lowercase",
 			output: "Use (shift+tab to cycle) between modes",
+		},
+		{
+			name:   "mode cycling hint mixed case",
+			output: "⏸ plan mode on (shift+Tab to cycle)",
+		},
+		{
+			name:   "unicode prompt with send indicator",
+			output: "❯ Write a test function ↵ send",
+		},
+		{
+			name:   "unicode prompt at end of line",
+			output: "Some output text\n❯ ",
+		},
+		{
+			name:   "unicode prompt with user input",
+			output: "Some output\n❯ iii",
+		},
+		{
+			name:   "plan mode indicator",
+			output: "⏸ plan mode on (shift+Tab to cycle)",
+		},
+		{
+			name:   "auto mode indicator",
+			output: "⏸ auto mode on (shift+Tab to cycle)",
+		},
+		{
+			name:   "focus mode indicator with on",
+			output: "⏸ focus mode on",
+		},
+		{
+			name:   "plan mode indicator without on suffix",
+			output: "⏸ plan mode",
+		},
+		{
+			name:   "auto mode indicator without on suffix",
+			output: "⏸ auto mode (shift+Tab to cycle)",
+		},
+		{
+			name: "real claude code plan mode output",
+			output: `⎿  Interrupted · What should Claude do instead?
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ iii
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ plan mode on (shift+Tab to cycle)`,
 		},
 	}
 
@@ -583,4 +632,74 @@ func TestGetLastNonEmptyLines(t *testing.T) {
 func TestDetector_Interface(t *testing.T) {
 	// Verify Detector implements StateDetector
 	var _ StateDetector = NewDetector()
+}
+
+func TestDetector_HasWorkingIndicators(t *testing.T) {
+	d := NewDetector()
+
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{
+			name:   "spinner character",
+			output: "Thinking... ⠋",
+			want:   true,
+		},
+		{
+			name:   "reading indicator",
+			output: "Reading...",
+			want:   true,
+		},
+		{
+			name:   "writing indicator",
+			output: "Writing...",
+			want:   true,
+		},
+		{
+			name:   "analyzing indicator",
+			output: "Analyzing...",
+			want:   true,
+		},
+		{
+			name:   "let me check phrase",
+			output: "Let me check the file structure",
+			want:   true,
+		},
+		{
+			name:   "working on phrase",
+			output: "Working on the implementation",
+			want:   true,
+		},
+		{
+			name:   "no working indicators",
+			output: "Hello world",
+			want:   false,
+		},
+		{
+			name:   "empty output",
+			output: "",
+			want:   false,
+		},
+		{
+			name:   "question without working",
+			output: "What file should I edit?",
+			want:   false,
+		},
+		{
+			name:   "working indicator in old output pushed out by many recent lines",
+			output: "Reading...\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12",
+			want:   false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := d.HasWorkingIndicators([]byte(tc.output))
+			if got != tc.want {
+				t.Errorf("HasWorkingIndicators(%q) = %v, want %v", tc.output, got, tc.want)
+			}
+		})
+	}
 }

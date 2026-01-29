@@ -130,9 +130,14 @@ var (
 		`⏵⏵\s*bypass permissions`,      // Bypass mode indicator
 		`⏵\s*(?:allow|approve|bypass)`, // Single arrow prompt indicators
 		`↵\s*send`,                     // Send indicator at end of input line
-		`\(shift\+tab to cycle\)`,      // Mode cycling hint
-		// Input prompt line pattern (> followed by text and send indicator)
-		`>\s+.*↵`,
+		`(?i)\(shift\+tab to cycle\)`,  // Mode cycling hint (case-insensitive)
+		// Input prompt line pattern - Claude Code uses ❯ (U+276F) not ASCII > (U+003E).
+		// The ASCII > pattern was intentionally removed to avoid false positives.
+		`❯\s+.*↵`,  // Prompt with send indicator
+		`❯\s*$`,    // Prompt at end of line (no user input yet)
+		`(?m)^❯\s`, // Prompt at start of a line with space (user typing)
+		// Pause indicator with mode name (plan/auto/focus mode)
+		`⏸\s*(?:plan|auto|focus)\s+mode(?:\s+on)?`, // "on" suffix is optional
 	}
 
 	// CompletionPatterns detect task completion.
@@ -209,21 +214,13 @@ func compilePatterns(patterns []string) []*regexp.Regexp {
 	return compiled
 }
 
-// Detect analyzes output and returns the detected waiting state.
-// It examines the last portion of output (last ~2000 chars) for patterns.
-//
-// Detection priority (highest to lowest):
-//  1. Working indicators - if Claude is actively working, return StateWorking
-//  2. PR opened - if a GitHub PR URL is found, return StatePROpened
-//  3. Errors - if critical Claude CLI errors are found, return StateError
-//  4. Completion - if completion patterns match (currently disabled), return StateCompleted
-//  5. Permission prompts - if Y/N or permission requests found, return StateWaitingPermission
-//  6. Questions - if questions are found, return StateWaitingQuestion
-//  7. Input prompts - if Claude Code UI elements detected, return StateWaitingInput
-//  8. Default - return StateWorking
-func (d *Detector) Detect(output []byte) WaitingState {
+// prepareOutputForDetection processes raw output for pattern matching.
+// It truncates to the last ~2000 chars, strips ANSI codes, and extracts
+// the last non-empty lines for focused analysis.
+// Returns the full processed text and the recent lines text.
+func prepareOutputForDetection(output []byte) (fullText, recentText string) {
 	if len(output) == 0 {
-		return StateWorking
+		return "", ""
 	}
 
 	// Focus on the last portion of output (last ~2000 chars for efficiency)
@@ -238,7 +235,27 @@ func (d *Detector) Detect(output []byte) WaitingState {
 	// Get the last few lines for more focused analysis
 	lines := strings.Split(text, "\n")
 	recentLines := getLastNonEmptyLines(lines, 10)
-	recentText := strings.Join(recentLines, "\n")
+
+	return text, strings.Join(recentLines, "\n")
+}
+
+// Detect analyzes output and returns the detected waiting state.
+// It examines the last portion of output (last ~2000 chars) for patterns.
+//
+// Detection priority (highest to lowest):
+//  1. Working indicators - if Claude is actively working, return StateWorking
+//  2. PR opened - if a GitHub PR URL is found, return StatePROpened
+//  3. Errors - if critical Claude CLI errors are found, return StateError
+//  4. Completion - if completion patterns match (currently disabled), return StateCompleted
+//  5. Permission prompts - if Y/N or permission requests found, return StateWaitingPermission
+//  6. Questions - if questions are found, return StateWaitingQuestion
+//  7. Input prompts - if Claude Code UI elements detected, return StateWaitingInput
+//  8. Default - return StateWorking
+func (d *Detector) Detect(output []byte) WaitingState {
+	text, recentText := prepareOutputForDetection(output)
+	if text == "" {
+		return StateWorking
+	}
 
 	// Check for active working indicators first - if Claude is actively working,
 	// don't report as waiting even if there's a question in the output history
@@ -280,6 +297,18 @@ func (d *Detector) Detect(output []byte) WaitingState {
 
 	// Default to working
 	return StateWorking
+}
+
+// HasWorkingIndicators checks if the output contains active working indicators
+// (spinners, progress messages, etc.) that suggest Claude is actively working.
+// This is separate from Detect() to allow callers to check for working activity
+// without going through the full state machine.
+func (d *Detector) HasWorkingIndicators(output []byte) bool {
+	_, recentText := prepareOutputForDetection(output)
+	if recentText == "" {
+		return false
+	}
+	return d.matchesAny(recentText, d.workingPatterns)
 }
 
 // matchesAny checks if text matches any of the provided patterns.
