@@ -184,6 +184,26 @@ func (a *adversarialGroupAdapter) AddInstance(instanceID string) {
 	a.group.AddInstance(instanceID)
 }
 
+func (a *adversarialGroupAdapter) GetInstances() []string {
+	if a.group == nil {
+		return nil
+	}
+	return a.group.Instances
+}
+
+func (a *adversarialGroupAdapter) RemoveInstance(instanceID string) {
+	if a.group == nil {
+		return
+	}
+	filtered := make([]string, 0, len(a.group.Instances))
+	for _, id := range a.group.Instances {
+		if id != instanceID {
+			filtered = append(filtered, id)
+		}
+	}
+	a.group.Instances = filtered
+}
+
 // GetOrCreateSubGroup finds or creates a sub-group with the given ID and name.
 // This implements adversarial.GroupWithSubGroupsInterface.
 func (a *adversarialGroupAdapter) GetOrCreateSubGroup(id, name string) adversarial.GroupInterface {

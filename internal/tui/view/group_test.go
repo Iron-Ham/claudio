@@ -744,3 +744,121 @@ func TestFindGroupContainingInstance(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderGroupHeaderItemWrapped_WithRoundInfo(t *testing.T) {
+	// Test that RoundInfo is included in the group header for adversarial groups
+	group := &orchestrator.InstanceGroup{
+		ID:          "adv-group-1",
+		Name:        "Refactor auth",
+		SessionType: "adversarial",
+		Phase:       orchestrator.GroupPhaseExecuting,
+	}
+
+	progress := GroupProgress{
+		Completed: 1,
+		Total:     2,
+	}
+
+	item := GroupHeaderItem{
+		Group:      group,
+		Progress:   progress,
+		Collapsed:  false,
+		IsSelected: false,
+		Depth:      0,
+		RoundInfo:  "Round 3",
+	}
+
+	result := RenderGroupHeaderItemWrapped(item, 80)
+
+	if len(result) == 0 {
+		t.Fatal("RenderGroupHeaderItemWrapped() returned empty result")
+	}
+
+	// The rendered output should include the round info
+	fullOutput := strings.Join(result, "\n")
+	if !strings.Contains(fullOutput, "Round 3") {
+		t.Errorf("RenderGroupHeaderItemWrapped() should contain round info, got: %s", fullOutput)
+	}
+
+	// The rendered output should include the group name
+	if !strings.Contains(fullOutput, "Refactor auth") {
+		t.Errorf("RenderGroupHeaderItemWrapped() should contain group name, got: %s", fullOutput)
+	}
+
+	// The rendered output should include progress
+	if !strings.Contains(fullOutput, "[1/2]") {
+		t.Errorf("RenderGroupHeaderItemWrapped() should contain progress, got: %s", fullOutput)
+	}
+}
+
+func TestRenderGroupHeaderItemWrapped_WithoutRoundInfo(t *testing.T) {
+	// Test that group header works without RoundInfo (non-adversarial groups)
+	group := &orchestrator.InstanceGroup{
+		ID:          "plan-group-1",
+		Name:        "Build feature",
+		SessionType: "plan",
+		Phase:       orchestrator.GroupPhaseExecuting,
+	}
+
+	progress := GroupProgress{
+		Completed: 2,
+		Total:     3,
+	}
+
+	item := GroupHeaderItem{
+		Group:      group,
+		Progress:   progress,
+		Collapsed:  false,
+		IsSelected: false,
+		Depth:      0,
+		RoundInfo:  "", // No round info for non-adversarial
+	}
+
+	result := RenderGroupHeaderItemWrapped(item, 80)
+
+	if len(result) == 0 {
+		t.Fatal("RenderGroupHeaderItemWrapped() returned empty result")
+	}
+
+	fullOutput := strings.Join(result, "\n")
+
+	// Should NOT contain "()" since RoundInfo is empty
+	if strings.Contains(fullOutput, "()") {
+		t.Errorf("RenderGroupHeaderItemWrapped() should not show empty parens, got: %s", fullOutput)
+	}
+
+	// Should contain the group name
+	if !strings.Contains(fullOutput, "Build feature") {
+		t.Errorf("RenderGroupHeaderItemWrapped() should contain group name, got: %s", fullOutput)
+	}
+}
+
+func TestRenderGroupHeaderItem(t *testing.T) {
+	// Test the single-line version
+	group := &orchestrator.InstanceGroup{
+		ID:          "adv-group-1",
+		Name:        "Test Task",
+		SessionType: "adversarial",
+		Phase:       orchestrator.GroupPhaseExecuting,
+	}
+
+	item := GroupHeaderItem{
+		Group:      group,
+		Progress:   GroupProgress{Completed: 1, Total: 2},
+		Collapsed:  false,
+		IsSelected: false,
+		Depth:      0,
+		RoundInfo:  "Round 1",
+	}
+
+	result := RenderGroupHeaderItem(item, 80)
+
+	if result == "" {
+		t.Fatal("RenderGroupHeaderItem() returned empty string")
+	}
+
+	// Should contain round info
+	if !strings.Contains(result, "Round 1") {
+		t.Errorf("RenderGroupHeaderItem() should contain round info, got: %s", result)
+	}
+}

@@ -446,6 +446,12 @@ func (m Model) PlanStateData() *view.PlanState {
 	return m.planSessions
 }
 
+// AdversarialStateData returns the adversarial state for tracking concurrent adversarial sessions.
+// Implements view.SidebarState interface.
+func (m Model) AdversarialStateData() *view.AdversarialState {
+	return m.adversarial
+}
+
 // Orchestrator returns the orchestrator for instance lookups.
 // Implements view.SidebarState interface.
 func (m Model) Orchestrator() *orchestrator.Orchestrator {

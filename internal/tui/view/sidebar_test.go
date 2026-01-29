@@ -6,6 +6,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 )
 
@@ -21,6 +22,7 @@ type mockSidebarState struct {
 	intelligentNamingEnabled bool
 	groupViewState           *GroupViewState
 	sidebarMode              SidebarMode
+	adversarialState         *AdversarialState
 }
 
 func (m *mockSidebarState) Session() *orchestrator.Session     { return m.session }
@@ -38,6 +40,9 @@ func (m *mockSidebarState) MultiPlanState() *MultiPlanState    { return nil }
 func (m *mockSidebarState) PlanStateData() *PlanState          { return nil }
 func (m *mockSidebarState) Orchestrator() *orchestrator.Orchestrator {
 	return nil
+}
+func (m *mockSidebarState) AdversarialStateData() *AdversarialState {
+	return m.adversarialState
 }
 func (m *mockSidebarState) IsInstanceSelected(instanceID string) bool {
 	if m.session == nil || m.activeTab < 0 || m.activeTab >= len(m.session.Instances) {
@@ -2088,5 +2093,241 @@ func TestSidebarView_GroupedModeCollapsedGroupOverflow(t *testing.T) {
 	// Group B instances should be visible
 	if !strings.Contains(result, "Task B1") {
 		t.Errorf("expanded group instances should appear, got:\n%s", result)
+	}
+}
+
+// Tests for enrichAdversarialRoundInfo
+
+func TestEnrichAdversarialRoundInfo_NilAdvState(t *testing.T) {
+	// When advState is nil, items should be returned unchanged
+	items := []any{
+		GroupHeaderItem{
+			Group: &orchestrator.InstanceGroup{
+				ID:   "group-1",
+				Name: "Test Group",
+			},
+		},
+		GroupedInstance{
+			Instance: &orchestrator.Instance{ID: "inst-1"},
+		},
+	}
+
+	result := enrichAdversarialRoundInfo(items, nil)
+
+	if len(result) != len(items) {
+		t.Errorf("expected %d items, got %d", len(items), len(result))
+	}
+
+	// Check that no round info was added
+	header := result[0].(GroupHeaderItem)
+	if header.RoundInfo != "" {
+		t.Errorf("expected empty RoundInfo, got %q", header.RoundInfo)
+	}
+}
+
+func TestEnrichAdversarialRoundInfo_EmptyCoordinators(t *testing.T) {
+	// When coordinators map is empty, items should be returned unchanged
+	advState := &AdversarialState{
+		Coordinators: make(map[string]*adversarial.Coordinator),
+	}
+
+	items := []any{
+		GroupHeaderItem{
+			Group: &orchestrator.InstanceGroup{
+				ID:   "group-1",
+				Name: "Test Group",
+			},
+		},
+	}
+
+	result := enrichAdversarialRoundInfo(items, advState)
+
+	header := result[0].(GroupHeaderItem)
+	if header.RoundInfo != "" {
+		t.Errorf("expected empty RoundInfo with empty coordinators, got %q", header.RoundInfo)
+	}
+}
+
+func TestEnrichAdversarialRoundInfo_GroupWithRoundInfo(t *testing.T) {
+	// Create an adversarial session with a specific round
+	advSession := adversarial.NewSession("test-id", "test task", adversarial.DefaultConfig())
+	advSession.CurrentRound = 3 // Set to round 3
+
+	// Create a coordinator with this session
+	cfg := adversarial.CoordinatorConfig{
+		AdvSession:  advSession,
+		SessionType: "adversarial",
+	}
+	coord := adversarial.NewCoordinator(cfg)
+
+	// Create adversarial state with the coordinator mapped to a group ID
+	advState := &AdversarialState{
+		Coordinators: map[string]*adversarial.Coordinator{
+			"adv-group-1": coord,
+		},
+	}
+
+	items := []any{
+		GroupHeaderItem{
+			Group: &orchestrator.InstanceGroup{
+				ID:   "adv-group-1",
+				Name: "Adversarial Task",
+			},
+		},
+		GroupedInstance{
+			Instance: &orchestrator.Instance{ID: "inst-1"},
+		},
+	}
+
+	result := enrichAdversarialRoundInfo(items, advState)
+
+	// The group header should now have round info
+	header := result[0].(GroupHeaderItem)
+	if header.RoundInfo != "Round 3" {
+		t.Errorf("expected RoundInfo = %q, got %q", "Round 3", header.RoundInfo)
+	}
+
+	// Non-header items should be unchanged
+	inst := result[1].(GroupedInstance)
+	if inst.Instance.ID != "inst-1" {
+		t.Errorf("expected instance ID = inst-1, got %s", inst.Instance.ID)
+	}
+}
+
+func TestEnrichAdversarialRoundInfo_NonAdversarialGroups(t *testing.T) {
+	// Create an adversarial session
+	advSession := adversarial.NewSession("test-id", "test task", adversarial.DefaultConfig())
+	advSession.CurrentRound = 2
+
+	cfg := adversarial.CoordinatorConfig{
+		AdvSession:  advSession,
+		SessionType: "adversarial",
+	}
+	coord := adversarial.NewCoordinator(cfg)
+
+	advState := &AdversarialState{
+		Coordinators: map[string]*adversarial.Coordinator{
+			"adv-group-1": coord, // Only this group is adversarial
+		},
+	}
+
+	items := []any{
+		GroupHeaderItem{
+			Group: &orchestrator.InstanceGroup{
+				ID:   "adv-group-1",
+				Name: "Adversarial Task",
+			},
+		},
+		GroupHeaderItem{
+			Group: &orchestrator.InstanceGroup{
+				ID:   "plan-group-1",
+				Name: "Plan Task",
+			},
+		},
+		GroupHeaderItem{
+			Group: &orchestrator.InstanceGroup{
+				ID:   "triple-group-1",
+				Name: "Triple Shot Task",
+			},
+		},
+	}
+
+	result := enrichAdversarialRoundInfo(items, advState)
+
+	// First group (adversarial) should have round info
+	header0 := result[0].(GroupHeaderItem)
+	if header0.RoundInfo != "Round 2" {
+		t.Errorf("adversarial group should have RoundInfo = %q, got %q", "Round 2", header0.RoundInfo)
+	}
+
+	// Second group (non-adversarial) should not have round info
+	header1 := result[1].(GroupHeaderItem)
+	if header1.RoundInfo != "" {
+		t.Errorf("non-adversarial group should have empty RoundInfo, got %q", header1.RoundInfo)
+	}
+
+	// Third group (non-adversarial) should not have round info
+	header2 := result[2].(GroupHeaderItem)
+	if header2.RoundInfo != "" {
+		t.Errorf("non-adversarial group should have empty RoundInfo, got %q", header2.RoundInfo)
+	}
+}
+
+func TestEnrichAdversarialRoundInfo_NilGroup(t *testing.T) {
+	// Test with nil group in header
+	advState := &AdversarialState{
+		Coordinators: map[string]*adversarial.Coordinator{},
+	}
+
+	items := []any{
+		GroupHeaderItem{
+			Group: nil, // nil group
+		},
+	}
+
+	result := enrichAdversarialRoundInfo(items, advState)
+
+	// Should not panic and header should be returned unchanged
+	header := result[0].(GroupHeaderItem)
+	if header.RoundInfo != "" {
+		t.Errorf("expected empty RoundInfo for nil group, got %q", header.RoundInfo)
+	}
+}
+
+func TestSidebarView_GroupedModeWithAdversarialState(t *testing.T) {
+	// Test that the sidebar correctly uses AdversarialStateData to enrich groups
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "inst-1", Task: "Implement feature", Status: orchestrator.StatusWorking},
+			{ID: "inst-2", Task: "Review code", Status: orchestrator.StatusPending},
+		},
+		Groups: []*orchestrator.InstanceGroup{
+			{
+				ID:          "adv-group-1",
+				Name:        "Refactor auth",
+				Phase:       orchestrator.GroupPhaseExecuting,
+				Instances:   []string{"inst-1", "inst-2"},
+				SessionType: "adversarial",
+			},
+		},
+	}
+
+	// Create adversarial session with round 2
+	advSession := adversarial.NewSession("test-id", "test task", adversarial.DefaultConfig())
+	advSession.CurrentRound = 2
+
+	cfg := adversarial.CoordinatorConfig{
+		AdvSession:  advSession,
+		SessionType: "adversarial",
+	}
+	coord := adversarial.NewCoordinator(cfg)
+
+	advState := &AdversarialState{
+		Coordinators: map[string]*adversarial.Coordinator{
+			"adv-group-1": coord,
+		},
+	}
+
+	state := &mockSidebarState{
+		session:          session,
+		activeTab:        0,
+		terminalWidth:    80,
+		terminalHeight:   30,
+		sidebarMode:      SidebarModeGrouped,
+		groupViewState:   NewGroupViewState(),
+		adversarialState: advState,
+	}
+
+	sv := NewSidebarView()
+	result := sv.RenderSidebar(state, 40, 25)
+
+	// Should contain the round info
+	if !strings.Contains(result, "Round 2") {
+		t.Errorf("grouped sidebar should show round info for adversarial group, got:\n%s", result)
+	}
+
+	// Should contain the group name
+	if !strings.Contains(result, "Refactor auth") {
+		t.Errorf("grouped sidebar should show group name, got:\n%s", result)
 	}
 }

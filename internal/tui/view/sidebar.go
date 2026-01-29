@@ -51,6 +51,10 @@ type SidebarState interface {
 
 	// IsInstanceSelected returns true if the given instance ID is currently selected.
 	IsInstanceSelected(instanceID string) bool
+
+	// AdversarialStateData returns the adversarial state for tracking concurrent adversarial sessions.
+	// Returns nil if no adversarial sessions are active.
+	AdversarialStateData() *AdversarialState
 }
 
 // SidebarView handles rendering of the sidebar in both flat and grouped modes.
@@ -130,6 +134,10 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 
 	// Get flattened items for display
 	items := FlattenGroupsForDisplay(session, groupState)
+
+	// Enrich adversarial group headers with round info
+	items = enrichAdversarialRoundInfo(items, state.AdversarialStateData())
+
 	if len(items) == 0 && !isAddingTask {
 		b.WriteString(styles.Muted.Render("No instances"))
 		b.WriteString("\n")
@@ -172,7 +180,8 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 			switch v := item.(type) {
 			case GroupHeaderItem:
 				indent := strings.Repeat("  ", v.Depth)
-				header := RenderGroupHeader(v.Group, v.Progress, v.Collapsed, v.IsSelected, width-len(indent))
+				// Use RenderGroupHeaderItem which supports RoundInfo display
+				header := RenderGroupHeaderItem(v, width-len(indent))
 				renderedContent = indent + header
 				// Count lines: header can be multi-line due to word wrapping
 				itemLines = strings.Count(renderedContent, "\n") + 1 // +1 for the line itself
@@ -387,4 +396,38 @@ func (n *GroupNavigator) MoveToPrevInstance(currentIdx int) int {
 // GetInstanceAtIndex returns the instance at the given global index.
 func (n *GroupNavigator) GetInstanceAtIndex(idx int) *orchestrator.Instance {
 	return FindInstanceByGlobalIndex(n.session, n.groupState, idx)
+}
+
+// enrichAdversarialRoundInfo adds round info to adversarial group headers.
+// For adversarial groups, this populates the RoundInfo field with "Round N".
+func enrichAdversarialRoundInfo(items []any, advState *AdversarialState) []any {
+	if advState == nil || len(advState.Coordinators) == 0 {
+		return items
+	}
+
+	// Build a map from group ID to current round
+	groupRounds := make(map[string]int)
+	for groupID, coord := range advState.Coordinators {
+		if session := coord.Session(); session != nil {
+			groupRounds[groupID] = session.CurrentRound
+		}
+	}
+
+	// Enrich group headers with round info
+	enriched := make([]any, len(items))
+	for i, item := range items {
+		if header, ok := item.(GroupHeaderItem); ok {
+			if header.Group != nil {
+				// Check if this is an adversarial group
+				if round, isAdversarial := groupRounds[header.Group.ID]; isAdversarial {
+					header.RoundInfo = fmt.Sprintf("Round %d", round)
+				}
+			}
+			enriched[i] = header
+		} else {
+			enriched[i] = item
+		}
+	}
+
+	return enriched
 }
