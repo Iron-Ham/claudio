@@ -1,6 +1,10 @@
 package adversarial
 
-import "fmt"
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+)
 
 // ImplementerPromptTemplate is the prompt for the implementer instance
 const ImplementerPromptTemplate = `You are the IMPLEMENTER in an adversarial review workflow.
@@ -174,8 +178,21 @@ The reviewer found the following issues that must be addressed:
 
 Please address ALL the issues above in this iteration.`
 
-// FormatImplementerPrompt creates the full prompt for the implementer
-func FormatImplementerPrompt(task string, round int, previousReview *ReviewFile) string {
+// formatFilePathInstruction returns the file path instruction for the prompt.
+// If worktreePath is provided, it includes the absolute path for clarity.
+// Otherwise, it uses the relative filename with "worktree root" guidance.
+func formatFilePathInstruction(worktreePath, fileName string) string {
+	if worktreePath != "" {
+		absPath := filepath.Join(worktreePath, fileName)
+		return fmt.Sprintf("`%s`\n\n**IMPORTANT:** Write to this EXACT path. Do NOT write to a parent directory or subdirectory.", absPath)
+	}
+	return fmt.Sprintf("`%s` (in your worktree root)", fileName)
+}
+
+// FormatImplementerPrompt creates the full prompt for the implementer.
+// If worktreePath is provided, the prompt will include the absolute path
+// to the increment file for clarity.
+func FormatImplementerPrompt(task string, round int, previousReview *ReviewFile, worktreePath string) string {
 	var previousFeedback string
 	if previousReview != nil {
 		issues := ""
@@ -203,11 +220,28 @@ func FormatImplementerPrompt(task string, round int, previousReview *ReviewFile)
 		)
 	}
 
-	return fmt.Sprintf(ImplementerPromptTemplate, task, round, previousFeedback, round, round, round)
+	// Build the file path instruction
+	fileInstruction := formatFilePathInstruction(worktreePath, IncrementFileName)
+
+	// Replace the placeholder in the template with the constructed instruction
+	basePrompt := fmt.Sprintf(ImplementerPromptTemplate, task, round, previousFeedback, round, round, round)
+
+	// The template has a hardcoded file instruction - we need to replace it
+	// with our dynamic one that may include the absolute path
+	return replaceFileInstruction(basePrompt, IncrementFileName, fileInstruction)
 }
 
-// FormatReviewerPrompt creates the full prompt for the reviewer
-func FormatReviewerPrompt(task string, round int, increment *IncrementFile, minPassingScore int) string {
+// replaceFileInstruction replaces the simple file instruction in a prompt
+// with a more detailed one that may include the absolute path.
+func replaceFileInstruction(prompt, fileName, newInstruction string) string {
+	oldInstruction := fmt.Sprintf("`%s` (in your worktree root)", fileName)
+	return strings.Replace(prompt, oldInstruction, newInstruction, 1)
+}
+
+// FormatReviewerPrompt creates the full prompt for the reviewer.
+// If worktreePath is provided, the prompt will include the absolute path
+// to the review file for clarity.
+func FormatReviewerPrompt(task string, round int, increment *IncrementFile, minPassingScore int, worktreePath string) string {
 	submission := fmt.Sprintf(`**Summary:** %s
 
 **Approach:** %s
@@ -221,5 +255,12 @@ func FormatReviewerPrompt(task string, round int, increment *IncrementFile, minP
 		increment.Notes,
 	)
 
-	return fmt.Sprintf(ReviewerPromptTemplate, task, round, submission, round, minPassingScore)
+	// Build the base prompt
+	basePrompt := fmt.Sprintf(ReviewerPromptTemplate, task, round, submission, round, minPassingScore)
+
+	// Build the file path instruction
+	fileInstruction := formatFilePathInstruction(worktreePath, ReviewFileName)
+
+	// Replace the hardcoded file instruction with our dynamic one
+	return replaceFileInstruction(basePrompt, ReviewFileName, fileInstruction)
 }

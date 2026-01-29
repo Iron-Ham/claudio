@@ -90,6 +90,82 @@ func IncrementFilePath(worktreePath string) string {
 	return filepath.Join(worktreePath, IncrementFileName)
 }
 
+// findSentinelFile searches for a sentinel file by name in multiple locations.
+// This handles cases where Claude instances write the file to the wrong directory.
+//
+// Search order:
+// 1. Worktree root (expected location)
+// 2. Immediate subdirectories of worktree (handles cd into subdirectory)
+// 3. Parent directory (handles monorepo case where Claude works in parent)
+func findSentinelFile(worktreePath, fileName, fileDescription string) (string, error) {
+	// First, check the expected location (worktree root)
+	expectedPath := filepath.Join(worktreePath, fileName)
+	_, err := os.Stat(expectedPath)
+	if err == nil {
+		return expectedPath, nil
+	}
+	// Only fall back to other searches if file doesn't exist.
+	// For other errors (permissions, I/O), propagate them.
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("failed to check %s file: %w", fileDescription, err)
+	}
+
+	// Search immediate subdirectories (depth 1)
+	entries, err := os.ReadDir(worktreePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read worktree directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		// Skip hidden directories (like .git)
+		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		subPath := filepath.Join(worktreePath, entry.Name(), fileName)
+		_, err := os.Stat(subPath)
+		if err == nil {
+			return subPath, nil
+		}
+		// Continue searching if file doesn't exist; propagate other errors
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("failed to check %s file in %s: %w", fileDescription, entry.Name(), err)
+		}
+	}
+
+	// Search parent directory (handles monorepo case where Claude might write
+	// to the repository root instead of the worktree subdirectory).
+	// Note: We intentionally don't propagate permission errors from parent
+	// directory access. In shared environments or CI systems, the parent
+	// directory may have restricted permissions that don't affect the worktree.
+	// Failing the entire search because we can't access a fallback location
+	// would be unnecessarily disruptive.
+	parentDir := filepath.Dir(worktreePath)
+	if parentDir != worktreePath && parentDir != "/" {
+		parentPath := filepath.Join(parentDir, fileName)
+		if _, err := os.Stat(parentPath); err == nil {
+			return parentPath, nil
+		}
+	}
+
+	return "", os.ErrNotExist
+}
+
+// FindIncrementFile searches for the increment file in multiple locations.
+// This handles cases where Claude writes the file to the wrong directory.
+func FindIncrementFile(worktreePath string) (string, error) {
+	return findSentinelFile(worktreePath, IncrementFileName, "increment")
+}
+
+// IncrementFileExists checks if an increment file exists for the given worktree,
+// searching multiple possible locations.
+func IncrementFileExists(worktreePath string) bool {
+	_, err := FindIncrementFile(worktreePath)
+	return err == nil
+}
+
 // sanitizeJSONContent cleans up common LLM quirks in JSON output.
 // This handles issues like:
 // - Smart/curly quotes (" " ' ') instead of straight quotes (" ')
@@ -253,13 +329,19 @@ func validateIncrementContent(increment *IncrementFile) error {
 // ParseIncrementFile reads and parses an increment file with comprehensive validation.
 // It sanitizes the input to handle common LLM quirks, validates the JSON structure,
 // and checks semantic content to catch malformed files with actionable error messages.
+// The file is searched in multiple locations to handle cases where Claude writes it
+// to the wrong directory.
 func ParseIncrementFile(worktreePath string) (*IncrementFile, error) {
-	path := IncrementFilePath(worktreePath)
-	data, err := os.ReadFile(path)
+	path, err := FindIncrementFile(worktreePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, err // Return unwrapped for existence checks
 		}
+		return nil, fmt.Errorf("failed to find adversarial increment file: %w", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return nil, fmt.Errorf("failed to read adversarial increment file: %w", err)
 	}
 
@@ -304,16 +386,35 @@ func ReviewFilePath(worktreePath string) string {
 	return filepath.Join(worktreePath, ReviewFileName)
 }
 
+// FindReviewFile searches for the review file in multiple locations.
+// This handles cases where Claude writes the file to the wrong directory.
+func FindReviewFile(worktreePath string) (string, error) {
+	return findSentinelFile(worktreePath, ReviewFileName, "review")
+}
+
+// ReviewFileExists checks if a review file exists for the given worktree,
+// searching multiple possible locations.
+func ReviewFileExists(worktreePath string) bool {
+	_, err := FindReviewFile(worktreePath)
+	return err == nil
+}
+
 // ParseReviewFile reads and parses a review file.
 // It applies sanitization to handle common LLM quirks like smart quotes,
 // markdown code blocks, and surrounding text.
+// The file is searched in multiple locations to handle cases where Claude writes it
+// to the wrong directory.
 func ParseReviewFile(worktreePath string) (*ReviewFile, error) {
-	path := ReviewFilePath(worktreePath)
-	data, err := os.ReadFile(path)
+	path, err := FindReviewFile(worktreePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, err // Return unwrapped for existence checks
 		}
+		return nil, fmt.Errorf("failed to find adversarial review file: %w", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return nil, fmt.Errorf("failed to read adversarial review file: %w", err)
 	}
 

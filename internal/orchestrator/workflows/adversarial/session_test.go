@@ -1221,3 +1221,249 @@ func TestEvent_Fields(t *testing.T) {
 		t.Errorf("Timestamp = %v, want %v", event.Timestamp, now)
 	}
 }
+
+// Tests for sentinel file search functionality
+
+func TestFindIncrementFile_InWorktreeRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write increment file in expected location (worktree root)
+	incrementPath := filepath.Join(tmpDir, IncrementFileName)
+	if err := os.WriteFile(incrementPath, []byte(`{"round":1,"status":"ready_for_review","summary":"test","files_modified":[],"approach":"test"}`), 0644); err != nil {
+		t.Fatalf("failed to write increment file: %v", err)
+	}
+
+	foundPath, err := FindIncrementFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindIncrementFile() error = %v", err)
+	}
+	if foundPath != incrementPath {
+		t.Errorf("FindIncrementFile() = %q, want %q", foundPath, incrementPath)
+	}
+}
+
+func TestFindIncrementFile_InSubdirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a subdirectory and write file there (simulates Claude cd into subdir)
+	subDir := filepath.Join(tmpDir, "myapp")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	incrementPath := filepath.Join(subDir, IncrementFileName)
+	if err := os.WriteFile(incrementPath, []byte(`{"round":1,"status":"ready_for_review","summary":"test","files_modified":[],"approach":"test"}`), 0644); err != nil {
+		t.Fatalf("failed to write increment file: %v", err)
+	}
+
+	foundPath, err := FindIncrementFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindIncrementFile() error = %v, want nil", err)
+	}
+	if foundPath != incrementPath {
+		t.Errorf("FindIncrementFile() = %q, want %q", foundPath, incrementPath)
+	}
+}
+
+func TestFindIncrementFile_InParentDirectory(t *testing.T) {
+	// Create a structure like: /tmp/parent/worktree
+	// File is in /tmp/parent, but we search from /tmp/parent/worktree
+	tmpParent := t.TempDir()
+	worktreeDir := filepath.Join(tmpParent, "worktree")
+	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+		t.Fatalf("failed to create worktree directory: %v", err)
+	}
+
+	// Write increment file in parent directory (simulates Claude working in monorepo root)
+	incrementPath := filepath.Join(tmpParent, IncrementFileName)
+	if err := os.WriteFile(incrementPath, []byte(`{"round":1,"status":"ready_for_review","summary":"test","files_modified":[],"approach":"test"}`), 0644); err != nil {
+		t.Fatalf("failed to write increment file: %v", err)
+	}
+
+	foundPath, err := FindIncrementFile(worktreeDir)
+	if err != nil {
+		t.Fatalf("FindIncrementFile() error = %v, want nil", err)
+	}
+	if foundPath != incrementPath {
+		t.Errorf("FindIncrementFile() = %q, want %q", foundPath, incrementPath)
+	}
+}
+
+func TestFindIncrementFile_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	_, err := FindIncrementFile(tmpDir)
+	if err == nil {
+		t.Error("expected error when file not found")
+	}
+	if !os.IsNotExist(err) {
+		t.Errorf("expected os.ErrNotExist, got: %v", err)
+	}
+}
+
+func TestFindIncrementFile_SkipsHiddenDirectories(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a hidden directory (.git) with the file
+	hiddenDir := filepath.Join(tmpDir, ".git")
+	if err := os.MkdirAll(hiddenDir, 0755); err != nil {
+		t.Fatalf("failed to create hidden directory: %v", err)
+	}
+
+	incrementPath := filepath.Join(hiddenDir, IncrementFileName)
+	if err := os.WriteFile(incrementPath, []byte(`{"round":1}`), 0644); err != nil {
+		t.Fatalf("failed to write increment file: %v", err)
+	}
+
+	// Should NOT find the file in hidden directory
+	_, err := FindIncrementFile(tmpDir)
+	if err == nil {
+		t.Error("should not find file in hidden directory")
+	}
+}
+
+func TestFindReviewFile_InWorktreeRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write review file in expected location
+	reviewPath := filepath.Join(tmpDir, ReviewFileName)
+	if err := os.WriteFile(reviewPath, []byte(`{"round":1,"approved":true,"score":8}`), 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	foundPath, err := FindReviewFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindReviewFile() error = %v", err)
+	}
+	if foundPath != reviewPath {
+		t.Errorf("FindReviewFile() = %q, want %q", foundPath, reviewPath)
+	}
+}
+
+func TestFindReviewFile_InSubdirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a subdirectory and write file there
+	subDir := filepath.Join(tmpDir, "myapp")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	reviewPath := filepath.Join(subDir, ReviewFileName)
+	if err := os.WriteFile(reviewPath, []byte(`{"round":1,"approved":true,"score":8}`), 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	foundPath, err := FindReviewFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindReviewFile() error = %v, want nil", err)
+	}
+	if foundPath != reviewPath {
+		t.Errorf("FindReviewFile() = %q, want %q", foundPath, reviewPath)
+	}
+}
+
+func TestIncrementFileExists(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Initially should not exist
+	if IncrementFileExists(tmpDir) {
+		t.Error("IncrementFileExists() = true, want false when file doesn't exist")
+	}
+
+	// Write the file
+	incrementPath := filepath.Join(tmpDir, IncrementFileName)
+	if err := os.WriteFile(incrementPath, []byte(`{}`), 0644); err != nil {
+		t.Fatalf("failed to write increment file: %v", err)
+	}
+
+	// Should now exist
+	if !IncrementFileExists(tmpDir) {
+		t.Error("IncrementFileExists() = false, want true when file exists")
+	}
+}
+
+func TestReviewFileExists(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Initially should not exist
+	if ReviewFileExists(tmpDir) {
+		t.Error("ReviewFileExists() = true, want false when file doesn't exist")
+	}
+
+	// Write the file
+	reviewPath := filepath.Join(tmpDir, ReviewFileName)
+	if err := os.WriteFile(reviewPath, []byte(`{}`), 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	// Should now exist
+	if !ReviewFileExists(tmpDir) {
+		t.Error("ReviewFileExists() = false, want true when file exists")
+	}
+}
+
+func TestParseIncrementFile_FindsInSubdirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a subdirectory and write valid file there
+	subDir := filepath.Join(tmpDir, "myapp")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	increment := IncrementFile{
+		Round:         1,
+		Status:        "ready_for_review",
+		Summary:       "Test from subdirectory",
+		FilesModified: []string{"test.go"},
+		Approach:      "Test approach",
+	}
+
+	incrementPath := filepath.Join(subDir, IncrementFileName)
+	data, _ := json.Marshal(increment)
+	if err := os.WriteFile(incrementPath, data, 0644); err != nil {
+		t.Fatalf("failed to write increment file: %v", err)
+	}
+
+	// Should find and parse the file from subdirectory
+	parsed, err := ParseIncrementFile(tmpDir)
+	if err != nil {
+		t.Fatalf("ParseIncrementFile() error = %v", err)
+	}
+	if parsed.Summary != increment.Summary {
+		t.Errorf("Summary = %q, want %q", parsed.Summary, increment.Summary)
+	}
+}
+
+func TestParseReviewFile_FindsInParentDirectory(t *testing.T) {
+	// Create a structure like: /tmp/parent/worktree
+	tmpParent := t.TempDir()
+	worktreeDir := filepath.Join(tmpParent, "worktree")
+	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+		t.Fatalf("failed to create worktree directory: %v", err)
+	}
+
+	// Write review file in parent directory
+	review := ReviewFile{
+		Round:    1,
+		Approved: true,
+		Score:    9,
+		Summary:  "Test from parent directory",
+	}
+
+	reviewPath := filepath.Join(tmpParent, ReviewFileName)
+	data, _ := json.Marshal(review)
+	if err := os.WriteFile(reviewPath, data, 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	// Should find and parse the file from parent directory
+	parsed, err := ParseReviewFile(worktreeDir)
+	if err != nil {
+		t.Fatalf("ParseReviewFile() error = %v", err)
+	}
+	if parsed.Summary != review.Summary {
+		t.Errorf("Summary = %q, want %q", parsed.Summary, review.Summary)
+	}
+}
