@@ -557,10 +557,77 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tuimsg.TripleShotStartedMsg:
-		// Triple-shot attempts started successfully
+		// Triple-shot attempts started successfully (legacy synchronous path)
 		m.infoMessage = "Triple-shot started: 3 instances working on the task"
 		if m.logger != nil {
 			m.logger.Info("triple-shot attempts started")
+		}
+		return m, nil
+
+	case tuimsg.TripleShotStubsCreatedMsg:
+		// Fast first phase: stubs created, now dispatch parallel worktree setup
+		if msg.Err != nil {
+			m.errorMessage = fmt.Sprintf("Failed to create triple-shot stubs: %v", msg.Err)
+			m.cleanupTripleShot()
+			if m.logger != nil {
+				m.logger.Error("failed to create triple-shot stubs", "error", msg.Err)
+			}
+			return m, nil
+		}
+
+		m.infoMessage = "Triple-shot started: preparing 3 worktrees..."
+		if m.logger != nil {
+			m.logger.Info("triple-shot stubs created, starting parallel setup",
+				"instance_ids", msg.InstanceIDs,
+				"group_id", msg.GroupID,
+			)
+		}
+
+		// Find the coordinator for this group
+		if m.tripleShot == nil || m.tripleShot.Coordinators == nil {
+			m.errorMessage = "Triple-shot coordinator not found"
+			return m, nil
+		}
+		coord := m.tripleShot.Coordinators[msg.GroupID]
+		if coord == nil {
+			m.errorMessage = "Triple-shot coordinator not found"
+			return m, nil
+		}
+
+		// Dispatch parallel worktree setup commands for all 3 attempts
+		return m, tea.Batch(
+			tuimsg.CompleteTripleShotAttemptSetupAsync(coord, msg.GroupID, 0),
+			tuimsg.CompleteTripleShotAttemptSetupAsync(coord, msg.GroupID, 1),
+			tuimsg.CompleteTripleShotAttemptSetupAsync(coord, msg.GroupID, 2),
+		)
+
+	case tuimsg.TripleShotAttemptSetupCompleteMsg:
+		// Slow second phase: single attempt's worktree is ready and instance started
+		if msg.Err != nil {
+			if m.logger != nil {
+				m.logger.Error("failed to complete triple-shot attempt setup",
+					"attempt_index", msg.AttemptIndex,
+					"group_id", msg.GroupID,
+					"error", msg.Err,
+				)
+			}
+			// Don't fail the whole tripleshot - other attempts may succeed
+			return m, nil
+		}
+
+		if m.logger != nil {
+			m.logger.Info("triple-shot attempt setup complete",
+				"attempt_index", msg.AttemptIndex,
+				"group_id", msg.GroupID,
+			)
+		}
+
+		// Check if all attempts are now ready
+		if m.tripleShot != nil && m.tripleShot.Coordinators != nil {
+			coord := m.tripleShot.Coordinators[msg.GroupID]
+			if coord != nil && coord.AllAttemptsReady() {
+				m.infoMessage = "Triple-shot started: 3 instances working on the task"
+			}
 		}
 		return m, nil
 
@@ -1673,13 +1740,11 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 		m.infoMessage = "Starting triple-shot mode..."
 	}
 
-	// Start attempts asynchronously
-	return m, func() tea.Msg {
-		if err := coordinator.StartAttempts(); err != nil {
-			return tuimsg.TripleShotErrorMsg{Err: err}
-		}
-		return tuimsg.TripleShotStartedMsg{}
-	}
+	// Start the async two-phase initialization:
+	// 1. CreateTripleShotStubsAsync creates stubs immediately (fast)
+	// 2. UI shows instances with "Preparing" status
+	// 3. CompleteTripleShotAttemptSetupAsync creates worktrees in parallel (slow)
+	return m, tuimsg.CreateTripleShotStubsAsync(coordinator, tripleGroup.ID)
 }
 
 // initiateAdversarialMode creates and starts an adversarial session.

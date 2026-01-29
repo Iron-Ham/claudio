@@ -93,6 +93,22 @@ type UltraPlanInitMsg struct{}
 // TripleShotStartedMsg indicates triple-shot attempts have started.
 type TripleShotStartedMsg struct{}
 
+// TripleShotStubsCreatedMsg indicates that stub instances for all three attempts
+// have been created (fast first phase). The UI can show these with "Preparing" status.
+type TripleShotStubsCreatedMsg struct {
+	GroupID     string
+	InstanceIDs [3]string
+	Err         error
+}
+
+// TripleShotAttemptSetupCompleteMsg indicates that a single attempt's worktree setup
+// has completed (slow second phase). The attempt is now ready to run.
+type TripleShotAttemptSetupCompleteMsg struct {
+	GroupID      string
+	AttemptIndex int
+	Err          error
+}
+
 // TripleShotJudgeStartedMsg indicates the judge has started evaluating.
 type TripleShotJudgeStartedMsg struct {
 	// ImplementersGroupID is the ID of the Implementers sub-group, used by TUI

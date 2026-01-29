@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tripleshot UI Responsiveness** - Fixed UI stalling when starting a tripleshot on large repositories. Worktree creation is now performed asynchronously in parallel, allowing the UI to remain responsive. Instances appear immediately with "Preparing" status while worktrees are created in the background.
+
 - **TUI Tripleshot Config Settings** - The `:tripleshot` command in the TUI now properly respects the `tripleshot.auto_approve` and `tripleshot.adversarial` settings from the config file. Previously, starting a tripleshot from the TUI always used hardcoded defaults, ignoring user configuration.
 
 - **False Positive Stale Detection** - Fixed instances being incorrectly marked as "stuck" in two scenarios: (1) When Claude was actively working but the output wasn't changing (e.g., running explore agents with collapsed output, or showing a static spinner during thinking phase) - the stale counter now only increments when no working indicators (spinners, "Reading...", "Analyzing...", etc.) are present. (2) When Claude was waiting for user input but the patterns didn't match Claude Code's actual UI - the state detection patterns now correctly recognize Claude Code's input prompt (`❯`), plan/auto/focus mode indicators (`⏸`), and case variations in mode cycling hints.

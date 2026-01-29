@@ -11,15 +11,19 @@ import (
 // Mock implementations for coordinator tests
 
 type mockOrchestrator struct {
-	addInstanceFunc           func(session SessionInterface, task string) (InstanceInterface, error)
-	addInstanceToWorktreeFunc func(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error)
-	startInstanceFunc         func(inst InstanceInterface) error
-	saveSessionFunc           func() error
+	addInstanceFunc               func(session SessionInterface, task string) (InstanceInterface, error)
+	addInstanceStubFunc           func(session SessionInterface, task string) (InstanceInterface, error)
+	addInstanceToWorktreeFunc     func(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error)
+	startInstanceFunc             func(inst InstanceInterface) error
+	saveSessionFunc               func() error
+	completeInstanceSetupByIDFunc func(session SessionInterface, instanceID string) error
 
-	addInstanceCalls           int
-	addInstanceToWorktreeCalls int
-	startInstanceCalls         int
-	saveSessionCalls           int
+	addInstanceCalls               int
+	addInstanceStubCalls           int
+	addInstanceToWorktreeCalls     int
+	startInstanceCalls             int
+	saveSessionCalls               int
+	completeInstanceSetupByIDCalls int
 
 	lastAddedInstances []InstanceInterface
 }
@@ -70,6 +74,28 @@ func (m *mockOrchestrator) SaveSession() error {
 	m.saveSessionCalls++
 	if m.saveSessionFunc != nil {
 		return m.saveSessionFunc()
+	}
+	return nil
+}
+
+func (m *mockOrchestrator) AddInstanceStub(session SessionInterface, task string) (InstanceInterface, error) {
+	m.addInstanceStubCalls++
+	if m.addInstanceStubFunc != nil {
+		return m.addInstanceStubFunc(session, task)
+	}
+	inst := &mockInstance{
+		id:           "mock-stub-" + string(rune('0'+m.addInstanceStubCalls)),
+		worktreePath: "",
+		branch:       "",
+	}
+	m.lastAddedInstances = append(m.lastAddedInstances, inst)
+	return inst, nil
+}
+
+func (m *mockOrchestrator) CompleteInstanceSetupByID(session SessionInterface, instanceID string) error {
+	m.completeInstanceSetupByIDCalls++
+	if m.completeInstanceSetupByIDFunc != nil {
+		return m.completeInstanceSetupByIDFunc(session, instanceID)
 	}
 	return nil
 }
@@ -1720,4 +1746,303 @@ func TestCoordinator_NotifyReviewerCallbacks_Nil(t *testing.T) {
 	coord.notifyReviewerStart(0, "inst-1")
 	coord.notifyReviewApproved(0, 9)
 	coord.notifyReviewRejected(0, 5, []string{"issue1"})
+}
+
+func TestCoordinator_CreateAttemptStubs(t *testing.T) {
+	session := NewSession("test task", DefaultConfig())
+	orch := newMockOrchestrator()
+	baseSession := newMockBaseSession()
+	group := &mockGroup{id: "test-group"}
+	baseSession.groups["test-group"] = group
+	session.GroupID = "test-group"
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   baseSession,
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	instanceIDs, err := coord.CreateAttemptStubs()
+
+	if err != nil {
+		t.Fatalf("CreateAttemptStubs() error = %v", err)
+	}
+
+	// Should have created 3 stubs
+	if orch.addInstanceStubCalls != 3 {
+		t.Errorf("AddInstanceStub called %d times, want 3", orch.addInstanceStubCalls)
+	}
+
+	// All instance IDs should be non-empty
+	for i, id := range instanceIDs {
+		if id == "" {
+			t.Errorf("instanceIDs[%d] is empty", i)
+		}
+	}
+
+	// All attempts should have preparing status
+	for i, attempt := range session.Attempts {
+		if attempt.Status != AttemptStatusPreparing {
+			t.Errorf("Attempt[%d].Status = %v, want %v", i, attempt.Status, AttemptStatusPreparing)
+		}
+		if attempt.InstanceID == "" {
+			t.Errorf("Attempt[%d].InstanceID is empty", i)
+		}
+	}
+
+	// Should have added instances to group
+	if len(group.instances) != 3 {
+		t.Errorf("group has %d instances, want 3", len(group.instances))
+	}
+
+	// Should have saved session
+	if orch.saveSessionCalls == 0 {
+		t.Error("SaveSession should have been called")
+	}
+}
+
+func TestCoordinator_CreateAttemptStubs_Error(t *testing.T) {
+	session := NewSession("test task", DefaultConfig())
+	orch := newMockOrchestrator()
+	orch.addInstanceStubFunc = func(sess SessionInterface, task string) (InstanceInterface, error) {
+		return nil, errors.New("stub creation failed")
+	}
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	_, err := coord.CreateAttemptStubs()
+
+	if err == nil {
+		t.Error("CreateAttemptStubs() should return error when AddInstanceStub fails")
+	}
+	if !strings.Contains(err.Error(), "stub creation failed") {
+		t.Errorf("error message should contain underlying error, got: %v", err)
+	}
+}
+
+func TestCoordinator_CompleteAttemptSetup(t *testing.T) {
+	session := NewSession("test task", DefaultConfig())
+	session.Attempts[0] = Attempt{
+		InstanceID: "stub-inst-1",
+		Status:     AttemptStatusPreparing,
+	}
+
+	orch := newMockOrchestrator()
+	baseSession := newMockBaseSession()
+	// Add the instance to baseSession so GetInstance finds it after setup
+	baseSession.instances["stub-inst-1"] = &mockInstance{
+		id:           "stub-inst-1",
+		worktreePath: "/tmp/worktree-1",
+		branch:       "branch-1",
+	}
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   baseSession,
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	var attemptStartCalled bool
+	coord.SetCallbacks(&CoordinatorCallbacks{
+		OnAttemptStart: func(attemptIndex int, instanceID string) {
+			attemptStartCalled = true
+		},
+	})
+
+	err := coord.CompleteAttemptSetup(0)
+
+	if err != nil {
+		t.Fatalf("CompleteAttemptSetup() error = %v", err)
+	}
+
+	// Should have called CompleteInstanceSetupByID
+	if orch.completeInstanceSetupByIDCalls != 1 {
+		t.Errorf("CompleteInstanceSetupByID called %d times, want 1", orch.completeInstanceSetupByIDCalls)
+	}
+
+	// Should have called StartInstance
+	if orch.startInstanceCalls != 1 {
+		t.Errorf("StartInstance called %d times, want 1", orch.startInstanceCalls)
+	}
+
+	// Attempt should have working status and worktree info
+	attempt := session.Attempts[0]
+	if attempt.Status != AttemptStatusWorking {
+		t.Errorf("Attempt.Status = %v, want %v", attempt.Status, AttemptStatusWorking)
+	}
+	if attempt.WorktreePath != "/tmp/worktree-1" {
+		t.Errorf("Attempt.WorktreePath = %q, want %q", attempt.WorktreePath, "/tmp/worktree-1")
+	}
+	if attempt.Branch != "branch-1" {
+		t.Errorf("Attempt.Branch = %q, want %q", attempt.Branch, "branch-1")
+	}
+
+	// Should have notified attempt start
+	if !attemptStartCalled {
+		t.Error("OnAttemptStart callback should have been called")
+	}
+}
+
+func TestCoordinator_CompleteAttemptSetup_InvalidIndex(t *testing.T) {
+	session := NewSession("test task", DefaultConfig())
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  newMockOrchestrator(),
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	tests := []struct {
+		name  string
+		index int
+	}{
+		{"negative", -1},
+		{"too high", 3},
+		{"way too high", 100},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := coord.CompleteAttemptSetup(tt.index)
+			if err == nil {
+				t.Errorf("CompleteAttemptSetup(%d) should return error", tt.index)
+			}
+		})
+	}
+}
+
+func TestCoordinator_CompleteAttemptSetup_SetupError(t *testing.T) {
+	session := NewSession("test task", DefaultConfig())
+	session.Attempts[0] = Attempt{
+		InstanceID: "stub-inst-1",
+		Status:     AttemptStatusPreparing,
+	}
+
+	orch := newMockOrchestrator()
+	orch.completeInstanceSetupByIDFunc = func(sess SessionInterface, instanceID string) error {
+		return errors.New("worktree creation failed")
+	}
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	err := coord.CompleteAttemptSetup(0)
+
+	if err == nil {
+		t.Error("CompleteAttemptSetup() should return error when setup fails")
+	}
+	if session.Attempts[0].Status != AttemptStatusFailed {
+		t.Errorf("Attempt.Status = %v, want %v", session.Attempts[0].Status, AttemptStatusFailed)
+	}
+}
+
+func TestCoordinator_CompleteAttemptSetup_StartError(t *testing.T) {
+	session := NewSession("test task", DefaultConfig())
+	session.Attempts[1] = Attempt{
+		InstanceID: "stub-inst-2",
+		Status:     AttemptStatusPreparing,
+	}
+
+	orch := newMockOrchestrator()
+	orch.startInstanceFunc = func(inst InstanceInterface) error {
+		return errors.New("failed to start instance")
+	}
+	baseSession := newMockBaseSession()
+	baseSession.instances["stub-inst-2"] = &mockInstance{
+		id:           "stub-inst-2",
+		worktreePath: "/tmp/worktree-2",
+		branch:       "branch-2",
+	}
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   baseSession,
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	err := coord.CompleteAttemptSetup(1)
+
+	if err == nil {
+		t.Error("CompleteAttemptSetup() should return error when StartInstance fails")
+	}
+	if session.Attempts[1].Status != AttemptStatusFailed {
+		t.Errorf("Attempt.Status = %v, want %v", session.Attempts[1].Status, AttemptStatusFailed)
+	}
+}
+
+func TestCoordinator_AllAttemptsReady(t *testing.T) {
+	tests := []struct {
+		name     string
+		statuses [3]AttemptStatus
+		want     bool
+	}{
+		{
+			name:     "all pending - not ready",
+			statuses: [3]AttemptStatus{AttemptStatusPending, AttemptStatusPending, AttemptStatusPending},
+			want:     false,
+		},
+		{
+			name:     "all preparing - not ready",
+			statuses: [3]AttemptStatus{AttemptStatusPreparing, AttemptStatusPreparing, AttemptStatusPreparing},
+			want:     false,
+		},
+		{
+			name:     "some preparing - not ready",
+			statuses: [3]AttemptStatus{AttemptStatusWorking, AttemptStatusPreparing, AttemptStatusWorking},
+			want:     false,
+		},
+		{
+			name:     "all working - ready",
+			statuses: [3]AttemptStatus{AttemptStatusWorking, AttemptStatusWorking, AttemptStatusWorking},
+			want:     true,
+		},
+		{
+			name:     "mixed working and failed - ready",
+			statuses: [3]AttemptStatus{AttemptStatusWorking, AttemptStatusFailed, AttemptStatusWorking},
+			want:     true,
+		},
+		{
+			name:     "all failed - ready",
+			statuses: [3]AttemptStatus{AttemptStatusFailed, AttemptStatusFailed, AttemptStatusFailed},
+			want:     true,
+		},
+		{
+			name:     "all complete - ready",
+			statuses: [3]AttemptStatus{AttemptStatusCompleted, AttemptStatusCompleted, AttemptStatusCompleted},
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := NewSession("test task", DefaultConfig())
+			for i, status := range tt.statuses {
+				session.Attempts[i] = Attempt{Status: status}
+			}
+
+			coord := NewCoordinator(CoordinatorConfig{
+				Orchestrator:  newMockOrchestrator(),
+				BaseSession:   newMockBaseSession(),
+				TripleSession: session,
+				SessionType:   "tripleshot",
+			})
+
+			got := coord.AllAttemptsReady()
+			if got != tt.want {
+				t.Errorf("AllAttemptsReady() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
