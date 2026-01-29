@@ -113,8 +113,12 @@ func (b *TaskBuilder) writePreviousGroupContext(sb *strings.Builder, prev *Group
 
 // writeCompletionProtocol writes the completion protocol instructions.
 func (b *TaskBuilder) writeCompletionProtocol(sb *strings.Builder, taskID string) {
-	sb.WriteString("## Completion Protocol\n\n")
-	sb.WriteString("When your task is complete, you MUST write a completion file to signal the orchestrator:\n\n")
+	sb.WriteString("## Completion Protocol - FINAL MANDATORY STEP\n\n")
+	sb.WriteString("**IMPORTANT**: Writing the completion file is your FINAL MANDATORY ACTION. ")
+	sb.WriteString("The orchestrator is BLOCKED waiting for this file. ")
+	sb.WriteString("Without it, your work will NOT be recorded and the workflow cannot proceed.\n\n")
+	sb.WriteString("**DO NOT** wait for user prompting or confirmation. ")
+	sb.WriteString("Write this file AUTOMATICALLY as soon as you have finished your implementation work and committed your changes.\n\n")
 	sb.WriteString("**CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.\n")
 	sb.WriteString("If you changed directories during the task (e.g., `cd project/`), use an absolute path or navigate back to the root first.\n\n")
 	fmt.Fprintf(sb, "1. Use Write tool to create `%s` in your worktree root\n", TaskCompletionFileName)
@@ -132,5 +136,6 @@ func (b *TaskBuilder) writeCompletionProtocol(sb *strings.Builder, taskID string
 	sb.WriteString("}\n")
 	sb.WriteString("```\n\n")
 	sb.WriteString("3. Use status \"blocked\" if you cannot complete (explain in issues), or \"failed\" if something broke\n")
-	sb.WriteString("4. This file signals that your work is done and provides context for consolidation\n")
+	sb.WriteString("4. This file signals that your work is done and provides context for consolidation\n\n")
+	sb.WriteString("**REMEMBER**: Your task is NOT complete until you write this file. Do it NOW after finishing your work.\n")
 }

@@ -185,12 +185,19 @@ const consolidationPromptTemplate = `You are consolidating work from multiple pa
 4. **Run** verification (build, lint, tests)
 5. **Create** pull requests
 
-## Completion Protocol
+## Completion Protocol - FINAL MANDATORY STEP
+
+**IMPORTANT**: Writing the completion file is your FINAL MANDATORY ACTION.
+The orchestrator is BLOCKED waiting for this file.
+Without it, your consolidation work will NOT be recorded and the workflow cannot proceed.
+
+**DO NOT** wait for user prompting or confirmation.
+Write this file AUTOMATICALLY as soon as you have finished consolidation.
 
 **CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.
 If you changed directories during the task, use an absolute path or navigate back to the root first.
 
-When consolidation is complete, write ` + "`" + ConsolidationCompletionFileName + "`" + `:
+You MUST write ` + "`" + ConsolidationCompletionFileName + "`" + `:
 
 ` + "```json" + `
 {
@@ -210,7 +217,9 @@ When consolidation is complete, write ` + "`" + ConsolidationCompletionFileName 
   },
   "notes": "Any observations"
 }
-` + "```"
+` + "```" + `
+
+**REMEMBER**: Your consolidation is NOT complete until you write this file. Do it NOW after finishing your work.`
 
 // GroupConsolidatorBuilder builds prompts for per-group consolidation.
 // Each execution group gets its own consolidator to merge task branches.
@@ -400,10 +409,15 @@ func (b *GroupConsolidatorBuilder) writeInstructions(sb *strings.Builder, consol
 
 // writeCompletionProtocol writes the completion protocol for group consolidation.
 func (b *GroupConsolidatorBuilder) writeCompletionProtocol(sb *strings.Builder, groupIndex int, consolidatedBranch string) {
-	sb.WriteString("## Completion Protocol\n\n")
+	sb.WriteString("## Completion Protocol - FINAL MANDATORY STEP\n\n")
+	sb.WriteString("**IMPORTANT**: Writing the completion file is your FINAL MANDATORY ACTION. ")
+	sb.WriteString("The orchestrator is BLOCKED waiting for this file. ")
+	sb.WriteString("Without it, your consolidation work will NOT be recorded and the workflow cannot proceed.\n\n")
+	sb.WriteString("**DO NOT** wait for user prompting or confirmation. ")
+	sb.WriteString("Write this file AUTOMATICALLY as soon as you have finished consolidation.\n\n")
 	sb.WriteString("**CRITICAL**: Write this file at the ROOT of your worktree directory, not in any subdirectory.\n")
 	sb.WriteString("If you changed directories during the task, use an absolute path or navigate back to the root first.\n\n")
-	fmt.Fprintf(sb, "When consolidation is complete, write `%s` in your worktree root:\n\n", GroupConsolidationCompletionFileName)
+	fmt.Fprintf(sb, "You MUST write `%s` in your worktree root:\n\n", GroupConsolidationCompletionFileName)
 	sb.WriteString("```json\n")
 	sb.WriteString("{\n")
 	fmt.Fprintf(sb, "  \"group_index\": %d,\n", groupIndex)
@@ -427,5 +441,6 @@ func (b *GroupConsolidatorBuilder) writeCompletionProtocol(sb *strings.Builder, 
 	sb.WriteString("  \"issues_for_next_group\": [\"Any warnings or concerns for the next group\"]\n")
 	sb.WriteString("}\n")
 	sb.WriteString("```\n\n")
-	sb.WriteString("Use status \"failed\" if consolidation cannot be completed.\n")
+	sb.WriteString("Use status \"failed\" if consolidation cannot be completed.\n\n")
+	sb.WriteString("**REMEMBER**: Your consolidation is NOT complete until you write this file. Do it NOW after finishing your work.\n")
 }

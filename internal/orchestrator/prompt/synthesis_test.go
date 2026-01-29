@@ -175,7 +175,16 @@ func TestSynthesisBuilder_CompletionProtocol(t *testing.T) {
 	}
 
 	expectedParts := []string{
-		"## Completion Protocol",
+		// Emphatic completion protocol wording
+		"## Completion Protocol - FINAL MANDATORY STEP",
+		"FINAL MANDATORY ACTION",
+		"orchestrator is BLOCKED waiting",
+		"DO NOT",
+		"wait for user prompting",
+		"Write this file AUTOMATICALLY",
+		"REMEMBER",
+		"Your review is NOT complete until you write this file",
+		// Structural elements
 		SynthesisCompletionFileName,
 		`"status": "complete"`,
 		`"revision_round":`,

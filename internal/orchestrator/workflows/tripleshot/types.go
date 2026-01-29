@@ -349,11 +349,14 @@ Your goal is to solve the problem using your own approach - be creative and thor
 3. **Document your approach** - Write clear commit messages and code comments
 4. **Be thorough** - Make sure your solution is complete and well-tested
 
-## CRITICAL: Completion File Requirement
+## CRITICAL: Completion File Requirement - FINAL MANDATORY STEP
 
-**YOUR WORK IS NOT COMPLETE UNTIL YOU WRITE THE COMPLETION FILE.**
+**IMPORTANT**: Writing the completion file is your FINAL MANDATORY ACTION.
+The orchestrator is BLOCKED waiting for this file.
+Without it, your work will NOT be recorded and the workflow cannot proceed.
 
-The orchestration system is waiting for this file to know you are done. Without it, your work will be ignored and the system will hang indefinitely. You MUST write this file as your FINAL action, no matter what.
+**DO NOT** wait for user prompting or confirmation.
+Write this file AUTOMATICALLY as soon as you have finished your implementation.
 
 **File:** ` + "`" + CompletionFileName + "`" + ` (in your worktree root)
 
@@ -375,7 +378,7 @@ The orchestration system is waiting for this file to know you are done. Without 
 - Even if you encounter errors or cannot complete the task, you MUST still write this file with status "failed"
 - This file is your ONLY way to signal completion - do not skip it under any circumstances
 
-**REMINDER: Write ` + "`" + CompletionFileName + "`" + ` as your absolute last action.**`
+**REMEMBER**: Your attempt is NOT complete until you write this file. Do it NOW after finishing your work.`
 
 // JudgePromptTemplate is the prompt template for the judge instance
 const JudgePromptTemplate = `You are a senior software architect evaluating three different solutions to the same problem.

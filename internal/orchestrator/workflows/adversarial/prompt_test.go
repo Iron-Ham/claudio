@@ -193,3 +193,43 @@ func TestPreviousFeedbackTemplate(t *testing.T) {
 		t.Error("template should have required changes section")
 	}
 }
+
+func TestImplementerPromptTemplate_CompletionProtocol(t *testing.T) {
+	// Verify emphatic completion protocol wording
+	expectedParts := []string{
+		"FINAL MANDATORY STEP",
+		"FINAL MANDATORY ACTION",
+		"BLOCKED waiting",
+		"DO NOT",
+		"wait for user prompting",
+		"Write this file AUTOMATICALLY",
+		"REMEMBER",
+		"Your implementation is NOT complete until you write this file",
+	}
+
+	for _, part := range expectedParts {
+		if !strings.Contains(ImplementerPromptTemplate, part) {
+			t.Errorf("Completion protocol missing %q", part)
+		}
+	}
+}
+
+func TestReviewerPromptTemplate_CompletionProtocol(t *testing.T) {
+	// Verify emphatic completion protocol wording
+	expectedParts := []string{
+		"FINAL MANDATORY STEP",
+		"FINAL MANDATORY ACTION",
+		"BLOCKED waiting",
+		"DO NOT",
+		"wait for user prompting",
+		"Write this file AUTOMATICALLY",
+		"REMEMBER",
+		"Your review is NOT complete until you write this file",
+	}
+
+	for _, part := range expectedParts {
+		if !strings.Contains(ReviewerPromptTemplate, part) {
+			t.Errorf("Completion protocol missing %q", part)
+		}
+	}
+}

@@ -532,6 +532,26 @@ func TestJudgePromptTemplate(t *testing.T) {
 	}
 }
 
+func TestAttemptPromptTemplate_CompletionProtocol(t *testing.T) {
+	// Verify emphatic completion protocol wording
+	expectedParts := []string{
+		"FINAL MANDATORY STEP",
+		"FINAL MANDATORY ACTION",
+		"orchestrator is BLOCKED waiting",
+		"DO NOT",
+		"wait for user prompting",
+		"Write this file AUTOMATICALLY",
+		"REMEMBER",
+		"Your attempt is NOT complete until you write this file",
+	}
+
+	for _, part := range expectedParts {
+		if !strings.Contains(AttemptPromptTemplate, part) {
+			t.Errorf("Completion protocol missing %q", part)
+		}
+	}
+}
+
 func TestAttempt_Timestamps(t *testing.T) {
 	now := time.Now()
 	later := now.Add(5 * time.Minute)
