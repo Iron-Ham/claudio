@@ -6,6 +6,9 @@ import (
 
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -130,7 +133,25 @@ type GroupProgress struct {
 
 // CalculateGroupProgress calculates the completion progress for a group.
 // A group's progress includes all instances in the group and its sub-groups.
+// For orchestrated session types (tripleshot, adversarial, ralph), it uses
+// workflow-specific completion tracking rather than just Instance.Status.
 func CalculateGroupProgress(group *orchestrator.InstanceGroup, session *orchestrator.Session) GroupProgress {
+	if group == nil || session == nil {
+		return GroupProgress{}
+	}
+
+	// Check if this is a workflow-specific group that tracks completion differently
+	sessionType := orchestrator.GetSessionType(group)
+	switch sessionType {
+	case orchestrator.SessionTypeTripleShot:
+		return calculateTripleShotProgress(group, session)
+	case orchestrator.SessionTypeAdversarial:
+		return calculateAdversarialProgress(group, session)
+	case orchestrator.SessionTypeRalph:
+		return calculateRalphProgress(group, session)
+	}
+
+	// Default: use instance status
 	progress := GroupProgress{}
 	calculateGroupProgressRecursive(group, session, &progress)
 	return progress
@@ -140,7 +161,7 @@ func calculateGroupProgressRecursive(group *orchestrator.InstanceGroup, session 
 	for _, instID := range group.Instances {
 		progress.Total++
 		inst := session.GetInstance(instID)
-		if inst != nil && inst.Status == orchestrator.StatusCompleted {
+		if inst != nil && isInstanceCompleted(inst.Status) {
 			progress.Completed++
 		}
 	}
@@ -148,6 +169,218 @@ func calculateGroupProgressRecursive(group *orchestrator.InstanceGroup, session 
 	for _, subGroup := range group.SubGroups {
 		calculateGroupProgressRecursive(subGroup, session, progress)
 	}
+}
+
+// isInstanceCompleted returns true if the instance status represents a terminal state.
+// This includes successful completion and various failure/error states.
+func isInstanceCompleted(status orchestrator.InstanceStatus) bool {
+	switch status {
+	case orchestrator.StatusCompleted,
+		orchestrator.StatusError,
+		orchestrator.StatusStuck,
+		orchestrator.StatusTimeout,
+		orchestrator.StatusInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+// findTripleShotSession finds the tripleshot session for a group.
+func findTripleShotSession(groupID string, session *orchestrator.Session) *tripleshot.Session {
+	for _, s := range session.TripleShots {
+		if s.GroupID == groupID {
+			return s
+		}
+	}
+	return nil
+}
+
+// findAdversarialSession finds the adversarial session for a group.
+func findAdversarialSession(groupID string, session *orchestrator.Session) *adversarial.Session {
+	for _, s := range session.AdversarialSessions {
+		if s.GroupID == groupID {
+			return s
+		}
+	}
+	return nil
+}
+
+// findRalphSession finds the ralph session for a group.
+func findRalphSession(groupID string, session *orchestrator.Session) *ralph.Session {
+	for _, s := range session.RalphSessions {
+		if s.GroupID == groupID {
+			return s
+		}
+	}
+	return nil
+}
+
+// defaultGroupProgress returns the standard instance-based progress for a group.
+func defaultGroupProgress(group *orchestrator.InstanceGroup, session *orchestrator.Session) GroupProgress {
+	progress := GroupProgress{}
+	calculateGroupProgressRecursive(group, session, &progress)
+	return progress
+}
+
+// calculateTripleShotProgress calculates progress for a tripleshot group.
+// It uses the tripleshot session's Attempt.Status rather than Instance.Status
+// to accurately reflect work completion before instances fully exit.
+func calculateTripleShotProgress(group *orchestrator.InstanceGroup, session *orchestrator.Session) GroupProgress {
+	ts := findTripleShotSession(group.ID, session)
+	if ts == nil {
+		return defaultGroupProgress(group, session)
+	}
+
+	progress := GroupProgress{}
+
+	// Track which instance IDs we've already counted to avoid double-counting
+	countedIDs := make(map[string]bool)
+
+	// Count attempts by their workflow status
+	for _, attempt := range ts.Attempts {
+		if attempt.InstanceID != "" {
+			progress.Total++
+			countedIDs[attempt.InstanceID] = true
+			if isTripleShotAttemptCompleted(attempt.Status) {
+				progress.Completed++
+			}
+		}
+		// Count adversarial reviewers - they use instance status since they don't have
+		// separate workflow tracking like attempts do. Only count if the instance exists.
+		if attempt.ReviewerID != "" {
+			inst := session.GetInstance(attempt.ReviewerID)
+			if inst != nil {
+				progress.Total++
+				countedIDs[attempt.ReviewerID] = true
+				if isInstanceCompleted(inst.Status) {
+					progress.Completed++
+				}
+			}
+		}
+	}
+
+	// Count judge if present
+	if ts.JudgeID != "" {
+		progress.Total++
+		countedIDs[ts.JudgeID] = true
+		if ts.Phase == tripleshot.PhaseComplete || ts.Evaluation != nil {
+			progress.Completed++
+		}
+	}
+
+	// Count any additional instances in the group not accounted for above.
+	// Only count instances that actually exist to avoid unreachable progress.
+	for _, instID := range group.Instances {
+		if countedIDs[instID] {
+			continue // Already counted
+		}
+		inst := session.GetInstance(instID)
+		if inst == nil {
+			continue // Instance doesn't exist, don't count it
+		}
+		progress.Total++
+		if isInstanceCompleted(inst.Status) {
+			progress.Completed++
+		}
+	}
+
+	return progress
+}
+
+// isTripleShotAttemptCompleted returns true if the attempt has reached a terminal state.
+func isTripleShotAttemptCompleted(status tripleshot.AttemptStatus) bool {
+	switch status {
+	case tripleshot.AttemptStatusCompleted, tripleshot.AttemptStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// calculateAdversarialProgress calculates progress for an adversarial group.
+// Adversarial sessions track progress via rounds completed, not instance status.
+func calculateAdversarialProgress(group *orchestrator.InstanceGroup, session *orchestrator.Session) GroupProgress {
+	as := findAdversarialSession(group.ID, session)
+	if as == nil {
+		return defaultGroupProgress(group, session)
+	}
+
+	progress := GroupProgress{}
+
+	// Count all instances in the group (including sub-groups)
+	allInstIDs := group.AllInstanceIDs()
+	progress.Total = len(allInstIDs)
+
+	// For adversarial, completion is determined by session phase
+	switch as.Phase {
+	case adversarial.PhaseComplete, adversarial.PhaseApproved:
+		// All work is done
+		progress.Completed = progress.Total
+	case adversarial.PhaseFailed, adversarial.PhaseStuck:
+		// Session ended but not successfully - count any completed instances
+		for _, instID := range allInstIDs {
+			inst := session.GetInstance(instID)
+			if inst != nil && isInstanceCompleted(inst.Status) {
+				progress.Completed++
+			}
+		}
+	default:
+		// Session in progress - count completed rounds' instances.
+		// Each round has an implementer and reviewer.
+		completedRounds := 0
+		for _, round := range as.History {
+			if round.Review != nil {
+				// A round with a review is complete (whether approved or not)
+				completedRounds++
+			}
+		}
+		// 2 instances per completed round (implementer + reviewer)
+		progress.Completed = completedRounds * 2
+
+		// Check if current round's implementer is done (increment ready but not yet reviewed)
+		if len(as.History) > 0 {
+			currentRound := as.History[len(as.History)-1]
+			if currentRound.Increment != nil && currentRound.Review == nil {
+				progress.Completed++
+			}
+		}
+
+		// Cap at total to handle edge cases
+		if progress.Completed > progress.Total {
+			progress.Completed = progress.Total
+		}
+	}
+
+	return progress
+}
+
+// calculateRalphProgress calculates progress for a ralph group.
+// Ralph sessions iterate with a single instance, tracking progress via iteration count.
+func calculateRalphProgress(group *orchestrator.InstanceGroup, session *orchestrator.Session) GroupProgress {
+	rs := findRalphSession(group.ID, session)
+	if rs == nil {
+		return defaultGroupProgress(group, session)
+	}
+
+	progress := GroupProgress{}
+
+	// Ralph creates a new instance each iteration
+	allInstIDs := group.AllInstanceIDs()
+	progress.Total = len(allInstIDs)
+
+	switch rs.Phase {
+	case ralph.PhaseComplete, ralph.PhaseMaxIterations, ralph.PhaseCancelled, ralph.PhaseError:
+		// Session is done - all instances are complete
+		progress.Completed = progress.Total
+	default:
+		// Session in progress - all but current instance are complete
+		if progress.Total > 0 {
+			progress.Completed = progress.Total - 1
+		}
+	}
+
+	return progress
 }
 
 // PhaseIndicator returns the visual indicator for a group phase.
