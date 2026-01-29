@@ -332,6 +332,10 @@ func (a *App) Run() error {
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tuimsg.Tick()}
 
+	// Discover custom themes from ~/.config/claudio/themes/
+	// This must happen before applying the theme so custom themes are available.
+	_, _ = styles.DiscoverCustomThemes() // Errors logged, continue with built-in themes
+
 	// Apply theme from config at startup
 	// The styles package initializes with the default theme, but we need to
 	// respect the user's saved preference from config.

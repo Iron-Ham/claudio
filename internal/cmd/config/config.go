@@ -11,6 +11,7 @@ import (
 
 	appconfig "github.com/Iron-Ham/claudio/internal/config"
 	tuiconfig "github.com/Iron-Ham/claudio/internal/tui/config"
+	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -167,6 +168,7 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	// Validate the key exists
 	validKeys := map[string]string{
 		"completion.default_action":    "string",
+		"tui.theme":                    "theme",
 		"tui.auto_focus_on_input":      "bool",
 		"tui.max_output_lines":         "int",
 		"instance.output_buffer_size":  "int",
@@ -190,6 +192,14 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		if key == "completion.default_action" && !appconfig.IsValidCompletionAction(value) {
 			return fmt.Errorf("invalid value for %s: %s\nValid options: %s",
 				key, value, strings.Join(appconfig.ValidCompletionActions(), ", "))
+		}
+		typedValue = value
+	case "theme":
+		// Discover custom themes first
+		_, _ = styles.DiscoverCustomThemes()
+		if !styles.IsValidTheme(value) {
+			return fmt.Errorf("invalid theme: %s\nValid options: %s",
+				value, strings.Join(styles.ValidThemes(), ", "))
 		}
 		typedValue = value
 	case "bool":
