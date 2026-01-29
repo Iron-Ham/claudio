@@ -305,6 +305,83 @@ func TestAdversarialInterfaceSatisfaction(t *testing.T) {
 	// Verify adversarialGroupAdapter satisfies adversarial.GroupInterface
 	group := NewInstanceGroup("test")
 	var _ adversarial.GroupInterface = &adversarialGroupAdapter{group: group}
+
+	// Verify adversarialGroupAdapter also satisfies adversarial.GroupWithSubGroupsInterface
+	var _ adversarial.GroupWithSubGroupsInterface = &adversarialGroupAdapter{group: group}
+}
+
+// TestAdversarialGroupAdapterGetOrCreateSubGroup tests sub-group creation.
+func TestAdversarialGroupAdapterGetOrCreateSubGroup(t *testing.T) {
+	group := NewInstanceGroup("parent")
+	adapter := &adversarialGroupAdapter{group: group}
+
+	// Create a sub-group
+	subGroup := adapter.GetOrCreateSubGroup("sub-1", "Round 1")
+	if subGroup == nil {
+		t.Fatal("expected sub-group, got nil")
+	}
+
+	// Verify the sub-group was added to the parent
+	if len(group.SubGroups) != 1 {
+		t.Errorf("expected 1 sub-group, got %d", len(group.SubGroups))
+	}
+	if group.SubGroups[0].Name != "Round 1" {
+		t.Errorf("expected sub-group name 'Round 1', got '%s'", group.SubGroups[0].Name)
+	}
+
+	// Getting the same sub-group by name should return existing
+	subGroup2 := adapter.GetOrCreateSubGroup("sub-1-new", "Round 1")
+	if subGroup2 == nil {
+		t.Fatal("expected existing sub-group, got nil")
+	}
+	// Should not have created another sub-group
+	if len(group.SubGroups) != 1 {
+		t.Errorf("expected 1 sub-group after second call, got %d", len(group.SubGroups))
+	}
+
+	// Add an instance to the sub-group
+	subGroup.AddInstance("inst-1")
+	if len(group.SubGroups[0].Instances) != 1 {
+		t.Errorf("expected 1 instance in sub-group, got %d", len(group.SubGroups[0].Instances))
+	}
+}
+
+// TestAdversarialGroupAdapterGetSubGroupByName tests sub-group lookup by name.
+func TestAdversarialGroupAdapterGetSubGroupByName(t *testing.T) {
+	group := NewInstanceGroup("parent")
+	adapter := &adversarialGroupAdapter{group: group}
+
+	// Should return nil when no sub-groups exist
+	if adapter.GetSubGroupByName("Round 1") != nil {
+		t.Error("expected nil for non-existent sub-group")
+	}
+
+	// Create a sub-group
+	adapter.GetOrCreateSubGroup("sub-1", "Round 1")
+
+	// Should find the sub-group
+	found := adapter.GetSubGroupByName("Round 1")
+	if found == nil {
+		t.Error("expected to find sub-group 'Round 1'")
+	}
+
+	// Should return nil for non-existent name
+	if adapter.GetSubGroupByName("Round 2") != nil {
+		t.Error("expected nil for 'Round 2'")
+	}
+}
+
+// TestAdversarialGroupAdapterNilGroup tests behavior with nil group.
+func TestAdversarialGroupAdapterNilGroup(t *testing.T) {
+	adapter := &adversarialGroupAdapter{group: nil}
+
+	// Should not panic
+	if adapter.GetOrCreateSubGroup("id", "name") != nil {
+		t.Error("expected nil from GetOrCreateSubGroup with nil group")
+	}
+	if adapter.GetSubGroupByName("name") != nil {
+		t.Error("expected nil from GetSubGroupByName with nil group")
+	}
 }
 
 // TestRalphInterfaceSatisfaction verifies adapters satisfy their interfaces.

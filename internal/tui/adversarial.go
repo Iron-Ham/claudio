@@ -292,12 +292,52 @@ func (m *Model) handleAdversarialReviewProcessed(msg tuimsg.AdversarialReviewPro
 		m.infoMessage = fmt.Sprintf("Adversarial review complete! Approved after %d round(s) with score %d/10",
 			session.CurrentRound, msg.Score)
 		m.adversarial.NeedsNotification = true
+		// Don't collapse the final approved round's sub-group (leave it expanded)
 	} else {
+		completedRound := session.CurrentRound - 1 // NextRound was already called
 		m.infoMessage = fmt.Sprintf("Round %d review: Score %d/10 - Changes requested, starting next round...",
-			session.CurrentRound-1, msg.Score) // -1 because NextRound was already called
+			completedRound, msg.Score)
+
+		// Auto-collapse the completed round's sub-group
+		m.collapseAdversarialRound(session, completedRound)
 	}
 
 	return m, nil
+}
+
+// collapseAdversarialRound collapses the sub-group for a completed adversarial round.
+// This keeps the UI clean by hiding completed rounds while preserving the ability
+// for users to expand them manually if needed.
+func (m *Model) collapseAdversarialRound(session *adversarial.Session, round int) {
+	if session == nil {
+		return
+	}
+
+	// Initialize groupViewState if needed
+	if m.groupViewState == nil {
+		m.groupViewState = view.NewGroupViewState()
+	}
+
+	// Find the round in history
+	if round < 1 || round > len(session.History) {
+		return
+	}
+
+	// Get the sub-group ID for this round
+	subGroupID := session.History[round-1].SubGroupID
+	if subGroupID == "" {
+		return
+	}
+
+	// Collapse the sub-group (user can toggle to expand)
+	m.groupViewState.CollapsedGroups[subGroupID] = true
+
+	if m.logger != nil {
+		m.logger.Info("auto-collapsed adversarial round sub-group",
+			"round", round,
+			"sub_group_id", subGroupID,
+		)
+	}
 }
 
 // cleanupAdversarial stops all adversarial coordinators and clears the adversarial state.

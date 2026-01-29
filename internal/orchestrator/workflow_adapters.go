@@ -168,13 +168,50 @@ func (a *adversarialSessionAdapter) GetInstance(id string) adversarial.InstanceI
 	return inst
 }
 
-// adversarialGroupAdapter implements adversarial.GroupInterface
+// adversarialGroupAdapter implements adversarial.GroupInterface and
+// adversarial.GroupWithSubGroupsInterface for round-based sub-grouping.
 type adversarialGroupAdapter struct {
 	group *InstanceGroup
 }
 
 func (a *adversarialGroupAdapter) AddInstance(instanceID string) {
 	a.group.AddInstance(instanceID)
+}
+
+// GetOrCreateSubGroup finds or creates a sub-group with the given ID and name.
+// This implements adversarial.GroupWithSubGroupsInterface.
+func (a *adversarialGroupAdapter) GetOrCreateSubGroup(id, name string) adversarial.GroupInterface {
+	if a.group == nil {
+		return nil
+	}
+
+	// First, try to find existing sub-group by name
+	for _, sg := range a.group.SubGroups {
+		if sg.Name == name {
+			return &adversarialGroupAdapter{group: sg}
+		}
+	}
+
+	// Create new sub-group
+	subGroup := NewInstanceGroupWithID(id, name)
+	a.group.AddSubGroup(subGroup)
+
+	return &adversarialGroupAdapter{group: subGroup}
+}
+
+// GetSubGroupByName returns a sub-group by name, or nil if not found.
+// This implements adversarial.GroupWithSubGroupsInterface.
+func (a *adversarialGroupAdapter) GetSubGroupByName(name string) adversarial.GroupInterface {
+	if a.group == nil {
+		return nil
+	}
+
+	for _, sg := range a.group.SubGroups {
+		if sg.Name == name {
+			return &adversarialGroupAdapter{group: sg}
+		}
+	}
+	return nil
 }
 
 // DefaultAdversarialConfig returns the default adversarial configuration

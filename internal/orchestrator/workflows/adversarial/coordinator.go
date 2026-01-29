@@ -38,6 +38,19 @@ type GroupInterface interface {
 	AddInstance(instanceID string)
 }
 
+// GroupWithSubGroupsInterface extends GroupInterface with sub-group support.
+// Groups that implement this interface can organize instances into sub-groups
+// (e.g., one sub-group per adversarial round).
+type GroupWithSubGroupsInterface interface {
+	GroupInterface
+	// GetOrCreateSubGroup finds or creates a sub-group with the given name.
+	// If a sub-group with the name already exists, it returns that sub-group.
+	// Otherwise, it creates a new sub-group with the given ID and name.
+	GetOrCreateSubGroup(id, name string) GroupInterface
+	// GetSubGroupByName returns a sub-group by name, or nil if not found.
+	GetSubGroupByName(name string) GroupInterface
+}
+
 // CoordinatorCallbacks holds callbacks for coordinator events
 type CoordinatorCallbacks struct {
 	// OnPhaseChange is called when the adversarial phase changes
@@ -270,6 +283,38 @@ func (c *Coordinator) notifyComplete(success bool, summary string) {
 	}
 }
 
+// getOrCreateRoundSubGroup gets or creates a sub-group for the given round.
+// If the group supports sub-groups, it creates a "Round N" sub-group.
+// Otherwise, it returns the main group.
+func (c *Coordinator) getOrCreateRoundSubGroup(advGroup GroupInterface, round int) (GroupInterface, string) {
+	// Check if the group supports sub-groups
+	groupWithSubGroups, ok := advGroup.(GroupWithSubGroupsInterface)
+	if !ok {
+		// Group doesn't support sub-groups, use main group
+		return advGroup, ""
+	}
+
+	subGroupName := fmt.Sprintf("Round %d", round)
+
+	// Build sub-group ID with fallback for empty GroupID
+	session := c.Session()
+	groupIDPrefix := session.GroupID
+	if groupIDPrefix == "" {
+		groupIDPrefix = session.ID
+	}
+	subGroupID := fmt.Sprintf("%s-round-%d", groupIDPrefix, round)
+
+	// Check if sub-group already exists
+	if existing := groupWithSubGroups.GetSubGroupByName(subGroupName); existing != nil {
+		return existing, subGroupID
+	}
+
+	// Create new sub-group
+	subGroup := groupWithSubGroups.GetOrCreateSubGroup(subGroupID, subGroupName)
+
+	return subGroup, subGroupID
+}
+
 // StartImplementer starts the implementer instance for the current round
 func (c *Coordinator) StartImplementer() error {
 	session := c.Session()
@@ -309,6 +354,13 @@ func (c *Coordinator) StartImplementer() error {
 		advGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
 	}
 
+	// Get or create a sub-group for this round
+	var roundGroup GroupInterface
+	var subGroupID string
+	if advGroup != nil {
+		roundGroup, subGroupID = c.getOrCreateRoundSubGroup(advGroup, round)
+	}
+
 	// Create instance for implementer
 	var inst InstanceInterface
 	var err error
@@ -331,13 +383,17 @@ func (c *Coordinator) StartImplementer() error {
 		}
 	}
 
-	// Add instance to the adversarial group for sidebar display
-	if advGroup != nil {
-		advGroup.AddInstance(inst.GetID())
+	// Add instance to the round's sub-group (or main group if sub-groups not supported)
+	if roundGroup != nil {
+		roundGroup.AddInstance(inst.GetID())
 	}
 
-	// Store implementer ID
+	// Store implementer ID in both session and current round history
 	session.ImplementerID = inst.GetID()
+	if len(session.History) > 0 {
+		session.History[len(session.History)-1].ImplementerID = inst.GetID()
+		session.History[len(session.History)-1].SubGroupID = subGroupID
+	}
 
 	// Transition to implementing phase
 	c.notifyPhaseChange(PhaseImplementing)
@@ -385,19 +441,28 @@ func (c *Coordinator) StartReviewer(increment *IncrementFile) error {
 		advGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
 	}
 
+	// Get the round's sub-group (should already exist from implementer)
+	var roundGroup GroupInterface
+	if advGroup != nil {
+		roundGroup, _ = c.getOrCreateRoundSubGroup(advGroup, round)
+	}
+
 	// Create reviewer instance in the same worktree
 	inst, err := c.orch.AddInstanceToWorktree(c.baseSession, prompt, c.reviewerWorktree, "")
 	if err != nil {
 		return fmt.Errorf("failed to create reviewer instance: %w", err)
 	}
 
-	// Add instance to the adversarial group
-	if advGroup != nil {
-		advGroup.AddInstance(inst.GetID())
+	// Add instance to the round's sub-group (or main group if sub-groups not supported)
+	if roundGroup != nil {
+		roundGroup.AddInstance(inst.GetID())
 	}
 
-	// Store reviewer ID
+	// Store reviewer ID in both session and current round history
 	session.ReviewerID = inst.GetID()
+	if len(session.History) > 0 {
+		session.History[len(session.History)-1].ReviewerID = inst.GetID()
+	}
 
 	// Transition to reviewing phase
 	c.notifyPhaseChange(PhaseReviewing)

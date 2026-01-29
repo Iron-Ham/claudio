@@ -1412,3 +1412,160 @@ func TestCoordinator_ProcessRejectionAfterApproval_MaxIterationsReached(t *testi
 		t.Error("expected phase to transition to failed")
 	}
 }
+
+// mockGroupWithSubGroups implements GroupWithSubGroupsInterface for testing
+type mockGroupWithSubGroups struct {
+	mockGroup
+	subGroups    map[string]GroupInterface
+	subGroupByID map[string]GroupInterface
+}
+
+func newMockGroupWithSubGroups() *mockGroupWithSubGroups {
+	return &mockGroupWithSubGroups{
+		mockGroup:    mockGroup{instances: []string{}},
+		subGroups:    make(map[string]GroupInterface),
+		subGroupByID: make(map[string]GroupInterface),
+	}
+}
+
+func (m *mockGroupWithSubGroups) GetOrCreateSubGroup(id, name string) GroupInterface {
+	// First check if exists by name
+	if existing, ok := m.subGroups[name]; ok {
+		return existing
+	}
+	// Create new
+	newSubGroup := &mockGroup{instances: []string{}}
+	m.subGroups[name] = newSubGroup
+	m.subGroupByID[id] = newSubGroup
+	return newSubGroup
+}
+
+func (m *mockGroupWithSubGroups) GetSubGroupByName(name string) GroupInterface {
+	return m.subGroups[name]
+}
+
+func TestCoordinator_GetOrCreateRoundSubGroup_EmptyGroupIDFallback(t *testing.T) {
+	// Test that when session.GroupID is empty, the session.ID is used as fallback
+	// to prevent malformed sub-group IDs like "-round-1"
+
+	advSession := NewSession("test-session-123", "test task", DefaultConfig())
+	// Ensure GroupID is empty
+	advSession.GroupID = ""
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	mockGroup := newMockGroupWithSubGroups()
+
+	// Call getOrCreateRoundSubGroup
+	subGroup, subGroupID := coord.getOrCreateRoundSubGroup(mockGroup, 1)
+
+	// Verify the sub-group was created
+	if subGroup == nil {
+		t.Fatal("expected sub-group to be created")
+	}
+
+	// Verify the sub-group ID uses session.ID as fallback (not empty string)
+	expectedID := "test-session-123-round-1"
+	if subGroupID != expectedID {
+		t.Errorf("subGroupID = %q, want %q", subGroupID, expectedID)
+	}
+
+	// Verify ID doesn't start with "-" (which would indicate empty prefix)
+	if len(subGroupID) > 0 && subGroupID[0] == '-' {
+		t.Errorf("subGroupID should not start with '-': got %q", subGroupID)
+	}
+}
+
+func TestCoordinator_GetOrCreateRoundSubGroup_WithGroupID(t *testing.T) {
+	// Test that when session.GroupID is set, it is used
+
+	advSession := NewSession("test-session-123", "test task", DefaultConfig())
+	advSession.GroupID = "adv-group-456"
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	mockGroup := newMockGroupWithSubGroups()
+
+	subGroup, subGroupID := coord.getOrCreateRoundSubGroup(mockGroup, 2)
+
+	if subGroup == nil {
+		t.Fatal("expected sub-group to be created")
+	}
+
+	expectedID := "adv-group-456-round-2"
+	if subGroupID != expectedID {
+		t.Errorf("subGroupID = %q, want %q", subGroupID, expectedID)
+	}
+}
+
+func TestCoordinator_GetOrCreateRoundSubGroup_ExistingSubGroup(t *testing.T) {
+	// Test that existing sub-groups are reused
+
+	advSession := NewSession("test-session-123", "test task", DefaultConfig())
+	advSession.GroupID = "adv-group-456"
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	mockGroup := newMockGroupWithSubGroups()
+
+	// Create sub-group first time
+	subGroup1, subGroupID1 := coord.getOrCreateRoundSubGroup(mockGroup, 1)
+
+	// Get same sub-group second time
+	subGroup2, subGroupID2 := coord.getOrCreateRoundSubGroup(mockGroup, 1)
+
+	if subGroupID1 != subGroupID2 {
+		t.Errorf("subGroupIDs should match: %q vs %q", subGroupID1, subGroupID2)
+	}
+
+	if subGroup1 != subGroup2 {
+		t.Error("should return the same sub-group instance")
+	}
+}
+
+func TestCoordinator_GetOrCreateRoundSubGroup_GroupWithoutSubGroupSupport(t *testing.T) {
+	// Test that groups without sub-group support return the main group
+
+	advSession := NewSession("test-session-123", "test task", DefaultConfig())
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	// Use mockGroup which doesn't implement GroupWithSubGroupsInterface
+	basicGroup := &mockGroup{}
+
+	subGroup, subGroupID := coord.getOrCreateRoundSubGroup(basicGroup, 1)
+
+	// Should return the original group
+	if subGroup != basicGroup {
+		t.Error("should return the original group when sub-groups not supported")
+	}
+
+	// SubGroupID should be empty
+	if subGroupID != "" {
+		t.Errorf("subGroupID should be empty when sub-groups not supported, got %q", subGroupID)
+	}
+}
