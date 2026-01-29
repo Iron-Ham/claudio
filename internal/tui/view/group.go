@@ -414,16 +414,16 @@ func PhaseColor(phase orchestrator.GroupPhase) lipgloss.Color {
 }
 
 // RenderGroupHeader renders the header line for a group.
-// Example: "▾ ⚡ Refactor auth [2/5] ●"
+// Example: "▾ ⚡ Refactor auth ●"
 // For multi-line wrapped headers, use RenderGroupHeaderWrapped instead.
-func RenderGroupHeader(group *orchestrator.InstanceGroup, progress GroupProgress, collapsed bool, isSelected bool, width int) string {
-	lines := RenderGroupHeaderWrapped(group, progress, collapsed, isSelected, width)
+func RenderGroupHeader(group *orchestrator.InstanceGroup, collapsed bool, isSelected bool, width int) string {
+	lines := RenderGroupHeaderWrapped(group, collapsed, isSelected, width)
 	return strings.Join(lines, "\n")
 }
 
 // RenderGroupHeaderItem renders a group header from a GroupHeaderItem.
 // This version supports RoundInfo display for adversarial groups.
-// Example for adversarial: "▾ ⚔️ Refactor auth (Round 3) [2/2] ●"
+// Example for adversarial: "▾ ⚔️ Refactor auth (Round 3) ●"
 func RenderGroupHeaderItem(item GroupHeaderItem, width int) string {
 	lines := RenderGroupHeaderItemWrapped(item, width)
 	return strings.Join(lines, "\n")
@@ -448,16 +448,16 @@ func RenderGroupHeaderItemWrapped(item GroupHeaderItem, width int) []string {
 	tempGroup := *group
 	tempGroup.Name = displayName
 
-	return RenderGroupHeaderWrapped(&tempGroup, item.Progress, item.Collapsed, item.IsSelected, width)
+	return RenderGroupHeaderWrapped(&tempGroup, item.Collapsed, item.IsSelected, width)
 }
 
 // RenderGroupHeaderWrapped renders a group header with word-wrapped name support.
 // Returns a slice of lines where the first line contains the collapse indicator,
 // icon, and start of name, and subsequent lines contain wrapped name continuation.
-// The progress indicator and phase indicator are placed on the first line.
-// Example first line: "▾ ⚡ Refactor auth module [2/5] ●"
+// The phase indicator is placed on the first line.
+// Example first line: "▾ ⚡ Refactor auth module ●"
 // Example continuation: "     for better security"
-func RenderGroupHeaderWrapped(group *orchestrator.InstanceGroup, progress GroupProgress, collapsed bool, isSelected bool, width int) []string {
+func RenderGroupHeaderWrapped(group *orchestrator.InstanceGroup, collapsed bool, isSelected bool, width int) []string {
 	// Collapse indicator
 	collapseChar := styles.IconGroupExpand // down-pointing triangle (expanded)
 	if collapsed {
@@ -476,9 +476,6 @@ func RenderGroupHeaderWrapped(group *orchestrator.InstanceGroup, progress GroupP
 	// Session type color (use for the icon)
 	sessionColor := styles.SessionTypeColor(group.SessionType)
 
-	// Build the header components
-	progressStr := fmt.Sprintf("[%d/%d]", progress.Completed, progress.Total)
-
 	// Calculate prefix length for indentation of continuation lines
 	// Prefix: "V " or "V I " depending on whether there's an icon
 	prefixLen := 2 // collapse + space
@@ -487,11 +484,11 @@ func RenderGroupHeaderWrapped(group *orchestrator.InstanceGroup, progress GroupP
 	}
 
 	// Calculate how much space we have for the name on the first line
-	// Format: "V I <name> [x/y] P" where V=collapse, I=session icon, P=phase indicator
+	// Format: "V I <name> P" where V=collapse, I=session icon, P=phase indicator
 	// Width deductions:
 	// - 2 chars: sidebar Padding(1, 1) horizontal
 	// - 2 chars: safety buffer for border/edge alignment
-	suffixLen := 1 + len(progressStr) + 1 + 1 // space + progress + space + indicator
+	suffixLen := 1 + 1 // space + indicator
 	maxFirstLineNameLen := width - prefixLen - suffixLen - 4
 
 	// Calculate max name length for continuation lines (full width minus indent)
@@ -517,7 +514,6 @@ func RenderGroupHeaderWrapped(group *orchestrator.InstanceGroup, progress GroupP
 	// Build styles
 	collapseStyle := lipgloss.NewStyle().Foreground(styles.MutedColor)
 	iconStyle := lipgloss.NewStyle().Foreground(sessionColor)
-	progressStyle := lipgloss.NewStyle().Foreground(styles.MutedColor)
 	indicatorStyle := lipgloss.NewStyle().Foreground(phaseColor)
 
 	var result []string
@@ -533,8 +529,6 @@ func RenderGroupHeaderWrapped(group *orchestrator.InstanceGroup, progress GroupP
 	if len(nameLines) > 0 {
 		firstLine.WriteString(headerStyle.Render(nameLines[0]))
 	}
-	firstLine.WriteString(" ")
-	firstLine.WriteString(progressStyle.Render(progressStr))
 	firstLine.WriteString(" ")
 	firstLine.WriteString(indicatorStyle.Render(phaseIndicator))
 	result = append(result, firstLine.String())
@@ -680,7 +674,6 @@ func FlattenGroupsForDisplay(session *orchestrator.Session, state *GroupViewStat
 // GroupHeaderItem represents a group header in the flattened display list.
 type GroupHeaderItem struct {
 	Group      *orchestrator.InstanceGroup
-	Progress   GroupProgress
 	Collapsed  bool
 	IsSelected bool
 	Depth      int
@@ -691,13 +684,11 @@ func flattenGroupRecursive(group *orchestrator.InstanceGroup, session *orchestra
 	var items []any
 
 	// Add group header
-	progress := CalculateGroupProgress(group, session)
 	collapsed := state.IsCollapsed(group.ID)
 	isSelected := state.SelectedGroupID == group.ID
 
 	items = append(items, GroupHeaderItem{
 		Group:      group,
-		Progress:   progress,
 		Collapsed:  collapsed,
 		IsSelected: isSelected,
 		Depth:      depth,

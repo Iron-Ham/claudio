@@ -178,7 +178,6 @@ func TestRenderGroupHeaderWrapped(t *testing.T) {
 	tests := []struct {
 		name       string
 		group      *orchestrator.InstanceGroup
-		progress   GroupProgress
 		collapsed  bool
 		isSelected bool
 		width      int
@@ -192,7 +191,6 @@ func TestRenderGroupHeaderWrapped(t *testing.T) {
 				Phase:       orchestrator.GroupPhasePending,
 				SessionType: string(orchestrator.SessionTypeTripleShot),
 			},
-			progress:   GroupProgress{Completed: 1, Total: 3},
 			collapsed:  false,
 			isSelected: false,
 			width:      80,
@@ -206,7 +204,6 @@ func TestRenderGroupHeaderWrapped(t *testing.T) {
 				Phase:       orchestrator.GroupPhaseExecuting,
 				SessionType: string(orchestrator.SessionTypeTripleShot),
 			},
-			progress:   GroupProgress{Completed: 2, Total: 5},
 			collapsed:  false,
 			isSelected: false,
 			width:      40,
@@ -220,7 +217,6 @@ func TestRenderGroupHeaderWrapped(t *testing.T) {
 				Phase:       orchestrator.GroupPhaseCompleted,
 				SessionType: string(orchestrator.SessionTypePlan),
 			},
-			progress:   GroupProgress{Completed: 3, Total: 3},
 			collapsed:  true,
 			isSelected: true,
 			width:      60,
@@ -230,13 +226,13 @@ func TestRenderGroupHeaderWrapped(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := RenderGroupHeaderWrapped(tt.group, tt.progress, tt.collapsed, tt.isSelected, tt.width)
+			result := RenderGroupHeaderWrapped(tt.group, tt.collapsed, tt.isSelected, tt.width)
 			if len(result) < tt.checkLines {
 				t.Errorf("RenderGroupHeaderWrapped() returned %d lines, want at least %d", len(result), tt.checkLines)
 			}
-			// First line should contain progress indicator
-			if len(result) > 0 && !strings.Contains(result[0], "[") {
-				t.Errorf("First line should contain progress indicator, got: %s", result[0])
+			// First line should contain the group name
+			if len(result) > 0 && !strings.Contains(result[0], tt.group.Name[:5]) {
+				t.Errorf("First line should contain group name, got: %s", result[0])
 			}
 		})
 	}
@@ -249,9 +245,8 @@ func TestRenderGroupHeader_WrappedOutput(t *testing.T) {
 		Phase:       orchestrator.GroupPhasePending,
 		SessionType: string(orchestrator.SessionTypeTripleShot),
 	}
-	progress := GroupProgress{Completed: 1, Total: 3}
 
-	result := RenderGroupHeader(group, progress, false, false, 80)
+	result := RenderGroupHeader(group, false, false, 80)
 
 	// Should be a single string (possibly with newlines)
 	if result == "" {
@@ -261,11 +256,6 @@ func TestRenderGroupHeader_WrappedOutput(t *testing.T) {
 	// Should contain the group name
 	if !strings.Contains(result, "Test Group") {
 		t.Errorf("RenderGroupHeader() should contain group name, got: %s", result)
-	}
-
-	// Should contain progress
-	if !strings.Contains(result, "[1/3]") {
-		t.Errorf("RenderGroupHeader() should contain progress [1/3], got: %s", result)
 	}
 }
 
@@ -754,14 +744,8 @@ func TestRenderGroupHeaderItemWrapped_WithRoundInfo(t *testing.T) {
 		Phase:       orchestrator.GroupPhaseExecuting,
 	}
 
-	progress := GroupProgress{
-		Completed: 1,
-		Total:     2,
-	}
-
 	item := GroupHeaderItem{
 		Group:      group,
-		Progress:   progress,
 		Collapsed:  false,
 		IsSelected: false,
 		Depth:      0,
@@ -784,11 +768,6 @@ func TestRenderGroupHeaderItemWrapped_WithRoundInfo(t *testing.T) {
 	if !strings.Contains(fullOutput, "Refactor auth") {
 		t.Errorf("RenderGroupHeaderItemWrapped() should contain group name, got: %s", fullOutput)
 	}
-
-	// The rendered output should include progress
-	if !strings.Contains(fullOutput, "[1/2]") {
-		t.Errorf("RenderGroupHeaderItemWrapped() should contain progress, got: %s", fullOutput)
-	}
 }
 
 func TestRenderGroupHeaderItemWrapped_WithoutRoundInfo(t *testing.T) {
@@ -800,14 +779,8 @@ func TestRenderGroupHeaderItemWrapped_WithoutRoundInfo(t *testing.T) {
 		Phase:       orchestrator.GroupPhaseExecuting,
 	}
 
-	progress := GroupProgress{
-		Completed: 2,
-		Total:     3,
-	}
-
 	item := GroupHeaderItem{
 		Group:      group,
-		Progress:   progress,
 		Collapsed:  false,
 		IsSelected: false,
 		Depth:      0,
@@ -844,7 +817,6 @@ func TestRenderGroupHeaderItem(t *testing.T) {
 
 	item := GroupHeaderItem{
 		Group:      group,
-		Progress:   GroupProgress{Completed: 1, Total: 2},
 		Collapsed:  false,
 		IsSelected: false,
 		Depth:      0,

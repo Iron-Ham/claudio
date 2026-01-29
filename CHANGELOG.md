@@ -13,15 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Adversarial Mode UI Enhancement** - Current round instances in adversarial mode now appear directly in the main adversarial group header instead of being nested under a "[Round X]" sub-group. The group header displays round information inline (e.g., "Refactor auth (Round 3) [2/2]"), making it immediately visible which round is active. Previous rounds are still organized under the "Previous Rounds" container for historical reference. This flattens the UI for the current round while preserving full round history navigation.
+- **Adversarial Mode UI Enhancement** - Current round instances in adversarial mode now appear directly in the main adversarial group header instead of being nested under a "[Round X]" sub-group. The group header displays round information inline (e.g., "Refactor auth (Round 3)"), making it immediately visible which round is active. Previous rounds are still organized under the "Previous Rounds" container for historical reference. This flattens the UI for the current round while preserving full round history navigation.
+
+- **Simplified Group Headers** - Removed the `[x/y]` progress counters from group headers in the sidebar. The phase indicator (● for executing, ✓ for completed, ✗ for failed) already provides visual feedback on group status, making the numeric counters redundant visual noise.
 
 ### Removed
 
 - **`claudio tripleshot` CLI Command** - The standalone `claudio tripleshot` command has been removed. TripleShot mode is now exclusively accessed through the TUI via the `:tripleshot` command (or aliases `:triple`, `:3shot`). This consolidates all tripleshot functionality within the standard TUI, providing a more consistent user experience. To use tripleshot, run `claudio start` and then use `:tripleshot` in command mode.
 
 ### Fixed
-
-- **Group Progress Display** - Fixed group title progress indicators (e.g., `[0/4]`) always showing `[0/x]` for orchestrated workflows. Progress now accurately reflects work completion for tripleshot (including adversarial reviewers), adversarial, and ralph session types by using workflow-specific completion tracking rather than just instance process status. For example, a tripleshot with 3 completed attempts now shows `[3/4]` instead of `[0/4]`.
 
 - **TUI Tripleshot Config Settings** - The `:tripleshot` command in the TUI now properly respects the `tripleshot.auto_approve` and `tripleshot.adversarial` settings from the config file. Previously, starting a tripleshot from the TUI always used hardcoded defaults, ignoring user configuration.
 
