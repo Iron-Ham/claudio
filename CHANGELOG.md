@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Input Mode Not Exited When Plan Editor Opens** - Fixed a UI bug where users in input mode (tmux passthrough) would remain stuck in input mode when an ultraplan became ready and the plan editor opened. Keystrokes intended for plan editor navigation (j/k, Enter, etc.) would be sent to the tmux session instead of being handled by the plan editor. The plan editor now automatically exits input mode when entering, ensuring users can immediately interact with the plan.
+
 - **Plan File Written to Wrong Location in Worktrees** - Fixed a bug where ultraplan coordinators would write `.claudio-plan.json` to the main repository root instead of the worktree directory. The planning prompt instructed Claude to write "at the repository root", which was ambiguous when running in a git worktree—Claude would follow the worktree's `.git` reference and write to the main repo. Changed the prompt to explicitly say "in your current working directory" with the `./` prefix, ensuring the plan file is written to the correct worktree location where the detection code expects it.
 - **Theme Persistence** - Theme selection now persists across application restarts. The TUI's `Init()` function now applies the user's saved theme preference from config at startup.
 - **Theme Config Validation** - Invalid theme names in config are now caught during validation and reported with a clear error message listing valid theme options.
