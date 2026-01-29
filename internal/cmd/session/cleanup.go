@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/Iron-Ham/claudio/internal/cleanup"
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/session"
@@ -61,6 +63,9 @@ var (
 	cleanupSessions    bool
 	cleanupAllSessions bool
 	cleanupDeepClean   bool
+	cleanupRunJob      string // Internal flag for background job execution
+	cleanupForeground  bool   // Run synchronously instead of in background
+	cleanupJobStatus   string // Show status of a specific job
 )
 
 func init() {
@@ -72,6 +77,12 @@ func init() {
 	cleanupCmd.Flags().BoolVar(&cleanupSessions, "sessions", false, "Clean up only empty sessions (0 instances)")
 	cleanupCmd.Flags().BoolVar(&cleanupAllSessions, "all-sessions", false, "Kill all claudio-* tmux sessions")
 	cleanupCmd.Flags().BoolVar(&cleanupDeepClean, "deep-clean", false, "Also remove session directories (empty only, or all with --all-sessions)")
+	cleanupCmd.Flags().BoolVar(&cleanupForeground, "foreground", false, "Run cleanup synchronously instead of in background")
+	cleanupCmd.Flags().StringVar(&cleanupJobStatus, "job-status", "", "Show status of a specific cleanup job")
+
+	// Internal flag for background job execution (hidden from help)
+	cleanupCmd.Flags().StringVar(&cleanupRunJob, "run-job", "", "Internal: run a cleanup job from its job file")
+	_ = cleanupCmd.Flags().MarkHidden("run-job")
 }
 
 // RegisterCleanupCmd registers the cleanup command with the given parent command.
@@ -83,6 +94,16 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Handle internal --run-job flag (background job execution)
+	if cleanupRunJob != "" {
+		return cleanup.RunJobFromFile(cwd, cleanupRunJob)
+	}
+
+	// Handle --job-status flag
+	if cleanupJobStatus != "" {
+		return showJobStatus(cwd, cleanupJobStatus)
 	}
 
 	// If no specific flags, clean all standard resources
@@ -127,8 +148,12 @@ func runCleanup(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Perform cleanup
-	return performCleanup(cwd, result, cleanAll)
+	// Run in foreground if requested, otherwise spawn background job
+	if cleanupForeground {
+		return performCleanup(cwd, result, cleanAll)
+	}
+
+	return spawnBackgroundCleanup(cwd, result, cleanAll)
 }
 
 func discoverStaleResources(baseDir string) (*CleanupResult, error) {
@@ -534,4 +559,141 @@ func removeAllSessions(baseDir string) int {
 		removed++
 	}
 	return removed
+}
+
+// spawnBackgroundCleanup creates a cleanup job with snapshotted resources and spawns
+// a background process to execute it. This ensures that resources created after the
+// command starts are not affected, even with --all-sessions --force --deep-clean.
+func spawnBackgroundCleanup(baseDir string, result *CleanupResult, cleanAll bool) error {
+	// Create a new cleanup job with current snapshot
+	job := cleanup.NewJob(baseDir)
+
+	// Store configuration
+	job.Force = cleanupForce
+	job.AllSessions = cleanupAllSessions
+	job.DeepClean = cleanupDeepClean
+	job.CleanAll = cleanAll
+	job.Worktrees = cleanupWorktrees
+	job.Branches = cleanupBranches
+	job.Tmux = cleanupTmux
+	job.Sessions = cleanupSessions
+
+	// Snapshot stale worktrees
+	for _, sw := range result.StaleWorktrees {
+		job.StaleWorktrees = append(job.StaleWorktrees, cleanup.StaleWorktree{
+			Path:           sw.Path,
+			Branch:         sw.Branch,
+			HasUncommitted: sw.HasUncommitted,
+			ExistsOnRemote: sw.ExistsOnRemote,
+		})
+	}
+
+	// Snapshot stale branches
+	job.StaleBranches = result.StaleBranches
+
+	// Snapshot orphaned tmux sessions
+	job.OrphanedTmuxSess = result.OrphanedTmuxSess
+
+	// Snapshot empty sessions
+	for _, s := range result.EmptySessions {
+		job.EmptySessions = append(job.EmptySessions, cleanup.StaleSession{
+			ID:   s.ID,
+			Name: s.Name,
+		})
+	}
+
+	// For --all-sessions: snapshot ALL claudio tmux sessions at this moment
+	if cleanupAllSessions {
+		job.AllTmuxSessions = cleanup.ListAllClaudioTmuxSessions()
+	}
+
+	// For --deep-clean --all-sessions: snapshot ALL session IDs at this moment
+	if cleanupDeepClean && cleanupAllSessions {
+		sessions, err := session.ListSessions(baseDir)
+		if err == nil {
+			for _, s := range sessions {
+				// Only include unlocked sessions in the snapshot
+				if !s.IsLocked {
+					job.AllSessionIDs = append(job.AllSessionIDs, cleanup.StaleSession{
+						ID:   s.ID,
+						Name: s.Name,
+					})
+				}
+			}
+		}
+	}
+
+	// Save the job file
+	if err := job.Save(); err != nil {
+		return fmt.Errorf("failed to save cleanup job: %w", err)
+	}
+
+	// Get the executable path
+	execPath, err := cleanup.GetExecutablePath()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+
+	// Spawn the background process
+	if err := cleanup.SpawnBackgroundCleanup(execPath, baseDir, job.ID); err != nil {
+		// Clean up the job file if spawn fails
+		_ = cleanup.RemoveJobFile(baseDir, job.ID)
+		return fmt.Errorf("failed to spawn background cleanup: %w", err)
+	}
+
+	fmt.Printf("\nCleanup job %s started in background.\n", job.ID)
+	fmt.Printf("Resources snapshotted at %s - new resources created after this won't be affected.\n",
+		job.CreatedAt.Format(time.RFC3339))
+	fmt.Printf("Use 'claudio cleanup --job-status %s' to check progress.\n", job.ID)
+
+	// Clean up old job files (older than 24 hours)
+	if cleaned, _ := cleanup.CleanupOldJobs(baseDir, 24*time.Hour); cleaned > 0 {
+		fmt.Printf("Cleaned up %d old job files.\n", cleaned)
+	}
+
+	return nil
+}
+
+// showJobStatus displays the status of a cleanup job
+func showJobStatus(baseDir, jobID string) error {
+	job, err := cleanup.LoadJob(baseDir, jobID)
+	if err != nil {
+		return fmt.Errorf("failed to load job %s: %w", jobID, err)
+	}
+
+	fmt.Printf("Cleanup Job: %s\n", job.ID)
+	fmt.Printf("Status: %s\n", job.Status)
+	fmt.Printf("Created: %s\n", job.CreatedAt.Format(time.RFC3339))
+
+	if !job.StartedAt.IsZero() {
+		fmt.Printf("Started: %s\n", job.StartedAt.Format(time.RFC3339))
+	}
+
+	if !job.EndedAt.IsZero() {
+		fmt.Printf("Ended: %s\n", job.EndedAt.Format(time.RFC3339))
+		duration := job.EndedAt.Sub(job.StartedAt)
+		fmt.Printf("Duration: %s\n", duration.Round(time.Millisecond))
+	}
+
+	if job.Error != "" {
+		fmt.Printf("Error: %s\n", job.Error)
+	}
+
+	if job.Results != nil {
+		fmt.Println("\nResults:")
+		fmt.Printf("  Worktrees removed: %d\n", job.Results.WorktreesRemoved)
+		fmt.Printf("  Branches deleted: %d\n", job.Results.BranchesDeleted)
+		fmt.Printf("  Tmux sessions killed: %d\n", job.Results.TmuxSessionsKilled)
+		fmt.Printf("  Sessions removed: %d\n", job.Results.SessionsRemoved)
+		fmt.Printf("  Total: %d\n", job.Results.TotalRemoved)
+
+		if len(job.Results.Errors) > 0 {
+			fmt.Printf("\nWarnings/Errors (%d):\n", len(job.Results.Errors))
+			for _, e := range job.Results.Errors {
+				fmt.Printf("  - %s\n", e)
+			}
+		}
+	}
+
+	return nil
 }

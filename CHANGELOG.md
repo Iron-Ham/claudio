@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Background Cleanup Jobs** - The `claudio cleanup` command now runs in the background by default, significantly improving performance when there are many worktrees. Resources are snapshotted at command invocation time, ensuring that new worktrees created during cleanup are not affected—even when using `--all-sessions --force --deep-clean`. Use `--foreground` to run synchronously as before. Check job status with `--job-status <job-id>`. Old job files are automatically cleaned up after 24 hours.
+
 - **Triple-Shot Implementers Auto-Collapse** - When the judge (fourth session) starts running in a tripleshot workflow, the implementers sub-group is now automatically collapsed in the TUI sidebar. This focuses attention on the judge instance while keeping the three implementer instances accessible via manual expand.
 
 - **Color Themes** - Added support for user-selectable color themes in the TUI. Available themes: `default` (original purple/green), `monokai` (classic Monokai editor colors), `dracula` (Dracula theme), and `nord` (cool blue-gray Nord theme). Configure via `tui.theme` in config or select interactively via `:config` command. Theme changes apply immediately with live preview.
