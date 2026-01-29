@@ -30,6 +30,12 @@ func SendKeyToTmux(sender KeySender, msg tea.KeyMsg) {
 	case tea.KeyEnter:
 		key = "Enter"
 	case tea.KeyBackspace:
+		// Check for Alt modifier (Opt+Backspace on macOS)
+		if msg.Alt {
+			sender.SendKey("Escape")
+			sender.SendKey("BSpace")
+			return
+		}
 		key = "BSpace"
 	case tea.KeyTab:
 		key = "Tab"
@@ -41,14 +47,34 @@ func SendKeyToTmux(sender KeySender, msg tea.KeyMsg) {
 	case tea.KeyEsc:
 		key = "Escape"
 
-	// Arrow keys
+	// Arrow keys - check for Alt modifier (Opt+Arrow on macOS)
 	case tea.KeyUp:
+		if msg.Alt {
+			sender.SendKey("Escape")
+			sender.SendKey("Up")
+			return
+		}
 		key = "Up"
 	case tea.KeyDown:
+		if msg.Alt {
+			sender.SendKey("Escape")
+			sender.SendKey("Down")
+			return
+		}
 		key = "Down"
 	case tea.KeyRight:
+		if msg.Alt {
+			sender.SendKey("Escape")
+			sender.SendKey("Right")
+			return
+		}
 		key = "Right"
 	case tea.KeyLeft:
+		if msg.Alt {
+			sender.SendKey("Escape")
+			sender.SendKey("Left")
+			return
+		}
 		key = "Left"
 
 	// Navigation keys

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Enhanced Keyboard Navigation** - Added support for macOS-style keyboard shortcuts in input mode and the task prompt writer. Input mode now properly forwards `Opt+Left/Right` (word navigation) and `Opt+Backspace` (word deletion) to Claude instances. The task prompt writer now supports both the `msg.Alt` flag and string-based key reporting for `Opt+Arrow/Backspace`, as well as `Cmd+Left/Right/Backspace` (line navigation and delete-to-line-start) for terminals that forward these keys.
+
 ### Changed
 
 - **Adversarial Mode UI Enhancement** - Current round instances in adversarial mode now appear directly in the main adversarial group header instead of being nested under a "[Round X]" sub-group. The group header displays round information inline (e.g., "Refactor auth (Round 3) [2/2]"), making it immediately visible which round is active. Previous rounds are still organized under the "Previous Rounds" container for historical reference. This flattens the UI for the current round while preserving full round history navigation.

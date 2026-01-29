@@ -148,8 +148,9 @@ func (m Model) handleTaskInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Handle Opt+Arrow (word navigation) and Cmd+Arrow (line navigation)
 	// On macOS, terminals typically report these as:
-	// - Opt+Arrow: "alt+left", "alt+right", etc.
-	// - Cmd+Arrow: May vary by terminal, often reported as special sequences
+	// - Opt+Arrow: "alt+left", "alt+right", etc. or msg.Alt=true with arrow KeyType
+	// - Cmd+Arrow: May vary by terminal - "super+left", Home/End, or not forwarded
+	// - Cmd+Backspace: "super+backspace" in some terminals, often not forwarded
 	keyStr := msg.String()
 	switch keyStr {
 	case "alt+left":
@@ -173,6 +174,44 @@ func (m Model) handleTaskInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		prevWord := m.taskInputFindPrevWordBoundary()
 		m.taskInputDeleteBack(m.taskInputCursor - prevWord)
 		return m, nil
+	case "super+left":
+		// Cmd+Left: Move to start of current line
+		m.taskInputCursor = m.taskInputFindLineStart()
+		return m, nil
+	case "super+right":
+		// Cmd+Right: Move to end of current line
+		m.taskInputCursor = m.taskInputFindLineEnd()
+		return m, nil
+	case "super+backspace":
+		// Cmd+Backspace: Delete from cursor to start of line
+		lineStart := m.taskInputFindLineStart()
+		m.taskInputDeleteBack(m.taskInputCursor - lineStart)
+		return m, nil
+	}
+
+	// Also handle Alt modifier on arrow keys when reported via msg.Alt flag
+	// (some terminals report this way instead of "alt+left" string)
+	if msg.Alt {
+		switch msg.Type {
+		case tea.KeyLeft:
+			m.taskInputCursor = m.taskInputFindPrevWordBoundary()
+			return m, nil
+		case tea.KeyRight:
+			m.taskInputCursor = m.taskInputFindNextWordBoundary()
+			return m, nil
+		case tea.KeyUp:
+			// Alt+Up: Move to start of input (same as string-based "alt+up")
+			m.taskInputCursor = 0
+			return m, nil
+		case tea.KeyDown:
+			// Alt+Down: Move to end of input (same as string-based "alt+down")
+			m.taskInputCursor = len([]rune(m.taskInput))
+			return m, nil
+		case tea.KeyBackspace:
+			prevWord := m.taskInputFindPrevWordBoundary()
+			m.taskInputDeleteBack(m.taskInputCursor - prevWord)
+			return m, nil
+		}
 	}
 
 	switch msg.Type {

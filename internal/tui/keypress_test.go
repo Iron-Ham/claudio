@@ -519,6 +519,372 @@ func TestIsRestartableStatus(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
+// handleTaskInput Alt Key Tests
+// -----------------------------------------------------------------------------
+
+// TestHandleTaskInput_AltArrowKeys tests that Alt+Arrow key combinations work
+// correctly in task input mode. These tests verify both the string-based handling
+// (e.g., "alt+left") and the msg.Alt flag handling (msg.Alt=true with KeyLeft).
+func TestHandleTaskInput_AltArrowKeys(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialInput   string
+		initialCursor  int
+		keyMsg         tea.KeyMsg
+		expectedCursor int
+		description    string
+	}{
+		// Alt+Left (word navigation backward)
+		{
+			name:           "alt+left string - move to previous word",
+			initialInput:   "hello world",
+			initialCursor:  11, // end of "world"
+			keyMsg:         tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("alt+left")},
+			expectedCursor: 6, // start of "world"
+			description:    "String-based alt+left should move to previous word boundary",
+		},
+		{
+			name:           "alt+left flag - move to previous word",
+			initialInput:   "hello world",
+			initialCursor:  11, // end of "world"
+			keyMsg:         tea.KeyMsg{Type: tea.KeyLeft, Alt: true},
+			expectedCursor: 6, // start of "world"
+			description:    "Flag-based Alt+Left should move to previous word boundary",
+		},
+		// Alt+Right (word navigation forward)
+		{
+			name:           "alt+right string - move to next word",
+			initialInput:   "hello world",
+			initialCursor:  0, // start
+			keyMsg:         tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("alt+right")},
+			expectedCursor: 6, // after "hello "
+			description:    "String-based alt+right should move to next word boundary",
+		},
+		{
+			name:           "alt+right flag - move to next word",
+			initialInput:   "hello world",
+			initialCursor:  0, // start
+			keyMsg:         tea.KeyMsg{Type: tea.KeyRight, Alt: true},
+			expectedCursor: 6, // after "hello "
+			description:    "Flag-based Alt+Right should move to next word boundary",
+		},
+		// Alt+Up (move to start of input)
+		{
+			name:           "alt+up string - move to start",
+			initialInput:   "hello world test",
+			initialCursor:  10, // middle
+			keyMsg:         tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("alt+up")},
+			expectedCursor: 0, // start
+			description:    "String-based alt+up should move cursor to start of input",
+		},
+		{
+			name:           "alt+up flag - move to start",
+			initialInput:   "hello world test",
+			initialCursor:  10, // middle
+			keyMsg:         tea.KeyMsg{Type: tea.KeyUp, Alt: true},
+			expectedCursor: 0, // start
+			description:    "Flag-based Alt+Up should move cursor to start of input",
+		},
+		// Alt+Down (move to end of input)
+		{
+			name:           "alt+down string - move to end",
+			initialInput:   "hello world test",
+			initialCursor:  5, // middle
+			keyMsg:         tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("alt+down")},
+			expectedCursor: 16, // end
+			description:    "String-based alt+down should move cursor to end of input",
+		},
+		{
+			name:           "alt+down flag - move to end",
+			initialInput:   "hello world test",
+			initialCursor:  5, // middle
+			keyMsg:         tea.KeyMsg{Type: tea.KeyDown, Alt: true},
+			expectedCursor: 16, // end
+			description:    "Flag-based Alt+Down should move cursor to end of input",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				addingTask:      true,
+				taskInput:       tt.initialInput,
+				taskInputCursor: tt.initialCursor,
+			}
+
+			result, _ := m.handleTaskInput(tt.keyMsg)
+			updatedModel := result.(Model)
+
+			if updatedModel.taskInputCursor != tt.expectedCursor {
+				t.Errorf("%s: taskInputCursor = %d, want %d",
+					tt.description, updatedModel.taskInputCursor, tt.expectedCursor)
+			}
+		})
+	}
+}
+
+// TestHandleTaskInput_AltBackspace tests Alt+Backspace (delete previous word)
+// functionality in task input mode.
+func TestHandleTaskInput_AltBackspace(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialInput   string
+		initialCursor  int
+		keyMsg         tea.KeyMsg
+		expectedInput  string
+		expectedCursor int
+	}{
+		{
+			name:           "alt+backspace string - delete previous word",
+			initialInput:   "hello world",
+			initialCursor:  11, // end
+			keyMsg:         tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("alt+backspace")},
+			expectedInput:  "hello ",
+			expectedCursor: 6,
+		},
+		{
+			name:           "alt+backspace flag - delete previous word",
+			initialInput:   "hello world",
+			initialCursor:  11, // end
+			keyMsg:         tea.KeyMsg{Type: tea.KeyBackspace, Alt: true},
+			expectedInput:  "hello ",
+			expectedCursor: 6,
+		},
+		{
+			name:           "alt+backspace at word boundary",
+			initialInput:   "hello world",
+			initialCursor:  6, // after space
+			keyMsg:         tea.KeyMsg{Type: tea.KeyBackspace, Alt: true},
+			expectedInput:  "world",
+			expectedCursor: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				addingTask:      true,
+				taskInput:       tt.initialInput,
+				taskInputCursor: tt.initialCursor,
+			}
+
+			result, _ := m.handleTaskInput(tt.keyMsg)
+			updatedModel := result.(Model)
+
+			if updatedModel.taskInput != tt.expectedInput {
+				t.Errorf("taskInput = %q, want %q", updatedModel.taskInput, tt.expectedInput)
+			}
+			if updatedModel.taskInputCursor != tt.expectedCursor {
+				t.Errorf("taskInputCursor = %d, want %d", updatedModel.taskInputCursor, tt.expectedCursor)
+			}
+		})
+	}
+}
+
+// TestHandleTaskInput_CtrlShortcuts tests Ctrl key shortcuts in task input mode.
+func TestHandleTaskInput_CtrlShortcuts(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialInput   string
+		initialCursor  int
+		keyMsg         tea.KeyMsg
+		expectedCursor int
+		description    string
+	}{
+		{
+			name:           "ctrl+a moves to start",
+			initialInput:   "hello world",
+			initialCursor:  6,
+			keyMsg:         tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ctrl+a")},
+			expectedCursor: 0,
+			description:    "Ctrl+A should move cursor to start",
+		},
+		{
+			name:           "ctrl+e moves to end",
+			initialInput:   "hello world",
+			initialCursor:  0,
+			keyMsg:         tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ctrl+e")},
+			expectedCursor: 11,
+			description:    "Ctrl+E should move cursor to end",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				addingTask:      true,
+				taskInput:       tt.initialInput,
+				taskInputCursor: tt.initialCursor,
+			}
+
+			result, _ := m.handleTaskInput(tt.keyMsg)
+			updatedModel := result.(Model)
+
+			if updatedModel.taskInputCursor != tt.expectedCursor {
+				t.Errorf("%s: taskInputCursor = %d, want %d",
+					tt.description, updatedModel.taskInputCursor, tt.expectedCursor)
+			}
+		})
+	}
+}
+
+// TestHandleTaskInput_BasicNavigation tests basic navigation keys in task input.
+func TestHandleTaskInput_BasicNavigation(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialInput   string
+		initialCursor  int
+		keyMsg         tea.KeyMsg
+		expectedCursor int
+	}{
+		{
+			name:           "left arrow moves cursor left",
+			initialInput:   "hello",
+			initialCursor:  3,
+			keyMsg:         tea.KeyMsg{Type: tea.KeyLeft},
+			expectedCursor: 2,
+		},
+		{
+			name:           "right arrow moves cursor right",
+			initialInput:   "hello",
+			initialCursor:  2,
+			keyMsg:         tea.KeyMsg{Type: tea.KeyRight},
+			expectedCursor: 3,
+		},
+		{
+			name:           "home key moves to line start",
+			initialInput:   "hello",
+			initialCursor:  3,
+			keyMsg:         tea.KeyMsg{Type: tea.KeyHome},
+			expectedCursor: 0,
+		},
+		{
+			name:           "end key moves to line end",
+			initialInput:   "hello",
+			initialCursor:  2,
+			keyMsg:         tea.KeyMsg{Type: tea.KeyEnd},
+			expectedCursor: 5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				addingTask:      true,
+				taskInput:       tt.initialInput,
+				taskInputCursor: tt.initialCursor,
+			}
+
+			result, _ := m.handleTaskInput(tt.keyMsg)
+			updatedModel := result.(Model)
+
+			if updatedModel.taskInputCursor != tt.expectedCursor {
+				t.Errorf("taskInputCursor = %d, want %d",
+					updatedModel.taskInputCursor, tt.expectedCursor)
+			}
+		})
+	}
+}
+
+// TestHandleTaskInput_Escape tests that Escape cancels task input mode.
+func TestHandleTaskInput_Escape(t *testing.T) {
+	m := Model{
+		addingTask:      true,
+		taskInput:       "some input",
+		taskInputCursor: 5,
+	}
+
+	result, _ := m.handleTaskInput(tea.KeyMsg{Type: tea.KeyEsc})
+	updatedModel := result.(Model)
+
+	if updatedModel.addingTask {
+		t.Error("Escape should cancel task input mode (addingTask should be false)")
+	}
+	if updatedModel.taskInput != "" {
+		t.Errorf("taskInput should be cleared after Escape, got %q", updatedModel.taskInput)
+	}
+}
+
+// TestHandleTaskInput_AltUpDown_Consistency verifies that Alt+Up/Down work
+// consistently whether reported as string or via flag (regression test).
+func TestHandleTaskInput_AltUpDown_Consistency(t *testing.T) {
+	// This test specifically addresses the reviewer feedback about
+	// inconsistent handling of Alt+Up/Down via string vs flag
+
+	initialInput := "hello world test"
+	middleCursor := 8
+
+	t.Run("Alt+Up consistency", func(t *testing.T) {
+		// Test string-based handling
+		mString := Model{
+			addingTask:      true,
+			taskInput:       initialInput,
+			taskInputCursor: middleCursor,
+		}
+		resultString, _ := mString.handleTaskInput(tea.KeyMsg{
+			Type:  tea.KeyRunes,
+			Runes: []rune("alt+up"),
+		})
+		cursorString := resultString.(Model).taskInputCursor
+
+		// Test flag-based handling
+		mFlag := Model{
+			addingTask:      true,
+			taskInput:       initialInput,
+			taskInputCursor: middleCursor,
+		}
+		resultFlag, _ := mFlag.handleTaskInput(tea.KeyMsg{
+			Type: tea.KeyUp,
+			Alt:  true,
+		})
+		cursorFlag := resultFlag.(Model).taskInputCursor
+
+		if cursorString != cursorFlag {
+			t.Errorf("Alt+Up inconsistency: string-based cursor=%d, flag-based cursor=%d",
+				cursorString, cursorFlag)
+		}
+		if cursorString != 0 {
+			t.Errorf("Alt+Up should move to start (0), got %d", cursorString)
+		}
+	})
+
+	t.Run("Alt+Down consistency", func(t *testing.T) {
+		// Test string-based handling
+		mString := Model{
+			addingTask:      true,
+			taskInput:       initialInput,
+			taskInputCursor: middleCursor,
+		}
+		resultString, _ := mString.handleTaskInput(tea.KeyMsg{
+			Type:  tea.KeyRunes,
+			Runes: []rune("alt+down"),
+		})
+		cursorString := resultString.(Model).taskInputCursor
+
+		// Test flag-based handling
+		mFlag := Model{
+			addingTask:      true,
+			taskInput:       initialInput,
+			taskInputCursor: middleCursor,
+		}
+		resultFlag, _ := mFlag.handleTaskInput(tea.KeyMsg{
+			Type: tea.KeyDown,
+			Alt:  true,
+		})
+		cursorFlag := resultFlag.(Model).taskInputCursor
+
+		if cursorString != cursorFlag {
+			t.Errorf("Alt+Down inconsistency: string-based cursor=%d, flag-based cursor=%d",
+				cursorString, cursorFlag)
+		}
+		expectedEnd := len([]rune(initialInput))
+		if cursorString != expectedEnd {
+			t.Errorf("Alt+Down should move to end (%d), got %d", expectedEnd, cursorString)
+		}
+	})
+}
+
+// -----------------------------------------------------------------------------
 // Test helpers
 // -----------------------------------------------------------------------------
 
