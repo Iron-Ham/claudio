@@ -50,11 +50,14 @@ func DefaultConfig() Config {
 
 // Round represents one implement-review cycle
 type Round struct {
-	Round      int            `json:"round"`
-	Increment  *IncrementFile `json:"increment,omitempty"`
-	Review     *ReviewFile    `json:"review,omitempty"`
-	StartedAt  time.Time      `json:"started_at"`
-	ReviewedAt *time.Time     `json:"reviewed_at,omitempty"`
+	Round         int            `json:"round"`
+	Increment     *IncrementFile `json:"increment,omitempty"`
+	Review        *ReviewFile    `json:"review,omitempty"`
+	StartedAt     time.Time      `json:"started_at"`
+	ReviewedAt    *time.Time     `json:"reviewed_at,omitempty"`
+	SubGroupID    string         `json:"sub_group_id,omitempty"`   // Sub-group ID for this round's instances
+	ImplementerID string         `json:"implementer_id,omitempty"` // Instance ID of implementer for this round
+	ReviewerID    string         `json:"reviewer_id,omitempty"`    // Instance ID of reviewer for this round
 }
 
 // IncrementFileName is the sentinel file the implementer writes when ready for review

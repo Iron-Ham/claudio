@@ -26,6 +26,12 @@ func NewInstanceGroup(name string) *InstanceGroup {
 	return grouptypes.NewInstanceGroup(generateID(), name)
 }
 
+// NewInstanceGroupWithID creates a new instance group with a specified ID.
+// Use this when you need a predictable ID (e.g., for round sub-groups).
+func NewInstanceGroupWithID(id, name string) *InstanceGroup {
+	return grouptypes.NewInstanceGroup(id, name)
+}
+
 // NewInstanceGroupWithType creates a new instance group with a session type and objective.
 // The objective is used for LLM-based name generation.
 func NewInstanceGroupWithType(name string, sessionType SessionType, objective string) *InstanceGroup {

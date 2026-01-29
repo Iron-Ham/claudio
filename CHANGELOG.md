@@ -23,11 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Total API Calls in Stats Panel** - Added aggregated API call count across all instances to the session statistics panel.
 
+- **Adversarial Round Auto-Collapse** - Completed rounds in adversarial mode now automatically collapse into sub-groups, keeping the sidebar clean while preserving access to round history. Each round (implementer + reviewer instances) is organized into a "Round N" sub-group. When a round is rejected and a new round starts, the completed round's sub-group automatically collapses. The final approved round remains expanded so users can see the successful review. Users can manually toggle any round's expansion state.
+
 ### Fixed
 
 - **Plan File Written to Wrong Location in Worktrees** - Fixed a bug where ultraplan coordinators would write `.claudio-plan.json` to the main repository root instead of the worktree directory. The planning prompt instructed Claude to write "at the repository root", which was ambiguous when running in a git worktree—Claude would follow the worktree's `.git` reference and write to the main repo. Changed the prompt to explicitly say "in your current working directory" with the `./` prefix, ensuring the plan file is written to the correct worktree location where the detection code expects it.
 - **Theme Persistence** - Theme selection now persists across application restarts. The TUI's `Init()` function now applies the user's saved theme preference from config at startup.
 - **Theme Config Validation** - Invalid theme names in config are now caught during validation and reported with a clear error message listing valid theme options.
+- **Adversarial Sub-Group ID Edge Case** - Fixed an edge case where sub-group IDs would be malformed (e.g., `-round-1` instead of `session-id-round-1`) when the adversarial session's GroupID was empty. Now falls back to using the session ID as the prefix.
+
+### Changed
+
+- **Removed Dead Code from Adversarial Workflow** - Removed `AdversarialRoundCompleteMsg` message type and `OnRoundSubGroupCreated`/`OnRoundComplete` callbacks that were defined but never used. The TUI handles round completion directly via `collapseAdversarialRound` method.
 
 ## [0.12.7] - 2026-01-23
 
