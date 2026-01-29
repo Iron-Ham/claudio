@@ -32,6 +32,11 @@ func TestDefault(t *testing.T) {
 		t.Error("TUI.VerboseCommandHelp should be true by default")
 	}
 
+	// Verify default session config
+	if !cfg.Session.AutoStartOnAdd {
+		t.Error("Session.AutoStartOnAdd should be true by default")
+	}
+
 	// Verify default instance config
 	if cfg.Instance.OutputBufferSize != 100000 {
 		t.Errorf("Instance.OutputBufferSize = %d, want 100000", cfg.Instance.OutputBufferSize)
@@ -261,6 +266,32 @@ func TestConfig_ResourceConfig_Values(t *testing.T) {
 	// Token limit of 0 means no limit (valid default)
 	if cfg.Resources.TokenLimitPerInstance < 0 {
 		t.Errorf("TokenLimitPerInstance should not be negative, got %d", cfg.Resources.TokenLimitPerInstance)
+	}
+}
+
+func TestConfig_SessionConfig_ViperLoading(t *testing.T) {
+	// Test that session config is properly loaded via viper
+	viper.Reset()
+	SetDefaults()
+
+	// After SetDefaults, session.auto_start_on_add should be true
+	autoStart := viper.GetBool("session.auto_start_on_add")
+	if !autoStart {
+		t.Error("viper.GetBool('session.auto_start_on_add') should be true by default")
+	}
+
+	// Test disabling via viper (simulates config file setting)
+	viper.Set("session.auto_start_on_add", false)
+	cfg := Get()
+	if cfg.Session.AutoStartOnAdd {
+		t.Error("Session.AutoStartOnAdd should be false after viper.Set(false)")
+	}
+
+	// Test re-enabling
+	viper.Set("session.auto_start_on_add", true)
+	cfg = Get()
+	if !cfg.Session.AutoStartOnAdd {
+		t.Error("Session.AutoStartOnAdd should be true after viper.Set(true)")
 	}
 }
 

@@ -51,7 +51,10 @@ type TUIConfig struct {
 
 // SessionConfig controls session behavior
 type SessionConfig struct {
-	// Placeholder for future session settings
+	// AutoStartOnAdd controls whether instances added via :a automatically start.
+	// When true (default), instances start immediately after being added.
+	// When false, instances are created in pending state and must be started manually with :s.
+	AutoStartOnAdd bool `mapstructure:"auto_start_on_add"`
 }
 
 // InstanceConfig controls instance behavior
@@ -345,7 +348,9 @@ func Default() *Config {
 			SidebarWidth:       36,
 			Theme:              "default",
 		},
-		Session: SessionConfig{},
+		Session: SessionConfig{
+			AutoStartOnAdd: true, // Auto-start instances added via :a by default
+		},
 		Instance: InstanceConfig{
 			OutputBufferSize:         100000, // 100KB
 			CaptureIntervalMs:        100,
@@ -461,7 +466,8 @@ func SetDefaults() {
 	viper.SetDefault("tui.sidebar_width", defaults.TUI.SidebarWidth)
 	viper.SetDefault("tui.theme", defaults.TUI.Theme)
 
-	// Session defaults (currently empty)
+	// Session defaults
+	viper.SetDefault("session.auto_start_on_add", defaults.Session.AutoStartOnAdd)
 
 	// Instance defaults
 	viper.SetDefault("instance.output_buffer_size", defaults.Instance.OutputBufferSize)
