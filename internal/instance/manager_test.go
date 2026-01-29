@@ -629,6 +629,27 @@ func TestSessionGoneErrorPatterns(t *testing.T) {
 	}
 }
 
+// TestCaptureFailure_ChecksSessionExists documents the fix for GitHub issue #403.
+// When output capture fails, the capture loop should verify the session still exists
+// to detect the race condition where the tmux server dies between getSessionStatus()
+// and the actual capture. This prevents instances from showing stale "RUNNING" status
+// indefinitely with no output updates.
+//
+// The actual race condition is difficult to test without a real tmux server, but
+// this test documents the expected behavior: checkSessionExists should return false
+// for non-existent sessions, which is what the capture loop uses after a capture failure.
+func TestCaptureFailure_ChecksSessionExists(t *testing.T) {
+	mgr := newTestManager("capture-fail-test", "/tmp", "task")
+
+	// Simulate the scenario: capture would fail for a non-existent session
+	// The fix uses checkSessionExists to verify session state after capture failure
+	exists := mgr.checkSessionExists("definitely-nonexistent-session-xyz")
+	if exists {
+		t.Error("checkSessionExists should return false for non-existent session, " +
+			"enabling capture failure handling to detect dead server/session")
+	}
+}
+
 func TestListClaudioTmuxSessions_NoTmuxServer(t *testing.T) {
 	// This test may return nil or an empty list depending on whether tmux is running
 	// The important thing is it should not error in a way that causes a panic
