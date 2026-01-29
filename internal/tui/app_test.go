@@ -3,12 +3,14 @@ package tui
 import (
 	"testing"
 
+	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	"github.com/Iron-Ham/claudio/internal/util"
+	"github.com/spf13/viper"
 )
 
 // TestInit_CallsSetActiveTheme tests that Init() calls SetActiveTheme when
@@ -402,5 +404,82 @@ func TestUltraPlanGroupID_MustBeSetOnCreation(t *testing.T) {
 	}
 	if orchestrator.GetSessionType(retrievedGroup) != orchestrator.SessionTypeUltraPlan {
 		t.Errorf("group.SessionType = %v, want %v", orchestrator.GetSessionType(retrievedGroup), orchestrator.SessionTypeUltraPlan)
+	}
+}
+
+// TestTripleshotConfig_UsesConfigFileSettings verifies that when a tripleshot
+// session is created via the TUI, it uses the config file settings for AutoApprove
+// and Adversarial instead of hardcoded defaults.
+//
+// This test documents the expected behavior: initiateTripleShotMode should read
+// from config.Get() to apply user-configured settings.
+func TestTripleshotConfig_UsesConfigFileSettings(t *testing.T) {
+	// Save and restore viper state
+	viper.Reset()
+	defer viper.Reset()
+
+	// Set up config with custom tripleshot settings
+	config.SetDefaults()
+	viper.Set("tripleshot.auto_approve", true)
+	viper.Set("tripleshot.adversarial", true)
+
+	// Verify config.Get() returns the expected values
+	cfg := config.Get()
+	if !cfg.Tripleshot.AutoApprove {
+		t.Error("config.Get().Tripleshot.AutoApprove should be true after viper.Set")
+	}
+	if !cfg.Tripleshot.Adversarial {
+		t.Error("config.Get().Tripleshot.Adversarial should be true after viper.Set")
+	}
+
+	// Create a tripleshot session using the same pattern as initiateTripleShotMode
+	// This mimics what the TUI does when starting tripleshot from command mode
+	tripleConfig := orchestrator.DefaultTripleShotConfig()
+	tripleConfig.AutoApprove = cfg.Tripleshot.AutoApprove
+	tripleConfig.Adversarial = cfg.Tripleshot.Adversarial
+
+	tripleSession := tripleshot.NewSession("Test task", tripleConfig)
+
+	// Verify the session config reflects the viper settings
+	if !tripleSession.Config.AutoApprove {
+		t.Error("tripleSession.Config.AutoApprove should be true (from config)")
+	}
+	if !tripleSession.Config.Adversarial {
+		t.Error("tripleSession.Config.Adversarial should be true (from config)")
+	}
+}
+
+// TestTripleshotConfig_DefaultsWhenNotConfigured verifies that tripleshot uses
+// default values (false) when the config file doesn't specify custom settings.
+func TestTripleshotConfig_DefaultsWhenNotConfigured(t *testing.T) {
+	// Save and restore viper state
+	viper.Reset()
+	defer viper.Reset()
+
+	// Set up config with defaults (no custom tripleshot settings)
+	config.SetDefaults()
+
+	// Verify config.Get() returns default values
+	cfg := config.Get()
+	if cfg.Tripleshot.AutoApprove {
+		t.Error("config.Get().Tripleshot.AutoApprove should be false by default")
+	}
+	if cfg.Tripleshot.Adversarial {
+		t.Error("config.Get().Tripleshot.Adversarial should be false by default")
+	}
+
+	// Create a tripleshot session using the same pattern as initiateTripleShotMode
+	tripleConfig := orchestrator.DefaultTripleShotConfig()
+	tripleConfig.AutoApprove = cfg.Tripleshot.AutoApprove
+	tripleConfig.Adversarial = cfg.Tripleshot.Adversarial
+
+	tripleSession := tripleshot.NewSession("Test task", tripleConfig)
+
+	// Verify the session config uses defaults
+	if tripleSession.Config.AutoApprove {
+		t.Error("tripleSession.Config.AutoApprove should be false by default")
+	}
+	if tripleSession.Config.Adversarial {
+		t.Error("tripleSession.Config.Adversarial should be false by default")
 	}
 }

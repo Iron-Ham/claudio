@@ -1635,8 +1635,11 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	// Request intelligent name generation for the group
 	m.orchestrator.RequestGroupRename(tripleGroup.ID, task)
 
-	// Create triple-shot session with default config
+	// Create triple-shot session with config from user settings
 	tripleConfig := orchestrator.DefaultTripleShotConfig()
+	cfg := config.Get()
+	tripleConfig.AutoApprove = cfg.Tripleshot.AutoApprove
+	tripleConfig.Adversarial = cfg.Tripleshot.Adversarial
 	tripleSession := orchestrator.NewTripleShotSession(task, tripleConfig)
 
 	// Link group ID to session for multi-tripleshot support
