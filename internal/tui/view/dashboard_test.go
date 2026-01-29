@@ -3,9 +3,11 @@ package view
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/tui/styles"
 )
 
 // mockDashboardState implements DashboardState for testing
@@ -586,6 +588,249 @@ func TestTruncate(t *testing.T) {
 			result := truncate(tt.input, tt.maxLen)
 			if result != tt.expected {
 				t.Errorf("truncate(%q, %d) = %q, want %q", tt.input, tt.maxLen, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFormatTimeAgo(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    time.Time
+		expected string
+	}{
+		{
+			name:     "zero time returns empty",
+			input:    time.Time{},
+			expected: "",
+		},
+		{
+			name:     "seconds ago",
+			input:    time.Now().Add(-30 * time.Second),
+			expected: "30s ago",
+		},
+		{
+			name:     "minutes ago",
+			input:    time.Now().Add(-5 * time.Minute),
+			expected: "5m ago",
+		},
+		{
+			name:     "hours ago",
+			input:    time.Now().Add(-2 * time.Hour),
+			expected: "2h ago",
+		},
+		{
+			name:     "days ago",
+			input:    time.Now().Add(-48 * time.Hour),
+			expected: "2d ago",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatTimeAgo(tt.input)
+			if result != tt.expected {
+				t.Errorf("FormatTimeAgo() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFormatTimeAgoPtr(t *testing.T) {
+	now := time.Now().Add(-5 * time.Minute)
+
+	tests := []struct {
+		name     string
+		input    *time.Time
+		expected string
+	}{
+		{
+			name:     "nil returns empty",
+			input:    nil,
+			expected: "",
+		},
+		{
+			name:     "valid time pointer",
+			input:    &now,
+			expected: "5m ago",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatTimeAgoPtr(tt.input)
+			if result != tt.expected {
+				t.Errorf("FormatTimeAgoPtr() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFormatInstanceContextInfo(t *testing.T) {
+	startTime := time.Now().Add(-5 * time.Minute)
+	endTime := time.Now()
+
+	tests := []struct {
+		name     string
+		instance *orchestrator.Instance
+		contains []string
+	}{
+		{
+			name: "instance with metrics duration",
+			instance: &orchestrator.Instance{
+				ID:     "test-1",
+				Status: orchestrator.StatusCompleted,
+				Metrics: &orchestrator.Metrics{
+					StartTime: &startTime,
+					EndTime:   &endTime,
+					Cost:      0.05,
+				},
+			},
+			contains: []string{"5m", "$0.05"},
+		},
+		{
+			name: "instance with files modified",
+			instance: &orchestrator.Instance{
+				ID:            "test-2",
+				Status:        orchestrator.StatusCompleted,
+				FilesModified: []string{"file1.go", "file2.go", "file3.go"},
+			},
+			contains: []string{"3 files"},
+		},
+		{
+			name: "instance with all info",
+			instance: &orchestrator.Instance{
+				ID:     "test-3",
+				Status: orchestrator.StatusWorking,
+				Metrics: &orchestrator.Metrics{
+					StartTime: &startTime,
+					Cost:      0.10,
+				},
+				FilesModified: []string{"file1.go"},
+			},
+			contains: []string{"5m", "$0.10", "1 files"},
+		},
+		{
+			name: "instance with no metrics",
+			instance: &orchestrator.Instance{
+				ID:     "test-4",
+				Status: orchestrator.StatusPending,
+			},
+			contains: []string{},
+		},
+		{
+			name: "instance with cost below threshold",
+			instance: &orchestrator.Instance{
+				ID:     "test-5",
+				Status: orchestrator.StatusCompleted,
+				Metrics: &orchestrator.Metrics{
+					Cost: 0.005, // Below 0.01 threshold
+				},
+			},
+			contains: []string{}, // Cost should not be shown
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatInstanceContextInfo(tt.instance)
+			for _, expected := range tt.contains {
+				if !strings.Contains(result, expected) {
+					t.Errorf("formatInstanceContextInfo() = %q, should contain %q", result, expected)
+				}
+			}
+		})
+	}
+}
+
+func TestFormatDurationCompact(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration time.Duration
+		expected string
+	}{
+		{"30 seconds", 30 * time.Second, "30s"},
+		{"59 seconds", 59 * time.Second, "59s"},
+		{"1 minute", 1 * time.Minute, "1m"},
+		{"5 minutes", 5 * time.Minute, "5m"},
+		{"59 minutes", 59 * time.Minute, "59m"},
+		{"1 hour", 1 * time.Hour, "1h"},
+		{"1 hour 30 minutes", 1*time.Hour + 30*time.Minute, "1h30m"},
+		{"2 hours", 2 * time.Hour, "2h"},
+		{"2 hours 15 minutes", 2*time.Hour + 15*time.Minute, "2h15m"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatDurationCompact(tt.duration)
+			if result != tt.expected {
+				t.Errorf("FormatDurationCompact(%v) = %q, want %q", tt.duration, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRenderEnhancedStatusLine(t *testing.T) {
+	startTime := time.Now().Add(-5 * time.Minute)
+	lastActive := time.Now().Add(-30 * time.Second)
+
+	tests := []struct {
+		name           string
+		instance       *orchestrator.Instance
+		containsStatus bool
+		containsTime   bool
+	}{
+		{
+			name: "working instance shows last active time",
+			instance: &orchestrator.Instance{
+				ID:           "test-1",
+				Status:       orchestrator.StatusWorking,
+				LastActiveAt: &lastActive,
+				Metrics: &orchestrator.Metrics{
+					StartTime: &startTime,
+				},
+			},
+			containsStatus: true,
+			containsTime:   true,
+		},
+		{
+			name: "completed instance shows metrics",
+			instance: &orchestrator.Instance{
+				ID:     "test-2",
+				Status: orchestrator.StatusCompleted,
+				Metrics: &orchestrator.Metrics{
+					StartTime: &startTime,
+					Cost:      0.05,
+				},
+			},
+			containsStatus: true,
+			containsTime:   false, // Not working, so no "ago" time
+		},
+		{
+			name: "pending instance minimal info",
+			instance: &orchestrator.Instance{
+				ID:     "test-3",
+				Status: orchestrator.StatusPending,
+			},
+			containsStatus: true,
+			containsTime:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			statusColor := styles.StatusColor(string(tt.instance.Status))
+			result := renderEnhancedStatusLine(tt.instance, statusColor, 2, 40)
+
+			// Should contain status abbreviation
+			statusAbbrev := instanceStatusAbbrev(tt.instance.Status)
+			if tt.containsStatus && !strings.Contains(result, statusAbbrev) {
+				t.Errorf("renderEnhancedStatusLine() = %q, should contain status %q", result, statusAbbrev)
+			}
+
+			// Check for "ago" indicator
+			if tt.containsTime && !strings.Contains(result, "ago") {
+				t.Errorf("renderEnhancedStatusLine() = %q, should contain 'ago' time indicator", result)
 			}
 		})
 	}

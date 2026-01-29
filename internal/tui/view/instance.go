@@ -139,10 +139,27 @@ func (v *InstanceView) RenderWithSession(inst *orchestrator.Instance, state Rend
 	return b.String()
 }
 
-// RenderHeader renders the instance header with branch info.
-// Status is displayed in the sidebar, so we only show branch here.
+// RenderHeader renders the instance header with branch info and additional context.
+// Status is displayed in the sidebar, so we only show branch and context here.
 func (v *InstanceView) RenderHeader(inst *orchestrator.Instance) string {
-	info := fmt.Sprintf("Branch: %s", inst.Branch)
+	var parts []string
+	parts = append(parts, fmt.Sprintf("Branch: %s", inst.Branch))
+
+	// Add files modified count if any
+	if len(inst.FilesModified) > 0 {
+		parts = append(parts, fmt.Sprintf("%d files modified", len(inst.FilesModified)))
+	}
+
+	// Add last activity time for running instances
+	if inst.LastActiveAt != nil && !inst.LastActiveAt.IsZero() {
+		if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
+			if timeAgo := FormatTimeAgo(*inst.LastActiveAt); timeAgo != "" {
+				parts = append(parts, "Active "+timeAgo)
+			}
+		}
+	}
+
+	info := strings.Join(parts, " | ")
 	return styles.InstanceInfo.Render(info)
 }
 
@@ -466,6 +483,11 @@ func (v *InstanceView) FormatMetrics(metrics *orchestrator.Metrics) string {
 	// Cost
 	if metrics.Cost > 0 {
 		parts = append(parts, instmetrics.FormatCost(metrics.Cost))
+	}
+
+	// API calls
+	if metrics.APICalls > 0 {
+		parts = append(parts, fmt.Sprintf("%d API calls", metrics.APICalls))
 	}
 
 	// Duration

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Enhanced Sidebar Status Display** - Instance status lines in the sidebar now show additional context including elapsed time (e.g., "5m"), cost (e.g., "$0.05"), and files modified count (e.g., "3 files"). Running instances also display "last active" time (e.g., "30s ago"). This helps users quickly understand instance progress without navigating to the stats panel.
+
+- **Enhanced Instance Header** - The instance detail view header now shows files modified count and last activity time for running instances, providing immediate context about what the instance is working on.
+
+- **API Calls in Metrics Display** - The instance metrics line now includes API call count (e.g., "12 API calls") alongside tokens and cost, giving users more insight into instance resource usage.
+
+- **Session Recovery Status in Stats Panel** - The stats panel now displays session recovery state (recovered/interrupted) with the number of recovery attempts, helping users understand if a session was restored from an interruption.
+
+- **Total API Calls in Stats Panel** - Added aggregated API call count across all instances to the session statistics panel.
+
 ## [0.12.7] - 2026-01-23
 
 ### Fixed

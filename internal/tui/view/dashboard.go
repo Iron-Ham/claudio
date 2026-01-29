@@ -6,8 +6,10 @@ package view
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Iron-Ham/claudio/internal/conflict"
+	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/charmbracelet/lipgloss"
@@ -158,11 +160,40 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 	return styles.Sidebar.Width(width - 2).Render(b.String())
 }
 
-// renderStatusLine renders a status indicator line with proper indentation.
-// The indent parameter specifies how many spaces to add before the status dot.
-func renderStatusLine(status orchestrator.InstanceStatus, statusColor lipgloss.Color, indent int) string {
-	return strings.Repeat(" ", indent) +
-		lipgloss.NewStyle().Foreground(statusColor).Render("●"+instanceStatusAbbrev(status))
+// renderEnhancedStatusLine renders a status indicator line with additional context.
+// Shows status abbreviation plus optional context info (duration, cost, files).
+func renderEnhancedStatusLine(inst *orchestrator.Instance, statusColor lipgloss.Color, indent int, maxWidth int) string {
+	statusPart := lipgloss.NewStyle().Foreground(statusColor).Render("●" + instanceStatusAbbrev(inst.Status))
+
+	// Build context info
+	contextInfo := formatInstanceContextInfo(inst)
+
+	// Add "last active" for running instances
+	if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
+		if lastActive := FormatTimeAgoPtr(inst.LastActiveAt); lastActive != "" {
+			if contextInfo != "" {
+				contextInfo = lastActive + " | " + contextInfo
+			} else {
+				contextInfo = lastActive
+			}
+		}
+	}
+
+	// Calculate available space for context
+	indentStr := strings.Repeat(" ", indent)
+	statusLen := len("●") + len(instanceStatusAbbrev(inst.Status))
+	availableForContext := maxWidth - indent - statusLen - 2 // 2 for spacing
+
+	if contextInfo == "" || availableForContext < 10 {
+		return indentStr + statusPart
+	}
+
+	// Truncate context if needed
+	if len(contextInfo) > availableForContext {
+		contextInfo = contextInfo[:availableForContext-3] + "..."
+	}
+
+	return indentStr + statusPart + " " + styles.Muted.Render(contextInfo)
 }
 
 // renderSidebarInstance renders a single instance item in the sidebar.
@@ -221,7 +252,7 @@ func (dv *DashboardView) renderSidebarInstance(
 	// Standard rendering with status on second line
 	label := fmt.Sprintf("%d %s%s", i+1, prefix, truncate(effectiveName, normalMaxLen))
 	firstLine := dot + " " + itemStyle.Render(label)
-	statusLine := renderStatusLine(inst.Status, statusColor, statusIndent)
+	statusLine := renderEnhancedStatusLine(inst, statusColor, statusIndent, width)
 
 	return firstLine + "\n" + statusLine
 }
@@ -257,7 +288,7 @@ func (dv *DashboardView) renderExpandedInstance(
 		// Fits on one line even when expanded
 		label := fmt.Sprintf("%d %s%s", i+1, prefix, displayName)
 		firstLine := dot + " " + itemStyle.Render(label)
-		statusLine := renderStatusLine(inst.Status, statusColor, statusIndent)
+		statusLine := renderEnhancedStatusLine(inst, statusColor, statusIndent, width)
 		return firstLine + "\n" + statusLine
 	}
 
@@ -302,7 +333,7 @@ func (dv *DashboardView) renderExpandedInstance(
 	}
 
 	// Add status line at the end
-	lines = append(lines, renderStatusLine(inst.Status, statusColor, statusIndent))
+	lines = append(lines, renderEnhancedStatusLine(inst, statusColor, statusIndent, width))
 
 	return strings.Join(lines, "\n")
 }
@@ -360,4 +391,77 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return string(runes[:max-3]) + "..."
+}
+
+// FormatTimeAgo formats a time as a human-readable relative duration (e.g., "3m ago", "2h ago").
+// Returns empty string if the time is zero.
+func FormatTimeAgo(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
+// FormatTimeAgoPtr formats a time pointer as a human-readable relative duration.
+// Returns empty string if the pointer is nil or the time is zero.
+func FormatTimeAgoPtr(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return FormatTimeAgo(*t)
+}
+
+// FormatDurationCompact formats a duration in a compact human-readable format.
+// Examples: "30s", "5m", "2h15m"
+func FormatDurationCompact(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	hours := int(d.Hours())
+	mins := int(d.Minutes()) % 60
+	if mins > 0 {
+		return fmt.Sprintf("%dh%dm", hours, mins)
+	}
+	return fmt.Sprintf("%dh", hours)
+}
+
+// formatInstanceContextInfo builds additional context information for an instance.
+// Returns a formatted string with duration, cost, and files modified.
+func formatInstanceContextInfo(inst *orchestrator.Instance) string {
+	var parts []string
+
+	// Add duration for running or completed instances
+	if inst.Metrics != nil {
+		if duration := inst.Metrics.Duration(); duration > 0 {
+			parts = append(parts, FormatDurationCompact(duration))
+		}
+
+		// Add cost if significant
+		if inst.Metrics.Cost > 0.01 {
+			parts = append(parts, instmetrics.FormatCost(inst.Metrics.Cost))
+		}
+	}
+
+	// Add files modified count if any
+	if len(inst.FilesModified) > 0 {
+		parts = append(parts, fmt.Sprintf("%d files", len(inst.FilesModified)))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " | ")
 }
