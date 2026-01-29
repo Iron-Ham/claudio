@@ -1,25 +1,25 @@
 package styles
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestValidThemes(t *testing.T) {
 	themes := ValidThemes()
 
-	if len(themes) != 4 {
-		t.Errorf("ValidThemes() returned %d themes, want 4", len(themes))
+	if len(themes) != 14 {
+		t.Errorf("ValidThemes() returned %d themes, want 14", len(themes))
 	}
 
-	// Verify expected themes are present
-	expected := []string{"default", "monokai", "dracula", "nord"}
+	expected := []string{
+		"default", "monokai", "dracula", "nord",
+		"claude-code", "solarized-dark", "solarized-light", "one-dark",
+		"github-dark", "gruvbox", "tokyo-night", "catppuccin",
+		"synthwave", "ayu",
+	}
 	for _, want := range expected {
-		found := false
-		for _, got := range themes {
-			if got == want {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.Contains(themes, want) {
 			t.Errorf("ValidThemes() missing %q", want)
 		}
 	}
@@ -35,6 +35,16 @@ func TestIsValidTheme(t *testing.T) {
 		{"monokai theme", "monokai", true},
 		{"dracula theme", "dracula", true},
 		{"nord theme", "nord", true},
+		{"claude-code theme", "claude-code", true},
+		{"solarized-dark theme", "solarized-dark", true},
+		{"solarized-light theme", "solarized-light", true},
+		{"one-dark theme", "one-dark", true},
+		{"github-dark theme", "github-dark", true},
+		{"gruvbox theme", "gruvbox", true},
+		{"tokyo-night theme", "tokyo-night", true},
+		{"catppuccin theme", "catppuccin", true},
+		{"synthwave theme", "synthwave", true},
+		{"ayu theme", "ayu", true},
 		{"invalid theme", "invalid", false},
 		{"empty string", "", false},
 		{"case sensitive", "Default", false},
@@ -59,6 +69,16 @@ func TestThemeNameConstants(t *testing.T) {
 		{ThemeMonokai, "monokai"},
 		{ThemeDracula, "dracula"},
 		{ThemeNord, "nord"},
+		{ThemeClaudeCode, "claude-code"},
+		{ThemeSolarizedDark, "solarized-dark"},
+		{ThemeSolarizedLight, "solarized-light"},
+		{ThemeOneDark, "one-dark"},
+		{ThemeGitHubDark, "github-dark"},
+		{ThemeGruvbox, "gruvbox"},
+		{ThemeTokyoNight, "tokyo-night"},
+		{ThemeCatppuccin, "catppuccin"},
+		{ThemeSynthwave, "synthwave"},
+		{ThemeAyu, "ayu"},
 	}
 
 	for _, tt := range tests {
@@ -70,104 +90,46 @@ func TestThemeNameConstants(t *testing.T) {
 	}
 }
 
-func TestDefaultPalette(t *testing.T) {
-	p := DefaultPalette()
-
-	if p == nil {
-		t.Fatal("DefaultPalette() returned nil")
+func TestPalettes(t *testing.T) {
+	tests := []struct {
+		name       string
+		getPalette func() *ColorPalette
+		primary    string
+		secondary  string
+		surface    string
+	}{
+		{"default", DefaultPalette, "#A78BFA", "#10B981", "#1F2937"},
+		{"monokai", MonokaiPalette, "#F92672", "#A6E22E", "#272822"},
+		{"dracula", DraculaPalette, "#BD93F9", "#50FA7B", "#282A36"},
+		{"nord", NordPalette, "#88C0D0", "#A3BE8C", "#2E3440"},
+		{"claude-code", ClaudeCodePalette, "#DA7756", "#7DCEA0", "#1C1C1C"},
+		{"solarized-dark", SolarizedDarkPalette, "#268BD2", "#859900", "#002B36"},
+		{"solarized-light", SolarizedLightPalette, "#268BD2", "#859900", "#FDF6E3"},
+		{"one-dark", OneDarkPalette, "#61AFEF", "#98C379", "#282C34"},
+		{"github-dark", GitHubDarkPalette, "#58A6FF", "#3FB950", "#0D1117"},
+		{"gruvbox", GruvboxPalette, "#83A598", "#B8BB26", "#282828"},
+		{"tokyo-night", TokyoNightPalette, "#7AA2F7", "#9ECE6A", "#1A1B26"},
+		{"catppuccin", CatppuccinPalette, "#89B4FA", "#A6E3A1", "#1E1E2E"},
+		{"synthwave", SynthwavePalette, "#FF7EDB", "#72F1B8", "#262335"},
+		{"ayu", AyuPalette, "#39BAE6", "#7FD962", "#0D1017"},
 	}
 
-	// Verify key colors are set
-	if p.Primary == "" {
-		t.Error("Primary color is empty")
-	}
-	if p.Secondary == "" {
-		t.Error("Secondary color is empty")
-	}
-	if p.Warning == "" {
-		t.Error("Warning color is empty")
-	}
-	if p.Error == "" {
-		t.Error("Error color is empty")
-	}
-	if p.Text == "" {
-		t.Error("Text color is empty")
-	}
-	if p.Surface == "" {
-		t.Error("Surface color is empty")
-	}
-
-	// Verify status colors are set
-	if p.StatusWorking == "" {
-		t.Error("StatusWorking color is empty")
-	}
-	if p.StatusComplete == "" {
-		t.Error("StatusComplete color is empty")
-	}
-
-	// Verify diff colors are set
-	if p.DiffAdd == "" {
-		t.Error("DiffAdd color is empty")
-	}
-	if p.DiffRemove == "" {
-		t.Error("DiffRemove color is empty")
-	}
-}
-
-func TestMonokaiPalette(t *testing.T) {
-	p := MonokaiPalette()
-
-	if p == nil {
-		t.Fatal("MonokaiPalette() returned nil")
-	}
-
-	// Verify Monokai-specific colors
-	if string(p.Primary) != "#F92672" {
-		t.Errorf("Primary = %q, want #F92672 (Monokai pink)", p.Primary)
-	}
-	if string(p.Secondary) != "#A6E22E" {
-		t.Errorf("Secondary = %q, want #A6E22E (Monokai green)", p.Secondary)
-	}
-	if string(p.Surface) != "#272822" {
-		t.Errorf("Surface = %q, want #272822 (Monokai background)", p.Surface)
-	}
-}
-
-func TestDraculaPalette(t *testing.T) {
-	p := DraculaPalette()
-
-	if p == nil {
-		t.Fatal("DraculaPalette() returned nil")
-	}
-
-	// Verify Dracula-specific colors
-	if string(p.Primary) != "#BD93F9" {
-		t.Errorf("Primary = %q, want #BD93F9 (Dracula purple)", p.Primary)
-	}
-	if string(p.Secondary) != "#50FA7B" {
-		t.Errorf("Secondary = %q, want #50FA7B (Dracula green)", p.Secondary)
-	}
-	if string(p.Surface) != "#282A36" {
-		t.Errorf("Surface = %q, want #282A36 (Dracula background)", p.Surface)
-	}
-}
-
-func TestNordPalette(t *testing.T) {
-	p := NordPalette()
-
-	if p == nil {
-		t.Fatal("NordPalette() returned nil")
-	}
-
-	// Verify Nord-specific colors
-	if string(p.Primary) != "#88C0D0" {
-		t.Errorf("Primary = %q, want #88C0D0 (Nord frost cyan)", p.Primary)
-	}
-	if string(p.Secondary) != "#A3BE8C" {
-		t.Errorf("Secondary = %q, want #A3BE8C (Nord aurora green)", p.Secondary)
-	}
-	if string(p.Surface) != "#2E3440" {
-		t.Errorf("Surface = %q, want #2E3440 (Nord polar night)", p.Surface)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := tt.getPalette()
+			if p == nil {
+				t.Fatal("palette returned nil")
+			}
+			if string(p.Primary) != tt.primary {
+				t.Errorf("Primary = %q, want %q", p.Primary, tt.primary)
+			}
+			if string(p.Secondary) != tt.secondary {
+				t.Errorf("Secondary = %q, want %q", p.Secondary, tt.secondary)
+			}
+			if string(p.Surface) != tt.surface {
+				t.Errorf("Surface = %q, want %q", p.Surface, tt.surface)
+			}
+		})
 	}
 }
 
@@ -180,6 +142,16 @@ func TestGetPalette(t *testing.T) {
 		{ThemeMonokai, "#F92672"},
 		{ThemeDracula, "#BD93F9"},
 		{ThemeNord, "#88C0D0"},
+		{ThemeClaudeCode, "#DA7756"},
+		{ThemeSolarizedDark, "#268BD2"},
+		{ThemeSolarizedLight, "#268BD2"},
+		{ThemeOneDark, "#61AFEF"},
+		{ThemeGitHubDark, "#58A6FF"},
+		{ThemeGruvbox, "#83A598"},
+		{ThemeTokyoNight, "#7AA2F7"},
+		{ThemeCatppuccin, "#89B4FA"},
+		{ThemeSynthwave, "#FF7EDB"},
+		{ThemeAyu, "#39BAE6"},
 		{"unknown", "#A78BFA"}, // Should fall back to default
 	}
 
@@ -202,6 +174,16 @@ func TestPaletteColorConsistency(t *testing.T) {
 		MonokaiPalette(),
 		DraculaPalette(),
 		NordPalette(),
+		ClaudeCodePalette(),
+		SolarizedDarkPalette(),
+		SolarizedLightPalette(),
+		OneDarkPalette(),
+		GitHubDarkPalette(),
+		GruvboxPalette(),
+		TokyoNightPalette(),
+		CatppuccinPalette(),
+		SynthwavePalette(),
+		AyuPalette(),
 	}
 
 	for i, p := range palettes {
@@ -231,6 +213,10 @@ func TestPaletteColorConsistency(t *testing.T) {
 				"DiffHeader":        string(p.DiffHeader),
 				"DiffHunk":          string(p.DiffHunk),
 				"DiffContext":       string(p.DiffContext),
+				"SearchMatchBg":     string(p.SearchMatchBg),
+				"SearchMatchFg":     string(p.SearchMatchFg),
+				"SearchCurrentBg":   string(p.SearchCurrentBg),
+				"SearchCurrentFg":   string(p.SearchCurrentFg),
 				"Blue":              string(p.Blue),
 				"Yellow":            string(p.Yellow),
 				"Purple":            string(p.Purple),
