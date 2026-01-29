@@ -491,24 +491,18 @@ func renderTripleShotPlanGroups(ctx TripleShotRenderContext, width int) string {
 			continue
 		}
 
-		// Calculate group progress
-		progress := CalculateGroupProgress(group, ctx.Session)
-
 		// Render group header (simplified - not collapsible in tripleshot view)
 		phaseColor := PhaseColor(group.Phase)
 		phaseIndicator := PhaseIndicator(group.Phase)
-		progressStr := fmt.Sprintf("[%d/%d]", progress.Completed, progress.Total)
 
 		// Truncate name if needed (use rune-based truncation for Unicode safety)
-		maxNameLen := width - len(progressStr) - 6
+		maxNameLen := width - 4 // Leave room for space + indicator
 		displayName := truncateGroupName(group.Name, maxNameLen)
 
 		headerStyle := lipgloss.NewStyle().Bold(true).Foreground(phaseColor)
-		progressStyle := lipgloss.NewStyle().Foreground(styles.MutedColor)
 		indicatorStyle := lipgloss.NewStyle().Foreground(phaseColor)
 
 		lines = append(lines, headerStyle.Render(displayName)+" "+
-			progressStyle.Render(progressStr)+" "+
 			indicatorStyle.Render(phaseIndicator))
 
 		// Render instances in this group

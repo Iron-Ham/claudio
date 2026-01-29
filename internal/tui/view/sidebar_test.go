@@ -148,11 +148,6 @@ func TestSidebarView_GroupedModeWithGroups(t *testing.T) {
 		t.Errorf("grouped mode should show group 2, got:\n%s", result)
 	}
 
-	// Should contain progress indicators
-	if !strings.Contains(result, "[2/2]") {
-		t.Errorf("should show progress [2/2] for completed group, got:\n%s", result)
-	}
-
 	// Should contain instance names
 	if !strings.Contains(result, "Setup auth") {
 		t.Errorf("should show instance task 'Setup auth', got:\n%s", result)
@@ -745,15 +740,11 @@ func TestRenderGroupHeader(t *testing.T) {
 		Name:  "Test Group",
 		Phase: orchestrator.GroupPhaseExecuting,
 	}
-	progress := GroupProgress{Completed: 2, Total: 5}
 
 	// Test expanded
-	result := RenderGroupHeader(group, progress, false, false, 40)
+	result := RenderGroupHeader(group, false, false, 40)
 	if !strings.Contains(result, "Test Group") {
 		t.Errorf("should contain group name, got: %s", result)
-	}
-	if !strings.Contains(result, "[2/5]") {
-		t.Errorf("should contain progress [2/5], got: %s", result)
 	}
 	// Should have expanded indicator (down triangle)
 	if !strings.Contains(result, styles.IconGroupExpand) {
@@ -761,7 +752,7 @@ func TestRenderGroupHeader(t *testing.T) {
 	}
 
 	// Test collapsed
-	result = RenderGroupHeader(group, progress, true, false, 40)
+	result = RenderGroupHeader(group, true, false, 40)
 	// Should have collapsed indicator (right triangle)
 	if !strings.Contains(result, styles.IconGroupCollapse) {
 		t.Errorf("collapsed group should have right triangle, got: %s", result)
