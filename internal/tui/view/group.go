@@ -188,6 +188,36 @@ func RenderGroupHeader(group *orchestrator.InstanceGroup, progress GroupProgress
 	return strings.Join(lines, "\n")
 }
 
+// RenderGroupHeaderItem renders a group header from a GroupHeaderItem.
+// This version supports RoundInfo display for adversarial groups.
+// Example for adversarial: "▾ ⚔️ Refactor auth (Round 3) [2/2] ●"
+func RenderGroupHeaderItem(item GroupHeaderItem, width int) string {
+	lines := RenderGroupHeaderItemWrapped(item, width)
+	return strings.Join(lines, "\n")
+}
+
+// RenderGroupHeaderItemWrapped renders a group header with round info support.
+// For adversarial groups, appends " (Round N)" to the group name.
+func RenderGroupHeaderItemWrapped(item GroupHeaderItem, width int) []string {
+	group := item.Group
+	if group == nil {
+		return []string{}
+	}
+
+	// Build display name with optional round info
+	displayName := group.Name
+	if item.RoundInfo != "" {
+		displayName = fmt.Sprintf("%s (%s)", group.Name, item.RoundInfo)
+	}
+
+	// Create a temporary copy of the group with modified name for rendering
+	// (we don't want to modify the original group)
+	tempGroup := *group
+	tempGroup.Name = displayName
+
+	return RenderGroupHeaderWrapped(&tempGroup, item.Progress, item.Collapsed, item.IsSelected, width)
+}
+
 // RenderGroupHeaderWrapped renders a group header with word-wrapped name support.
 // Returns a slice of lines where the first line contains the collapse indicator,
 // icon, and start of name, and subsequent lines contain wrapped name continuation.
@@ -421,6 +451,7 @@ type GroupHeaderItem struct {
 	Collapsed  bool
 	IsSelected bool
 	Depth      int
+	RoundInfo  string // Optional round info for adversarial groups, e.g., "Round 3"
 }
 
 func flattenGroupRecursive(group *orchestrator.InstanceGroup, session *orchestrator.Session, state *GroupViewState, depth int, globalIdx *int) []any {

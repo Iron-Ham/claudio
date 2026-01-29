@@ -87,6 +87,20 @@ func (m *mockGroup) AddInstance(instanceID string) {
 	m.instances = append(m.instances, instanceID)
 }
 
+func (m *mockGroup) GetInstances() []string {
+	return m.instances
+}
+
+func (m *mockGroup) RemoveInstance(instanceID string) {
+	filtered := make([]string, 0, len(m.instances))
+	for _, id := range m.instances {
+		if id != instanceID {
+			filtered = append(filtered, id)
+		}
+	}
+	m.instances = filtered
+}
+
 // Tests
 
 func TestNewCoordinator(t *testing.T) {
@@ -1419,13 +1433,24 @@ type mockGroupWithSubGroups struct {
 	mockGroup
 	subGroups    map[string]GroupInterface
 	subGroupByID map[string]GroupInterface
+
+	// Track MoveSubGroupUnder calls for test verification
+	moveSubGroupUnderCalls []moveSubGroupUnderCall
+}
+
+// moveSubGroupUnderCall records a call to MoveSubGroupUnder for test assertions
+type moveSubGroupUnderCall struct {
+	SubGroupID string
+	ParentID   string
+	ParentName string
 }
 
 func newMockGroupWithSubGroups() *mockGroupWithSubGroups {
 	return &mockGroupWithSubGroups{
-		mockGroup:    mockGroup{instances: []string{}},
-		subGroups:    make(map[string]GroupInterface),
-		subGroupByID: make(map[string]GroupInterface),
+		mockGroup:              mockGroup{instances: []string{}},
+		subGroups:              make(map[string]GroupInterface),
+		subGroupByID:           make(map[string]GroupInterface),
+		moveSubGroupUnderCalls: []moveSubGroupUnderCall{},
 	}
 }
 
@@ -1450,16 +1475,22 @@ func (m *mockGroupWithSubGroups) GetSubGroupByID(id string) GroupInterface {
 }
 
 func (m *mockGroupWithSubGroups) MoveSubGroupUnder(subGroupID, parentID, parentName string) bool {
-	// For testing, just return true if the sub-group exists
+	// Record the call for test verification
+	m.moveSubGroupUnderCalls = append(m.moveSubGroupUnderCalls, moveSubGroupUnderCall{
+		SubGroupID: subGroupID,
+		ParentID:   parentID,
+		ParentName: parentName,
+	})
+
+	// Return true if the sub-group exists
 	if _, ok := m.subGroupByID[subGroupID]; ok {
 		return true
 	}
 	return false
 }
 
-func TestCoordinator_GetOrCreateRoundSubGroup_EmptyGroupIDFallback(t *testing.T) {
-	// Test that when session.GroupID is empty, the session.ID is used as fallback
-	// to prevent malformed sub-group IDs like "-round-1"
+func TestCoordinator_GetCurrentRoundGroup_EmptyGroupIDFallback(t *testing.T) {
+	// Test that current round instances go directly in the main group (no sub-group)
 
 	advSession := NewSession("test-session-123", "test task", DefaultConfig())
 	// Ensure GroupID is empty
@@ -1475,28 +1506,22 @@ func TestCoordinator_GetOrCreateRoundSubGroup_EmptyGroupIDFallback(t *testing.T)
 
 	mockGroup := newMockGroupWithSubGroups()
 
-	// Call getOrCreateRoundSubGroup
-	subGroup, subGroupID := coord.getOrCreateRoundSubGroup(mockGroup, 1)
+	// Call getCurrentRoundGroup
+	resultGroup := coord.getCurrentRoundGroup(mockGroup, 1)
 
-	// Verify the sub-group was created
-	if subGroup == nil {
-		t.Fatal("expected sub-group to be created")
+	// Current round's instances go in the main group (which is returned)
+	if resultGroup == nil {
+		t.Fatal("expected group to be returned")
 	}
 
-	// Verify the sub-group ID uses session.ID as fallback (not empty string)
-	expectedID := "test-session-123-round-1"
-	if subGroupID != expectedID {
-		t.Errorf("subGroupID = %q, want %q", subGroupID, expectedID)
-	}
-
-	// Verify ID doesn't start with "-" (which would indicate empty prefix)
-	if len(subGroupID) > 0 && subGroupID[0] == '-' {
-		t.Errorf("subGroupID should not start with '-': got %q", subGroupID)
+	// Should return the main group directly
+	if resultGroup != mockGroup {
+		t.Error("expected main group to be returned for current round")
 	}
 }
 
-func TestCoordinator_GetOrCreateRoundSubGroup_WithGroupID(t *testing.T) {
-	// Test that when session.GroupID is set, it is used
+func TestCoordinator_GetCurrentRoundGroup_WithGroupID(t *testing.T) {
+	// Test that current round instances go in the main group regardless of GroupID
 
 	advSession := NewSession("test-session-123", "test task", DefaultConfig())
 	advSession.GroupID = "adv-group-456"
@@ -1511,20 +1536,21 @@ func TestCoordinator_GetOrCreateRoundSubGroup_WithGroupID(t *testing.T) {
 
 	mockGroup := newMockGroupWithSubGroups()
 
-	subGroup, subGroupID := coord.getOrCreateRoundSubGroup(mockGroup, 2)
+	resultGroup := coord.getCurrentRoundGroup(mockGroup, 2)
 
-	if subGroup == nil {
-		t.Fatal("expected sub-group to be created")
+	// Current round's instances go in the main group (which is returned)
+	if resultGroup == nil {
+		t.Fatal("expected group to be returned")
 	}
 
-	expectedID := "adv-group-456-round-2"
-	if subGroupID != expectedID {
-		t.Errorf("subGroupID = %q, want %q", subGroupID, expectedID)
+	// Should return the main group directly
+	if resultGroup != mockGroup {
+		t.Error("expected main group to be returned for current round")
 	}
 }
 
-func TestCoordinator_GetOrCreateRoundSubGroup_ExistingSubGroup(t *testing.T) {
-	// Test that existing sub-groups are reused
+func TestCoordinator_GetCurrentRoundGroup_Idempotent(t *testing.T) {
+	// Test that calling getCurrentRoundGroup multiple times returns the same result
 
 	advSession := NewSession("test-session-123", "test task", DefaultConfig())
 	advSession.GroupID = "adv-group-456"
@@ -1539,22 +1565,21 @@ func TestCoordinator_GetOrCreateRoundSubGroup_ExistingSubGroup(t *testing.T) {
 
 	mockGroup := newMockGroupWithSubGroups()
 
-	// Create sub-group first time
-	subGroup1, subGroupID1 := coord.getOrCreateRoundSubGroup(mockGroup, 1)
+	// Call getCurrentRoundGroup multiple times
+	resultGroup1 := coord.getCurrentRoundGroup(mockGroup, 1)
+	resultGroup2 := coord.getCurrentRoundGroup(mockGroup, 1)
 
-	// Get same sub-group second time
-	subGroup2, subGroupID2 := coord.getOrCreateRoundSubGroup(mockGroup, 1)
-
-	if subGroupID1 != subGroupID2 {
-		t.Errorf("subGroupIDs should match: %q vs %q", subGroupID1, subGroupID2)
+	if resultGroup1 != resultGroup2 {
+		t.Error("getCurrentRoundGroup should return the same group on repeated calls")
 	}
 
-	if subGroup1 != subGroup2 {
-		t.Error("should return the same sub-group instance")
+	// Both should be the main group
+	if resultGroup1 != mockGroup {
+		t.Error("expected main group to be returned")
 	}
 }
 
-func TestCoordinator_GetOrCreateRoundSubGroup_GroupWithoutSubGroupSupport(t *testing.T) {
+func TestCoordinator_GetCurrentRoundGroup_GroupWithoutSubGroupSupport(t *testing.T) {
 	// Test that groups without sub-group support return the main group
 
 	advSession := NewSession("test-session-123", "test task", DefaultConfig())
@@ -1570,16 +1595,11 @@ func TestCoordinator_GetOrCreateRoundSubGroup_GroupWithoutSubGroupSupport(t *tes
 	// Use mockGroup which doesn't implement GroupWithSubGroupsInterface
 	basicGroup := &mockGroup{}
 
-	subGroup, subGroupID := coord.getOrCreateRoundSubGroup(basicGroup, 1)
+	resultGroup := coord.getCurrentRoundGroup(basicGroup, 1)
 
 	// Should return the original group
-	if subGroup != basicGroup {
+	if resultGroup != basicGroup {
 		t.Error("should return the original group when sub-groups not supported")
-	}
-
-	// SubGroupID should be empty
-	if subGroupID != "" {
-		t.Errorf("subGroupID should be empty when sub-groups not supported, got %q", subGroupID)
 	}
 }
 
@@ -2104,4 +2124,330 @@ func TestCoordinator_RestartStuckRole_PreservesStateOnFailure(t *testing.T) {
 	// Note: Phase transitions to PhaseImplementing before the error occurs in StartImplementer,
 	// so we can't rely on phase remaining PhaseStuck. The key invariant is that Error and
 	// StuckRole are preserved so the user can see what happened and retry.
+}
+
+// Tests for getCurrentRoundGroup and movePreviousRoundInstancesToSubGroup
+
+func TestCoordinator_GetCurrentRoundGroup_Round1(t *testing.T) {
+	// For round 1, getCurrentRoundGroup should return the main group without
+	// calling movePreviousRoundInstancesToSubGroup
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.GroupID = "adv-group-1"
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	mainGroup := newMockGroupWithSubGroups()
+
+	result := coord.getCurrentRoundGroup(mainGroup, 1)
+
+	// Should return the main group
+	if result != mainGroup {
+		t.Error("round 1 should return the main group directly")
+	}
+
+	// No sub-groups should be created for round 1
+	if len(mainGroup.subGroups) != 0 {
+		t.Errorf("no sub-groups should be created for round 1, got %d", len(mainGroup.subGroups))
+	}
+}
+
+func TestCoordinator_GetCurrentRoundGroup_Round2_TriggersMoveOperation(t *testing.T) {
+	// For round 2, getCurrentRoundGroup should call movePreviousRoundInstancesToSubGroup
+	// to move round 1 instances to a sub-group
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.GroupID = "adv-group-1"
+	advSession.ID = "session-123"
+
+	// Add round 1 to history with instance IDs
+	advSession.History = []Round{
+		{
+			Round:         1,
+			ImplementerID: "impl-1",
+			ReviewerID:    "reviewer-1",
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	mainGroup := newMockGroupWithSubGroups()
+	// Add round 1 instances to main group
+	mainGroup.AddInstance("impl-1")
+	mainGroup.AddInstance("reviewer-1")
+
+	result := coord.getCurrentRoundGroup(mainGroup, 2)
+
+	// Should return the main group
+	if result == nil {
+		t.Fatal("expected non-nil group")
+	}
+
+	// Round 1 instances should be moved to sub-group
+	// The main group should no longer have round 1 instances
+	for _, instID := range mainGroup.GetInstances() {
+		if instID == "impl-1" || instID == "reviewer-1" {
+			t.Errorf("round 1 instance %q should have been moved from main group", instID)
+		}
+	}
+
+	// SubGroupID should be recorded in history
+	if advSession.History[0].SubGroupID != "adv-group-1-round-1" {
+		t.Errorf("expected SubGroupID = %q, got %q", "adv-group-1-round-1", advSession.History[0].SubGroupID)
+	}
+}
+
+func TestCoordinator_MovePreviousRoundInstancesToSubGroup_NoSubGroupSupport(t *testing.T) {
+	// When the group doesn't support sub-groups, the function should return early
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.GroupID = "adv-group-1"
+	advSession.History = []Round{
+		{
+			Round:         1,
+			ImplementerID: "impl-1",
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	// Use basic mockGroup that doesn't implement GroupWithSubGroupsInterface
+	basicGroup := &mockGroup{instances: []string{"impl-1"}}
+
+	// This should not panic and should leave instances unchanged
+	coord.movePreviousRoundInstancesToSubGroup(basicGroup, 1)
+
+	// Instance should still be in the group
+	if len(basicGroup.GetInstances()) != 1 || basicGroup.GetInstances()[0] != "impl-1" {
+		t.Error("instances should be unchanged when sub-groups not supported")
+	}
+}
+
+func TestCoordinator_MovePreviousRoundInstancesToSubGroup_EmptyHistory(t *testing.T) {
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.GroupID = "adv-group-1"
+	advSession.History = []Round{} // Empty history
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	mainGroup := newMockGroupWithSubGroups()
+	mainGroup.AddInstance("some-instance")
+
+	// Should return early without doing anything
+	coord.movePreviousRoundInstancesToSubGroup(mainGroup, 1)
+
+	// Instance should still be in main group
+	if len(mainGroup.GetInstances()) != 1 {
+		t.Error("instances should be unchanged with empty history")
+	}
+}
+
+func TestCoordinator_MovePreviousRoundInstancesToSubGroup_InvalidRound(t *testing.T) {
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.GroupID = "adv-group-1"
+	advSession.History = []Round{
+		{Round: 1, ImplementerID: "impl-1"},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	mainGroup := newMockGroupWithSubGroups()
+	mainGroup.AddInstance("impl-1")
+
+	// Round 0 (invalid) should return early
+	coord.movePreviousRoundInstancesToSubGroup(mainGroup, 0)
+	if len(mainGroup.GetInstances()) != 1 {
+		t.Error("instances should be unchanged for round 0")
+	}
+
+	// Round 5 (beyond history) should return early
+	coord.movePreviousRoundInstancesToSubGroup(mainGroup, 5)
+	if len(mainGroup.GetInstances()) != 1 {
+		t.Error("instances should be unchanged for round beyond history")
+	}
+}
+
+func TestCoordinator_MovePreviousRoundInstancesToSubGroup_NoInstances(t *testing.T) {
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.GroupID = "adv-group-1"
+	// History entry with no instance IDs
+	advSession.History = []Round{
+		{
+			Round:         1,
+			ImplementerID: "",
+			ReviewerID:    "",
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	mainGroup := newMockGroupWithSubGroups()
+
+	// Should return early without creating sub-groups
+	coord.movePreviousRoundInstancesToSubGroup(mainGroup, 1)
+
+	// No sub-groups should be created
+	if len(mainGroup.subGroups) != 0 {
+		t.Errorf("no sub-groups should be created when there are no instances, got %d", len(mainGroup.subGroups))
+	}
+}
+
+func TestCoordinator_MovePreviousRoundInstancesToSubGroup_UsesSessionIDWhenGroupIDEmpty(t *testing.T) {
+	advSession := NewSession("test-session-id", "test task", DefaultConfig())
+	advSession.GroupID = "" // Empty GroupID, should fallback to session.ID
+	advSession.History = []Round{
+		{
+			Round:         1,
+			ImplementerID: "impl-1",
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	mainGroup := newMockGroupWithSubGroups()
+	mainGroup.AddInstance("impl-1")
+
+	coord.movePreviousRoundInstancesToSubGroup(mainGroup, 1)
+
+	// The sub-group ID should use session.ID as prefix
+	expectedSubGroupID := "test-session-id-round-1"
+	if advSession.History[0].SubGroupID != expectedSubGroupID {
+		t.Errorf("expected SubGroupID = %q, got %q", expectedSubGroupID, advSession.History[0].SubGroupID)
+	}
+}
+
+func TestCoordinator_MovePreviousRoundInstancesToSubGroup_OnlyImplementer(t *testing.T) {
+	// Test when only implementer ran (reviewer was never started)
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.GroupID = "adv-group-1"
+	advSession.History = []Round{
+		{
+			Round:         1,
+			ImplementerID: "impl-1",
+			ReviewerID:    "", // No reviewer
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	mainGroup := newMockGroupWithSubGroups()
+	mainGroup.AddInstance("impl-1")
+
+	coord.movePreviousRoundInstancesToSubGroup(mainGroup, 1)
+
+	// Implementer should be moved to sub-group
+	if len(mainGroup.GetInstances()) != 0 {
+		t.Errorf("main group should be empty, got %v", mainGroup.GetInstances())
+	}
+
+	// Sub-group should be created with the implementer
+	subGroup := mainGroup.GetSubGroupByName("Round 1")
+	if subGroup == nil {
+		t.Fatal("expected sub-group 'Round 1' to be created")
+	}
+
+	subGroupInstances := subGroup.GetInstances()
+	if len(subGroupInstances) != 1 || subGroupInstances[0] != "impl-1" {
+		t.Errorf("expected sub-group to have impl-1, got %v", subGroupInstances)
+	}
+}
+
+func TestCoordinator_MovePreviousRoundInstancesToSubGroup_MovesToPreviousRoundsContainer(t *testing.T) {
+	// Test that the round sub-group is moved under "Previous Rounds" container
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.GroupID = "adv-group-1"
+	advSession.History = []Round{
+		{
+			Round:         1,
+			ImplementerID: "impl-1",
+			ReviewerID:    "reviewer-1",
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	mainGroup := newMockGroupWithSubGroups()
+	mainGroup.AddInstance("impl-1")
+	mainGroup.AddInstance("reviewer-1")
+
+	coord.movePreviousRoundInstancesToSubGroup(mainGroup, 1)
+
+	// Verify SubGroupID is recorded in history
+	if advSession.History[0].SubGroupID == "" {
+		t.Error("SubGroupID should be recorded in history")
+	}
+
+	// Verify MoveSubGroupUnder was called with correct parameters
+	if len(mainGroup.moveSubGroupUnderCalls) != 1 {
+		t.Fatalf("expected 1 MoveSubGroupUnder call, got %d", len(mainGroup.moveSubGroupUnderCalls))
+	}
+
+	call := mainGroup.moveSubGroupUnderCalls[0]
+	expectedSubGroupID := "adv-group-1-round-1"
+	expectedParentID := "adv-group-1-previous-rounds"
+	expectedParentName := PreviousRoundsGroupName
+
+	if call.SubGroupID != expectedSubGroupID {
+		t.Errorf("MoveSubGroupUnder SubGroupID = %q, want %q", call.SubGroupID, expectedSubGroupID)
+	}
+	if call.ParentID != expectedParentID {
+		t.Errorf("MoveSubGroupUnder ParentID = %q, want %q", call.ParentID, expectedParentID)
+	}
+	if call.ParentName != expectedParentName {
+		t.Errorf("MoveSubGroupUnder ParentName = %q, want %q", call.ParentName, expectedParentName)
+	}
 }

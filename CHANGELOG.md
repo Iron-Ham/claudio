@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Adversarial Mode UI Enhancement** - Current round instances in adversarial mode now appear directly in the main adversarial group header instead of being nested under a "[Round X]" sub-group. The group header displays round information inline (e.g., "Refactor auth (Round 3) [2/2]"), making it immediately visible which round is active. Previous rounds are still organized under the "Previous Rounds" container for historical reference. This flattens the UI for the current round while preserving full round history navigation.
+
 ### Removed
 
 - **`claudio tripleshot` CLI Command** - The standalone `claudio tripleshot` command has been removed. TripleShot mode is now exclusively accessed through the TUI via the `:tripleshot` command (or aliases `:triple`, `:3shot`). This consolidates all tripleshot functionality within the standard TUI, providing a more consistent user experience. To use tripleshot, run `claudio start` and then use `:tripleshot` in command mode.

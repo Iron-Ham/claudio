@@ -36,6 +36,8 @@ type InstanceInterface interface {
 // GroupInterface defines the methods needed from an InstanceGroup.
 type GroupInterface interface {
 	AddInstance(instanceID string)
+	GetInstances() []string
+	RemoveInstance(instanceID string)
 }
 
 // GroupWithSubGroupsInterface extends GroupInterface with sub-group support.
@@ -295,64 +297,77 @@ func (c *Coordinator) notifyComplete(success bool, summary string) {
 // PreviousRoundsGroupName is the display name for the "Previous Rounds" container group.
 const PreviousRoundsGroupName = "Previous Rounds"
 
-// getOrCreateRoundSubGroup gets or creates a sub-group for the given round.
-// If the group supports sub-groups, it creates a "Round N" sub-group.
-// Otherwise, it returns the main group.
-//
-// When round > 1, this also moves the previous round's sub-group into a
-// "Previous Rounds" container to reduce visual clutter.
-func (c *Coordinator) getOrCreateRoundSubGroup(advGroup GroupInterface, round int) (GroupInterface, string) {
+// getCurrentRoundGroup returns the group where current round's instances should be added.
+// Current round instances are added directly to the main adversarial group (not a sub-group).
+// When round > 1, this first moves the previous round's instances to a sub-group.
+func (c *Coordinator) getCurrentRoundGroup(advGroup GroupInterface, round int) GroupInterface {
+	// For round > 1, first move previous round's instances to a sub-group
+	if round > 1 {
+		c.movePreviousRoundInstancesToSubGroup(advGroup, round-1)
+	}
+
+	// Current round's instances go directly in the main group
+	return advGroup
+}
+
+// movePreviousRoundInstancesToSubGroup moves the previous round's instances from the main
+// group into a "Round N" sub-group, then moves that sub-group under "Previous Rounds".
+// This keeps the main group clean with only current round instances visible.
+func (c *Coordinator) movePreviousRoundInstancesToSubGroup(advGroup GroupInterface, prevRound int) {
 	// Check if the group supports sub-groups
 	groupWithSubGroups, ok := advGroup.(GroupWithSubGroupsInterface)
 	if !ok {
-		// Group doesn't support sub-groups, use main group
-		return advGroup, ""
+		return
 	}
 
-	subGroupName := fmt.Sprintf("Round %d", round)
-
-	// Build sub-group ID with fallback for empty GroupID
 	session := c.Session()
 	groupIDPrefix := session.GroupID
 	if groupIDPrefix == "" {
 		groupIDPrefix = session.ID
 	}
-	subGroupID := fmt.Sprintf("%s-round-%d", groupIDPrefix, round)
 
-	// Check if sub-group already exists
-	if existing := groupWithSubGroups.GetSubGroupByName(subGroupName); existing != nil {
-		return existing, subGroupID
-	}
-
-	// For round > 1, move the previous round into "Previous Rounds" container
-	if round > 1 {
-		c.movePreviousRoundToContainer(groupWithSubGroups, groupIDPrefix, round-1)
-	}
-
-	// Create new sub-group for the current round
-	subGroup := groupWithSubGroups.GetOrCreateSubGroup(subGroupID, subGroupName)
-
-	return subGroup, subGroupID
-}
-
-// movePreviousRoundToContainer moves a completed round's sub-group into the
-// "Previous Rounds" container group. This reduces navigation clutter by
-// condensing all previous rounds into a single collapsible group.
-func (c *Coordinator) movePreviousRoundToContainer(group GroupWithSubGroupsInterface, groupIDPrefix string, prevRound int) {
-	prevRoundSubGroupID := fmt.Sprintf("%s-round-%d", groupIDPrefix, prevRound)
-	previousRoundsID := fmt.Sprintf("%s-previous-rounds", groupIDPrefix)
-
-	// Check if the previous round's sub-group exists at the top level
-	if group.GetSubGroupByID(prevRoundSubGroupID) == nil {
-		// Previous round sub-group doesn't exist or was already moved
+	// Get instance IDs from the previous round's history
+	if prevRound <= 0 || prevRound > len(session.History) {
 		return
 	}
+	prevRoundHistory := session.History[prevRound-1]
 
-	// Move the previous round into "Previous Rounds" container
-	if group.MoveSubGroupUnder(prevRoundSubGroupID, previousRoundsID, PreviousRoundsGroupName) {
-		c.logger.Info("moved previous round to container",
+	// Collect instance IDs from the previous round
+	var prevInstanceIDs []string
+	if prevRoundHistory.ImplementerID != "" {
+		prevInstanceIDs = append(prevInstanceIDs, prevRoundHistory.ImplementerID)
+	}
+	if prevRoundHistory.ReviewerID != "" {
+		prevInstanceIDs = append(prevInstanceIDs, prevRoundHistory.ReviewerID)
+	}
+
+	if len(prevInstanceIDs) == 0 {
+		return // No instances to move
+	}
+
+	// Create a sub-group for the previous round
+	subGroupID := fmt.Sprintf("%s-round-%d", groupIDPrefix, prevRound)
+	subGroupName := fmt.Sprintf("Round %d", prevRound)
+	prevRoundSubGroup := groupWithSubGroups.GetOrCreateSubGroup(subGroupID, subGroupName)
+
+	// Move instances from main group to the sub-group
+	for _, instID := range prevInstanceIDs {
+		// Remove from main group
+		advGroup.RemoveInstance(instID)
+		// Add to sub-group
+		prevRoundSubGroup.AddInstance(instID)
+	}
+
+	// Update the history to record the sub-group ID
+	session.History[prevRound-1].SubGroupID = subGroupID
+
+	// Move the sub-group under "Previous Rounds" container
+	previousRoundsID := fmt.Sprintf("%s-previous-rounds", groupIDPrefix)
+	if groupWithSubGroups.MoveSubGroupUnder(subGroupID, previousRoundsID, PreviousRoundsGroupName) {
+		c.logger.Info("moved previous round instances to container",
 			"round", prevRound,
-			"sub_group_id", prevRoundSubGroupID,
+			"instance_count", len(prevInstanceIDs),
+			"sub_group_id", subGroupID,
 			"container_id", previousRoundsID,
 		)
 	}
@@ -410,11 +425,11 @@ func (c *Coordinator) StartImplementer() error {
 		advGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
 	}
 
-	// Get or create a sub-group for this round
-	var roundGroup GroupInterface
-	var subGroupID string
+	// Get the group for the current round - instances go directly in the main group
+	// (previous rounds are moved to sub-groups automatically when starting a new round)
+	var targetGroup GroupInterface
 	if advGroup != nil {
-		roundGroup, subGroupID = c.getOrCreateRoundSubGroup(advGroup, round)
+		targetGroup = c.getCurrentRoundGroup(advGroup, round)
 	}
 
 	// Create instance for implementer
@@ -439,16 +454,16 @@ func (c *Coordinator) StartImplementer() error {
 		}
 	}
 
-	// Add instance to the round's sub-group (or main group if sub-groups not supported)
-	if roundGroup != nil {
-		roundGroup.AddInstance(inst.GetID())
+	// Add instance to the main adversarial group (current round instances are at top level)
+	if targetGroup != nil {
+		targetGroup.AddInstance(inst.GetID())
 	}
 
 	// Store implementer ID in both session and current round history
+	// Note: SubGroupID is no longer set for current round since instances are in main group
 	session.ImplementerID = inst.GetID()
 	if len(session.History) > 0 {
 		session.History[len(session.History)-1].ImplementerID = inst.GetID()
-		session.History[len(session.History)-1].SubGroupID = subGroupID
 	}
 
 	// Transition to implementing phase
@@ -497,10 +512,11 @@ func (c *Coordinator) StartReviewer(increment *IncrementFile) error {
 		advGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
 	}
 
-	// Get the round's sub-group (should already exist from implementer)
-	var roundGroup GroupInterface
+	// Get the main group for adding the reviewer instance
+	// (current round instances go directly in the main adversarial group)
+	var targetGroup GroupInterface
 	if advGroup != nil {
-		roundGroup, _ = c.getOrCreateRoundSubGroup(advGroup, round)
+		targetGroup = c.getCurrentRoundGroup(advGroup, round)
 	}
 
 	// Create reviewer instance in the same worktree
@@ -509,9 +525,9 @@ func (c *Coordinator) StartReviewer(increment *IncrementFile) error {
 		return fmt.Errorf("failed to create reviewer instance: %w", err)
 	}
 
-	// Add instance to the round's sub-group (or main group if sub-groups not supported)
-	if roundGroup != nil {
-		roundGroup.AddInstance(inst.GetID())
+	// Add instance to the main adversarial group (current round instances are at top level)
+	if targetGroup != nil {
+		targetGroup.AddInstance(inst.GetID())
 	}
 
 	// Store reviewer ID in both session and current round history
