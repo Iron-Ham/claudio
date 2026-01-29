@@ -298,14 +298,22 @@ func (m *Monitor) ProcessOutput(instanceID string, output []byte, outputHash str
 	oldState := inst.currentState
 	stateChanged := newState != oldState
 
-	// Track output changes
+	// Track output changes and working indicators
 	outputChanged := outputHash != inst.lastOutputHash
+	hasWorkingIndicators := m.detector.HasWorkingIndicators(output)
+
 	if outputChanged {
 		inst.lastActivityTime = time.Now()
 		inst.lastOutputHash = outputHash
 		inst.repeatedOutputCount = 0
 	} else if m.config.StaleDetection {
-		inst.repeatedOutputCount++
+		// Only increment stale counter if no working indicators are present.
+		// If Claude is showing spinners, "Reading...", etc., it's actively working
+		// even if the output hash hasn't changed (e.g., spinner is static).
+		// This prevents false positives during Claude's thinking phase.
+		if !hasWorkingIndicators {
+			inst.repeatedOutputCount++
+		}
 	}
 
 	// Update state
@@ -372,6 +380,9 @@ func (m *Monitor) CheckTimeouts(instanceID string) *TimeoutType {
 	}
 
 	// Check stale detection (repeated identical output)
+	// Note: The stale counter is only incremented in ProcessOutput when no
+	// working indicators are present, so this check is already filtered to
+	// cases where Claude is not actively showing working patterns.
 	if triggeredTimeout == nil && m.config.StaleDetection && inst.repeatedOutputCount > m.config.StaleThreshold {
 		t := TimeoutStale
 		triggeredTimeout = &t

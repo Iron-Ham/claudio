@@ -501,6 +501,49 @@ func TestMonitor_CheckTimeouts_StaleTimeout(t *testing.T) {
 	}
 }
 
+func TestMonitor_ProcessOutput_WorkingIndicatorsPreventsStale(t *testing.T) {
+	m := NewMonitor(MonitorConfig{
+		StaleDetection: true,
+		StaleThreshold: 3, // Low threshold for quick test
+	})
+
+	m.Start("inst-1")
+
+	// Output with working indicators (spinner) - should NOT increment stale counter
+	// even when output hash doesn't change
+	workingOutput := []byte("Analyzing the code... ⠋")
+	for i := 0; i < 5; i++ {
+		m.ProcessOutput("inst-1", workingOutput, "samehash")
+	}
+
+	// Should not trigger stale timeout because working indicators are present
+	result := m.CheckTimeouts("inst-1")
+	if result != nil {
+		t.Errorf("Expected no timeout when working indicators present, got %v", *result)
+	}
+
+	// Now test without working indicators - should increment stale counter
+	m2 := NewMonitor(MonitorConfig{
+		StaleDetection: true,
+		StaleThreshold: 3,
+	})
+	m2.Start("inst-2")
+
+	// Output without working indicators - should increment stale counter
+	normalOutput := []byte("Some static output")
+	for i := 0; i < 5; i++ {
+		m2.ProcessOutput("inst-2", normalOutput, "samehash2")
+	}
+
+	// Should trigger stale timeout because no working indicators
+	result2 := m2.CheckTimeouts("inst-2")
+	if result2 == nil {
+		t.Error("Expected stale timeout when no working indicators present")
+	} else if *result2 != TimeoutStale {
+		t.Errorf("Expected TimeoutStale, got %v", *result2)
+	}
+}
+
 func TestMonitor_CheckTimeouts_NoTimeout(t *testing.T) {
 	m := NewMonitor(MonitorConfig{
 		ActivityTimeoutMinutes:   60,  // 1 hour
