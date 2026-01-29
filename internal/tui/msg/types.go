@@ -134,6 +134,13 @@ type TripleShotCheckResultMsg struct {
 	// AttemptErrors maps attempt index to any errors encountered during check
 	AttemptErrors map[int]error
 
+	// ReviewResults maps attempt index to review completion status (true = file exists)
+	// Only populated during PhaseAdversarialReview
+	ReviewResults map[int]bool
+
+	// ReviewErrors maps attempt index to any errors encountered checking review files
+	ReviewErrors map[int]error
+
 	// JudgeComplete indicates whether the judge completion file exists
 	JudgeComplete bool
 
@@ -158,6 +165,14 @@ type TripleShotJudgeProcessedMsg struct {
 	GroupID     string
 	Err         error
 	TaskPreview string
+}
+
+// TripleShotReviewProcessedMsg contains the result of processing an adversarial review file.
+// This is returned by ProcessAdversarialReviewCompletionAsync after reading and parsing the file.
+type TripleShotReviewProcessedMsg struct {
+	GroupID      string
+	AttemptIndex int
+	Err          error
 }
 
 // PlanFileCheckResultMsg contains the result of async plan file checking.

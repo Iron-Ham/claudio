@@ -670,6 +670,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle async judge completion processing result
 		return m.handleTripleShotJudgeProcessed(msg)
 
+	case tuimsg.TripleShotReviewProcessedMsg:
+		// Handle async adversarial review processing result
+		return m.handleTripleShotReviewProcessed(msg)
+
 	case tuimsg.PlanFileCheckResultMsg:
 		// Handle async plan file check result (single-pass mode)
 		return m.handlePlanFileCheckResult(msg)
@@ -1707,6 +1711,7 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	cfg := config.Get()
 	tripleConfig.AutoApprove = cfg.Tripleshot.AutoApprove
 	tripleConfig.Adversarial = cfg.Tripleshot.Adversarial
+	tripleConfig.MaxAdversarialRounds = cfg.Adversarial.MaxIterations
 	tripleSession := orchestrator.NewTripleShotSession(task, tripleConfig)
 
 	// Link group ID to session for multi-tripleshot support

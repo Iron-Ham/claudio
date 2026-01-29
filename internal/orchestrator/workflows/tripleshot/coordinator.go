@@ -663,6 +663,17 @@ func (c *Coordinator) ProcessAdversarialReviewCompletion(attemptIndex int) error
 		return err
 	}
 
+	// Clean up review file when done (regardless of outcome)
+	defer func() {
+		if err := removeFile(AdversarialReviewFilePath(attempt.WorktreePath)); err != nil {
+			c.logger.Warn("failed to clean up adversarial review file",
+				"attempt_index", attemptIndex,
+				"worktree_path", attempt.WorktreePath,
+				"error", err,
+			)
+		}
+	}()
+
 	// Store review results
 	attempt.ReviewScore = review.Score
 	attempt.ReviewApproved = review.Approved
@@ -672,34 +683,43 @@ func (c *Coordinator) ProcessAdversarialReviewCompletion(attemptIndex int) error
 			"attempt_index", attemptIndex,
 			"score", review.Score,
 		)
-
-		// Mark the attempt as complete
 		c.notifyAttemptComplete(attemptIndex)
 		c.notifyReviewApproved(attemptIndex, review.Score)
-	} else {
-		c.logger.Info("adversarial review rejected",
-			"attempt_index", attemptIndex,
-			"score", review.Score,
-			"issues_count", len(review.Issues),
-		)
-
-		// For now, treat rejection as failure
-		// A more sophisticated implementation could restart the implementer with feedback
-		c.notifyAttemptFailed(attemptIndex, fmt.Sprintf("Review rejected (score: %d/10): %s", review.Score, review.Summary))
-		c.notifyReviewRejected(attemptIndex, review.Score, review.Issues)
+		return c.checkAllAttemptsAndProceed()
 	}
 
-	// Clean up the review file
-	if err := removeFile(AdversarialReviewFilePath(attempt.WorktreePath)); err != nil {
-		c.logger.Warn("failed to clean up adversarial review file",
+	// Review rejected
+	c.logger.Info("adversarial review rejected",
+		"attempt_index", attemptIndex,
+		"score", review.Score,
+		"issues_count", len(review.Issues),
+	)
+
+	maxRounds := session.Config.MaxAdversarialRounds
+	if maxRounds <= 0 {
+		maxRounds = 3 // Fallback default
+	}
+
+	if attempt.ReviewRound >= maxRounds {
+		// Exhausted iterations - permanent failure
+		c.notifyAttemptFailed(attemptIndex,
+			fmt.Sprintf("Exhausted %d adversarial rounds without approval (final score: %d/10)",
+				maxRounds, review.Score))
+		c.notifyReviewRejected(attemptIndex, review.Score, review.Issues)
+		return c.checkAllAttemptsAndProceed()
+	}
+
+	// Restart implementer with feedback
+	c.notifyReviewRejected(attemptIndex, review.Score, review.Issues)
+	if err := c.RestartImplementerWithFeedback(attemptIndex, review); err != nil {
+		c.logger.Error("failed to restart implementer with feedback",
 			"attempt_index", attemptIndex,
-			"worktree_path", attempt.WorktreePath,
 			"error", err,
 		)
+		c.notifyAttemptFailed(attemptIndex, fmt.Sprintf("Failed to restart implementer: %v", err))
 	}
-
-	// Check if we can proceed to judge
-	return c.checkAllAttemptsAndProceed()
+	// Don't check for judge yet - implementer is restarting
+	return nil
 }
 
 // notifyReviewApproved notifies callbacks of review approval
@@ -722,6 +742,73 @@ func (c *Coordinator) notifyReviewRejected(attemptIndex int, score int, issues [
 	if cb != nil && cb.OnReviewRejected != nil {
 		cb.OnReviewRejected(attemptIndex, score, issues)
 	}
+}
+
+// RestartImplementerWithFeedback restarts an implementer instance with feedback from the previous review.
+// This is called when a reviewer rejects an attempt and we haven't exhausted max rounds yet.
+func (c *Coordinator) RestartImplementerWithFeedback(attemptIndex int, review *AdversarialReviewFile) error {
+	session := c.Session()
+	attempt := &session.Attempts[attemptIndex]
+
+	// Increment review round
+	attempt.ReviewRound++
+
+	c.logger.Info("restarting implementer with feedback",
+		"attempt_index", attemptIndex,
+		"new_round", attempt.ReviewRound,
+		"previous_score", review.Score,
+	)
+
+	// Set status back to working
+	attempt.Status = AttemptStatusWorking
+
+	// Build prompt with feedback
+	prompt := FormatImplementerPromptWithFeedback(session.Task, attemptIndex, attempt.ReviewRound, review)
+
+	// Delete the old completion file so we can detect the new one
+	if err := removeFile(CompletionFilePath(attempt.WorktreePath)); err != nil {
+		c.logger.Warn("failed to remove old completion file",
+			"attempt_index", attemptIndex,
+			"error", err,
+		)
+	}
+
+	// Create new instance in the same worktree
+	inst, err := c.orch.AddInstanceToWorktree(c.baseSession, prompt, attempt.WorktreePath, "")
+	if err != nil {
+		return fmt.Errorf("failed to create new implementer instance: %w", err)
+	}
+
+	// Update attempt with new instance ID
+	oldInstanceID := attempt.InstanceID
+	attempt.InstanceID = inst.GetID()
+	attempt.ReviewerID = "" // Clear the old reviewer ID
+
+	// Add new instance to the triple-shot group
+	if tripleGroup := c.findTripleGroup(); tripleGroup != nil {
+		tripleGroup.AddInstance(inst.GetID())
+	}
+
+	// Start the new instance
+	if err := c.orch.StartInstance(inst); err != nil {
+		return fmt.Errorf("failed to start new implementer: %w", err)
+	}
+
+	c.logger.Info("implementer restarted with feedback",
+		"attempt_index", attemptIndex,
+		"old_instance_id", oldInstanceID,
+		"new_instance_id", inst.GetID(),
+		"round", attempt.ReviewRound,
+	)
+
+	c.notifyAttemptStart(attemptIndex, inst.GetID())
+
+	// Persist session state
+	if err := c.orch.SaveSession(); err != nil {
+		c.logger.Error("failed to persist session after restarting implementer", "error", err)
+	}
+
+	return nil
 }
 
 // removeFile is a helper to remove a file, ignoring not-exist errors
