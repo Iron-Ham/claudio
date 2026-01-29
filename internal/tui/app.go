@@ -635,6 +635,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle async rejection-after-approval processing result
 		return m.handleAdversarialRejectionAfterApprovalProcessed(msg)
 
+	case tuimsg.AdversarialStuckMsg:
+		// Handle stuck instance detection result
+		return m.handleAdversarialStuck(msg)
+
+	case tuimsg.AdversarialRestartMsg:
+		// Handle stuck role restart result
+		return m.handleAdversarialRestart(msg)
+
 	// Ralph loop message handlers
 	case tuimsg.RalphIterationStartedMsg:
 		return m.handleRalphIterationStarted(msg)

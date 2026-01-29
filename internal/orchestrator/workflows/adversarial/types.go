@@ -27,6 +27,18 @@ const (
 	PhaseComplete Phase = "complete"
 	// PhaseFailed - something went wrong
 	PhaseFailed Phase = "failed"
+	// PhaseStuck - an instance completed without writing its required file
+	PhaseStuck Phase = "stuck"
+)
+
+// StuckRole indicates which role (implementer/reviewer) is stuck
+type StuckRole string
+
+const (
+	// StuckRoleImplementer - the implementer completed without writing increment file
+	StuckRoleImplementer StuckRole = "implementer"
+	// StuckRoleReviewer - the reviewer completed without writing review file
+	StuckRoleReviewer StuckRole = "reviewer"
 )
 
 // Config holds configuration for an adversarial review session.

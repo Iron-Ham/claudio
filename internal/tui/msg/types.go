@@ -221,6 +221,20 @@ type AdversarialRejectionAfterApprovalMsg struct {
 	Err     error
 }
 
+// AdversarialStuckMsg indicates that an adversarial instance got stuck
+// (completed without writing its required file).
+type AdversarialStuckMsg struct {
+	GroupID    string
+	InstanceID string
+	StuckRole  adversarial.StuckRole
+}
+
+// AdversarialRestartMsg is sent when a stuck adversarial role is restarted.
+type AdversarialRestartMsg struct {
+	GroupID string
+	Err     error
+}
+
 // RalphIterationStartedMsg indicates a new ralph iteration has started.
 type RalphIterationStartedMsg struct {
 	GroupID   string

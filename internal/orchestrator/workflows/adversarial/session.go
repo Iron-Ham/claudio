@@ -22,7 +22,8 @@ type Session struct {
 	Created       time.Time  `json:"created"`
 	StartedAt     *time.Time `json:"started_at,omitempty"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-	Error         string     `json:"error,omitempty"` // Error message if failed
+	Error         string     `json:"error,omitempty"`      // Error message if failed
+	StuckRole     string     `json:"stuck_role,omitempty"` // Role that got stuck (implementer/reviewer)
 
 	// History tracks all increments and reviews
 	History []Round `json:"history,omitempty"`

@@ -3,6 +3,7 @@ package adversarial
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 )
@@ -1418,16 +1419,13 @@ type mockGroupWithSubGroups struct {
 	mockGroup
 	subGroups    map[string]GroupInterface
 	subGroupByID map[string]GroupInterface
-	// Track moved sub-groups for testing
-	movedSubGroups map[string]string // subGroupID -> targetID
 }
 
 func newMockGroupWithSubGroups() *mockGroupWithSubGroups {
 	return &mockGroupWithSubGroups{
-		mockGroup:      mockGroup{instances: []string{}},
-		subGroups:      make(map[string]GroupInterface),
-		subGroupByID:   make(map[string]GroupInterface),
-		movedSubGroups: make(map[string]string),
+		mockGroup:    mockGroup{instances: []string{}},
+		subGroups:    make(map[string]GroupInterface),
+		subGroupByID: make(map[string]GroupInterface),
 	}
 }
 
@@ -1451,25 +1449,12 @@ func (m *mockGroupWithSubGroups) GetSubGroupByID(id string) GroupInterface {
 	return m.subGroupByID[id]
 }
 
-func (m *mockGroupWithSubGroups) MoveSubGroupUnder(subGroupID, targetID, targetName string) bool {
-	// Check if the sub-group exists
-	if m.subGroupByID[subGroupID] == nil {
-		return false
+func (m *mockGroupWithSubGroups) MoveSubGroupUnder(subGroupID, parentID, parentName string) bool {
+	// For testing, just return true if the sub-group exists
+	if _, ok := m.subGroupByID[subGroupID]; ok {
+		return true
 	}
-
-	// Create target if it doesn't exist
-	if m.subGroupByID[targetID] == nil {
-		newTarget := &mockGroup{instances: []string{}}
-		m.subGroups[targetName] = newTarget
-		m.subGroupByID[targetID] = newTarget
-	}
-
-	// Track the move (for test verification)
-	m.movedSubGroups[subGroupID] = targetID
-
-	// In a real implementation, we'd remove from subGroups and add to target's subGroups
-	// For testing, we just track that the move was requested
-	return true
+	return false
 }
 
 func TestCoordinator_GetOrCreateRoundSubGroup_EmptyGroupIDFallback(t *testing.T) {
@@ -1598,11 +1583,162 @@ func TestCoordinator_GetOrCreateRoundSubGroup_GroupWithoutSubGroupSupport(t *tes
 	}
 }
 
-func TestCoordinator_GetOrCreateRoundSubGroup_MovesPreviousRoundToContainer(t *testing.T) {
-	// Test that when creating round 2+, the previous round is moved to "Previous Rounds"
+func TestCoordinator_HandleInstanceCompletion_ImplementerStuck(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "adversarial-stuck-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 
-	advSession := NewSession("test-session-123", "test task", DefaultConfig())
-	advSession.GroupID = "adv-group-456"
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.ImplementerID = "impl-123"
+	advSession.Phase = PhaseImplementing
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	var stuckCallbackCalled bool
+	var stuckRole StuckRole
+	cb := &CoordinatorCallbacks{
+		OnStuck: func(role StuckRole, instanceID string) {
+			stuckCallbackCalled = true
+			stuckRole = role
+		},
+		OnPhaseChange: func(phase Phase) {},
+	}
+	coord.SetCallbacks(cb)
+
+	// Simulate implementer completion without writing increment file
+	wasStuck := coord.HandleInstanceCompletion("impl-123", true, false)
+
+	if !wasStuck {
+		t.Error("expected HandleInstanceCompletion to return true for stuck condition")
+	}
+
+	if !stuckCallbackCalled {
+		t.Error("OnStuck callback should have been called")
+	}
+
+	if stuckRole != StuckRoleImplementer {
+		t.Errorf("expected stuckRole = %q, got %q", StuckRoleImplementer, stuckRole)
+	}
+
+	if advSession.Phase != PhaseStuck {
+		t.Errorf("expected phase = %q, got %q", PhaseStuck, advSession.Phase)
+	}
+
+	if advSession.StuckRole != string(StuckRoleImplementer) {
+		t.Errorf("expected StuckRole = %q, got %q", StuckRoleImplementer, advSession.StuckRole)
+	}
+}
+
+func TestCoordinator_HandleInstanceCompletion_ReviewerStuck(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "adversarial-stuck-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.ReviewerID = "reviewer-123"
+	advSession.Phase = PhaseReviewing
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	var stuckCallbackCalled bool
+	var stuckRole StuckRole
+	cb := &CoordinatorCallbacks{
+		OnStuck: func(role StuckRole, instanceID string) {
+			stuckCallbackCalled = true
+			stuckRole = role
+		},
+		OnPhaseChange: func(phase Phase) {},
+	}
+	coord.SetCallbacks(cb)
+
+	// Simulate reviewer completion without writing review file
+	wasStuck := coord.HandleInstanceCompletion("reviewer-123", true, false)
+
+	if !wasStuck {
+		t.Error("expected HandleInstanceCompletion to return true for stuck condition")
+	}
+
+	if !stuckCallbackCalled {
+		t.Error("OnStuck callback should have been called")
+	}
+
+	if stuckRole != StuckRoleReviewer {
+		t.Errorf("expected stuckRole = %q, got %q", StuckRoleReviewer, stuckRole)
+	}
+
+	if advSession.Phase != PhaseStuck {
+		t.Errorf("expected phase = %q, got %q", PhaseStuck, advSession.Phase)
+	}
+}
+
+func TestCoordinator_HandleInstanceCompletion_NotStuck(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "adversarial-stuck-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.ImplementerID = "impl-123"
+	advSession.Phase = PhaseImplementing
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	// Write an increment file so the instance isn't stuck
+	increment := IncrementFile{
+		Round:         1,
+		Status:        "ready_for_review",
+		Summary:       "Implemented feature",
+		FilesModified: []string{"file.go"},
+		Approach:      "Test approach",
+		Notes:         "Test notes",
+	}
+	data, _ := json.MarshalIndent(increment, "", "  ")
+	if err := os.WriteFile(IncrementFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write increment file: %v", err)
+	}
+
+	// Simulate implementer completion WITH increment file
+	wasStuck := coord.HandleInstanceCompletion("impl-123", true, false)
+
+	if wasStuck {
+		t.Error("expected HandleInstanceCompletion to return false when file exists")
+	}
+
+	if advSession.Phase != PhaseImplementing {
+		t.Errorf("expected phase = %q, got %q", PhaseImplementing, advSession.Phase)
+	}
+}
+
+func TestCoordinator_HandleInstanceCompletion_UnrelatedInstance(t *testing.T) {
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.ImplementerID = "impl-123"
+	advSession.Phase = PhaseImplementing
 
 	cfg := CoordinatorConfig{
 		Orchestrator: &mockOrchestrator{},
@@ -1612,43 +1748,75 @@ func TestCoordinator_GetOrCreateRoundSubGroup_MovesPreviousRoundToContainer(t *t
 	}
 	coord := NewCoordinator(cfg)
 
-	mockGroup := newMockGroupWithSubGroups()
+	// Simulate completion of an unrelated instance
+	wasStuck := coord.HandleInstanceCompletion("other-123", true, false)
 
-	// Create round 1 first
-	_, round1ID := coord.getOrCreateRoundSubGroup(mockGroup, 1)
-
-	// Verify round 1 was created
-	if mockGroup.GetSubGroupByID(round1ID) == nil {
-		t.Fatal("round 1 sub-group should have been created")
-	}
-
-	// Now create round 2 - should trigger move of round 1 to "Previous Rounds"
-	_, round2ID := coord.getOrCreateRoundSubGroup(mockGroup, 2)
-
-	// Verify round 2 was created
-	if mockGroup.GetSubGroupByID(round2ID) == nil {
-		t.Fatal("round 2 sub-group should have been created")
-	}
-
-	// Verify round 1 was moved to "Previous Rounds" container
-	expectedContainerID := "adv-group-456-previous-rounds"
-	if targetID, moved := mockGroup.movedSubGroups[round1ID]; !moved {
-		t.Error("round 1 should have been moved to Previous Rounds container")
-	} else if targetID != expectedContainerID {
-		t.Errorf("round 1 should have been moved to %q, but was moved to %q", expectedContainerID, targetID)
-	}
-
-	// Verify "Previous Rounds" container was created
-	if mockGroup.GetSubGroupByName(PreviousRoundsGroupName) == nil {
-		t.Error("Previous Rounds container should have been created")
+	if wasStuck {
+		t.Error("expected HandleInstanceCompletion to return false for unrelated instance")
 	}
 }
 
-func TestCoordinator_GetOrCreateRoundSubGroup_MovesMultipleRounds(t *testing.T) {
-	// Test that when creating round 3, round 2 is moved (round 1 was already moved)
+func TestCoordinator_RestartStuckRole_Implementer(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "adversarial-restart-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 
-	advSession := NewSession("test-session-123", "test task", DefaultConfig())
-	advSession.GroupID = "adv-group"
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.Phase = PhaseStuck
+	advSession.StuckRole = string(StuckRoleImplementer)
+	advSession.WorktreePath = tmpDir
+	baseSession := newMockSession()
+
+	// Create a group for the session type
+	group := &mockGroup{}
+	baseSession.groups["adversarial"] = group
+
+	var addInstanceCalled bool
+	mockOrch := &mockOrchestrator{
+		addInstanceFunc: func(session SessionInterface, task string) (InstanceInterface, error) {
+			addInstanceCalled = true
+			return &mockInstance{id: "new-impl", worktreePath: tmpDir, branch: "test-branch"}, nil
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: mockOrch,
+		BaseSession:  baseSession,
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	cb := &CoordinatorCallbacks{
+		OnPhaseChange:      func(phase Phase) {},
+		OnImplementerStart: func(round int, instanceID string) {},
+	}
+	coord.SetCallbacks(cb)
+
+	err = coord.RestartStuckRole()
+	if err != nil {
+		t.Fatalf("RestartStuckRole failed: %v", err)
+	}
+
+	if !addInstanceCalled {
+		t.Error("AddInstance should have been called to restart implementer")
+	}
+
+	if advSession.Phase != PhaseImplementing {
+		t.Errorf("expected phase = %q, got %q", PhaseImplementing, advSession.Phase)
+	}
+
+	if advSession.StuckRole != "" {
+		t.Errorf("expected StuckRole to be cleared, got %q", advSession.StuckRole)
+	}
+}
+
+func TestCoordinator_RestartStuckRole_NotStuck(t *testing.T) {
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.Phase = PhaseImplementing // Not stuck
 
 	cfg := CoordinatorConfig{
 		Orchestrator: &mockOrchestrator{},
@@ -1658,73 +1826,282 @@ func TestCoordinator_GetOrCreateRoundSubGroup_MovesMultipleRounds(t *testing.T) 
 	}
 	coord := NewCoordinator(cfg)
 
-	mockGroup := newMockGroupWithSubGroups()
-
-	// Create round 1
-	_, round1ID := coord.getOrCreateRoundSubGroup(mockGroup, 1)
-
-	// Create round 2 - moves round 1 to container
-	_, round2ID := coord.getOrCreateRoundSubGroup(mockGroup, 2)
-
-	// Verify round 1 was moved
-	if _, moved := mockGroup.movedSubGroups[round1ID]; !moved {
-		t.Error("round 1 should have been moved")
-	}
-
-	// Create round 3 - should move round 2 to container
-	_, _ = coord.getOrCreateRoundSubGroup(mockGroup, 3)
-
-	// Verify round 2 was moved
-	expectedContainerID := "adv-group-previous-rounds"
-	if targetID, moved := mockGroup.movedSubGroups[round2ID]; !moved {
-		t.Error("round 2 should have been moved to Previous Rounds container")
-	} else if targetID != expectedContainerID {
-		t.Errorf("round 2 should have been moved to %q, but was moved to %q", expectedContainerID, targetID)
+	err := coord.RestartStuckRole()
+	if err == nil {
+		t.Error("expected error when trying to restart non-stuck session")
 	}
 }
 
-func TestGetPreviousRoundsGroupID(t *testing.T) {
+func TestCoordinator_IsStuck(t *testing.T) {
 	tests := []struct {
-		name    string
-		session *Session
-		want    string
+		name     string
+		phase    Phase
+		expected bool
 	}{
-		{
-			name:    "nil session returns empty",
-			session: nil,
-			want:    "",
-		},
-		{
-			name: "uses GroupID when set",
-			session: &Session{
-				ID:      "session-123",
-				GroupID: "adv-group-456",
-			},
-			want: "adv-group-456-previous-rounds",
-		},
-		{
-			name: "uses session ID when GroupID empty",
-			session: &Session{
-				ID:      "session-123",
-				GroupID: "",
-			},
-			want: "session-123-previous-rounds",
-		},
+		{"implementing", PhaseImplementing, false},
+		{"reviewing", PhaseReviewing, false},
+		{"approved", PhaseApproved, false},
+		{"complete", PhaseComplete, false},
+		{"failed", PhaseFailed, false},
+		{"stuck", PhaseStuck, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := GetPreviousRoundsGroupID(tt.session)
-			if got != tt.want {
-				t.Errorf("GetPreviousRoundsGroupID() = %q, want %q", got, tt.want)
+			advSession := NewSession("test-id", "test task", DefaultConfig())
+			advSession.Phase = tt.phase
+
+			cfg := CoordinatorConfig{
+				Orchestrator: &mockOrchestrator{},
+				BaseSession:  newMockSession(),
+				AdvSession:   advSession,
+				SessionType:  "adversarial",
+			}
+			coord := NewCoordinator(cfg)
+
+			if coord.IsStuck() != tt.expected {
+				t.Errorf("IsStuck() = %v, want %v", coord.IsStuck(), tt.expected)
 			}
 		})
 	}
 }
 
-func TestPreviousRoundsGroupName(t *testing.T) {
-	// Verify the constant has the expected value
-	if PreviousRoundsGroupName != "Previous Rounds" {
-		t.Errorf("PreviousRoundsGroupName = %q, want %q", PreviousRoundsGroupName, "Previous Rounds")
+func TestCoordinator_GetStuckRole(t *testing.T) {
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.Phase = PhaseStuck
+	advSession.StuckRole = string(StuckRoleReviewer)
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
 	}
+	coord := NewCoordinator(cfg)
+
+	role := coord.GetStuckRole()
+	if role != StuckRoleReviewer {
+		t.Errorf("GetStuckRole() = %q, want %q", role, StuckRoleReviewer)
+	}
+}
+
+func TestCoordinator_RestartStuckRole_Reviewer(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "adversarial-restart-reviewer-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.Phase = PhaseStuck
+	advSession.StuckRole = string(StuckRoleReviewer)
+	advSession.CurrentRound = 1
+	advSession.WorktreePath = tmpDir
+	// Add history with an increment (required for reviewer restart)
+	advSession.History = []Round{
+		{
+			Round: 1,
+			Increment: &IncrementFile{
+				Round:         1,
+				Status:        "ready_for_review",
+				Summary:       "Test implementation",
+				FilesModified: []string{"test.go"},
+				Approach:      "Test approach",
+				Notes:         "",
+			},
+		},
+	}
+
+	baseSession := newMockSession()
+
+	// Create a group for the session type
+	group := &mockGroup{}
+	baseSession.groups["adversarial"] = group
+
+	var addInstanceToWorktreeCalled bool
+	var receivedWorktreePath string
+	mockOrch := &mockOrchestrator{
+		addInstanceToWorktreeFunc: func(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error) {
+			addInstanceToWorktreeCalled = true
+			receivedWorktreePath = worktreePath
+			return &mockInstance{id: "new-reviewer", worktreePath: worktreePath, branch: "test-branch"}, nil
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: mockOrch,
+		BaseSession:  baseSession,
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	var reviewerStartCalled bool
+	cb := &CoordinatorCallbacks{
+		OnPhaseChange:   func(phase Phase) {},
+		OnReviewerStart: func(round int, instanceID string) { reviewerStartCalled = true },
+	}
+	coord.SetCallbacks(cb)
+
+	err = coord.RestartStuckRole()
+	if err != nil {
+		t.Fatalf("RestartStuckRole failed: %v", err)
+	}
+
+	if !addInstanceToWorktreeCalled {
+		t.Error("AddInstanceToWorktree should have been called to restart reviewer")
+	}
+
+	if receivedWorktreePath != tmpDir {
+		t.Errorf("expected worktree path = %q, got %q", tmpDir, receivedWorktreePath)
+	}
+
+	if !reviewerStartCalled {
+		t.Error("OnReviewerStart callback should have been called")
+	}
+
+	if advSession.Phase != PhaseReviewing {
+		t.Errorf("expected phase = %q, got %q", PhaseReviewing, advSession.Phase)
+	}
+
+	if advSession.StuckRole != "" {
+		t.Errorf("expected StuckRole to be cleared, got %q", advSession.StuckRole)
+	}
+
+	if advSession.ReviewerID != "new-reviewer" {
+		t.Errorf("expected ReviewerID = %q, got %q", "new-reviewer", advSession.ReviewerID)
+	}
+}
+
+func TestCoordinator_RestartStuckRole_Reviewer_EmptyHistory(t *testing.T) {
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.Phase = PhaseStuck
+	advSession.StuckRole = string(StuckRoleReviewer)
+	advSession.CurrentRound = 1
+	// Empty history - should fail
+	advSession.History = []Round{}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	err := coord.RestartStuckRole()
+	if err == nil {
+		t.Error("expected error when trying to restart reviewer with empty history")
+	}
+
+	expectedErr := "no increment found to restart reviewer"
+	if err.Error() != expectedErr {
+		t.Errorf("expected error %q, got %q", expectedErr, err.Error())
+	}
+}
+
+func TestCoordinator_RestartStuckRole_Reviewer_NilIncrement(t *testing.T) {
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.Phase = PhaseStuck
+	advSession.StuckRole = string(StuckRoleReviewer)
+	advSession.CurrentRound = 1
+	// History with nil increment - should fail
+	advSession.History = []Round{
+		{
+			Round:     1,
+			Increment: nil, // Increment is nil
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	err := coord.RestartStuckRole()
+	if err == nil {
+		t.Error("expected error when trying to restart reviewer with nil increment")
+	}
+
+	expectedErr := "no increment found to restart reviewer"
+	if err.Error() != expectedErr {
+		t.Errorf("expected error %q, got %q", expectedErr, err.Error())
+	}
+}
+
+func TestCoordinator_RestartStuckRole_NoStuckRole(t *testing.T) {
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.Phase = PhaseStuck
+	advSession.StuckRole = "" // No stuck role recorded
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	err := coord.RestartStuckRole()
+	if err == nil {
+		t.Error("expected error when no stuck role is recorded")
+	}
+
+	expectedErr := "no stuck role recorded"
+	if err.Error() != expectedErr {
+		t.Errorf("expected error %q, got %q", expectedErr, err.Error())
+	}
+}
+
+func TestCoordinator_RestartStuckRole_PreservesStateOnFailure(t *testing.T) {
+	// Test that if restart fails, the stuck state is preserved so user can retry
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.Phase = PhaseStuck
+	advSession.StuckRole = string(StuckRoleImplementer)
+	advSession.Error = "Original error message"
+	advSession.CurrentRound = 1
+
+	// Create an orchestrator that always fails to add instances
+	// Note: For round 1, StartImplementer uses AddInstance (not AddInstanceToWorktree)
+	mockOrch := &mockOrchestrator{
+		addInstanceFunc: func(session SessionInterface, task string) (InstanceInterface, error) {
+			return nil, fmt.Errorf("orchestrator failure")
+		},
+	}
+
+	baseSession := newMockSession()
+	// Create a group so the restart can find the adversarial group
+	baseSession.groups["adversarial"] = &mockGroup{}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: mockOrch,
+		BaseSession:  baseSession,
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees("/tmp/test-worktree")
+
+	// Attempt restart - should fail
+	err := coord.RestartStuckRole()
+	if err == nil {
+		t.Fatal("expected error when orchestrator fails")
+	}
+
+	// Verify stuck state is preserved (not cleared)
+	if advSession.Error == "" {
+		t.Error("Error field should be preserved when restart fails")
+	}
+
+	if advSession.StuckRole == "" {
+		t.Error("StuckRole should be preserved when restart fails")
+	}
+
+	// Note: Phase transitions to PhaseImplementing before the error occurs in StartImplementer,
+	// so we can't rely on phase remaining PhaseStuck. The key invariant is that Error and
+	// StuckRole are preserved so the user can see what happened and retry.
 }

@@ -82,6 +82,9 @@ type CoordinatorCallbacks struct {
 
 	// OnComplete is called when the adversarial session completes
 	OnComplete func(success bool, summary string)
+
+	// OnStuck is called when an instance completes without writing its required file
+	OnStuck func(role StuckRole, instanceID string)
 }
 
 // Coordinator orchestrates the execution of an adversarial review session
@@ -765,4 +768,190 @@ func (c *Coordinator) SetWorktrees(worktree string) {
 	defer c.mu.Unlock()
 	c.implementerWorktree = worktree
 	c.reviewerWorktree = worktree
+}
+
+// HandleInstanceCompletion checks if an adversarial instance completed without writing
+// its required file. This should be called when the orchestrator detects that an instance
+// has transitioned to a completed or waiting-for-input state.
+//
+// Returns true if this instance belongs to this coordinator and the stuck condition was
+// detected and handled.
+func (c *Coordinator) HandleInstanceCompletion(instanceID string, isCompleted bool, isWaitingInput bool) bool {
+	session := c.Session()
+	if session == nil {
+		return false
+	}
+
+	// Check if this instance belongs to this session
+	isImplementer := session.ImplementerID == instanceID
+	isReviewer := session.ReviewerID == instanceID
+
+	if !isImplementer && !isReviewer {
+		return false // Instance doesn't belong to this session
+	}
+
+	// Only check stuck condition if instance completed/waiting and we're in the right phase
+	if !isCompleted && !isWaitingInput {
+		return false
+	}
+
+	c.logger.Debug("checking for stuck instance",
+		"instance_id", instanceID,
+		"is_implementer", isImplementer,
+		"is_reviewer", isReviewer,
+		"phase", string(session.Phase),
+		"is_completed", isCompleted,
+		"is_waiting_input", isWaitingInput,
+	)
+
+	// Check for stuck implementer
+	if isImplementer && session.Phase == PhaseImplementing {
+		// Check if increment file exists
+		ready, err := c.CheckIncrementReady()
+		if err != nil {
+			// Filesystem error - cannot reliably determine stuck state
+			c.logger.Warn("error checking increment file during stuck detection",
+				"instance_id", instanceID,
+				"error", err,
+			)
+			return false
+		}
+		if !ready {
+			c.handleStuckImplementer(instanceID)
+			return true
+		}
+	}
+
+	// Check for stuck reviewer
+	if isReviewer && session.Phase == PhaseReviewing {
+		// Check if review file exists
+		ready, err := c.CheckReviewReady()
+		if err != nil {
+			// Filesystem error - cannot reliably determine stuck state
+			c.logger.Warn("error checking review file during stuck detection",
+				"instance_id", instanceID,
+				"error", err,
+			)
+			return false
+		}
+		if !ready {
+			c.handleStuckReviewer(instanceID)
+			return true
+		}
+	}
+
+	return false
+}
+
+// handleStuckImplementer handles the case where the implementer completed without
+// writing the increment file.
+func (c *Coordinator) handleStuckImplementer(instanceID string) {
+	session := c.Session()
+	c.logger.Warn("implementer stuck - completed without writing increment file",
+		"instance_id", instanceID,
+		"round", session.CurrentRound,
+	)
+
+	// Set phase to stuck and record error
+	session.Error = "Implementer completed without writing increment file. Use recovery options to continue."
+	session.StuckRole = string(StuckRoleImplementer)
+	c.notifyPhaseChange(PhaseStuck)
+
+	// Notify via callback
+	c.mu.RLock()
+	cb := c.callbacks
+	c.mu.RUnlock()
+
+	if cb != nil && cb.OnStuck != nil {
+		cb.OnStuck(StuckRoleImplementer, instanceID)
+	}
+}
+
+// handleStuckReviewer handles the case where the reviewer completed without
+// writing the review file.
+func (c *Coordinator) handleStuckReviewer(instanceID string) {
+	session := c.Session()
+	c.logger.Warn("reviewer stuck - completed without writing review file",
+		"instance_id", instanceID,
+		"round", session.CurrentRound,
+	)
+
+	// Set phase to stuck and record error
+	session.Error = "Reviewer completed without writing review file. Use recovery options to continue."
+	session.StuckRole = string(StuckRoleReviewer)
+	c.notifyPhaseChange(PhaseStuck)
+
+	// Notify via callback
+	c.mu.RLock()
+	cb := c.callbacks
+	c.mu.RUnlock()
+
+	if cb != nil && cb.OnStuck != nil {
+		cb.OnStuck(StuckRoleReviewer, instanceID)
+	}
+}
+
+// RestartStuckRole restarts the stuck role (implementer or reviewer).
+// This creates a new instance with a nudge prompt to write the required file.
+// Returns the new instance ID or an error.
+func (c *Coordinator) RestartStuckRole() error {
+	session := c.Session()
+	if session == nil {
+		return fmt.Errorf("no active session")
+	}
+
+	if session.Phase != PhaseStuck {
+		return fmt.Errorf("session is not stuck (phase: %s)", session.Phase)
+	}
+
+	stuckRole := StuckRole(session.StuckRole)
+	if stuckRole == "" {
+		return fmt.Errorf("no stuck role recorded")
+	}
+
+	c.logger.Info("restarting stuck role",
+		"role", string(stuckRole),
+		"round", session.CurrentRound,
+	)
+
+	// Attempt restart - only clear stuck state on success
+	var err error
+	switch stuckRole {
+	case StuckRoleImplementer:
+		err = c.StartImplementer()
+
+	case StuckRoleReviewer:
+		// We need the last increment to restart the reviewer
+		if len(session.History) == 0 || session.History[len(session.History)-1].Increment == nil {
+			return fmt.Errorf("no increment found to restart reviewer")
+		}
+		lastIncrement := session.History[len(session.History)-1].Increment
+		err = c.StartReviewer(lastIncrement)
+
+	default:
+		return fmt.Errorf("unknown stuck role: %s", stuckRole)
+	}
+
+	// Only clear stuck state after successful restart
+	if err == nil {
+		session.Error = ""
+		session.StuckRole = ""
+	}
+
+	return err
+}
+
+// GetStuckRole returns the stuck role if the session is stuck, or empty string otherwise.
+func (c *Coordinator) GetStuckRole() StuckRole {
+	session := c.Session()
+	if session == nil || session.Phase != PhaseStuck {
+		return ""
+	}
+	return StuckRole(session.StuckRole)
+}
+
+// IsStuck returns true if the session is in a stuck state.
+func (c *Coordinator) IsStuck() bool {
+	session := c.Session()
+	return session != nil && session.Phase == PhaseStuck
 }

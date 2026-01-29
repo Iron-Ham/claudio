@@ -53,6 +53,10 @@ type Dependencies interface {
 
 	// GetRalphCoordinators returns all active ralph coordinators
 	GetRalphCoordinators() []*ralph.Coordinator
+
+	// RestartFirstStuckAdversarial finds the first stuck adversarial session and restarts it.
+	// Returns a tea.Cmd if a stuck session was found, nil otherwise.
+	RestartFirstStuckAdversarial() tea.Cmd
 }
 
 // Result represents the outcome of executing a command.
@@ -299,6 +303,7 @@ func (h *Handler) registerCommands() {
 	// Adversarial commands
 	h.commands["adversarial"] = cmdAdversarial
 	h.commands["adv"] = cmdAdversarial
+	h.commands["adversarial-retry"] = cmdAdversarialRetry
 
 	// Plan mode commands
 	h.commands["plan"] = cmdPlan
@@ -375,6 +380,7 @@ func (h *Handler) buildCategories() {
 				{ShortKey: "", LongKey: "cancel", Description: "Cancel ultra-plan execution", Category: "utility"},
 				{ShortKey: "", LongKey: "tripleshot", Description: "Start triple-shot mode (3 parallel attempts + judge)", Category: "utility"},
 				{ShortKey: "", LongKey: "adversarial", Description: "Start adversarial mode (implementer + reviewer feedback loop)", Category: "utility"},
+				{ShortKey: "", LongKey: "adversarial-retry", Description: "Restart a stuck adversarial instance", Category: "utility"},
 				{ShortKey: "", LongKey: "plan", Description: "Start inline plan mode for structured task planning", Category: "utility"},
 				{ShortKey: "", LongKey: "multiplan", Description: "Start multi-pass plan mode (3 planners + 1 assessor)", Category: "utility"},
 				{ShortKey: "", LongKey: "ultraplan", Description: "Start ultraplan mode (use --multi-pass or --plan flags)", Category: "utility"},
@@ -1083,6 +1089,24 @@ func cmdAdversarial(deps Dependencies) Result {
 	return Result{
 		StartAdversarial: &startAdversarial,
 		InfoMessage:      infoMsg,
+	}
+}
+
+func cmdAdversarialRetry(deps Dependencies) Result {
+	// Must be in adversarial mode
+	if !deps.IsAdversarialMode() {
+		return Result{ErrorMessage: "Not in adversarial mode"}
+	}
+
+	// Try to restart the first stuck adversarial session
+	cmd := deps.RestartFirstStuckAdversarial()
+	if cmd == nil {
+		return Result{ErrorMessage: "No stuck adversarial sessions found"}
+	}
+
+	return Result{
+		TeaCmd:      cmd,
+		InfoMessage: "Restarting stuck adversarial instance...",
 	}
 }
 
