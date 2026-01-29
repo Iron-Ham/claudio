@@ -431,6 +431,8 @@ func (m Model) handleGroupCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case GroupActionNextGroup, GroupActionPrevGroup:
 			if result.GroupID != "" {
 				m.groupViewState.SelectedGroupID = result.GroupID
+				// Ensure the selected group is visible in the sidebar
+				m.ensureSelectedGroupVisible()
 			}
 		case GroupActionSkipGroup:
 			m.infoMessage = "Group skipped"

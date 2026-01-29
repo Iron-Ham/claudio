@@ -18,6 +18,23 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 )
 
+// Sidebar layout constants for scroll calculations.
+// These values are used across multiple functions to ensure consistent behavior.
+const (
+	// sidebarReservedLines accounts for: title (1) + blank line (1) + add hint (1) +
+	// scroll indicators (2) + border padding (1) = 6 lines
+	sidebarReservedLines = 6
+
+	// sidebarLinesPerItemFlat is the estimated lines per instance in flat sidebar mode.
+	// Instances take 1-2 lines depending on name wrapping.
+	sidebarLinesPerItemFlat = 1
+
+	// sidebarLinesPerItemGrouped is the estimated lines per item in grouped sidebar mode.
+	// Group headers take 1-2 lines, instances take 2-3 lines (name + status + spacing).
+	// Using 3 as a conservative estimate to ensure items stay visible.
+	sidebarLinesPerItemGrouped = 3
+)
+
 // modelInstanceProvider adapts the Model to the terminal.ActiveInstanceProvider interface.
 type modelInstanceProvider struct {
 	model *Model
@@ -882,61 +899,115 @@ func (m Model) findInstanceIndexByID(id string) int {
 	return -1
 }
 
+// sidebarVisibleItemCount returns the number of items that can fit in the sidebar viewport.
+func (m *Model) sidebarVisibleItemCount() int {
+	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
+	availableLines := max(dims.MainAreaHeight-sidebarReservedLines, 3)
+
+	linesPerItem := sidebarLinesPerItemFlat
+	if m.sidebarMode == view.SidebarModeGrouped {
+		linesPerItem = sidebarLinesPerItemGrouped
+	}
+
+	return max(availableLines/linesPerItem, 1)
+}
+
+// adjustScrollToShowPosition adjusts sidebarScrollOffset to make the given
+// display position visible in the sidebar viewport.
+func (m *Model) adjustScrollToShowPosition(displayPosition int) {
+	visibleItems := m.sidebarVisibleItemCount()
+
+	if displayPosition < m.sidebarScrollOffset {
+		m.sidebarScrollOffset = displayPosition
+	} else if displayPosition >= m.sidebarScrollOffset+visibleItems {
+		m.sidebarScrollOffset = displayPosition - visibleItems + 1
+	}
+
+	m.sidebarScrollOffset = max(m.sidebarScrollOffset, 0)
+	maxOffset := m.calculateSidebarMaxScrollOffset()
+	m.sidebarScrollOffset = min(m.sidebarScrollOffset, maxOffset)
+}
+
 // ensureActiveVisible adjusts sidebarScrollOffset to keep activeTab visible
 func (m *Model) ensureActiveVisible() {
-	// Calculate available lines (not slots - actual lines!)
-	// Reserve: 1 for title, 1 for blank line, 1 for add hint, 2 for scroll indicators, plus border padding
-	reservedLines := 6
-	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
-	availableLines := max(dims.MainAreaHeight-reservedLines, 3)
+	displayPosition := m.activeTab
+	if m.isGroupedSidebarMode() {
+		displayPosition = m.findActiveDisplayPosition()
+	}
+	m.adjustScrollToShowPosition(displayPosition)
+}
 
-	// Estimate lines per item based on sidebar mode
-	// Grouped view: each instance takes ~3 lines (name + status + newline)
-	// Flat view: each instance takes 1-2 lines (expandable names may wrap)
-	// Use a conservative estimate to ensure active item stays visible
-	linesPerItem := 1
-	if m.sidebarMode == view.SidebarModeGrouped {
-		linesPerItem = 3 // Group headers: 1-2, Instances: 2-3
+// findActiveDisplayPosition finds the position of the active instance in the
+// flattened display list. In grouped mode, this accounts for group headers.
+func (m *Model) findActiveDisplayPosition() int {
+	if m.session == nil || m.activeTab < 0 || m.activeTab >= len(m.session.Instances) {
+		return m.activeTab
 	}
 
-	// Calculate how many items can fit
-	visibleItems := max(availableLines/linesPerItem, 1)
+	activeInstanceID := m.session.Instances[m.activeTab].ID
+	items := view.FlattenGroupsForDisplay(m.session, m.groupViewState)
 
-	// Adjust scroll offset to keep active instance visible
-	if m.activeTab < m.sidebarScrollOffset {
-		// Active is above visible area, scroll up
-		m.sidebarScrollOffset = m.activeTab
-	} else if m.activeTab >= m.sidebarScrollOffset+visibleItems {
-		// Active is below visible area, scroll down
-		m.sidebarScrollOffset = m.activeTab - visibleItems + 1
+	for i, item := range items {
+		if gi, ok := item.(view.GroupedInstance); ok {
+			if gi.Instance.ID == activeInstanceID {
+				return i
+			}
+		}
 	}
 
-	// Ensure scroll offset is within valid bounds
-	m.sidebarScrollOffset = max(m.sidebarScrollOffset, 0)
-	maxOffset := max(m.instanceCount()-visibleItems, 0)
-	m.sidebarScrollOffset = min(m.sidebarScrollOffset, maxOffset)
+	// Fallback to activeTab if not found. This can happen if the instance is in
+	// a collapsed group and hasn't been auto-expanded yet.
+	if m.logger != nil {
+		m.logger.Debug("findActiveDisplayPosition: instance not found in flattened list, using activeTab",
+			"instance_id", activeInstanceID,
+			"activeTab", m.activeTab,
+			"flattened_items", len(items))
+	}
+	return m.activeTab
+}
+
+// ensureSelectedGroupVisible adjusts sidebarScrollOffset to keep the selected
+// group visible in the sidebar. This is used for gn/gp group navigation.
+func (m *Model) ensureSelectedGroupVisible() {
+	if m.groupViewState == nil || m.groupViewState.SelectedGroupID == "" {
+		return
+	}
+
+	displayPosition := m.findGroupDisplayPosition(m.groupViewState.SelectedGroupID)
+	if displayPosition < 0 {
+		return
+	}
+
+	m.adjustScrollToShowPosition(displayPosition)
+}
+
+// findGroupDisplayPosition finds the position of a group header in the
+// flattened display list.
+func (m *Model) findGroupDisplayPosition(groupID string) int {
+	if m.session == nil {
+		return -1
+	}
+
+	items := view.FlattenGroupsForDisplay(m.session, m.groupViewState)
+
+	for i, item := range items {
+		if gh, ok := item.(view.GroupHeaderItem); ok {
+			if gh.Group.ID == groupID {
+				return i
+			}
+		}
+	}
+
+	return -1
 }
 
 // calculateSidebarMaxScrollOffset calculates the maximum scroll offset for the sidebar.
 // This is used for manual sidebar scrolling (J/K keys) to prevent scrolling past content.
 func (m Model) calculateSidebarMaxScrollOffset() int {
-	// Calculate available lines (matching ensureActiveVisible logic)
-	reservedLines := 6
-	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
-	availableLines := max(dims.MainAreaHeight-reservedLines, 3)
+	visibleItems := m.sidebarVisibleItemCount()
 
-	// Estimate lines per item based on sidebar mode
-	linesPerItem := 1
-	if m.sidebarMode == view.SidebarModeGrouped {
-		linesPerItem = 3
-	}
-
-	// Calculate how many items can fit
-	visibleItems := max(availableLines/linesPerItem, 1)
-
-	// In grouped mode, count flattened items (includes group headers)
 	totalItems := m.instanceCount()
-	if m.sidebarMode == view.SidebarModeGrouped && m.session != nil && m.session.HasGroups() {
+	if m.isGroupedSidebarMode() {
 		items := view.FlattenGroupsForDisplay(m.session, m.groupViewState)
 		totalItems = len(items)
 	}

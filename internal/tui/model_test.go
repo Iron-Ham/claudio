@@ -1289,6 +1289,311 @@ func TestSidebarScrollDoesNotChangeActiveTab(t *testing.T) {
 	})
 }
 
+func TestFindActiveDisplayPosition(t *testing.T) {
+	tests := []struct {
+		name             string
+		instances        []*orchestrator.Instance
+		groups           []*orchestrator.InstanceGroup
+		activeTab        int
+		sidebarMode      view.SidebarMode
+		groupViewState   *view.GroupViewState
+		expectedPosition int
+	}{
+		{
+			name: "flat mode returns activeTab directly",
+			instances: []*orchestrator.Instance{
+				{ID: "inst-1"},
+				{ID: "inst-2"},
+				{ID: "inst-3"},
+			},
+			activeTab:        1,
+			sidebarMode:      view.SidebarModeFlat,
+			groupViewState:   nil,
+			expectedPosition: 1,
+		},
+		{
+			name: "grouped mode with ungrouped instance at start",
+			instances: []*orchestrator.Instance{
+				{ID: "inst-1"}, // ungrouped, display pos 0
+				{ID: "inst-2"}, // in group, display pos 2 (after group header)
+			},
+			groups: []*orchestrator.InstanceGroup{
+				{ID: "group-1", Name: "Group", Instances: []string{"inst-2"}},
+			},
+			activeTab:        0, // inst-1 is selected
+			sidebarMode:      view.SidebarModeGrouped,
+			groupViewState:   view.NewGroupViewState(),
+			expectedPosition: 0, // ungrouped instance is first
+		},
+		{
+			name: "grouped mode with instance inside group",
+			instances: []*orchestrator.Instance{
+				{ID: "inst-1"}, // ungrouped, display pos 0
+				{ID: "inst-2"}, // in group, display pos 2 (after group header at pos 1)
+			},
+			groups: []*orchestrator.InstanceGroup{
+				{ID: "group-1", Name: "Group", Instances: []string{"inst-2"}},
+			},
+			activeTab:        1, // inst-2 is selected
+			sidebarMode:      view.SidebarModeGrouped,
+			groupViewState:   view.NewGroupViewState(),
+			expectedPosition: 2, // 0: ungrouped, 1: group header, 2: inst-2
+		},
+		{
+			name: "grouped mode with multiple groups and instances",
+			instances: []*orchestrator.Instance{
+				{ID: "inst-1"}, // in group-1, display pos 1
+				{ID: "inst-2"}, // in group-2, display pos 3
+			},
+			groups: []*orchestrator.InstanceGroup{
+				{ID: "group-1", Name: "Group 1", Instances: []string{"inst-1"}},
+				{ID: "group-2", Name: "Group 2", Instances: []string{"inst-2"}},
+			},
+			activeTab:        1, // inst-2 is selected
+			sidebarMode:      view.SidebarModeGrouped,
+			groupViewState:   view.NewGroupViewState(),
+			expectedPosition: 3, // 0: group-1 header, 1: inst-1, 2: group-2 header, 3: inst-2
+		},
+		{
+			name:             "nil session returns activeTab",
+			instances:        nil,
+			activeTab:        5,
+			sidebarMode:      view.SidebarModeFlat,
+			groupViewState:   nil,
+			expectedPosition: 5,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var session *orchestrator.Session
+			if tt.instances != nil {
+				session = &orchestrator.Session{
+					Instances: tt.instances,
+					Groups:    tt.groups,
+				}
+			}
+
+			m := Model{
+				session:        session,
+				activeTab:      tt.activeTab,
+				sidebarMode:    tt.sidebarMode,
+				groupViewState: tt.groupViewState,
+			}
+
+			got := m.findActiveDisplayPosition()
+			if got != tt.expectedPosition {
+				t.Errorf("findActiveDisplayPosition() = %d, want %d", got, tt.expectedPosition)
+			}
+		})
+	}
+}
+
+func TestFindGroupDisplayPosition(t *testing.T) {
+	tests := []struct {
+		name             string
+		instances        []*orchestrator.Instance
+		groups           []*orchestrator.InstanceGroup
+		groupViewState   *view.GroupViewState
+		searchGroupID    string
+		expectedPosition int
+	}{
+		{
+			name: "finds first group",
+			instances: []*orchestrator.Instance{
+				{ID: "inst-1"},
+			},
+			groups: []*orchestrator.InstanceGroup{
+				{ID: "group-1", Name: "Group 1", Instances: []string{"inst-1"}},
+			},
+			groupViewState:   view.NewGroupViewState(),
+			searchGroupID:    "group-1",
+			expectedPosition: 0, // first item is the group header
+		},
+		{
+			name: "finds group after ungrouped instances",
+			instances: []*orchestrator.Instance{
+				{ID: "inst-1"}, // ungrouped
+				{ID: "inst-2"}, // in group
+			},
+			groups: []*orchestrator.InstanceGroup{
+				{ID: "group-1", Name: "Group 1", Instances: []string{"inst-2"}},
+			},
+			groupViewState:   view.NewGroupViewState(),
+			searchGroupID:    "group-1",
+			expectedPosition: 1, // 0: ungrouped inst-1, 1: group header
+		},
+		{
+			name: "finds second group",
+			instances: []*orchestrator.Instance{
+				{ID: "inst-1"}, // in group-1
+				{ID: "inst-2"}, // in group-2
+			},
+			groups: []*orchestrator.InstanceGroup{
+				{ID: "group-1", Name: "Group 1", Instances: []string{"inst-1"}},
+				{ID: "group-2", Name: "Group 2", Instances: []string{"inst-2"}},
+			},
+			groupViewState:   view.NewGroupViewState(),
+			searchGroupID:    "group-2",
+			expectedPosition: 2, // 0: group-1 header, 1: inst-1, 2: group-2 header
+		},
+		{
+			name: "returns -1 for non-existent group",
+			instances: []*orchestrator.Instance{
+				{ID: "inst-1"},
+			},
+			groups: []*orchestrator.InstanceGroup{
+				{ID: "group-1", Name: "Group 1", Instances: []string{"inst-1"}},
+			},
+			groupViewState:   view.NewGroupViewState(),
+			searchGroupID:    "non-existent",
+			expectedPosition: -1,
+		},
+		{
+			name:             "nil session returns -1",
+			instances:        nil,
+			groups:           nil,
+			groupViewState:   nil,
+			searchGroupID:    "any-group",
+			expectedPosition: -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var session *orchestrator.Session
+			if tt.instances != nil {
+				session = &orchestrator.Session{
+					Instances: tt.instances,
+					Groups:    tt.groups,
+				}
+			}
+
+			m := Model{
+				session:        session,
+				groupViewState: tt.groupViewState,
+			}
+
+			got := m.findGroupDisplayPosition(tt.searchGroupID)
+			if got != tt.expectedPosition {
+				t.Errorf("findGroupDisplayPosition(%q) = %d, want %d", tt.searchGroupID, got, tt.expectedPosition)
+			}
+		})
+	}
+}
+
+func TestEnsureSelectedGroupVisible(t *testing.T) {
+	// Test that ensureSelectedGroupVisible adjusts scroll offset correctly
+	instances := []*orchestrator.Instance{
+		{ID: "inst-1"},
+		{ID: "inst-2"},
+		{ID: "inst-3"},
+		{ID: "inst-4"},
+	}
+
+	groups := []*orchestrator.InstanceGroup{
+		{ID: "group-1", Name: "Group 1", Instances: []string{"inst-1", "inst-2"}},
+		{ID: "group-2", Name: "Group 2", Instances: []string{"inst-3", "inst-4"}},
+	}
+
+	t.Run("scrolls up when group is above viewport", func(t *testing.T) {
+		session := &orchestrator.Session{
+			Instances: instances,
+			Groups:    groups,
+		}
+
+		state := view.NewGroupViewState()
+		state.SelectedGroupID = "group-1" // at position 0
+
+		m := NewModel(nil, session, nil)
+		m.sidebarMode = view.SidebarModeGrouped
+		m.groupViewState = state
+		m.sidebarScrollOffset = 5 // scrolled past the group
+
+		m.ensureSelectedGroupVisible()
+
+		// Scroll offset should be adjusted to show group-1 (at position 0)
+		if m.sidebarScrollOffset > 0 {
+			t.Errorf("sidebarScrollOffset = %d, expected <= 0 to show group-1", m.sidebarScrollOffset)
+		}
+	})
+
+	t.Run("does nothing when no group is selected", func(t *testing.T) {
+		session := &orchestrator.Session{
+			Instances: instances,
+			Groups:    groups,
+		}
+
+		state := view.NewGroupViewState()
+		state.SelectedGroupID = "" // no selection
+
+		m := NewModel(nil, session, nil)
+		m.sidebarMode = view.SidebarModeGrouped
+		m.groupViewState = state
+		m.sidebarScrollOffset = 5
+
+		m.ensureSelectedGroupVisible()
+
+		// Should not change scroll offset
+		if m.sidebarScrollOffset != 5 {
+			t.Errorf("sidebarScrollOffset = %d, expected 5 (unchanged)", m.sidebarScrollOffset)
+		}
+	})
+
+	t.Run("does nothing with nil groupViewState", func(t *testing.T) {
+		session := &orchestrator.Session{
+			Instances: instances,
+			Groups:    groups,
+		}
+
+		m := NewModel(nil, session, nil)
+		m.sidebarMode = view.SidebarModeGrouped
+		m.groupViewState = nil
+		m.sidebarScrollOffset = 5
+
+		m.ensureSelectedGroupVisible()
+
+		// Should not change scroll offset
+		if m.sidebarScrollOffset != 5 {
+			t.Errorf("sidebarScrollOffset = %d, expected 5 (unchanged)", m.sidebarScrollOffset)
+		}
+	})
+}
+
+func TestEnsureActiveVisible_GroupedMode(t *testing.T) {
+	// Test that ensureActiveVisible works correctly in grouped mode
+	// where group headers affect the display position of instances
+	instances := []*orchestrator.Instance{
+		{ID: "inst-1"}, // in group, display pos 1
+		{ID: "inst-2"}, // in group, display pos 2
+	}
+
+	groups := []*orchestrator.InstanceGroup{
+		{ID: "group-1", Name: "Group 1", Instances: []string{"inst-1", "inst-2"}},
+	}
+
+	t.Run("accounts for group header when calculating position", func(t *testing.T) {
+		session := &orchestrator.Session{
+			Instances: instances,
+			Groups:    groups,
+		}
+
+		m := NewModel(nil, session, nil)
+		m.sidebarMode = view.SidebarModeGrouped
+		m.groupViewState = view.NewGroupViewState()
+		m.activeTab = 1            // inst-2
+		m.sidebarScrollOffset = 10 // scrolled way past
+
+		m.ensureActiveVisible()
+
+		// inst-2 is at display position 2 (0: header, 1: inst-1, 2: inst-2)
+		// Scroll should be adjusted to show it
+		if m.sidebarScrollOffset > 2 {
+			t.Errorf("sidebarScrollOffset = %d, expected <= 2 to show inst-2", m.sidebarScrollOffset)
+		}
+	})
+}
+
 func TestAutoDismissMessages(t *testing.T) {
 	t.Run("new message sets timestamp", func(t *testing.T) {
 		m := &Model{}
