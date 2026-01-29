@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Simplified Group Headers** - Removed the `[x/y]` progress counters from group headers in the sidebar. The phase indicator (● for executing, ✓ for completed, ✗ for failed) already provides visual feedback on group status, making the numeric counters redundant visual noise.
 
+- **Tripleshot Adversarial Pair Clarity** - Improved the sidebar display for tripleshot with adversarial mode enabled to show clear implementer/reviewer pairs. Each of the three attempts is now displayed as a "Pair N" with both the implementer status and its paired reviewer status visible together. The display includes a phase indicator showing the current workflow phase (Implementing, Under Review, Judging, Complete), reviewer approval status with scores (e.g., "8/10 ✓"), and a count of active pairs during the review phase. This makes it immediately clear which reviewer is reviewing which implementer's work.
+
 ### Removed
 
 - **`claudio tripleshot` CLI Command** - The standalone `claudio tripleshot` command has been removed. TripleShot mode is now exclusively accessed through the TUI via the `:tripleshot` command (or aliases `:triple`, `:3shot`). This consolidates all tripleshot functionality within the standard TUI, providing a more consistent user experience. To use tripleshot, run `claudio start` and then use `:tripleshot` in command mode.

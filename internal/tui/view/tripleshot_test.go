@@ -499,3 +499,431 @@ func TestFindGroupByIDDeepNesting(t *testing.T) {
 		}
 	})
 }
+
+func TestRenderAdversarialPhaseInfo(t *testing.T) {
+	t.Run("shows Implementing phase during working", func(t *testing.T) {
+		session := &tripleshot.Session{
+			Phase: tripleshot.PhaseWorking,
+			Config: tripleshot.Config{
+				Adversarial: true,
+			},
+		}
+
+		result := renderAdversarialPhaseInfo(session)
+
+		if len(result) == 0 {
+			t.Fatal("expected at least one line of output")
+		}
+		joined := strings.Join(result, "\n")
+		if !strings.Contains(joined, "Phase:") {
+			t.Error("expected Phase label in output")
+		}
+		if !strings.Contains(joined, "Implementing") {
+			t.Errorf("expected 'Implementing' for PhaseWorking, got: %s", joined)
+		}
+	})
+
+	t.Run("shows Under Review phase during adversarial review", func(t *testing.T) {
+		session := &tripleshot.Session{
+			Phase: tripleshot.PhaseAdversarialReview,
+			Config: tripleshot.Config{
+				Adversarial: true,
+			},
+			Attempts: [3]tripleshot.Attempt{
+				{InstanceID: "impl-1", ReviewerID: "rev-1"},
+				{InstanceID: "impl-2", ReviewerID: "rev-2"},
+				{InstanceID: "impl-3", ReviewerID: ""},
+			},
+		}
+
+		result := renderAdversarialPhaseInfo(session)
+
+		joined := strings.Join(result, "\n")
+		if !strings.Contains(joined, "Under Review") {
+			t.Errorf("expected 'Under Review' for PhaseAdversarialReview, got: %s", joined)
+		}
+		// Should show pair count (2 reviewers active)
+		if !strings.Contains(joined, "2/3 pairs active") {
+			t.Errorf("expected pair count in output, got: %s", joined)
+		}
+	})
+
+	t.Run("shows Judging phase during evaluation", func(t *testing.T) {
+		session := &tripleshot.Session{
+			Phase: tripleshot.PhaseEvaluating,
+			Config: tripleshot.Config{
+				Adversarial: true,
+			},
+		}
+
+		result := renderAdversarialPhaseInfo(session)
+
+		joined := strings.Join(result, "\n")
+		if !strings.Contains(joined, "Judging") {
+			t.Errorf("expected 'Judging' for PhaseEvaluating, got: %s", joined)
+		}
+	})
+
+	t.Run("shows Complete phase when done", func(t *testing.T) {
+		session := &tripleshot.Session{
+			Phase: tripleshot.PhaseComplete,
+			Config: tripleshot.Config{
+				Adversarial: true,
+			},
+		}
+
+		result := renderAdversarialPhaseInfo(session)
+
+		joined := strings.Join(result, "\n")
+		if !strings.Contains(joined, "Complete") {
+			t.Errorf("expected 'Complete' for PhaseComplete, got: %s", joined)
+		}
+	})
+}
+
+func TestRenderAdversarialAttemptPairs(t *testing.T) {
+	t.Run("shows implementer/reviewer pairs header", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session: &orchestrator.Session{},
+		}
+		session := &tripleshot.Session{
+			Config: tripleshot.Config{Adversarial: true},
+			Attempts: [3]tripleshot.Attempt{
+				{InstanceID: "impl-1", Status: tripleshot.AttemptStatusWorking},
+				{InstanceID: "impl-2", Status: tripleshot.AttemptStatusWorking},
+				{InstanceID: "impl-3", Status: tripleshot.AttemptStatusWorking},
+			},
+		}
+
+		result := renderAdversarialAttemptPairs(ctx, session)
+
+		joined := strings.Join(result, "\n")
+		if !strings.Contains(joined, "Implementer/Reviewer Pairs:") {
+			t.Errorf("expected pairs header, got: %s", joined)
+		}
+	})
+
+	t.Run("shows all three pairs", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session: &orchestrator.Session{},
+		}
+		session := &tripleshot.Session{
+			Config: tripleshot.Config{Adversarial: true},
+			Attempts: [3]tripleshot.Attempt{
+				{InstanceID: "impl-1", Status: tripleshot.AttemptStatusWorking},
+				{InstanceID: "impl-2", Status: tripleshot.AttemptStatusWorking},
+				{InstanceID: "impl-3", Status: tripleshot.AttemptStatusWorking},
+			},
+		}
+
+		result := renderAdversarialAttemptPairs(ctx, session)
+
+		joined := strings.Join(result, "\n")
+		if !strings.Contains(joined, "Pair 1:") {
+			t.Error("expected Pair 1")
+		}
+		if !strings.Contains(joined, "Pair 2:") {
+			t.Error("expected Pair 2")
+		}
+		if !strings.Contains(joined, "Pair 3:") {
+			t.Error("expected Pair 3")
+		}
+	})
+
+	t.Run("shows implementer and reviewer status", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session: &orchestrator.Session{
+				Instances: []*orchestrator.Instance{
+					{ID: "rev-1", Status: orchestrator.StatusWorking},
+				},
+			},
+		}
+		session := &tripleshot.Session{
+			Phase:  tripleshot.PhaseAdversarialReview,
+			Config: tripleshot.Config{Adversarial: true},
+			Attempts: [3]tripleshot.Attempt{
+				{InstanceID: "impl-1", Status: tripleshot.AttemptStatusCompleted, ReviewerID: "rev-1"},
+				{InstanceID: "impl-2", Status: tripleshot.AttemptStatusWorking},
+				{InstanceID: "impl-3", Status: tripleshot.AttemptStatusWorking},
+			},
+		}
+
+		result := renderAdversarialAttemptPairs(ctx, session)
+
+		joined := strings.Join(result, "\n")
+		// Should show implementer status
+		if !strings.Contains(joined, "Impl:") {
+			t.Errorf("expected implementer indicator, got: %s", joined)
+		}
+		// Should show reviewer status
+		if !strings.Contains(joined, "Rev:") {
+			t.Errorf("expected reviewer indicator, got: %s", joined)
+		}
+	})
+
+	t.Run("shows review score when available", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session: &orchestrator.Session{
+				Instances: []*orchestrator.Instance{
+					{ID: "rev-1", Status: orchestrator.StatusCompleted},
+				},
+			},
+		}
+		session := &tripleshot.Session{
+			Phase:  tripleshot.PhaseAdversarialReview,
+			Config: tripleshot.Config{Adversarial: true},
+			Attempts: [3]tripleshot.Attempt{
+				{
+					InstanceID:     "impl-1",
+					Status:         tripleshot.AttemptStatusCompleted,
+					ReviewerID:     "rev-1",
+					ReviewScore:    8,
+					ReviewApproved: true,
+				},
+				{InstanceID: "impl-2", Status: tripleshot.AttemptStatusWorking},
+				{InstanceID: "impl-3", Status: tripleshot.AttemptStatusWorking},
+			},
+		}
+
+		result := renderAdversarialAttemptPairs(ctx, session)
+
+		joined := strings.Join(result, "\n")
+		// Should show score
+		if !strings.Contains(joined, "8/10") {
+			t.Errorf("expected score 8/10 in output, got: %s", joined)
+		}
+		// Should show approval checkmark
+		if !strings.Contains(joined, "✓") {
+			t.Errorf("expected approval checkmark in output, got: %s", joined)
+		}
+	})
+
+	t.Run("shows rejection when score but not approved", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session: &orchestrator.Session{
+				Instances: []*orchestrator.Instance{
+					{ID: "rev-1", Status: orchestrator.StatusCompleted},
+				},
+			},
+		}
+		session := &tripleshot.Session{
+			Phase:  tripleshot.PhaseAdversarialReview,
+			Config: tripleshot.Config{Adversarial: true},
+			Attempts: [3]tripleshot.Attempt{
+				{
+					InstanceID:     "impl-1",
+					Status:         tripleshot.AttemptStatusUnderReview,
+					ReviewerID:     "rev-1",
+					ReviewScore:    5,
+					ReviewApproved: false,
+				},
+				{InstanceID: "impl-2", Status: tripleshot.AttemptStatusWorking},
+				{InstanceID: "impl-3", Status: tripleshot.AttemptStatusWorking},
+			},
+		}
+
+		result := renderAdversarialAttemptPairs(ctx, session)
+
+		joined := strings.Join(result, "\n")
+		// Should show rejection X
+		if !strings.Contains(joined, "✗") {
+			t.Errorf("expected rejection X in output, got: %s", joined)
+		}
+	})
+}
+
+func TestRenderStandardAttempts(t *testing.T) {
+	t.Run("renders attempts without reviewer info", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session: &orchestrator.Session{},
+		}
+		session := &tripleshot.Session{
+			Config: tripleshot.Config{Adversarial: false},
+			Attempts: [3]tripleshot.Attempt{
+				{InstanceID: "inst-1", Status: tripleshot.AttemptStatusCompleted},
+				{InstanceID: "inst-2", Status: tripleshot.AttemptStatusWorking},
+				{InstanceID: "inst-3", Status: tripleshot.AttemptStatusPending},
+			},
+		}
+
+		result := renderStandardAttempts(ctx, session)
+
+		joined := strings.Join(result, "\n")
+		// Should show Attempts header
+		if !strings.Contains(joined, "Attempts:") {
+			t.Errorf("expected Attempts header, got: %s", joined)
+		}
+		// Should show numbered attempts
+		if !strings.Contains(joined, "1:") {
+			t.Error("expected attempt 1")
+		}
+		if !strings.Contains(joined, "2:") {
+			t.Error("expected attempt 2")
+		}
+		if !strings.Contains(joined, "3:") {
+			t.Error("expected attempt 3")
+		}
+		// Should NOT show pairs or reviewers
+		if strings.Contains(joined, "Pair") || strings.Contains(joined, "Rev:") {
+			t.Error("standard mode should not show pair/reviewer info")
+		}
+	})
+}
+
+func TestGetAttemptStatusDisplay(t *testing.T) {
+	tests := []struct {
+		status       tripleshot.AttemptStatus
+		expectedText string
+	}{
+		{tripleshot.AttemptStatusWorking, "working"},
+		{tripleshot.AttemptStatusUnderReview, "under review"},
+		{tripleshot.AttemptStatusCompleted, "done"},
+		{tripleshot.AttemptStatusFailed, "failed"},
+		{tripleshot.AttemptStatusPending, "pending"},
+	}
+
+	for _, tc := range tests {
+		t.Run(string(tc.status), func(t *testing.T) {
+			text, _ := getAttemptStatusDisplay(tc.status)
+			if text != tc.expectedText {
+				t.Errorf("expected %q, got %q", tc.expectedText, text)
+			}
+		})
+	}
+}
+
+func TestGetReviewerStatusDisplay(t *testing.T) {
+	t.Run("returns approved for approved attempt", func(t *testing.T) {
+		ctx := TripleShotRenderContext{Session: &orchestrator.Session{}}
+		attempt := tripleshot.Attempt{ReviewApproved: true}
+
+		text, _ := getReviewerStatusDisplay(ctx, attempt, tripleshot.PhaseAdversarialReview)
+
+		if text != "approved" {
+			t.Errorf("expected 'approved', got %q", text)
+		}
+	})
+
+	t.Run("returns rejected for completed reviewer with low score", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session: &orchestrator.Session{
+				Instances: []*orchestrator.Instance{
+					{ID: "rev-1", Status: orchestrator.StatusCompleted},
+				},
+			},
+		}
+		attempt := tripleshot.Attempt{
+			ReviewerID:     "rev-1",
+			ReviewScore:    5,
+			ReviewApproved: false,
+		}
+
+		text, _ := getReviewerStatusDisplay(ctx, attempt, tripleshot.PhaseAdversarialReview)
+
+		if text != "rejected" {
+			t.Errorf("expected 'rejected', got %q", text)
+		}
+	})
+
+	t.Run("returns reviewing for working reviewer", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session: &orchestrator.Session{
+				Instances: []*orchestrator.Instance{
+					{ID: "rev-1", Status: orchestrator.StatusWorking},
+				},
+			},
+		}
+		attempt := tripleshot.Attempt{ReviewerID: "rev-1"}
+
+		text, _ := getReviewerStatusDisplay(ctx, attempt, tripleshot.PhaseAdversarialReview)
+
+		if text != "reviewing" {
+			t.Errorf("expected 'reviewing', got %q", text)
+		}
+	})
+
+	t.Run("returns error for stuck reviewer", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session: &orchestrator.Session{
+				Instances: []*orchestrator.Instance{
+					{ID: "rev-1", Status: orchestrator.StatusStuck},
+				},
+			},
+		}
+		attempt := tripleshot.Attempt{ReviewerID: "rev-1"}
+
+		text, _ := getReviewerStatusDisplay(ctx, attempt, tripleshot.PhaseAdversarialReview)
+
+		if text != "error" {
+			t.Errorf("expected 'error', got %q", text)
+		}
+	})
+}
+
+func TestGetInstancePrefix(t *testing.T) {
+	t.Run("returns arrow for active instance", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session: &orchestrator.Session{
+				Instances: []*orchestrator.Instance{
+					{ID: "inst-1"},
+					{ID: "inst-2"},
+				},
+			},
+			ActiveTab: 0,
+		}
+
+		prefix := getInstancePrefix(ctx, "inst-1")
+
+		if prefix != "▶ " {
+			t.Errorf("expected '▶ ' for active instance, got %q", prefix)
+		}
+	})
+
+	t.Run("returns spaces for inactive instance", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session: &orchestrator.Session{
+				Instances: []*orchestrator.Instance{
+					{ID: "inst-1"},
+					{ID: "inst-2"},
+				},
+			},
+			ActiveTab: 0,
+		}
+
+		prefix := getInstancePrefix(ctx, "inst-2")
+
+		if prefix != "  " {
+			t.Errorf("expected '  ' for inactive instance, got %q", prefix)
+		}
+	})
+
+	t.Run("returns spaces for empty instance ID", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session: &orchestrator.Session{
+				Instances: []*orchestrator.Instance{
+					{ID: "inst-1"},
+				},
+			},
+			ActiveTab: 0,
+		}
+
+		prefix := getInstancePrefix(ctx, "")
+
+		if prefix != "  " {
+			t.Errorf("expected '  ' for empty instance ID, got %q", prefix)
+		}
+	})
+
+	t.Run("handles nil session", func(t *testing.T) {
+		ctx := TripleShotRenderContext{
+			Session:   nil,
+			ActiveTab: 0,
+		}
+
+		prefix := getInstancePrefix(ctx, "inst-1")
+
+		if prefix != "  " {
+			t.Errorf("expected '  ' for nil session, got %q", prefix)
+		}
+	})
+}
