@@ -917,6 +917,33 @@ func (m *Model) ensureActiveVisible() {
 	m.sidebarScrollOffset = min(m.sidebarScrollOffset, maxOffset)
 }
 
+// calculateSidebarMaxScrollOffset calculates the maximum scroll offset for the sidebar.
+// This is used for manual sidebar scrolling (J/K keys) to prevent scrolling past content.
+func (m Model) calculateSidebarMaxScrollOffset() int {
+	// Calculate available lines (matching ensureActiveVisible logic)
+	reservedLines := 6
+	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
+	availableLines := max(dims.MainAreaHeight-reservedLines, 3)
+
+	// Estimate lines per item based on sidebar mode
+	linesPerItem := 1
+	if m.sidebarMode == view.SidebarModeGrouped {
+		linesPerItem = 3
+	}
+
+	// Calculate how many items can fit
+	visibleItems := max(availableLines/linesPerItem, 1)
+
+	// In grouped mode, count flattened items (includes group headers)
+	totalItems := m.instanceCount()
+	if m.sidebarMode == view.SidebarModeGrouped && m.session != nil && m.session.HasGroups() {
+		items := view.FlattenGroupsForDisplay(m.session, m.groupViewState)
+		totalItems = len(items)
+	}
+
+	return max(totalItems-visibleItems, 0)
+}
+
 // Output scroll helper methods
 // These methods delegate to the OutputManager for output buffer management.
 

@@ -132,7 +132,8 @@ func DefaultHelpSections() []HelpSection {
 			Title: "Navigation",
 			Items: []HelpItem{
 				{Key: "Tab/l  Shift+Tab/h", Description: "Next / Previous instance"},
-				{Key: "j/↓  k/↑", Description: "Scroll down / up one line"},
+				{Key: "j/↓  k/↑", Description: "Scroll output down / up"},
+				{Key: "J  K", Description: "Scroll sidebar down / up (view only)"},
 				{Key: "Ctrl+D/U  Ctrl+F/B", Description: "Scroll half / full page"},
 				{Key: "0  G", Description: "Jump to top / bottom"},
 			},

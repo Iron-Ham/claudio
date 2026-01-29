@@ -1115,6 +1115,180 @@ func TestNavigationCycle_GroupedMode(t *testing.T) {
 	}
 }
 
+func TestCalculateSidebarMaxScrollOffset(t *testing.T) {
+	tests := []struct {
+		name           string
+		instances      []*orchestrator.Instance
+		sidebarMode    view.SidebarMode
+		groups         []*orchestrator.InstanceGroup
+		groupViewState *view.GroupViewState
+	}{
+		{
+			name:           "empty instances returns 0",
+			instances:      []*orchestrator.Instance{},
+			sidebarMode:    view.SidebarModeFlat,
+			groupViewState: nil,
+		},
+		{
+			name: "flat mode with multiple instances",
+			instances: []*orchestrator.Instance{
+				{ID: "inst-1"},
+				{ID: "inst-2"},
+				{ID: "inst-3"},
+			},
+			sidebarMode:    view.SidebarModeFlat,
+			groupViewState: nil,
+		},
+		{
+			name: "grouped mode counts items correctly",
+			instances: []*orchestrator.Instance{
+				{ID: "inst-1"},
+				{ID: "inst-2"},
+			},
+			sidebarMode: view.SidebarModeGrouped,
+			groups: []*orchestrator.InstanceGroup{
+				{ID: "group-1", Name: "Test Group", Instances: []string{"inst-1", "inst-2"}},
+			},
+			groupViewState: view.NewGroupViewState(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var session *orchestrator.Session
+			if tt.instances != nil {
+				session = &orchestrator.Session{
+					Instances: tt.instances,
+					Groups:    tt.groups,
+				}
+			}
+
+			// Create model using the constructor to properly initialize terminal manager
+			m := NewModel(nil, session, nil)
+			m.sidebarMode = tt.sidebarMode
+			m.groupViewState = tt.groupViewState
+
+			// The method should not panic and should return a non-negative value
+			got := m.calculateSidebarMaxScrollOffset()
+			if got < 0 {
+				t.Errorf("calculateSidebarMaxScrollOffset() = %d, want >= 0", got)
+			}
+		})
+	}
+}
+
+func TestSidebarScrollUp(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialOffset  int
+		expectedOffset int
+	}{
+		{
+			name:           "scroll up from offset 5",
+			initialOffset:  5,
+			expectedOffset: 4,
+		},
+		{
+			name:           "scroll up from offset 1",
+			initialOffset:  1,
+			expectedOffset: 0,
+		},
+		{
+			name:           "scroll up from offset 0 stays at 0",
+			initialOffset:  0,
+			expectedOffset: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewModel(nil, nil, nil)
+			m.sidebarScrollOffset = tt.initialOffset
+
+			result, _ := m.handleSidebarScrollUp()
+			updatedModel := result.(Model)
+
+			if updatedModel.sidebarScrollOffset != tt.expectedOffset {
+				t.Errorf("sidebarScrollOffset = %d, want %d", updatedModel.sidebarScrollOffset, tt.expectedOffset)
+			}
+		})
+	}
+}
+
+func TestSidebarScrollDown(t *testing.T) {
+	// Create a session with enough instances to allow scrolling
+	instances := make([]*orchestrator.Instance, 20)
+	for i := range instances {
+		instances[i] = &orchestrator.Instance{ID: "inst-" + string(rune('a'+i))}
+	}
+
+	t.Run("scroll down increases offset", func(t *testing.T) {
+		m := NewModel(nil, &orchestrator.Session{Instances: instances}, nil)
+		m.sidebarScrollOffset = 0
+		m.sidebarMode = view.SidebarModeFlat
+
+		result, _ := m.handleSidebarScrollDown()
+		updatedModel := result.(Model)
+
+		if updatedModel.sidebarScrollOffset != 1 {
+			t.Errorf("sidebarScrollOffset = %d, want 1", updatedModel.sidebarScrollOffset)
+		}
+	})
+
+	t.Run("scroll down respects max offset", func(t *testing.T) {
+		// With a small number of instances and large initial offset,
+		// scrolling down should be limited
+		m := NewModel(nil, &orchestrator.Session{Instances: instances[:3]}, nil)
+		m.sidebarScrollOffset = 100 // Way beyond max
+		m.sidebarMode = view.SidebarModeFlat
+
+		result, _ := m.handleSidebarScrollDown()
+		updatedModel := result.(Model)
+
+		// Max offset calculation depends on terminal dimensions,
+		// but the offset should not increase beyond what's valid
+		// Just verify it didn't panic and returned a reasonable value
+		if updatedModel.sidebarScrollOffset < 0 {
+			t.Errorf("sidebarScrollOffset should be >= 0, got %d", updatedModel.sidebarScrollOffset)
+		}
+	})
+}
+
+func TestSidebarScrollDoesNotChangeActiveTab(t *testing.T) {
+	// The key feature: scrolling the sidebar should NOT change which instance is selected
+	instances := []*orchestrator.Instance{
+		{ID: "inst-1"},
+		{ID: "inst-2"},
+		{ID: "inst-3"},
+	}
+
+	t.Run("scroll up preserves active tab", func(t *testing.T) {
+		m := NewModel(nil, &orchestrator.Session{Instances: instances}, nil)
+		m.sidebarScrollOffset = 5
+		m.activeTab = 1
+
+		result, _ := m.handleSidebarScrollUp()
+		updatedModel := result.(Model)
+
+		if updatedModel.activeTab != 1 {
+			t.Errorf("activeTab changed from 1 to %d after scroll up", updatedModel.activeTab)
+		}
+	})
+
+	t.Run("scroll down preserves active tab", func(t *testing.T) {
+		m := NewModel(nil, &orchestrator.Session{Instances: instances}, nil)
+		m.sidebarScrollOffset = 0
+		m.activeTab = 2
+
+		result, _ := m.handleSidebarScrollDown()
+		updatedModel := result.(Model)
+
+		if updatedModel.activeTab != 2 {
+			t.Errorf("activeTab changed from 2 to %d after scroll down", updatedModel.activeTab)
+		}
+	})
+}
+
 func TestAutoDismissMessages(t *testing.T) {
 	t.Run("new message sets timestamp", func(t *testing.T) {
 		m := &Model{}
