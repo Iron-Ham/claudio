@@ -45,9 +45,12 @@ func NewSession(task string, config Config) *Session {
 }
 
 // AllAttemptsComplete returns true if all three attempts have completed (success or failure)
+// Note: AttemptStatusUnderReview is NOT considered complete - the attempt must either
+// pass review (AttemptStatusCompleted) or fail review (AttemptStatusFailed).
 func (s *Session) AllAttemptsComplete() bool {
 	for _, attempt := range s.Attempts {
-		if attempt.Status == AttemptStatusWorking || attempt.Status == AttemptStatusPending {
+		switch attempt.Status {
+		case AttemptStatusPending, AttemptStatusWorking, AttemptStatusUnderReview:
 			return false
 		}
 	}

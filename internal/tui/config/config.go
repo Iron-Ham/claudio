@@ -321,6 +321,13 @@ func New() Model {
 					Category:    "ultraplan",
 				},
 				{
+					Key:         "ultraplan.adversarial",
+					Label:       "Adversarial Mode",
+					Description: "Each task must pass reviewer approval before completion",
+					Type:        "bool",
+					Category:    "ultraplan",
+				},
+				{
 					Key:         "ultraplan.consolidation_mode",
 					Label:       "Consolidation Mode",
 					Description: "How to consolidate completed work: stacked or single PR",
@@ -417,6 +424,25 @@ func New() Model {
 					Description: "Default JSON output file path",
 					Type:        "string",
 					Category:    "plan",
+				},
+			},
+		},
+		{
+			Name: "Tripleshot",
+			Items: []ConfigItem{
+				{
+					Key:         "tripleshot.auto_approve",
+					Label:       "Auto Approve",
+					Description: "Skip confirmation for applying winning solution",
+					Type:        "bool",
+					Category:    "tripleshot",
+				},
+				{
+					Key:         "tripleshot.adversarial",
+					Label:       "Adversarial Mode",
+					Description: "Each implementer must pass reviewer approval before completion",
+					Type:        "bool",
+					Category:    "tripleshot",
 				},
 			},
 		},
@@ -1207,6 +1233,7 @@ func (m *Model) resetCurrentToDefault() {
 		// Ultraplan
 		"ultraplan.max_parallel":             defaults.Ultraplan.MaxParallel,
 		"ultraplan.multi_pass":               defaults.Ultraplan.MultiPass,
+		"ultraplan.adversarial":              defaults.Ultraplan.Adversarial,
 		"ultraplan.consolidation_mode":       defaults.Ultraplan.ConsolidationMode,
 		"ultraplan.create_draft_prs":         defaults.Ultraplan.CreateDraftPRs,
 		"ultraplan.pr_labels":                strings.Join(defaults.Ultraplan.PRLabels, ","),
@@ -1221,6 +1248,9 @@ func (m *Model) resetCurrentToDefault() {
 		"plan.multi_pass":    defaults.Plan.MultiPass,
 		"plan.labels":        strings.Join(defaults.Plan.Labels, ","),
 		"plan.output_file":   defaults.Plan.OutputFile,
+		// Tripleshot
+		"tripleshot.auto_approve": defaults.Tripleshot.AutoApprove,
+		"tripleshot.adversarial":  defaults.Tripleshot.Adversarial,
 		// Adversarial
 		"adversarial.max_iterations":    defaults.Adversarial.MaxIterations,
 		"adversarial.min_passing_score": defaults.Adversarial.MinPassingScore,

@@ -4,19 +4,22 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
 // Mock implementations for coordinator tests
 
 type mockOrchestrator struct {
-	addInstanceFunc   func(session SessionInterface, task string) (InstanceInterface, error)
-	startInstanceFunc func(inst InstanceInterface) error
-	saveSessionFunc   func() error
+	addInstanceFunc           func(session SessionInterface, task string) (InstanceInterface, error)
+	addInstanceToWorktreeFunc func(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error)
+	startInstanceFunc         func(inst InstanceInterface) error
+	saveSessionFunc           func() error
 
-	addInstanceCalls   int
-	startInstanceCalls int
-	saveSessionCalls   int
+	addInstanceCalls           int
+	addInstanceToWorktreeCalls int
+	startInstanceCalls         int
+	saveSessionCalls           int
 
 	lastAddedInstances []InstanceInterface
 }
@@ -36,6 +39,20 @@ func (m *mockOrchestrator) AddInstance(session SessionInterface, task string) (I
 		id:           "mock-inst-" + string(rune('0'+m.addInstanceCalls)),
 		worktreePath: "/tmp/mock-worktree-" + string(rune('0'+m.addInstanceCalls)),
 		branch:       "mock-branch-" + string(rune('0'+m.addInstanceCalls)),
+	}
+	m.lastAddedInstances = append(m.lastAddedInstances, inst)
+	return inst, nil
+}
+
+func (m *mockOrchestrator) AddInstanceToWorktree(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error) {
+	m.addInstanceToWorktreeCalls++
+	if m.addInstanceToWorktreeFunc != nil {
+		return m.addInstanceToWorktreeFunc(session, task, worktreePath, branch)
+	}
+	inst := &mockInstance{
+		id:           "mock-reviewer-" + string(rune('0'+m.addInstanceToWorktreeCalls)),
+		worktreePath: worktreePath,
+		branch:       branch,
 	}
 	m.lastAddedInstances = append(m.lastAddedInstances, inst)
 	return inst, nil
@@ -1218,4 +1235,489 @@ func TestCoordinator_StartJudge_Error(t *testing.T) {
 	if err == nil {
 		t.Error("StartJudge() should return error")
 	}
+}
+
+// Adversarial workflow tests
+
+func TestCoordinator_ProcessAttemptCompletion_Adversarial(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create session with adversarial mode enabled
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	session := NewSession("test task", cfg)
+	session.Attempts[0] = Attempt{InstanceID: "inst-1", WorktreePath: tmpDir, Status: AttemptStatusWorking}
+
+	orch := newMockOrchestrator()
+	baseSession := newMockBaseSession()
+	group := &mockGroup{}
+	baseSession.groups["tripleshot"] = group
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   baseSession,
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	var reviewerStartCalled bool
+	var reviewerAttemptIndex int
+	coord.SetCallbacks(&CoordinatorCallbacks{
+		OnReviewerStart: func(attemptIndex int, instanceID string) {
+			reviewerStartCalled = true
+			reviewerAttemptIndex = attemptIndex
+		},
+		OnPhaseChange: func(phase Phase) {},
+	})
+
+	// Write completion file
+	completion := CompletionFile{
+		AttemptIndex: 0,
+		Status:       "complete",
+		Summary:      "Test summary",
+		Approach:     "Test approach",
+	}
+	data, _ := json.MarshalIndent(completion, "", "  ")
+	if err := os.WriteFile(CompletionFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	err := coord.ProcessAttemptCompletion(0)
+
+	if err != nil {
+		t.Fatalf("ProcessAttemptCompletion() error = %v", err)
+	}
+	if !reviewerStartCalled {
+		t.Error("OnReviewerStart callback should have been called")
+	}
+	if reviewerAttemptIndex != 0 {
+		t.Errorf("reviewerAttemptIndex = %d, want 0", reviewerAttemptIndex)
+	}
+	if session.Attempts[0].Status != AttemptStatusUnderReview {
+		t.Errorf("session.Attempts[0].Status = %v, want %v", session.Attempts[0].Status, AttemptStatusUnderReview)
+	}
+	if session.Phase != PhaseAdversarialReview {
+		t.Errorf("session.Phase = %v, want %v", session.Phase, PhaseAdversarialReview)
+	}
+	// Verify AddInstanceToWorktree was called (for reviewer)
+	if orch.addInstanceToWorktreeCalls != 1 {
+		t.Errorf("AddInstanceToWorktree called %d times, want 1", orch.addInstanceToWorktreeCalls)
+	}
+}
+
+func TestCoordinator_CheckAdversarialReviewCompletion(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	session := NewSession("test task", cfg)
+	session.Attempts[0] = Attempt{InstanceID: "inst-1", WorktreePath: tmpDir, Status: AttemptStatusUnderReview}
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  newMockOrchestrator(),
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	// No file yet
+	complete, err := coord.CheckAdversarialReviewCompletion(0)
+	if err != nil {
+		t.Fatalf("CheckAdversarialReviewCompletion() error = %v", err)
+	}
+	if complete {
+		t.Error("should not be complete when file doesn't exist")
+	}
+
+	// Create review file
+	reviewPath := AdversarialReviewFilePath(tmpDir)
+	if err := os.WriteFile(reviewPath, []byte("{}"), 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	complete, err = coord.CheckAdversarialReviewCompletion(0)
+	if err != nil {
+		t.Fatalf("CheckAdversarialReviewCompletion() error = %v", err)
+	}
+	if !complete {
+		t.Error("should be complete when file exists")
+	}
+}
+
+func TestCoordinator_CheckAdversarialReviewCompletion_NotUnderReview(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	session := NewSession("test task", DefaultConfig())
+	session.Attempts[0] = Attempt{InstanceID: "inst-1", WorktreePath: tmpDir, Status: AttemptStatusWorking}
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  newMockOrchestrator(),
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	// Should return false when not under review
+	complete, err := coord.CheckAdversarialReviewCompletion(0)
+	if err != nil {
+		t.Fatalf("CheckAdversarialReviewCompletion() error = %v", err)
+	}
+	if complete {
+		t.Error("should return false when status is not UnderReview")
+	}
+}
+
+func TestCoordinator_CheckAdversarialReviewCompletion_InvalidIndex(t *testing.T) {
+	session := NewSession("test task", DefaultConfig())
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  newMockOrchestrator(),
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	_, err := coord.CheckAdversarialReviewCompletion(-1)
+	if err == nil {
+		t.Error("expected error for negative index")
+	}
+
+	_, err = coord.CheckAdversarialReviewCompletion(3)
+	if err == nil {
+		t.Error("expected error for index >= 3")
+	}
+}
+
+func TestCoordinator_ProcessAdversarialReviewCompletion_Approved(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	session := NewSession("test task", cfg)
+	session.Attempts[0] = Attempt{
+		InstanceID:   "inst-1",
+		WorktreePath: tmpDir,
+		Status:       AttemptStatusUnderReview,
+		ReviewerID:   "reviewer-1",
+		ReviewRound:  1,
+	}
+	session.Attempts[1] = Attempt{InstanceID: "inst-2", WorktreePath: tmpDir, Status: AttemptStatusCompleted}
+	session.Attempts[2] = Attempt{InstanceID: "inst-3", WorktreePath: tmpDir, Status: AttemptStatusCompleted}
+
+	orch := newMockOrchestrator()
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	var attemptCompleteCalled bool
+	var reviewApprovedCalled bool
+	var approvedScore int
+	coord.SetCallbacks(&CoordinatorCallbacks{
+		OnAttemptComplete: func(attemptIndex int) {
+			attemptCompleteCalled = true
+		},
+		OnReviewApproved: func(attemptIndex int, score int) {
+			reviewApprovedCalled = true
+			approvedScore = score
+		},
+	})
+
+	// Write approval review file
+	review := AdversarialReviewFile{
+		AttemptIndex: 0,
+		Round:        1,
+		Approved:     true,
+		Score:        9,
+		Summary:      "Looks good",
+		Strengths:    []string{"Well structured"},
+	}
+	data, _ := json.MarshalIndent(review, "", "  ")
+	if err := os.WriteFile(AdversarialReviewFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	err := coord.ProcessAdversarialReviewCompletion(0)
+
+	if err != nil {
+		t.Fatalf("ProcessAdversarialReviewCompletion() error = %v", err)
+	}
+	if !attemptCompleteCalled {
+		t.Error("OnAttemptComplete callback should have been called")
+	}
+	if !reviewApprovedCalled {
+		t.Error("OnReviewApproved callback should have been called")
+	}
+	if approvedScore != 9 {
+		t.Errorf("approvedScore = %d, want 9", approvedScore)
+	}
+	if session.Attempts[0].ReviewApproved != true {
+		t.Error("session.Attempts[0].ReviewApproved should be true")
+	}
+	if session.Attempts[0].ReviewScore != 9 {
+		t.Errorf("session.Attempts[0].ReviewScore = %d, want 9", session.Attempts[0].ReviewScore)
+	}
+}
+
+func TestCoordinator_ProcessAdversarialReviewCompletion_Rejected(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	session := NewSession("test task", cfg)
+	session.Attempts[0] = Attempt{
+		InstanceID:   "inst-1",
+		WorktreePath: tmpDir,
+		Status:       AttemptStatusUnderReview,
+		ReviewerID:   "reviewer-1",
+		ReviewRound:  1,
+	}
+	session.Attempts[1] = Attempt{InstanceID: "inst-2", WorktreePath: tmpDir, Status: AttemptStatusCompleted}
+	session.Attempts[2] = Attempt{InstanceID: "inst-3", WorktreePath: tmpDir, Status: AttemptStatusCompleted}
+
+	orch := newMockOrchestrator()
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	var attemptFailedCalled bool
+	var reviewRejectedCalled bool
+	var rejectedScore int
+	var rejectedIssues []string
+	coord.SetCallbacks(&CoordinatorCallbacks{
+		OnAttemptFailed: func(attemptIndex int, reason string) {
+			attemptFailedCalled = true
+		},
+		OnReviewRejected: func(attemptIndex int, score int, issues []string) {
+			reviewRejectedCalled = true
+			rejectedScore = score
+			rejectedIssues = issues
+		},
+	})
+
+	// Write rejection review file
+	review := AdversarialReviewFile{
+		AttemptIndex: 0,
+		Round:        1,
+		Approved:     false,
+		Score:        5,
+		Summary:      "Needs work",
+		Issues:       []string{"Missing error handling", "No tests"},
+	}
+	data, _ := json.MarshalIndent(review, "", "  ")
+	if err := os.WriteFile(AdversarialReviewFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	err := coord.ProcessAdversarialReviewCompletion(0)
+
+	if err != nil {
+		t.Fatalf("ProcessAdversarialReviewCompletion() error = %v", err)
+	}
+	if !attemptFailedCalled {
+		t.Error("OnAttemptFailed callback should have been called")
+	}
+	if !reviewRejectedCalled {
+		t.Error("OnReviewRejected callback should have been called")
+	}
+	if rejectedScore != 5 {
+		t.Errorf("rejectedScore = %d, want 5", rejectedScore)
+	}
+	if len(rejectedIssues) != 2 {
+		t.Errorf("len(rejectedIssues) = %d, want 2", len(rejectedIssues))
+	}
+	if session.Attempts[0].ReviewApproved != false {
+		t.Error("session.Attempts[0].ReviewApproved should be false")
+	}
+}
+
+func TestCoordinator_ProcessAdversarialReviewCompletion_InvalidIndex(t *testing.T) {
+	session := NewSession("test task", DefaultConfig())
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  newMockOrchestrator(),
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	err := coord.ProcessAdversarialReviewCompletion(-1)
+	if err == nil {
+		t.Error("expected error for negative index")
+	}
+
+	err = coord.ProcessAdversarialReviewCompletion(3)
+	if err == nil {
+		t.Error("expected error for index >= 3")
+	}
+}
+
+func TestCoordinator_StartAdversarialReviewer(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	session := NewSession("test task", cfg)
+	session.Attempts[0] = Attempt{
+		InstanceID:   "inst-1",
+		WorktreePath: tmpDir,
+		Status:       AttemptStatusUnderReview,
+		ReviewRound:  1,
+	}
+
+	orch := newMockOrchestrator()
+	baseSession := newMockBaseSession()
+	group := &mockGroup{}
+	baseSession.groups["tripleshot"] = group
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   baseSession,
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	var reviewerStartCalled bool
+	coord.SetCallbacks(&CoordinatorCallbacks{
+		OnReviewerStart: func(attemptIndex int, instanceID string) {
+			reviewerStartCalled = true
+		},
+	})
+
+	completion := &CompletionFile{
+		AttemptIndex: 0,
+		Status:       "complete",
+		Summary:      "Test summary",
+		Approach:     "Test approach",
+	}
+
+	err := coord.StartAdversarialReviewer(0, completion)
+
+	if err != nil {
+		t.Fatalf("StartAdversarialReviewer() error = %v", err)
+	}
+	if !reviewerStartCalled {
+		t.Error("OnReviewerStart callback should have been called")
+	}
+	if orch.addInstanceToWorktreeCalls != 1 {
+		t.Errorf("AddInstanceToWorktree called %d times, want 1", orch.addInstanceToWorktreeCalls)
+	}
+	if session.Attempts[0].ReviewerID == "" {
+		t.Error("session.Attempts[0].ReviewerID should be set")
+	}
+}
+
+func TestCoordinator_StartAdversarialReviewer_UsesConfiguredMinScore(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	cfg.MinPassingScore = 9 // Custom passing score
+	session := NewSession("test task", cfg)
+	session.Attempts[0] = Attempt{
+		InstanceID:   "inst-1",
+		WorktreePath: tmpDir,
+		Status:       AttemptStatusUnderReview,
+		ReviewRound:  1,
+	}
+
+	var capturedPrompt string
+	orch := newMockOrchestrator()
+	orch.addInstanceToWorktreeFunc = func(sess SessionInterface, task, worktreePath, branch string) (InstanceInterface, error) {
+		capturedPrompt = task
+		return &mockInstance{
+			id:           "reviewer-inst",
+			worktreePath: worktreePath,
+			branch:       branch,
+		}, nil
+	}
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	coord.SetCallbacks(&CoordinatorCallbacks{
+		OnReviewerStart: func(attemptIndex int, instanceID string) {},
+	})
+
+	completion := &CompletionFile{
+		AttemptIndex: 0,
+		Status:       "complete",
+		Summary:      "Test summary",
+		Approach:     "Test approach",
+	}
+
+	err := coord.StartAdversarialReviewer(0, completion)
+
+	if err != nil {
+		t.Fatalf("StartAdversarialReviewer() error = %v", err)
+	}
+
+	// Verify the prompt contains the configured min score (9) instead of default (8)
+	if capturedPrompt == "" {
+		t.Fatal("prompt was not captured")
+	}
+	// The prompt should mention the min score multiple times
+	if !strings.Contains(capturedPrompt, "score >= 9") {
+		t.Errorf("prompt should contain 'score >= 9' for configured MinPassingScore, got prompt that doesn't contain it")
+	}
+}
+
+func TestCoordinator_StartAdversarialReviewer_Error(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	session := NewSession("test task", cfg)
+	session.Attempts[0] = Attempt{
+		InstanceID:   "inst-1",
+		WorktreePath: tmpDir,
+		Status:       AttemptStatusUnderReview,
+		ReviewRound:  1,
+	}
+
+	orch := newMockOrchestrator()
+	orch.addInstanceToWorktreeFunc = func(sess SessionInterface, task, worktreePath, branch string) (InstanceInterface, error) {
+		return nil, errors.New("failed to create reviewer")
+	}
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	completion := &CompletionFile{
+		AttemptIndex: 0,
+		Status:       "complete",
+		Summary:      "Test summary",
+	}
+
+	err := coord.StartAdversarialReviewer(0, completion)
+
+	if err == nil {
+		t.Error("StartAdversarialReviewer() should return error")
+	}
+}
+
+func TestCoordinator_NotifyReviewerCallbacks_Nil(t *testing.T) {
+	session := NewSession("test task", DefaultConfig())
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  newMockOrchestrator(),
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	// Should not panic with nil callbacks
+	coord.notifyReviewerStart(0, "inst-1")
+	coord.notifyReviewApproved(0, 9)
+	coord.notifyReviewRejected(0, 5, []string{"issue1"})
 }

@@ -47,6 +47,12 @@ Multi-Pass Planning:
   into a canonical execution plan. This produces higher-quality plans through
   diverse strategic perspectives.
 
+Adversarial Mode:
+  Use --adversarial to enable adversarial review mode. In this mode, each task
+  is paired with a critical reviewer. A task's work is not considered complete
+  until its reviewer approves it. This ensures higher quality by catching issues
+  during execution rather than during synthesis.
+
 Plan Editor:
   When the plan is ready, an interactive editor opens allowing you to:
   - Review task dependencies and execution order
@@ -56,6 +62,11 @@ Plan Editor:
 
   Use --review to always open the plan editor, even with --auto-approve.
   Use --auto-approve without --review to skip the editor entirely.
+
+Configuration options can be set in config.yaml under 'ultraplan:' or via flags:
+- max_parallel: Maximum concurrent child sessions (default: 3)
+- multi_pass: Enable multi-pass planning (default: false)
+- adversarial: [EXPERIMENTAL] Enable adversarial review per task (default: false, infrastructure-only)
 
 Examples:
   # Start ultra-plan with an objective
@@ -80,7 +91,10 @@ Examples:
   claudio ultraplan --multi-pass "Refactor database layer to use repository pattern"
 
   # Combine multi-pass with dry-run to compare strategies without executing
-  claudio ultraplan --multi-pass --dry-run "Implement microservices architecture"`,
+  claudio ultraplan --multi-pass --dry-run "Implement microservices architecture"
+
+  # Enable adversarial review for higher quality task completion
+  claudio ultraplan --adversarial "Implement critical security features"`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runUltraplan,
 }
@@ -93,16 +107,19 @@ var (
 	ultraplanAutoApprove bool
 	ultraplanReview      bool
 	ultraplanMultiPass   bool
+	ultraplanAdversarial bool
 )
 
 func init() {
+	cfg := config.Get()
 	ultraplanCmd.Flags().StringVar(&ultraplanPlanFile, "plan", "", "Use existing plan file instead of planning phase")
-	ultraplanCmd.Flags().IntVar(&ultraplanMaxParallel, "max-parallel", 3, "Maximum concurrent child sessions (0 = unlimited)")
+	ultraplanCmd.Flags().IntVar(&ultraplanMaxParallel, "max-parallel", cfg.Ultraplan.MaxParallel, "Maximum concurrent child sessions (0 = unlimited)")
 	ultraplanCmd.Flags().BoolVar(&ultraplanDryRun, "dry-run", false, "Run planning only, output plan without executing")
 	ultraplanCmd.Flags().BoolVar(&ultraplanNoSynthesis, "no-synthesis", false, "Skip synthesis phase after execution")
 	ultraplanCmd.Flags().BoolVar(&ultraplanAutoApprove, "auto-approve", false, "Auto-approve spawned tasks without confirmation")
 	ultraplanCmd.Flags().BoolVar(&ultraplanReview, "review", false, "Review and edit plan before execution (opens plan editor)")
-	ultraplanCmd.Flags().BoolVar(&ultraplanMultiPass, "multi-pass", false, "Enable multi-pass planning with 3 strategic approaches (maximize-parallelism, minimize-complexity, balanced) - best plan is selected or merged")
+	ultraplanCmd.Flags().BoolVar(&ultraplanMultiPass, "multi-pass", cfg.Ultraplan.MultiPass, "Enable multi-pass planning with 3 strategic approaches (maximize-parallelism, minimize-complexity, balanced) - best plan is selected or merged")
+	ultraplanCmd.Flags().BoolVar(&ultraplanAdversarial, "adversarial", cfg.Ultraplan.Adversarial, "[EXPERIMENTAL] Enable adversarial review mode where each task must pass reviewer approval (NOTE: infrastructure-only, workflow integration not yet implemented)")
 }
 
 // RegisterUltraplanCmd registers the ultraplan command with the given parent command.
@@ -205,6 +222,7 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 		"objective", util.TruncateString(objective, 100),
 		"max_parallel", initResult.Config.MaxParallel,
 		"multi_pass", initResult.Config.MultiPass,
+		"adversarial", initResult.Config.Adversarial,
 		"dry_run", initResult.Config.DryRun,
 		"auto_approve", initResult.Config.AutoApprove,
 	)
@@ -234,6 +252,9 @@ func applyUltraplanFlagOverrides(cmd *cobra.Command, cfg *orchestrator.UltraPlan
 	}
 	if cmd.Flags().Changed("multi-pass") {
 		cfg.MultiPass = ultraplanMultiPass
+	}
+	if cmd.Flags().Changed("adversarial") {
+		cfg.Adversarial = ultraplanAdversarial
 	}
 	// These flags always apply (no "changed" check needed since they have sensible defaults)
 	cfg.DryRun = ultraplanDryRun

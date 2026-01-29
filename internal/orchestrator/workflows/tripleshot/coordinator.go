@@ -3,6 +3,7 @@ package tripleshot
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 // This interface allows the coordinator to work without importing the orchestrator package directly.
 type OrchestratorInterface interface {
 	AddInstance(session SessionInterface, task string) (InstanceInterface, error)
+	AddInstanceToWorktree(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error)
 	StartInstance(inst InstanceInterface) error
 	SaveSession() error
 }
@@ -69,6 +71,16 @@ type CoordinatorCallbacks struct {
 
 	// OnComplete is called when the entire triple-shot completes
 	OnComplete func(success bool, summary string)
+
+	// Adversarial review callbacks
+	// OnReviewerStart is called when an adversarial reviewer starts
+	OnReviewerStart func(attemptIndex int, instanceID string)
+
+	// OnReviewApproved is called when a reviewer approves an attempt
+	OnReviewApproved func(attemptIndex int, score int)
+
+	// OnReviewRejected is called when a reviewer rejects an attempt
+	OnReviewRejected func(attemptIndex int, score int, issues []string)
 }
 
 // Coordinator orchestrates the execution of a triple-shot session
@@ -479,7 +491,7 @@ func (c *Coordinator) ProcessAttemptCompletion(attemptIndex int) error {
 	}
 
 	session := c.Session()
-	attempt := session.Attempts[attemptIndex]
+	attempt := &session.Attempts[attemptIndex]
 
 	// Parse the completion file
 	completion, err := ParseCompletionFile(attempt.WorktreePath)
@@ -488,13 +500,50 @@ func (c *Coordinator) ProcessAttemptCompletion(attemptIndex int) error {
 		return err
 	}
 
-	if completion.Status == "complete" {
-		c.notifyAttemptComplete(attemptIndex)
-	} else {
+	if completion.Status != "complete" {
 		c.notifyAttemptFailed(attemptIndex, completion.Summary)
+		return c.checkAllAttemptsAndProceed()
 	}
 
-	// Check if all attempts are complete
+	// If adversarial mode is enabled, spawn a reviewer instead of marking complete
+	if session.Config.Adversarial {
+		c.logger.Info("adversarial mode enabled, spawning reviewer",
+			"attempt_index", attemptIndex,
+			"worktree_path", attempt.WorktreePath,
+		)
+
+		// Mark attempt as under review
+		attempt.Status = AttemptStatusUnderReview
+		attempt.ReviewRound = 1
+
+		// Transition to adversarial review phase if this is the first attempt under review
+		if session.Phase == PhaseWorking {
+			c.notifyPhaseChange(PhaseAdversarialReview)
+		}
+
+		// Start the adversarial reviewer
+		if err := c.StartAdversarialReviewer(attemptIndex, completion); err != nil {
+			c.logger.Error("failed to start adversarial reviewer",
+				"attempt_index", attemptIndex,
+				"error", err,
+			)
+			c.notifyAttemptFailed(attemptIndex, fmt.Sprintf("failed to start reviewer: %v", err))
+			return err
+		}
+		return nil
+	}
+
+	// Non-adversarial mode: mark complete immediately
+	c.notifyAttemptComplete(attemptIndex)
+	return c.checkAllAttemptsAndProceed()
+}
+
+// checkAllAttemptsAndProceed checks if all attempts are complete and proceeds to judge if ready.
+// Returns an error if all attempts are complete but fewer than 2 succeeded.
+func (c *Coordinator) checkAllAttemptsAndProceed() error {
+	session := c.Session()
+
+	// Check if all attempts are complete (including adversarial review approval)
 	if session.AllAttemptsComplete() {
 		c.logger.Info("all attempts complete", "successful_count", session.SuccessfulAttemptCount())
 
@@ -507,7 +556,186 @@ func (c *Coordinator) ProcessAttemptCompletion(attemptIndex int) error {
 			return fmt.Errorf("fewer than 2 attempts succeeded")
 		}
 	}
+	return nil
+}
 
+// StartAdversarialReviewer starts a reviewer instance for an attempt
+func (c *Coordinator) StartAdversarialReviewer(attemptIndex int, completion *CompletionFile) error {
+	session := c.Session()
+	attempt := &session.Attempts[attemptIndex]
+
+	// Use configured minimum passing score, or default to 8
+	minPassingScore := session.Config.MinPassingScore
+	if minPassingScore <= 0 {
+		minPassingScore = 8
+	}
+
+	// Build the reviewer prompt
+	prompt := FormatAdversarialReviewerPrompt(
+		session.Task,
+		attemptIndex,
+		attempt.ReviewRound,
+		completion,
+		minPassingScore,
+	)
+
+	// Create reviewer instance in the same worktree
+	inst, err := c.orch.AddInstanceToWorktree(c.baseSession, prompt, attempt.WorktreePath, "")
+	if err != nil {
+		return fmt.Errorf("failed to create reviewer instance: %w", err)
+	}
+
+	// Store reviewer ID
+	attempt.ReviewerID = inst.GetID()
+
+	// Add reviewer to the triple-shot group
+	var tripleGroup GroupInterface
+	if session.GroupID != "" {
+		tripleGroup = c.baseSession.GetGroup(session.GroupID)
+	}
+	if tripleGroup == nil {
+		tripleGroup = c.baseSession.GetGroupBySessionType(c.sessionType)
+	}
+	if tripleGroup != nil {
+		tripleGroup.AddInstance(inst.GetID())
+	}
+
+	// Start the reviewer instance
+	if err := c.orch.StartInstance(inst); err != nil {
+		return fmt.Errorf("failed to start reviewer: %w", err)
+	}
+
+	c.notifyReviewerStart(attemptIndex, inst.GetID())
+
+	// Persist session state
+	if err := c.orch.SaveSession(); err != nil {
+		c.logger.Error("failed to persist session after starting reviewer", "error", err)
+	}
+
+	return nil
+}
+
+// notifyReviewerStart notifies callbacks of reviewer start
+func (c *Coordinator) notifyReviewerStart(attemptIndex int, instanceID string) {
+	c.logger.Info("adversarial reviewer started",
+		"attempt_index", attemptIndex,
+		"instance_id", instanceID,
+	)
+
+	c.mu.RLock()
+	cb := c.callbacks
+	c.mu.RUnlock()
+
+	if cb != nil && cb.OnReviewerStart != nil {
+		cb.OnReviewerStart(attemptIndex, instanceID)
+	}
+}
+
+// CheckAdversarialReviewCompletion checks if a reviewer has written its review file
+func (c *Coordinator) CheckAdversarialReviewCompletion(attemptIndex int) (bool, error) {
+	session := c.Session()
+	if attemptIndex < 0 || attemptIndex >= 3 {
+		return false, fmt.Errorf("invalid attempt index: %d", attemptIndex)
+	}
+
+	attempt := session.Attempts[attemptIndex]
+	if attempt.Status != AttemptStatusUnderReview {
+		return false, nil
+	}
+	if attempt.WorktreePath == "" {
+		return false, nil
+	}
+
+	return AdversarialReviewFileExists(attempt.WorktreePath), nil
+}
+
+// ProcessAdversarialReviewCompletion handles when a reviewer completes
+func (c *Coordinator) ProcessAdversarialReviewCompletion(attemptIndex int) error {
+	if attemptIndex < 0 || attemptIndex >= 3 {
+		return fmt.Errorf("invalid attempt index: %d", attemptIndex)
+	}
+
+	session := c.Session()
+	attempt := &session.Attempts[attemptIndex]
+
+	// Parse the review file
+	review, err := ParseAdversarialReviewFile(attempt.WorktreePath)
+	if err != nil {
+		c.logger.Error("failed to parse adversarial review file",
+			"attempt_index", attemptIndex,
+			"error", err,
+		)
+		c.notifyAttemptFailed(attemptIndex, fmt.Sprintf("failed to parse review file: %v", err))
+		return err
+	}
+
+	// Store review results
+	attempt.ReviewScore = review.Score
+	attempt.ReviewApproved = review.Approved
+
+	if review.Approved {
+		c.logger.Info("adversarial review approved",
+			"attempt_index", attemptIndex,
+			"score", review.Score,
+		)
+
+		// Mark the attempt as complete
+		c.notifyAttemptComplete(attemptIndex)
+		c.notifyReviewApproved(attemptIndex, review.Score)
+	} else {
+		c.logger.Info("adversarial review rejected",
+			"attempt_index", attemptIndex,
+			"score", review.Score,
+			"issues_count", len(review.Issues),
+		)
+
+		// For now, treat rejection as failure
+		// A more sophisticated implementation could restart the implementer with feedback
+		c.notifyAttemptFailed(attemptIndex, fmt.Sprintf("Review rejected (score: %d/10): %s", review.Score, review.Summary))
+		c.notifyReviewRejected(attemptIndex, review.Score, review.Issues)
+	}
+
+	// Clean up the review file
+	if err := removeFile(AdversarialReviewFilePath(attempt.WorktreePath)); err != nil {
+		c.logger.Warn("failed to clean up adversarial review file",
+			"attempt_index", attemptIndex,
+			"worktree_path", attempt.WorktreePath,
+			"error", err,
+		)
+	}
+
+	// Check if we can proceed to judge
+	return c.checkAllAttemptsAndProceed()
+}
+
+// notifyReviewApproved notifies callbacks of review approval
+func (c *Coordinator) notifyReviewApproved(attemptIndex int, score int) {
+	c.mu.RLock()
+	cb := c.callbacks
+	c.mu.RUnlock()
+
+	if cb != nil && cb.OnReviewApproved != nil {
+		cb.OnReviewApproved(attemptIndex, score)
+	}
+}
+
+// notifyReviewRejected notifies callbacks of review rejection
+func (c *Coordinator) notifyReviewRejected(attemptIndex int, score int, issues []string) {
+	c.mu.RLock()
+	cb := c.callbacks
+	c.mu.RUnlock()
+
+	if cb != nil && cb.OnReviewRejected != nil {
+		cb.OnReviewRejected(attemptIndex, score, issues)
+	}
+}
+
+// removeFile is a helper to remove a file, ignoring not-exist errors
+func removeFile(path string) error {
+	err := os.Remove(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 

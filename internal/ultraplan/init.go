@@ -27,6 +27,7 @@ func BuildConfigFromFile() orchestrator.UltraPlanConfig {
 // The function applies config file settings to the default UltraPlanConfig:
 //   - MaxParallel: maximum concurrent child sessions
 //   - MultiPass: enable multi-pass planning
+//   - Adversarial: enable adversarial review mode per task
 //   - ConsolidationMode: "stacked" or "single" PR mode
 //   - CreateDraftPRs: create PRs as drafts
 //   - PRLabels: labels to add to created PRs
@@ -43,6 +44,7 @@ func BuildConfigFromAppConfig(cfg *config.Config) orchestrator.UltraPlanConfig {
 	// Apply config file settings
 	ultraCfg.MaxParallel = cfg.Ultraplan.MaxParallel
 	ultraCfg.MultiPass = cfg.Ultraplan.MultiPass
+	ultraCfg.Adversarial = cfg.Ultraplan.Adversarial
 
 	if cfg.Ultraplan.ConsolidationMode != "" {
 		ultraCfg.ConsolidationMode = orchestrator.ConsolidationMode(cfg.Ultraplan.ConsolidationMode)

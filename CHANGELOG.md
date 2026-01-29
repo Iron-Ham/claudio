@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Adversarial Review Mode for Tripleshot** - Added `--adversarial` flag to the `tripleshot` command. When enabled, each of the three implementers is paired with a critical reviewer and won't be considered complete until the reviewer approves the work (score >= 8/10). The adversarial phase runs between the working phase and evaluation phase. If a reviewer rejects an attempt, it's marked as failed. The setting can also be configured as a default in `config.yaml` under `tripleshot.adversarial`.
+
+- **Adversarial Flag Infrastructure for Ultraplan (Experimental)** - Added `--adversarial` flag configuration infrastructure to the `ultraplan` command. The flag can be set via CLI or configured in `config.yaml` under `ultraplan.adversarial`. This is marked as EXPERIMENTAL and disabled by default. Note: The workflow integration (spawning reviewers, waiting for approval) is not yet implemented for ultraplan; this is plumbing-only for a follow-up PR.
+
 - **Background Cleanup Jobs** - The `claudio cleanup` command now runs in the background by default, significantly improving performance when there are many worktrees. Resources are snapshotted at command invocation time, ensuring that new worktrees created during cleanup are not affected—even when using `--all-sessions --force --deep-clean`. Use `--foreground` to run synchronously as before. Check job status with `--job-status <job-id>`. Old job files are automatically cleaned up after 24 hours.
 
 - **Auto-Start on Add** - Instances added via `:a` now automatically start by default. This behavior is controlled by the new `session.auto_start_on_add` configuration option (default: `true`). Users who prefer the previous behavior (instances created in pending state requiring manual `:s` to start) can disable this in the interactive config (`:config`) or by setting `session.auto_start_on_add: false` in their config file.

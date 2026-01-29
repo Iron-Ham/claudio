@@ -166,6 +166,12 @@ type UltraPlanConfig struct {
 	AutoApprove bool `json:"auto_approve"` // Auto-approve spawned tasks without confirmation
 	Review      bool `json:"review"`       // Force plan editor to open for review (overrides AutoApprove)
 	MultiPass   bool `json:"multi_pass"`   // Enable multi-pass planning with plan comparison
+	// Adversarial enables adversarial review mode where each task must pass review before completion.
+	// NOTE: This flag is currently infrastructure-only for ultraplan. The configuration is plumbed through
+	// but the workflow integration (spawning reviewers, waiting for approval) is not yet implemented.
+	// See tripleshot.Config.Adversarial for a fully functional implementation.
+	// TODO: Implement ultraplan adversarial review in follow-up PR.
+	Adversarial bool `json:"adversarial"`
 
 	// Consolidation settings
 	ConsolidationMode ConsolidationMode `json:"consolidation_mode,omitempty"` // "stacked" or "single"
@@ -186,6 +192,7 @@ func DefaultUltraPlanConfig() UltraPlanConfig {
 		NoSynthesis:            false,
 		AutoApprove:            false,
 		MultiPass:              false,
+		Adversarial:            false,
 		ConsolidationMode:      ModeStackedPRs,
 		CreateDraftPRs:         true,
 		PRLabels:               []string{"ultraplan"},
