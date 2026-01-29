@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/Iron-Ham/claudio/internal/tui/styles"
 )
 
 // ValidationError represents a single validation failure
@@ -148,6 +150,15 @@ func (c *Config) validateTUI() []ValidationError {
 				Message: fmt.Sprintf("exceeds maximum of %d columns", maxSidebarWidth),
 			})
 		}
+	}
+
+	// Theme validation - empty is valid (uses default), but non-empty must be a valid theme name
+	if c.TUI.Theme != "" && !styles.IsValidTheme(c.TUI.Theme) {
+		errors = append(errors, ValidationError{
+			Field:   "tui.theme",
+			Value:   c.TUI.Theme,
+			Message: fmt.Sprintf("must be one of: %s", strings.Join(styles.ValidThemes(), ", ")),
+		})
 	}
 
 	return errors
@@ -355,22 +366,13 @@ func (c *Config) validateUltraplan() []ValidationError {
 	}
 
 	// Validate consolidation mode
-	if c.Ultraplan.ConsolidationMode != "" {
-		validModes := []string{"stacked", "single"}
-		valid := false
-		for _, mode := range validModes {
-			if c.Ultraplan.ConsolidationMode == mode {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			errors = append(errors, ValidationError{
-				Field:   "ultraplan.consolidation_mode",
-				Value:   c.Ultraplan.ConsolidationMode,
-				Message: "must be 'stacked' or 'single'",
-			})
-		}
+	validConsolidationModes := []string{"stacked", "single"}
+	if c.Ultraplan.ConsolidationMode != "" && !slices.Contains(validConsolidationModes, c.Ultraplan.ConsolidationMode) {
+		errors = append(errors, ValidationError{
+			Field:   "ultraplan.consolidation_mode",
+			Value:   c.Ultraplan.ConsolidationMode,
+			Message: "must be 'stacked' or 'single'",
+		})
 	}
 
 	// Validate max task retries

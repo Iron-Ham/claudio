@@ -6,9 +6,79 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
+	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	"github.com/Iron-Ham/claudio/internal/util"
 )
+
+// TestInit_CallsSetActiveTheme tests that Init() calls SetActiveTheme when
+// config.Get().TUI.Theme is set. This tests the theme application logic.
+//
+// Note: A full integration test would require setting up viper with a config file,
+// as viper.Set() values don't always propagate correctly through viper.Unmarshal().
+func TestInit_CallsSetActiveTheme(t *testing.T) {
+	// Reset to monokai theme before test - this way we can verify Init
+	// applies the default theme from config (which returns "default")
+	styles.SetActiveTheme(styles.ThemeMonokai)
+
+	// Verify we start with monokai's primary color
+	before := styles.GetActiveTheme()
+	if string(before.PrimaryColor) != "#F92672" {
+		t.Fatalf("Expected monokai primary color before Init, got %q", before.PrimaryColor)
+	}
+
+	// Create a minimal model and call Init
+	model := Model{
+		session: &orchestrator.Session{
+			ID: "test-session",
+		},
+	}
+
+	// Call Init - since config.Get().TUI.Theme returns "default",
+	// the theme should be reset to default
+	_ = model.Init()
+
+	// Verify Init applied the config theme (default, since config.Get() returns "default")
+	after := styles.GetActiveTheme()
+	if after == nil {
+		t.Fatal("GetActiveTheme() returned nil after Init()")
+	}
+
+	// Default theme has primary color #A78BFA
+	if string(after.PrimaryColor) != "#A78BFA" {
+		t.Errorf("Init() should apply config theme, got PrimaryColor = %q, want %q (default)",
+			after.PrimaryColor, "#A78BFA")
+	}
+}
+
+// TestSetActiveTheme_AppliesValidThemes tests that SetActiveTheme correctly
+// applies each valid theme. This validates the theme system works correctly.
+func TestSetActiveTheme_AppliesValidThemes(t *testing.T) {
+	tests := []struct {
+		theme        styles.ThemeName
+		primaryColor string
+	}{
+		{styles.ThemeDefault, "#A78BFA"},
+		{styles.ThemeMonokai, "#F92672"},
+		{styles.ThemeDracula, "#BD93F9"},
+		{styles.ThemeNord, "#88C0D0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.theme), func(t *testing.T) {
+			styles.SetActiveTheme(tt.theme)
+
+			active := styles.GetActiveTheme()
+			if active == nil {
+				t.Fatal("GetActiveTheme() returned nil")
+			}
+			if string(active.PrimaryColor) != tt.primaryColor {
+				t.Errorf("SetActiveTheme(%s) PrimaryColor = %q, want %q",
+					tt.theme, active.PrimaryColor, tt.primaryColor)
+			}
+		})
+	}
+}
 
 // TestNewWithUltraPlan_CreatesGroupForCLIStartedSession tests that
 // NewWithUltraPlan creates a group when started from CLI (without pre-existing group).

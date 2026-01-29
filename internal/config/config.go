@@ -44,6 +44,9 @@ type TUIConfig struct {
 	VerboseCommandHelp bool `mapstructure:"verbose_command_help"`
 	// SidebarWidth is the width of the sidebar panel in columns (default: 36, min: 20, max: 60)
 	SidebarWidth int `mapstructure:"sidebar_width"`
+	// Theme is the color theme for the TUI (default: "default")
+	// Options: "default", "monokai", "dracula", "nord"
+	Theme string `mapstructure:"theme"`
 }
 
 // SessionConfig controls session behavior
@@ -340,6 +343,7 @@ func Default() *Config {
 			MaxOutputLines:     1000,
 			VerboseCommandHelp: true,
 			SidebarWidth:       36,
+			Theme:              "default",
 		},
 		Session: SessionConfig{},
 		Instance: InstanceConfig{
@@ -455,6 +459,7 @@ func SetDefaults() {
 	viper.SetDefault("tui.max_output_lines", defaults.TUI.MaxOutputLines)
 	viper.SetDefault("tui.verbose_command_help", defaults.TUI.VerboseCommandHelp)
 	viper.SetDefault("tui.sidebar_width", defaults.TUI.SidebarWidth)
+	viper.SetDefault("tui.theme", defaults.TUI.Theme)
 
 	// Session defaults (currently empty)
 
