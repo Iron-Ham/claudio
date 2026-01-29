@@ -89,6 +89,24 @@ func TestSession_AllAttemptsComplete(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "one under review - adversarial mode not complete",
+			attempts: [3]Attempt{
+				{Status: AttemptStatusCompleted},
+				{Status: AttemptStatusUnderReview},
+				{Status: AttemptStatusCompleted},
+			},
+			want: false,
+		},
+		{
+			name: "all under review - adversarial mode not complete",
+			attempts: [3]Attempt{
+				{Status: AttemptStatusUnderReview},
+				{Status: AttemptStatusUnderReview},
+				{Status: AttemptStatusUnderReview},
+			},
+			want: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -948,5 +966,481 @@ func TestParseEvaluationFile_FromSubdirectory(t *testing.T) {
 	}
 	if parsed.Reasoning != evaluation.Reasoning {
 		t.Errorf("Reasoning = %q, want %q", parsed.Reasoning, evaluation.Reasoning)
+	}
+}
+
+// Adversarial review file tests
+
+func TestFindAdversarialReviewFile_InWorktreeRoot(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create review file in the worktree root
+	reviewPath := filepath.Join(tmpDir, AdversarialReviewFileName)
+	if err := os.WriteFile(reviewPath, []byte(`{"approved":true}`), 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	foundPath, err := FindAdversarialReviewFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindAdversarialReviewFile() error = %v", err)
+	}
+	if foundPath != reviewPath {
+		t.Errorf("FindAdversarialReviewFile() = %q, want %q", foundPath, reviewPath)
+	}
+}
+
+func TestFindAdversarialReviewFile_InSubdirectory(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create a subdirectory
+	subDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	// Create review file in the subdirectory
+	reviewPath := filepath.Join(subDir, AdversarialReviewFileName)
+	if err := os.WriteFile(reviewPath, []byte(`{"approved":true}`), 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	foundPath, err := FindAdversarialReviewFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindAdversarialReviewFile() error = %v", err)
+	}
+	if foundPath != reviewPath {
+		t.Errorf("FindAdversarialReviewFile() = %q, want %q", foundPath, reviewPath)
+	}
+}
+
+func TestFindAdversarialReviewFile_NotFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	_, err = FindAdversarialReviewFile(tmpDir)
+	if err == nil {
+		t.Error("expected error when review file doesn't exist")
+	}
+	if !os.IsNotExist(err) {
+		t.Errorf("expected os.ErrNotExist, got %v", err)
+	}
+}
+
+func TestFindAdversarialReviewFile_SkipsHiddenDirectories(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create .git directory with a review file (should be ignored)
+	gitDir := filepath.Join(tmpDir, ".git")
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
+		t.Fatalf("failed to create .git directory: %v", err)
+	}
+	gitReviewPath := filepath.Join(gitDir, AdversarialReviewFileName)
+	if err := os.WriteFile(gitReviewPath, []byte(`{"approved":true}`), 0644); err != nil {
+		t.Fatalf("failed to write review file in .git: %v", err)
+	}
+
+	// Should not find the file in .git
+	_, err = FindAdversarialReviewFile(tmpDir)
+	if err == nil {
+		t.Error("expected error when review file is only in hidden directory")
+	}
+}
+
+func TestFindAdversarialReviewFile_PrefersWorktreeRoot(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create review file in worktree root
+	rootReviewPath := filepath.Join(tmpDir, AdversarialReviewFileName)
+	if err := os.WriteFile(rootReviewPath, []byte(`{"approved":true,"score":9}`), 0644); err != nil {
+		t.Fatalf("failed to write root review file: %v", err)
+	}
+
+	// Also create review file in subdirectory
+	subDir := filepath.Join(tmpDir, "subproject")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+	subReviewPath := filepath.Join(subDir, AdversarialReviewFileName)
+	if err := os.WriteFile(subReviewPath, []byte(`{"approved":false,"score":5}`), 0644); err != nil {
+		t.Fatalf("failed to write sub review file: %v", err)
+	}
+
+	// Should find the root review file (preferred)
+	foundPath, err := FindAdversarialReviewFile(tmpDir)
+	if err != nil {
+		t.Fatalf("FindAdversarialReviewFile() error = %v", err)
+	}
+	if foundPath != rootReviewPath {
+		t.Errorf("FindAdversarialReviewFile() = %q, want %q (should prefer root)", foundPath, rootReviewPath)
+	}
+}
+
+func TestAdversarialReviewFileExists(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Initially should not exist
+	if AdversarialReviewFileExists(tmpDir) {
+		t.Error("AdversarialReviewFileExists() = true, want false")
+	}
+
+	// Create review file
+	reviewPath := filepath.Join(tmpDir, AdversarialReviewFileName)
+	if err := os.WriteFile(reviewPath, []byte(`{"approved":true}`), 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	// Now should exist
+	if !AdversarialReviewFileExists(tmpDir) {
+		t.Error("AdversarialReviewFileExists() = false, want true")
+	}
+}
+
+func TestAdversarialReviewFileExists_InSubdirectory(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create subdirectory
+	subDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	// Create review file in subdirectory
+	reviewPath := filepath.Join(subDir, AdversarialReviewFileName)
+	if err := os.WriteFile(reviewPath, []byte(`{"approved":true}`), 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	// Should find it in subdirectory
+	if !AdversarialReviewFileExists(tmpDir) {
+		t.Error("AdversarialReviewFileExists() = false, want true (should find in subdirectory)")
+	}
+}
+
+func TestParseAdversarialReviewFile(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	review := AdversarialReviewFile{
+		AttemptIndex: 0,
+		Round:        1,
+		Approved:     true,
+		Score:        9,
+		Summary:      "Excellent implementation",
+		Strengths:    []string{"Clean code", "Good tests"},
+		Issues:       []string{},
+	}
+
+	reviewPath := filepath.Join(tmpDir, AdversarialReviewFileName)
+	data, err := json.MarshalIndent(review, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to marshal review: %v", err)
+	}
+	if err := os.WriteFile(reviewPath, data, 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	parsed, err := ParseAdversarialReviewFile(tmpDir)
+	if err != nil {
+		t.Fatalf("ParseAdversarialReviewFile() error = %v", err)
+	}
+
+	if parsed.AttemptIndex != review.AttemptIndex {
+		t.Errorf("AttemptIndex = %d, want %d", parsed.AttemptIndex, review.AttemptIndex)
+	}
+	if parsed.Approved != review.Approved {
+		t.Errorf("Approved = %v, want %v", parsed.Approved, review.Approved)
+	}
+	if parsed.Score != review.Score {
+		t.Errorf("Score = %d, want %d", parsed.Score, review.Score)
+	}
+	if parsed.Summary != review.Summary {
+		t.Errorf("Summary = %q, want %q", parsed.Summary, review.Summary)
+	}
+}
+
+func TestParseAdversarialReviewFile_FromSubdirectory(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create subdirectory
+	subDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdirectory: %v", err)
+	}
+
+	review := AdversarialReviewFile{
+		AttemptIndex: 1,
+		Round:        2,
+		Approved:     false,
+		Score:        6,
+		Summary:      "Found in subdirectory",
+		Issues:       []string{"Missing tests"},
+	}
+	reviewPath := filepath.Join(subDir, AdversarialReviewFileName)
+	data, err := json.MarshalIndent(review, "", "  ")
+	if err != nil {
+		t.Fatalf("failed to marshal review: %v", err)
+	}
+	if err := os.WriteFile(reviewPath, data, 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	// Parse from worktree root - should find it in subdirectory
+	parsed, err := ParseAdversarialReviewFile(tmpDir)
+	if err != nil {
+		t.Fatalf("ParseAdversarialReviewFile() error = %v", err)
+	}
+	if parsed.Summary != review.Summary {
+		t.Errorf("Summary = %q, want %q", parsed.Summary, review.Summary)
+	}
+}
+
+func TestParseAdversarialReviewFile_InvalidJSON(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Write invalid JSON
+	reviewPath := filepath.Join(tmpDir, AdversarialReviewFileName)
+	if err := os.WriteFile(reviewPath, []byte("{ invalid json }"), 0644); err != nil {
+		t.Fatalf("failed to write invalid review file: %v", err)
+	}
+
+	_, err = ParseAdversarialReviewFile(tmpDir)
+	if err == nil {
+		t.Error("expected error when file contains invalid JSON")
+	}
+	if !strings.Contains(err.Error(), "failed to parse tripleshot adversarial review JSON") {
+		t.Errorf("error message should mention JSON parsing failure, got: %v", err)
+	}
+}
+
+func TestParseAdversarialReviewFile_NotFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	_, err = ParseAdversarialReviewFile(tmpDir)
+	if err == nil {
+		t.Error("expected error when file doesn't exist")
+	}
+}
+
+func TestDefaultConfig_MinPassingScore(t *testing.T) {
+	config := DefaultConfig()
+
+	if config.MinPassingScore != 8 {
+		t.Errorf("default MinPassingScore = %d, want 8", config.MinPassingScore)
+	}
+}
+
+func TestAdversarialReviewerPromptTemplate(t *testing.T) {
+	// Verify the template contains expected placeholders and protocol
+	if len(AdversarialReviewerPromptTemplate) == 0 {
+		t.Error("AdversarialReviewerPromptTemplate should not be empty")
+	}
+	if !strings.Contains(AdversarialReviewerPromptTemplate, "%s") {
+		t.Error("template should contain task placeholder")
+	}
+	if !strings.Contains(AdversarialReviewerPromptTemplate, "%d") {
+		t.Error("template should contain numeric placeholders")
+	}
+	if !strings.Contains(AdversarialReviewerPromptTemplate, AdversarialReviewFileName) {
+		t.Error("template should reference review file name")
+	}
+	if !strings.Contains(AdversarialReviewerPromptTemplate, "FINAL MANDATORY") {
+		t.Error("template should have emphatic completion protocol")
+	}
+}
+
+func TestFormatAdversarialReviewerPrompt(t *testing.T) {
+	completion := &CompletionFile{
+		AttemptIndex:  0,
+		Status:        "complete",
+		Summary:       "Implemented rate limiter",
+		Approach:      "Token bucket algorithm",
+		FilesModified: []string{"limiter.go", "limiter_test.go"},
+		Notes:         "Added tests",
+	}
+
+	prompt := FormatAdversarialReviewerPrompt("Implement rate limiter", 0, 1, completion, 8)
+
+	// Verify key elements are present
+	if !strings.Contains(prompt, "Implement rate limiter") {
+		t.Error("prompt should contain the task")
+	}
+	if !strings.Contains(prompt, "Attempt 1") {
+		t.Error("prompt should contain 1-indexed attempt number")
+	}
+	if !strings.Contains(prompt, "score >= 8") {
+		t.Error("prompt should contain passing score threshold")
+	}
+	if !strings.Contains(prompt, "Token bucket algorithm") {
+		t.Error("prompt should contain the approach")
+	}
+	if !strings.Contains(prompt, "Added tests") {
+		t.Error("prompt should contain the notes")
+	}
+}
+
+func TestFormatAdversarialReviewerPrompt_EmptyNotes(t *testing.T) {
+	completion := &CompletionFile{
+		AttemptIndex:  1,
+		Status:        "complete",
+		Summary:       "Test summary",
+		Approach:      "Test approach",
+		FilesModified: []string{"file.go"},
+		Notes:         "", // Empty notes
+	}
+
+	prompt := FormatAdversarialReviewerPrompt("Test task", 1, 2, completion, 9)
+
+	// Should still work with empty notes
+	if !strings.Contains(prompt, "Attempt 2") {
+		t.Error("prompt should contain 1-indexed attempt number")
+	}
+	if !strings.Contains(prompt, "score >= 9") {
+		t.Error("prompt should contain configured min score")
+	}
+}
+
+func TestAdversarialReviewFile_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		review  AdversarialReviewFile
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid review",
+			review: AdversarialReviewFile{
+				AttemptIndex: 0,
+				Round:        1,
+				Score:        8,
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid attempt index negative",
+			review: AdversarialReviewFile{
+				AttemptIndex: -1,
+				Round:        1,
+				Score:        8,
+			},
+			wantErr: true,
+			errMsg:  "attempt_index must be 0-2",
+		},
+		{
+			name: "invalid attempt index too high",
+			review: AdversarialReviewFile{
+				AttemptIndex: 3,
+				Round:        1,
+				Score:        8,
+			},
+			wantErr: true,
+			errMsg:  "attempt_index must be 0-2",
+		},
+		{
+			name: "invalid round zero",
+			review: AdversarialReviewFile{
+				AttemptIndex: 0,
+				Round:        0,
+				Score:        8,
+			},
+			wantErr: true,
+			errMsg:  "round must be >= 1",
+		},
+		{
+			name: "invalid score too low",
+			review: AdversarialReviewFile{
+				AttemptIndex: 0,
+				Round:        1,
+				Score:        0,
+			},
+			wantErr: true,
+			errMsg:  "score must be 1-10",
+		},
+		{
+			name: "invalid score too high",
+			review: AdversarialReviewFile{
+				AttemptIndex: 0,
+				Round:        1,
+				Score:        11,
+			},
+			wantErr: true,
+			errMsg:  "score must be 1-10",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.review.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr && err != nil && !strings.Contains(err.Error(), tt.errMsg) {
+				t.Errorf("Validate() error = %v, should contain %q", err, tt.errMsg)
+			}
+		})
+	}
+}
+
+func TestParseAdversarialReviewFile_InvalidValues(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "tripleshot-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Write review file with invalid score
+	reviewPath := filepath.Join(tmpDir, AdversarialReviewFileName)
+	invalidJSON := `{"attempt_index": 0, "round": 1, "score": 15, "approved": true}`
+	if err := os.WriteFile(reviewPath, []byte(invalidJSON), 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	_, err = ParseAdversarialReviewFile(tmpDir)
+	if err == nil {
+		t.Error("expected error for invalid score value")
+	}
+	if !strings.Contains(err.Error(), "invalid adversarial review") {
+		t.Errorf("error should mention invalid review, got: %v", err)
 	}
 }

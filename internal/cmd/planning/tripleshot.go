@@ -33,22 +33,38 @@ The process has three phases:
 2. EVALUATING: A judge instance reviews all three solutions
 3. COMPLETE: The judge provides an evaluation with a recommended approach
 
+Adversarial Mode:
+  Use --adversarial to enable adversarial review mode. In this mode, each of the
+  three implementers is paired with a critical reviewer. An implementer's work
+  is not considered complete until their reviewer approves it. This ensures
+  higher quality solutions by catching issues before the judge evaluation.
+
+Configuration options can be set in config.yaml under 'tripleshot:' or via flags:
+- auto_approve: Skip confirmation for applying winning solution (default: false)
+- adversarial: Enable adversarial review per implementer (default: false)
+
 Examples:
   # Start triple-shot with a task
   claudio tripleshot "Implement a rate limiter for the API"
 
   # Start with auto-approve (apply winning solution automatically)
-  claudio tripleshot --auto-approve "Refactor the authentication module"`,
+  claudio tripleshot --auto-approve "Refactor the authentication module"
+
+  # Enable adversarial review for each implementer
+  claudio tripleshot --adversarial "Implement complex caching strategy"`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runTripleshot,
 }
 
 var (
 	tripleshotAutoApprove bool
+	tripleshotAdversarial bool
 )
 
 func init() {
-	tripleshotCmd.Flags().BoolVar(&tripleshotAutoApprove, "auto-approve", false, "Auto-approve applying the winning solution")
+	cfg := config.Get()
+	tripleshotCmd.Flags().BoolVar(&tripleshotAutoApprove, "auto-approve", cfg.Tripleshot.AutoApprove, "Auto-approve applying the winning solution")
+	tripleshotCmd.Flags().BoolVar(&tripleshotAdversarial, "adversarial", cfg.Tripleshot.Adversarial, "Enable adversarial review mode where each implementer must pass reviewer approval")
 }
 
 // RegisterTripleshotCmd registers the tripleshot command with the given parent command.
@@ -80,6 +96,7 @@ func runTripleshot(cmd *cobra.Command, args []string) error {
 	// Create triple-shot configuration
 	tripleConfig := orchestrator.DefaultTripleShotConfig()
 	tripleConfig.AutoApprove = tripleshotAutoApprove
+	tripleConfig.Adversarial = tripleshotAdversarial
 
 	// Create logger if enabled
 	sessionDir := sessutil.GetSessionDir(cwd, sessionID)
@@ -112,6 +129,7 @@ func runTripleshot(cmd *cobra.Command, args []string) error {
 		"session_id", sessionID,
 		"task", util.TruncateString(task, 100),
 		"auto_approve", tripleConfig.AutoApprove,
+		"adversarial", tripleConfig.Adversarial,
 	)
 
 	// Create triple-shot session

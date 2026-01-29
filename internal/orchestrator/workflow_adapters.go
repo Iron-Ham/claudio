@@ -21,6 +21,12 @@ func (a *orchestratorAdapter) AddInstance(session tripleshot.SessionInterface, t
 	return a.orch.AddInstance(s, task)
 }
 
+func (a *orchestratorAdapter) AddInstanceToWorktree(session tripleshot.SessionInterface, task, worktreePath, branch string) (tripleshot.InstanceInterface, error) {
+	// Convert session interface back to concrete Session
+	s := session.(*sessionAdapter).session
+	return a.orch.AddInstanceToWorktree(s, task, worktreePath, branch)
+}
+
 func (a *orchestratorAdapter) StartInstance(inst tripleshot.InstanceInterface) error {
 	// The inst should be an *Instance which already satisfies the interface
 	i := inst.(*Instance)

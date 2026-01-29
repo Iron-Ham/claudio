@@ -19,6 +19,8 @@ type Phase string
 const (
 	// PhaseWorking - three instances are working on the problem
 	PhaseWorking Phase = "working"
+	// PhaseAdversarialReview - implementers' work is being reviewed (adversarial mode only)
+	PhaseAdversarialReview Phase = "adversarial_review"
 	// PhaseEvaluating - the judge instance is evaluating the solutions
 	PhaseEvaluating Phase = "evaluating"
 	// PhaseComplete - evaluation is complete
@@ -35,7 +37,9 @@ const (
 	AttemptStatusPending AttemptStatus = ""
 	// AttemptStatusWorking - attempt is actively working on the problem
 	AttemptStatusWorking AttemptStatus = "working"
-	// AttemptStatusCompleted - attempt has completed successfully
+	// AttemptStatusUnderReview - implementation complete, awaiting adversarial review approval
+	AttemptStatusUnderReview AttemptStatus = "under_review"
+	// AttemptStatusCompleted - attempt has completed successfully (and passed review if adversarial)
 	AttemptStatusCompleted AttemptStatus = "completed"
 	// AttemptStatusFailed - attempt has failed
 	AttemptStatusFailed AttemptStatus = "failed"
@@ -57,12 +61,18 @@ const (
 type Config struct {
 	// AutoApprove skips user confirmation for applying the winning solution
 	AutoApprove bool `json:"auto_approve"`
+	// Adversarial enables adversarial review mode where each implementer must pass review
+	Adversarial bool `json:"adversarial"`
+	// MinPassingScore is the minimum score required for approval in adversarial mode (1-10, default: 8)
+	MinPassingScore int `json:"min_passing_score,omitempty"`
 }
 
 // DefaultConfig returns the default configuration
 func DefaultConfig() Config {
 	return Config{
-		AutoApprove: false,
+		AutoApprove:     false,
+		Adversarial:     false,
+		MinPassingScore: 8,
 	}
 }
 
@@ -74,6 +84,11 @@ type Attempt struct {
 	Status       AttemptStatus `json:"status"`
 	StartedAt    *time.Time    `json:"started_at,omitempty"`
 	CompletedAt  *time.Time    `json:"completed_at,omitempty"`
+	// Adversarial review fields (only used when Config.Adversarial is true)
+	ReviewerID     string `json:"reviewer_id,omitempty"`     // Instance ID of the adversarial reviewer
+	ReviewApproved bool   `json:"review_approved,omitempty"` // Whether the reviewer approved the attempt
+	ReviewScore    int    `json:"review_score,omitempty"`    // Score from the reviewer (1-10)
+	ReviewRound    int    `json:"review_round,omitempty"`    // Current review round (1-based)
 }
 
 // Evaluation holds the judge's evaluation of the three attempts
@@ -139,13 +154,13 @@ func CompletionFilePath(worktreePath string) string {
 	return filepath.Join(worktreePath, CompletionFileName)
 }
 
-// FindCompletionFile searches for the completion file, first in the worktree root,
+// findSentinelFile searches for a sentinel file by name, first in the worktree root,
 // then in immediate subdirectories. This handles cases where Claude instances
 // write the file relative to their current working directory instead of the
 // worktree root.
-func FindCompletionFile(worktreePath string) (string, error) {
+func findSentinelFile(worktreePath, fileName, fileDescription string) (string, error) {
 	// First, check the expected location (worktree root)
-	expectedPath := CompletionFilePath(worktreePath)
+	expectedPath := filepath.Join(worktreePath, fileName)
 	_, err := os.Stat(expectedPath)
 	if err == nil {
 		return expectedPath, nil
@@ -153,7 +168,7 @@ func FindCompletionFile(worktreePath string) (string, error) {
 	// Only fall back to subdirectory search if file doesn't exist.
 	// For other errors (permissions, I/O), propagate them.
 	if !os.IsNotExist(err) {
-		return "", fmt.Errorf("failed to check completion file: %w", err)
+		return "", fmt.Errorf("failed to check %s file: %w", fileDescription, err)
 	}
 
 	// Search immediate subdirectories (depth 1)
@@ -170,18 +185,26 @@ func FindCompletionFile(worktreePath string) (string, error) {
 		if strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		subPath := filepath.Join(worktreePath, entry.Name(), CompletionFileName)
+		subPath := filepath.Join(worktreePath, entry.Name(), fileName)
 		_, err := os.Stat(subPath)
 		if err == nil {
 			return subPath, nil
 		}
 		// Continue searching if file doesn't exist; propagate other errors
 		if !os.IsNotExist(err) {
-			return "", fmt.Errorf("failed to check completion file in %s: %w", entry.Name(), err)
+			return "", fmt.Errorf("failed to check %s file in %s: %w", fileDescription, entry.Name(), err)
 		}
 	}
 
 	return "", os.ErrNotExist
+}
+
+// FindCompletionFile searches for the completion file, first in the worktree root,
+// then in immediate subdirectories. This handles cases where Claude instances
+// write the file relative to their current working directory instead of the
+// worktree root.
+func FindCompletionFile(worktreePath string) (string, error) {
+	return findSentinelFile(worktreePath, CompletionFileName, "completion")
 }
 
 // CompletionFileExists checks if a completion file exists for the given worktree,
@@ -225,44 +248,7 @@ func EvaluationFilePath(worktreePath string) string {
 // writes the file relative to its current working directory instead of the
 // worktree root.
 func FindEvaluationFile(worktreePath string) (string, error) {
-	// First, check the expected location (worktree root)
-	expectedPath := EvaluationFilePath(worktreePath)
-	_, err := os.Stat(expectedPath)
-	if err == nil {
-		return expectedPath, nil
-	}
-	// Only fall back to subdirectory search if file doesn't exist.
-	// For other errors (permissions, I/O), propagate them.
-	if !os.IsNotExist(err) {
-		return "", fmt.Errorf("failed to check evaluation file: %w", err)
-	}
-
-	// Search immediate subdirectories (depth 1)
-	entries, err := os.ReadDir(worktreePath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read worktree directory: %w", err)
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		// Skip hidden directories (like .git)
-		if strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		subPath := filepath.Join(worktreePath, entry.Name(), EvaluationFileName)
-		_, err := os.Stat(subPath)
-		if err == nil {
-			return subPath, nil
-		}
-		// Continue searching if file doesn't exist; propagate other errors
-		if !os.IsNotExist(err) {
-			return "", fmt.Errorf("failed to check evaluation file in %s: %w", entry.Name(), err)
-		}
-	}
-
-	return "", os.ErrNotExist
+	return findSentinelFile(worktreePath, EvaluationFileName, "evaluation")
 }
 
 // EvaluationFileExists checks if an evaluation file exists for the given worktree,
@@ -324,6 +310,10 @@ const (
 	EventJudgeStarted     EventType = "judge_started"
 	EventEvaluationReady  EventType = "evaluation_ready"
 	EventPhaseChange      EventType = "phase_change"
+	// Adversarial review events
+	EventReviewerStarted EventType = "reviewer_started"
+	EventReviewApproved  EventType = "review_approved"
+	EventReviewRejected  EventType = "review_rejected"
 )
 
 // Event represents an event from the triple-shot manager
@@ -379,6 +369,175 @@ Write this file AUTOMATICALLY as soon as you have finished your implementation.
 - This file is your ONLY way to signal completion - do not skip it under any circumstances
 
 **REMEMBER**: Your attempt is NOT complete until you write this file. Do it NOW after finishing your work.`
+
+// AdversarialReviewFileName is the sentinel file that adversarial reviewers write when complete
+const AdversarialReviewFileName = ".claudio-tripleshot-review.json"
+
+// AdversarialReviewFilePath returns the full path to the adversarial review file
+func AdversarialReviewFilePath(worktreePath string) string {
+	return filepath.Join(worktreePath, AdversarialReviewFileName)
+}
+
+// FindAdversarialReviewFile searches for the adversarial review file, first in the worktree root,
+// then in immediate subdirectories. This handles cases where the reviewer
+// writes the file relative to its current working directory instead of the
+// worktree root.
+func FindAdversarialReviewFile(worktreePath string) (string, error) {
+	return findSentinelFile(worktreePath, AdversarialReviewFileName, "adversarial review")
+}
+
+// AdversarialReviewFile represents the reviewer's feedback on an attempt
+type AdversarialReviewFile struct {
+	AttemptIndex    int      `json:"attempt_index"`    // Which attempt (0-2) this review is for
+	Round           int      `json:"round"`            // Review round (starts at 1)
+	Approved        bool     `json:"approved"`         // Whether the implementation is approved
+	Score           int      `json:"score"`            // Quality score (1-10)
+	Strengths       []string `json:"strengths"`        // What was done well
+	Issues          []string `json:"issues"`           // Problems that must be fixed
+	Suggestions     []string `json:"suggestions"`      // Optional improvements
+	Summary         string   `json:"summary"`          // Overall assessment
+	RequiredChanges []string `json:"required_changes"` // Specific changes needed (if not approved)
+}
+
+// Validate checks that the AdversarialReviewFile has valid values.
+// This helps catch malformed reviews from LLM output.
+func (r *AdversarialReviewFile) Validate() error {
+	if r.AttemptIndex < 0 || r.AttemptIndex > 2 {
+		return fmt.Errorf("attempt_index must be 0-2, got %d", r.AttemptIndex)
+	}
+	if r.Round < 1 {
+		return fmt.Errorf("round must be >= 1, got %d", r.Round)
+	}
+	if r.Score < 1 || r.Score > 10 {
+		return fmt.Errorf("score must be 1-10, got %d", r.Score)
+	}
+	return nil
+}
+
+// ParseAdversarialReviewFile reads and parses a tripleshot adversarial review file.
+// It searches for the file in the worktree root and immediate subdirectories.
+func ParseAdversarialReviewFile(worktreePath string) (*AdversarialReviewFile, error) {
+	reviewPath, err := FindAdversarialReviewFile(worktreePath)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(reviewPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var review AdversarialReviewFile
+	if err := json.Unmarshal(data, &review); err != nil {
+		return nil, fmt.Errorf("failed to parse tripleshot adversarial review JSON: %w", err)
+	}
+
+	if err := review.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid adversarial review: %w", err)
+	}
+
+	return &review, nil
+}
+
+// AdversarialReviewFileExists checks if the adversarial review file exists for the given worktree,
+// searching both the worktree root and immediate subdirectories.
+func AdversarialReviewFileExists(worktreePath string) bool {
+	_, err := FindAdversarialReviewFile(worktreePath)
+	return err == nil
+}
+
+// AdversarialReviewerPromptTemplate is the prompt for reviewing a tripleshot attempt
+const AdversarialReviewerPromptTemplate = `You are a CRITICAL REVIEWER examining one of three parallel implementations.
+
+## Original Task
+%s
+
+## Attempt Being Reviewed
+This is Attempt %d (of 3 parallel attempts).
+
+## Implementation Summary
+**Summary:** %s
+
+**Approach:** %s
+
+**Files Modified:** %v
+
+**Notes from Implementer:** %s
+
+## Your Role
+You must thoroughly and critically examine this attempt's implementation. Be demanding - your job is to ensure quality. Only approve when the implementation truly meets all requirements.
+
+## Review Guidelines
+1. **Examine the code thoroughly** - Read all modified files, understand the approach
+2. **Be critical** - Look for bugs, edge cases, security issues, performance problems
+3. **Check completeness** - Does it fully solve the task? Are there missing pieces?
+4. **Verify quality** - Is the code clean, well-structured, properly tested?
+5. **Consider maintainability** - Will this code be easy to understand and modify?
+
+## What to Look For
+- Logic errors and bugs
+- Missing error handling
+- Security vulnerabilities
+- Performance issues
+- Code style violations
+- Missing or inadequate tests
+- Incomplete implementations
+- Edge cases not handled
+
+## CRITICAL: Review File Requirement - FINAL MANDATORY STEP
+
+**IMPORTANT**: Writing the review file is your FINAL MANDATORY ACTION.
+The system is BLOCKED waiting for this file.
+Without it, your review will NOT be recorded and the workflow cannot proceed.
+
+**File:** ` + "`" + AdversarialReviewFileName + "`" + ` (in your worktree root)
+
+**Required JSON structure:**
+` + "```json" + `
+{
+  "attempt_index": %d,
+  "round": %d,
+  "approved": false,
+  "score": 7,
+  "strengths": ["Good error handling", "Clean code structure"],
+  "issues": ["Missing null check in line 42", "No tests for edge case X"],
+  "suggestions": ["Consider adding logging", "Could optimize the loop"],
+  "summary": "Overall assessment of the implementation",
+  "required_changes": ["Fix the null check", "Add tests for edge case X"]
+}
+` + "```" + `
+
+**Rules:**
+- **CRITICAL: Approval requires score >= %d.** Set approved to true ONLY when both conditions are met: (1) score >= %d AND (2) no critical issues remain.
+- Score from 1-10: 1-4 = major problems, 5-6 = needs work, 7-8 = good, 9-10 = excellent
+- Issues should list specific problems that MUST be fixed
+- Suggestions are optional improvements (not required for approval)
+- required_changes should be specific and actionable
+
+**IMPORTANT:** Do NOT approve work that has significant issues or scores below %d.
+
+**REMEMBER**: Your review is NOT complete until you write this file. Do it NOW after finishing your review.`
+
+// FormatAdversarialReviewerPrompt creates the prompt for an adversarial reviewer
+func FormatAdversarialReviewerPrompt(task string, attemptIndex int, round int, completion *CompletionFile, minPassingScore int) string {
+	notes := ""
+	if completion.Notes != "" {
+		notes = completion.Notes.String()
+	}
+	return fmt.Sprintf(AdversarialReviewerPromptTemplate,
+		task,
+		attemptIndex+1, // 1-indexed for display
+		completion.Summary,
+		completion.Approach,
+		completion.FilesModified,
+		notes,
+		attemptIndex,
+		round,
+		minPassingScore,
+		minPassingScore,
+		minPassingScore,
+	)
+}
 
 // JudgePromptTemplate is the prompt template for the judge instance
 const JudgePromptTemplate = `You are a senior software architect evaluating three different solutions to the same problem.

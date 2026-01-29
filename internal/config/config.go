@@ -21,6 +21,7 @@ type Config struct {
 	Resources    ResourceConfig     `mapstructure:"resources"`
 	Ultraplan    UltraplanConfig    `mapstructure:"ultraplan"`
 	Plan         PlanConfig         `mapstructure:"plan"`
+	Tripleshot   TripleshotConfig   `mapstructure:"tripleshot"`
 	Adversarial  AdversarialConfig  `mapstructure:"adversarial"`
 	Logging      LoggingConfig      `mapstructure:"logging"`
 	Paths        PathsConfig        `mapstructure:"paths"`
@@ -138,6 +139,11 @@ type UltraplanConfig struct {
 	// MultiPass enables multi-pass planning where multiple coordinators create plans independently
 	// and a coordinator-manager evaluates and combines them (default: false)
 	MultiPass bool `mapstructure:"multi_pass"`
+	// Adversarial enables adversarial review mode where each task must pass review before completion (default: false)
+	// NOTE: For ultraplan, this is EXPERIMENTAL infrastructure-only. The flag is plumbed through but workflow
+	// integration (spawning reviewers, waiting for approval) is not yet implemented for ultraplan.
+	// See tripleshot.adversarial for a fully functional implementation.
+	Adversarial bool `mapstructure:"adversarial"`
 	// Notifications controls audio notifications for user input
 	Notifications NotificationConfig `mapstructure:"notifications"`
 
@@ -179,6 +185,14 @@ type PlanConfig struct {
 	Labels []string `mapstructure:"labels"`
 	// OutputFile is the default output file path for JSON output (default: ".claudio-plan.json")
 	OutputFile string `mapstructure:"output_file"`
+}
+
+// TripleshotConfig controls tripleshot mode behavior
+type TripleshotConfig struct {
+	// AutoApprove skips user confirmation for applying the winning solution (default: false)
+	AutoApprove bool `mapstructure:"auto_approve"`
+	// Adversarial enables adversarial review mode where each implementer must pass review before completion (default: false)
+	Adversarial bool `mapstructure:"adversarial"`
 }
 
 // AdversarialConfig controls adversarial review mode behavior.
@@ -403,6 +417,10 @@ func Default() *Config {
 			Labels:       []string{},
 			OutputFile:   ".claudio-plan.json",
 		},
+		Tripleshot: TripleshotConfig{
+			AutoApprove: false,
+			Adversarial: false,
+		},
 		Adversarial: AdversarialConfig{
 			MaxIterations:   10, // Reasonable default to prevent infinite loops
 			MinPassingScore: 8,  // Score >= 8 required for approval
@@ -500,6 +518,7 @@ func SetDefaults() {
 	// Ultraplan defaults
 	viper.SetDefault("ultraplan.max_parallel", defaults.Ultraplan.MaxParallel)
 	viper.SetDefault("ultraplan.multi_pass", defaults.Ultraplan.MultiPass)
+	viper.SetDefault("ultraplan.adversarial", defaults.Ultraplan.Adversarial)
 	viper.SetDefault("ultraplan.notifications.enabled", defaults.Ultraplan.Notifications.Enabled)
 	viper.SetDefault("ultraplan.notifications.use_sound", defaults.Ultraplan.Notifications.UseSound)
 	viper.SetDefault("ultraplan.notifications.sound_path", defaults.Ultraplan.Notifications.SoundPath)
@@ -515,6 +534,10 @@ func SetDefaults() {
 	viper.SetDefault("plan.multi_pass", defaults.Plan.MultiPass)
 	viper.SetDefault("plan.labels", defaults.Plan.Labels)
 	viper.SetDefault("plan.output_file", defaults.Plan.OutputFile)
+
+	// Tripleshot defaults
+	viper.SetDefault("tripleshot.auto_approve", defaults.Tripleshot.AutoApprove)
+	viper.SetDefault("tripleshot.adversarial", defaults.Tripleshot.Adversarial)
 
 	// Adversarial defaults
 	viper.SetDefault("adversarial.max_iterations", defaults.Adversarial.MaxIterations)

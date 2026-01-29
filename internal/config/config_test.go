@@ -684,3 +684,71 @@ func TestSparseCheckoutConfig_GetSparseDirectories(t *testing.T) {
 		}
 	})
 }
+
+func TestConfig_TripleshotConfig_Defaults(t *testing.T) {
+	cfg := Default()
+
+	// AutoApprove should default to false
+	if cfg.Tripleshot.AutoApprove {
+		t.Error("Tripleshot.AutoApprove should be false by default")
+	}
+
+	// Adversarial should default to false
+	if cfg.Tripleshot.Adversarial {
+		t.Error("Tripleshot.Adversarial should be false by default")
+	}
+}
+
+func TestConfig_TripleshotConfig_ViperLoading(t *testing.T) {
+	// Test that tripleshot config is properly loaded via viper
+	viper.Reset()
+	SetDefaults()
+
+	// After SetDefaults, tripleshot values should be the defaults
+	if viper.GetBool("tripleshot.auto_approve") {
+		t.Error("viper.GetBool('tripleshot.auto_approve') should be false by default")
+	}
+	if viper.GetBool("tripleshot.adversarial") {
+		t.Error("viper.GetBool('tripleshot.adversarial') should be false by default")
+	}
+
+	// Test setting via viper (simulates config file or environment)
+	viper.Set("tripleshot.auto_approve", true)
+	viper.Set("tripleshot.adversarial", true)
+
+	cfg := Get()
+	if !cfg.Tripleshot.AutoApprove {
+		t.Error("Tripleshot.AutoApprove should be true after viper.Set(true)")
+	}
+	if !cfg.Tripleshot.Adversarial {
+		t.Error("Tripleshot.Adversarial should be true after viper.Set(true)")
+	}
+}
+
+func TestConfig_UltraplanConfig_Adversarial_Defaults(t *testing.T) {
+	cfg := Default()
+
+	// Adversarial should default to false
+	if cfg.Ultraplan.Adversarial {
+		t.Error("Ultraplan.Adversarial should be false by default")
+	}
+}
+
+func TestConfig_UltraplanConfig_Adversarial_ViperLoading(t *testing.T) {
+	// Test that ultraplan adversarial config is properly loaded via viper
+	viper.Reset()
+	SetDefaults()
+
+	// After SetDefaults, adversarial should be false
+	if viper.GetBool("ultraplan.adversarial") {
+		t.Error("viper.GetBool('ultraplan.adversarial') should be false by default")
+	}
+
+	// Test setting via viper (simulates config file or CLI flag)
+	viper.Set("ultraplan.adversarial", true)
+
+	cfg := Get()
+	if !cfg.Ultraplan.Adversarial {
+		t.Error("Ultraplan.Adversarial should be true after viper.Set(true)")
+	}
+}

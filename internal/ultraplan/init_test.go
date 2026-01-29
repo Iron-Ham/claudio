@@ -165,11 +165,25 @@ func TestBuildConfigFromAppConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "applies Adversarial from config",
+			cfg: &config.Config{
+				Ultraplan: config.UltraplanConfig{
+					Adversarial: true,
+				},
+			},
+			validate: func(t *testing.T, got orchestrator.UltraPlanConfig) {
+				if !got.Adversarial {
+					t.Errorf("Adversarial = false, want true")
+				}
+			},
+		},
+		{
 			name: "applies all settings from config",
 			cfg: &config.Config{
 				Ultraplan: config.UltraplanConfig{
 					MaxParallel:            10,
 					MultiPass:              true,
+					Adversarial:            true,
 					ConsolidationMode:      "single",
 					CreateDraftPRs:         false,
 					PRLabels:               []string{"label1"},
@@ -184,6 +198,9 @@ func TestBuildConfigFromAppConfig(t *testing.T) {
 				}
 				if !got.MultiPass {
 					t.Errorf("MultiPass = false, want true")
+				}
+				if !got.Adversarial {
+					t.Errorf("Adversarial = false, want true")
 				}
 				if got.ConsolidationMode != orchestrator.ModeSinglePR {
 					t.Errorf("ConsolidationMode = %s, want %s", got.ConsolidationMode, orchestrator.ModeSinglePR)
