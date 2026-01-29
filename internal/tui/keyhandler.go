@@ -290,8 +290,12 @@ func (m Model) submitTaskInput() (tea.Model, tea.Cmd) {
 			m.infoMessage = "Adding task from branch " + baseBranch + "..."
 			return m, tuimsg.AddTaskFromBranchAsync(m.orchestrator, m.session, task, baseBranch)
 		}
+
+		// Use two-phase async task addition for faster UI feedback:
+		// Phase 1: Create stub immediately (fast) - instance appears with "preparing" status
+		// Phase 2: Create worktree in background (slow) - then auto-start if configured
 		m.infoMessage = "Adding task..."
-		return m, tuimsg.AddTaskAsync(m.orchestrator, m.session, task)
+		return m, tuimsg.AddTaskStubAsync(m.orchestrator, m.session, task)
 	}
 	return m.cancelTaskInput(), nil
 }

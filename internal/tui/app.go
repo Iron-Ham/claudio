@@ -542,6 +542,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		update.HandleDependentTaskAdded(m.newUpdateContext(), msg)
 		return m, nil
 
+	case tuimsg.InstanceStubCreatedMsg:
+		// Fast first phase of async task addition completed - stub is now visible
+		update.HandleInstanceStubCreated(m.newUpdateContext(), msg)
+		// Kick off the slow second phase (worktree creation)
+		if msg.Instance != nil && msg.Err == nil {
+			return m, tuimsg.CompleteInstanceSetupAsync(m.orchestrator, m.session, msg.Instance)
+		}
+		return m, nil
+
+	case tuimsg.InstanceSetupCompleteMsg:
+		// Slow second phase completed - worktree is ready, optionally auto-start
+		update.HandleInstanceSetupComplete(m.newUpdateContext(), msg)
+		return m, nil
+
 	case tuimsg.TripleShotStartedMsg:
 		// Triple-shot attempts started successfully
 		m.infoMessage = "Triple-shot started: 3 instances working on the task"

@@ -808,3 +808,270 @@ func TestHandleTaskAdded_AutoStartDefault(t *testing.T) {
 		t.Errorf("HandleTaskAdded() default auto-start: errorMessage = %q, want empty", ctx.errorMessage)
 	}
 }
+
+func TestHandleInstanceStubCreated(t *testing.T) {
+	tests := []struct {
+		name            string
+		err             error
+		instance        *orchestrator.Instance
+		activeInstance  *orchestrator.Instance
+		instanceCount   int
+		wantError       string
+		wantInfo        string
+		wantActiveTab   int
+		wantPausedCount int
+		wantEnsureCalls int
+	}{
+		{
+			name:            "success with no active instance",
+			err:             nil,
+			instance:        &orchestrator.Instance{ID: "test-id", Task: "test task"},
+			activeInstance:  nil,
+			instanceCount:   3,
+			wantError:       "",
+			wantInfo:        "Preparing instance test-id...",
+			wantActiveTab:   2, // instanceCount - 1
+			wantPausedCount: 0,
+			wantEnsureCalls: 1,
+		},
+		{
+			name:            "success with active instance",
+			err:             nil,
+			instance:        &orchestrator.Instance{ID: "new-id", Task: "new task"},
+			activeInstance:  &orchestrator.Instance{ID: "old-instance"},
+			instanceCount:   5,
+			wantError:       "",
+			wantInfo:        "Preparing instance new-id...",
+			wantActiveTab:   4, // instanceCount - 1
+			wantPausedCount: 1,
+			wantEnsureCalls: 1,
+		},
+		{
+			name:            "error",
+			err:             errors.New("failed to create stub"),
+			instance:        nil,
+			instanceCount:   3,
+			wantError:       "failed to create stub",
+			wantInfo:        "", // cleared
+			wantActiveTab:   0,  // not changed
+			wantPausedCount: 0,
+			wantEnsureCalls: 0,
+		},
+		{
+			name:            "success with nil instance",
+			err:             nil,
+			instance:        nil,
+			instanceCount:   2,
+			wantError:       "",
+			wantInfo:        "", // no info message when instance is nil
+			wantActiveTab:   1,
+			wantPausedCount: 0,
+			wantEnsureCalls: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := newMockContext()
+			ctx.activeInstance = tt.activeInstance
+			ctx.instanceCount = tt.instanceCount
+			ctx.infoMessage = "Adding task..." // Should be cleared
+
+			HandleInstanceStubCreated(ctx, msg.InstanceStubCreatedMsg{
+				Instance: tt.instance,
+				Err:      tt.err,
+			})
+
+			if ctx.errorMessage != tt.wantError {
+				t.Errorf("HandleInstanceStubCreated() errorMessage = %q, want %q", ctx.errorMessage, tt.wantError)
+			}
+
+			if ctx.infoMessage != tt.wantInfo {
+				t.Errorf("HandleInstanceStubCreated() infoMessage = %q, want %q", ctx.infoMessage, tt.wantInfo)
+			}
+
+			if tt.err == nil && ctx.activeTab != tt.wantActiveTab {
+				t.Errorf("HandleInstanceStubCreated() activeTab = %d, want %d", ctx.activeTab, tt.wantActiveTab)
+			}
+
+			if len(ctx.pausedInstances) != tt.wantPausedCount {
+				t.Errorf("HandleInstanceStubCreated() paused %d instances, want %d", len(ctx.pausedInstances), tt.wantPausedCount)
+			}
+
+			if ctx.ensureActiveCalls != tt.wantEnsureCalls {
+				t.Errorf("HandleInstanceStubCreated() ensureActiveCalls = %d, want %d", ctx.ensureActiveCalls, tt.wantEnsureCalls)
+			}
+		})
+	}
+}
+
+func TestHandleInstanceSetupComplete(t *testing.T) {
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "test-instance", Task: "test task"},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		session     *orchestrator.Session
+		instanceID  string
+		err         error
+		autoStartOn bool
+		wantError   string
+		wantInfo    string
+	}{
+		{
+			name:        "nil session",
+			session:     nil,
+			instanceID:  "test",
+			err:         nil,
+			autoStartOn: true,
+			wantError:   "",
+			wantInfo:    "",
+		},
+		{
+			name:        "instance not found",
+			session:     session,
+			instanceID:  "nonexistent",
+			err:         nil,
+			autoStartOn: true,
+			wantError:   "",
+			wantInfo:    "",
+		},
+		{
+			name:        "error during setup",
+			session:     session,
+			instanceID:  "test-instance",
+			err:         errors.New("worktree creation failed"),
+			autoStartOn: true,
+			wantError:   "Failed to setup instance test-instance: worktree creation failed",
+			wantInfo:    "",
+		},
+		{
+			name:        "success without auto-start",
+			session:     session,
+			instanceID:  "test-instance",
+			err:         nil,
+			autoStartOn: false,
+			wantError:   "",
+			wantInfo:    "Instance test-instance ready",
+		},
+		{
+			name:        "success with auto-start but nil orchestrator",
+			session:     session,
+			instanceID:  "test-instance",
+			err:         nil,
+			autoStartOn: true,
+			wantError:   "",
+			wantInfo:    "", // No message when orchestrator is nil
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			viper.Set("session.auto_start_on_add", tt.autoStartOn)
+
+			ctx := newMockContext()
+			ctx.session = tt.session
+			ctx.orchestrator = nil // No orchestrator in test
+
+			HandleInstanceSetupComplete(ctx, msg.InstanceSetupCompleteMsg{
+				InstanceID: tt.instanceID,
+				Err:        tt.err,
+			})
+
+			if ctx.errorMessage != tt.wantError {
+				t.Errorf("HandleInstanceSetupComplete() errorMessage = %q, want %q", ctx.errorMessage, tt.wantError)
+			}
+
+			if ctx.infoMessage != tt.wantInfo {
+				t.Errorf("HandleInstanceSetupComplete() infoMessage = %q, want %q", ctx.infoMessage, tt.wantInfo)
+			}
+		})
+	}
+}
+
+func TestHandleInstanceStubCreated_WithLogger(t *testing.T) {
+	logger, err := logging.NewLogger(t.TempDir(), "DEBUG")
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer func() { _ = logger.Close() }()
+
+	t.Run("success with logger", func(t *testing.T) {
+		ctx := newMockContext()
+		ctx.logger = logger
+		ctx.instanceCount = 2
+
+		HandleInstanceStubCreated(ctx, msg.InstanceStubCreatedMsg{
+			Instance: &orchestrator.Instance{ID: "test-id", Task: "test task"},
+			Err:      nil,
+		})
+
+		if ctx.infoMessage != "Preparing instance test-id..." {
+			t.Errorf("HandleInstanceStubCreated() infoMessage = %q, want %q", ctx.infoMessage, "Preparing instance test-id...")
+		}
+	})
+
+	t.Run("error with logger", func(t *testing.T) {
+		ctx := newMockContext()
+		ctx.logger = logger
+
+		HandleInstanceStubCreated(ctx, msg.InstanceStubCreatedMsg{
+			Instance: nil,
+			Err:      errors.New("stub creation failed"),
+		})
+
+		if ctx.errorMessage != "stub creation failed" {
+			t.Errorf("HandleInstanceStubCreated() errorMessage = %q, want %q", ctx.errorMessage, "stub creation failed")
+		}
+	})
+}
+
+func TestHandleInstanceSetupComplete_WithLogger(t *testing.T) {
+	logger, err := logging.NewLogger(t.TempDir(), "DEBUG")
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+	defer func() { _ = logger.Close() }()
+
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "test-instance", Task: "test task"},
+		},
+	}
+
+	t.Run("success with logger", func(t *testing.T) {
+		viper.Set("session.auto_start_on_add", false)
+
+		ctx := newMockContext()
+		ctx.logger = logger
+		ctx.session = session
+
+		HandleInstanceSetupComplete(ctx, msg.InstanceSetupCompleteMsg{
+			InstanceID: "test-instance",
+			Err:        nil,
+		})
+
+		if ctx.infoMessage != "Instance test-instance ready" {
+			t.Errorf("HandleInstanceSetupComplete() infoMessage = %q, want %q", ctx.infoMessage, "Instance test-instance ready")
+		}
+	})
+
+	t.Run("error with logger", func(t *testing.T) {
+		ctx := newMockContext()
+		ctx.logger = logger
+		ctx.session = session
+
+		HandleInstanceSetupComplete(ctx, msg.InstanceSetupCompleteMsg{
+			InstanceID: "test-instance",
+			Err:        errors.New("setup failed"),
+		})
+
+		expectedErr := "Failed to setup instance test-instance: setup failed"
+		if ctx.errorMessage != expectedErr {
+			t.Errorf("HandleInstanceSetupComplete() errorMessage = %q, want %q", ctx.errorMessage, expectedErr)
+		}
+	})
+}

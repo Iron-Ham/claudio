@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Previous Rounds Container** - Adversarial mode now condenses all completed rounds into a single "Previous Rounds" container group, reducing sidebar clutter when tasks span many rounds. When round 2+ starts, the previous round is automatically moved into the "Previous Rounds" container, which is then collapsed. This means users see only two groups—"Previous Rounds" (collapsed) and the current round (expanded)—instead of navigating through many individual collapsed round groups. Users can expand "Previous Rounds" to access any historical round.
 
+- **Async Task Addition** - Task addition via `:a` is now significantly faster. When adding a task, a stub instance appears immediately in the sidebar with "PREP" status while the git worktree is created in the background. Once the worktree is ready, the instance transitions to pending (or auto-starts if configured). This two-phase async approach eliminates UI freezes during worktree creation, which can be slow in large repositories.
+
 ### Fixed
 
 - **Stale RUNNING Status After Tmux Server Death** - Fixed a race condition where instances would show as "RUNNING" indefinitely after the tmux server died. When the tmux server dies between the session status check and output capture, the capture error was logged but the session existence wasn't re-verified, leaving instances in a stale RUNNING state with no output updates. Now when capture fails, the code verifies the session still exists and properly marks it as completed if the server/session is gone (#403).

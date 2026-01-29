@@ -178,6 +178,88 @@ func TestAddDependentTaskAsync(t *testing.T) {
 	})
 }
 
+func TestAddTaskStubAsync(t *testing.T) {
+	t.Run("returns non-nil command", func(t *testing.T) {
+		cmd := AddTaskStubAsync(nil, nil, "test task")
+		if cmd == nil {
+			t.Fatal("AddTaskStubAsync() returned nil command")
+		}
+	})
+
+	t.Run("returns error when orchestrator is nil", func(t *testing.T) {
+		cmd := AddTaskStubAsync(nil, nil, "test task")
+		msg := cmd()
+
+		stubMsg, ok := msg.(InstanceStubCreatedMsg)
+		if !ok {
+			t.Fatalf("AddTaskStubAsync()() returned %T, want InstanceStubCreatedMsg", msg)
+		}
+
+		if stubMsg.Err == nil {
+			t.Error("expected error when orchestrator is nil")
+		}
+		if stubMsg.Instance != nil {
+			t.Error("expected nil instance on error")
+		}
+	})
+
+	t.Run("returns error when session is nil", func(t *testing.T) {
+		// Can't test with real orchestrator, but we can verify nil session handling
+		cmd := AddTaskStubAsync(nil, nil, "test task")
+		msg := cmd()
+
+		stubMsg, ok := msg.(InstanceStubCreatedMsg)
+		if !ok {
+			t.Fatalf("AddTaskStubAsync()() returned %T, want InstanceStubCreatedMsg", msg)
+		}
+
+		// Either orchestrator or session nil should produce an error
+		if stubMsg.Err == nil {
+			t.Error("expected error when session is nil")
+		}
+	})
+}
+
+func TestCompleteInstanceSetupAsync(t *testing.T) {
+	t.Run("returns non-nil command", func(t *testing.T) {
+		cmd := CompleteInstanceSetupAsync(nil, nil, nil)
+		if cmd == nil {
+			t.Fatal("CompleteInstanceSetupAsync() returned nil command")
+		}
+	})
+
+	t.Run("returns error when orchestrator is nil", func(t *testing.T) {
+		cmd := CompleteInstanceSetupAsync(nil, nil, nil)
+		msg := cmd()
+
+		completeMsg, ok := msg.(InstanceSetupCompleteMsg)
+		if !ok {
+			t.Fatalf("CompleteInstanceSetupAsync()() returned %T, want InstanceSetupCompleteMsg", msg)
+		}
+
+		if completeMsg.Err == nil {
+			t.Error("expected error when orchestrator is nil")
+		}
+	})
+
+	t.Run("returns error when instance is nil", func(t *testing.T) {
+		cmd := CompleteInstanceSetupAsync(nil, nil, nil)
+		msg := cmd()
+
+		completeMsg, ok := msg.(InstanceSetupCompleteMsg)
+		if !ok {
+			t.Fatalf("CompleteInstanceSetupAsync()() returned %T, want InstanceSetupCompleteMsg", msg)
+		}
+
+		if completeMsg.Err == nil {
+			t.Error("expected error when instance is nil")
+		}
+		if completeMsg.InstanceID != "" {
+			t.Errorf("expected empty InstanceID on error, got %q", completeMsg.InstanceID)
+		}
+	})
+}
+
 func TestCheckTripleShotCompletionAsync(t *testing.T) {
 	t.Run("nil coordinator", func(t *testing.T) {
 		// With nil coordinator, should handle gracefully

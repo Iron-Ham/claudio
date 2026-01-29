@@ -54,6 +54,7 @@ var (
 	// Status colors - all meet WCAG AA contrast (4.5:1) on both black and dark surfaces
 	StatusWorking     = lipgloss.Color("#10B981") // Green
 	StatusPending     = lipgloss.Color("#9CA3AF") // Gray (brighter for readability)
+	StatusPreparing   = lipgloss.Color("#60A5FA") // Blue - for async worktree creation in progress
 	StatusInput       = lipgloss.Color("#F59E0B") // Amber
 	StatusPaused      = lipgloss.Color("#60A5FA") // Blue (brighter for readability)
 	StatusComplete    = lipgloss.Color("#A78BFA") // Purple (brighter for readability)
@@ -349,6 +350,8 @@ func StatusColor(status string) lipgloss.Color {
 		return StatusWorking
 	case "pending":
 		return StatusPending
+	case "preparing":
+		return StatusPreparing
 	case "waiting_input":
 		return StatusInput
 	case "paused":
@@ -377,6 +380,8 @@ func StatusIcon(status string) string {
 		return "●"
 	case "pending":
 		return "○"
+	case "preparing":
+		return "◐" // Half-filled circle for async setup in progress
 	case "waiting_input":
 		return "?"
 	case "paused":
