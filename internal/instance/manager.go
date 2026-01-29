@@ -624,23 +624,9 @@ func (m *Manager) captureLoop() {
 				}
 				m.mu.Unlock()
 
-				if doHeartbeat {
-					// Lightweight session check - only verify session exists
-					if !m.checkSessionExists(sessionName) {
-						// Session ended while paused - notify completion
-						m.mu.Lock()
-						m.running = false
-						callback := m.stateCallback
-						m.mu.Unlock()
-
-						m.stateMonitor.SetState(instanceID, detect.StateCompleted)
-						m.stateMonitor.Stop(instanceID)
-
-						if callback != nil {
-							callback(instanceID, detect.StateCompleted)
-						}
-						return
-					}
+				if doHeartbeat && !m.checkSessionExists(sessionName) {
+					m.handleSessionEnded(instanceID)
+					return
 				}
 				continue
 			}
@@ -655,20 +641,7 @@ func (m *Manager) captureLoop() {
 
 			// Check if session ended
 			if !status.sessionExists {
-				// Session actually ended - notify completion and stop
-				m.mu.Lock()
-				m.running = false
-				callback := m.stateCallback
-				m.mu.Unlock()
-
-				// Notify state monitor about completion
-				m.stateMonitor.SetState(instanceID, detect.StateCompleted)
-				m.stateMonitor.Stop(instanceID)
-
-				// Fire the completion callback so coordinator knows task is done
-				if callback != nil {
-					callback(instanceID, detect.StateCompleted)
-				}
+				m.handleSessionEnded(instanceID)
 				return
 			}
 
@@ -722,6 +695,21 @@ func (m *Manager) captureLoop() {
 						"full_capture", doFullCapture,
 						"error", err.Error())
 				}
+
+				// When capture fails, verify the session still exists.
+				// This catches the race condition where the tmux server dies between
+				// getSessionStatus() and capture, preventing indefinite stale RUNNING
+				// status with no output updates. See GitHub issue #403.
+				if !m.checkSessionExists(sessionName) {
+					if logger != nil {
+						logger.Info("session ended (detected via capture failure)",
+							"session_name", sessionName,
+							"instance_id", instanceID)
+					}
+					m.handleSessionEnded(instanceID)
+					return
+				}
+
 				continue
 			}
 
@@ -970,6 +958,24 @@ func (m *Manager) checkSessionExists(sessionName string) bool {
 	}
 
 	return true
+}
+
+// handleSessionEnded performs cleanup when a session has ended. This consolidates
+// the common pattern of: marking running=false, notifying state monitor of completion,
+// stopping the state monitor, and firing the completion callback.
+// Callers should return from the capture loop after calling this.
+func (m *Manager) handleSessionEnded(instanceID string) {
+	m.mu.Lock()
+	m.running = false
+	callback := m.stateCallback
+	m.mu.Unlock()
+
+	m.stateMonitor.SetState(instanceID, detect.StateCompleted)
+	m.stateMonitor.Stop(instanceID)
+
+	if callback != nil {
+		callback(instanceID, detect.StateCompleted)
+	}
 }
 
 // captureVisiblePane captures only the visible pane content (no scrollback history).
