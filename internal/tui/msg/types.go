@@ -78,7 +78,11 @@ type UltraPlanInitMsg struct{}
 type TripleShotStartedMsg struct{}
 
 // TripleShotJudgeStartedMsg indicates the judge has started evaluating.
-type TripleShotJudgeStartedMsg struct{}
+type TripleShotJudgeStartedMsg struct {
+	// ImplementersGroupID is the ID of the Implementers sub-group, used by TUI
+	// to auto-collapse the implementers when the judge starts running.
+	ImplementersGroupID string
+}
 
 // TripleShotErrorMsg indicates an error during triple-shot operation.
 type TripleShotErrorMsg struct {

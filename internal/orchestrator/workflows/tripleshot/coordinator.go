@@ -38,6 +38,7 @@ type GroupInterface interface {
 	AddSubGroup(subGroup GroupInterface)
 	GetInstances() []string
 	SetInstances(instances []string)
+	GetID() string
 }
 
 // NewGroupFunc is a function type for creating new instance groups.
@@ -403,6 +404,9 @@ func (c *Coordinator) StartJudge() error {
 		// Clear the parent group's instances and add the sub-group
 		tripleGroup.SetInstances(nil)
 		tripleGroup.AddSubGroup(implementersGroup)
+
+		// Store the implementers group ID for TUI collapse behavior
+		session.ImplementersGroupID = implementersGroup.GetID()
 
 		// Add the judge to the parent group (so it appears at the top level)
 		tripleGroup.AddInstance(inst.GetID())

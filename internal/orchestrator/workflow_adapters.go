@@ -82,6 +82,10 @@ func (a *groupAdapter) SetInstances(instances []string) {
 	a.group.Instances = instances
 }
 
+func (a *groupAdapter) GetID() string {
+	return a.group.ID
+}
+
 // DefaultTripleShotConfig returns the default tripleshot configuration
 func DefaultTripleShotConfig() tripleshot.Config {
 	return tripleshot.DefaultConfig()
