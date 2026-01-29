@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-01-29
+
+This release introduces **Adversarial Review Mode** and **Color Themes** - two major features that enhance workflow quality and user experience.
+
 ### Added
 
 - **Adversarial Review Mode for Tripleshot** - Added `--adversarial` flag to the `tripleshot` command. When enabled, each of the three implementers is paired with a critical reviewer and won't be considered complete until the reviewer approves the work (score >= 8/10). The adversarial phase runs between the working phase and evaluation phase. If a reviewer rejects an attempt, it's marked as failed. The setting can also be configured as a default in `config.yaml` under `tripleshot.adversarial`.
@@ -825,6 +829,8 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.13.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.13.0
+[0.12.7]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.7
 [0.12.6]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.6
 [0.12.5]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.5
 [0.12.4]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.4
