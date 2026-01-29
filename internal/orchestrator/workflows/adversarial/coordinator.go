@@ -109,6 +109,13 @@ type Coordinator struct {
 	// State tracking
 	implementerWorktree string // Worktree path for implementer
 	reviewerWorktree    string // Worktree path for reviewer (same as implementer)
+
+	// Grace period tracking for stuck detection
+	// We track when instances were first detected as completed to avoid
+	// false positive stuck detection (race condition between instance
+	// completing and file being written)
+	implementerFirstCompleted *time.Time
+	reviewerFirstCompleted    *time.Time
 }
 
 // CoordinatorConfig holds configuration for creating a Coordinator
@@ -296,6 +303,12 @@ func (c *Coordinator) notifyComplete(success bool, summary string) {
 
 // PreviousRoundsGroupName is the display name for the "Previous Rounds" container group.
 const PreviousRoundsGroupName = "Previous Rounds"
+
+// StuckDetectionGracePeriod is the duration to wait after an instance is first
+// detected as completed before declaring it stuck. This grace period prevents
+// false positive stuck detection caused by a race condition where the instance
+// state transitions to "completed" before the sentinel file write finishes.
+const StuckDetectionGracePeriod = 3 * time.Second
 
 // getCurrentRoundGroup returns the group where current round's instances should be added.
 // Current round instances are added directly to the main adversarial group (not a sub-group).
@@ -805,9 +818,82 @@ func (c *Coordinator) SetWorktrees(worktree string) {
 	c.reviewerWorktree = worktree
 }
 
+// graceCheckResult represents the outcome of a grace period check for stuck detection.
+type graceCheckResult int
+
+const (
+	graceCheckNotStuck graceCheckResult = iota // File exists or grace period still active
+	graceCheckStuck                            // Grace period elapsed, instance is stuck
+	graceCheckError                            // Error checking file, skip stuck detection
+)
+
+// checkStuckWithGracePeriod checks if an instance is stuck, applying grace period logic.
+// This prevents false positive stuck detection by waiting for StuckDetectionGracePeriod
+// after the instance completes before declaring it stuck.
+func (c *Coordinator) checkStuckWithGracePeriod(
+	instanceID string,
+	role string,
+	checkReady func() (bool, error),
+	firstCompleted **time.Time,
+) graceCheckResult {
+	ready, err := checkReady()
+	if err != nil {
+		c.logger.Warn("error checking file during stuck detection",
+			"instance_id", instanceID,
+			"role", role,
+			"error", err,
+		)
+		return graceCheckError
+	}
+	if ready {
+		// File exists - reset grace period
+		c.mu.Lock()
+		*firstCompleted = nil
+		c.mu.Unlock()
+		return graceCheckNotStuck
+	}
+
+	// File not ready - check grace period
+	c.mu.Lock()
+	if *firstCompleted == nil {
+		// First detection of completion without file - start grace period
+		now := time.Now()
+		*firstCompleted = &now
+		c.mu.Unlock()
+		c.logger.Debug(role+" completed without file, starting grace period",
+			"instance_id", instanceID,
+			"grace_period", StuckDetectionGracePeriod,
+		)
+		return graceCheckNotStuck
+	}
+
+	elapsed := time.Since(**firstCompleted)
+	c.mu.Unlock()
+
+	if elapsed < StuckDetectionGracePeriod {
+		c.logger.Debug(role+" grace period still active",
+			"instance_id", instanceID,
+			"elapsed", elapsed,
+			"remaining", StuckDetectionGracePeriod-elapsed,
+		)
+		return graceCheckNotStuck
+	}
+
+	c.logger.Debug(role+" grace period elapsed, declaring stuck",
+		"instance_id", instanceID,
+		"elapsed", elapsed,
+	)
+	return graceCheckStuck
+}
+
 // HandleInstanceCompletion checks if an adversarial instance completed without writing
 // its required file. This should be called when the orchestrator detects that an instance
 // has transitioned to a completed or waiting-for-input state.
+//
+// To prevent false positive stuck detection (race condition between instance completing
+// and file being written), this method uses a grace period. The first time an instance
+// is detected as completed without its file, we record the time. Only if the instance
+// remains in this state past the grace period do we declare it stuck.
 //
 // Returns true if this instance belongs to this coordinator and the stuck condition was
 // detected and handled.
@@ -827,6 +913,14 @@ func (c *Coordinator) HandleInstanceCompletion(instanceID string, isCompleted bo
 
 	// Only check stuck condition if instance completed/waiting and we're in the right phase
 	if !isCompleted && !isWaitingInput {
+		// Instance is not completed - reset grace period tracking
+		c.mu.Lock()
+		if isImplementer {
+			c.implementerFirstCompleted = nil
+		} else {
+			c.reviewerFirstCompleted = nil
+		}
+		c.mu.Unlock()
 		return false
 	}
 
@@ -841,38 +935,26 @@ func (c *Coordinator) HandleInstanceCompletion(instanceID string, isCompleted bo
 
 	// Check for stuck implementer
 	if isImplementer && session.Phase == PhaseImplementing {
-		// Check if increment file exists
-		ready, err := c.CheckIncrementReady()
-		if err != nil {
-			// Filesystem error - cannot reliably determine stuck state
-			c.logger.Warn("error checking increment file during stuck detection",
-				"instance_id", instanceID,
-				"error", err,
-			)
-			return false
-		}
-		if !ready {
+		result := c.checkStuckWithGracePeriod(
+			instanceID, "implementer", c.CheckIncrementReady, &c.implementerFirstCompleted,
+		)
+		if result == graceCheckStuck {
 			c.handleStuckImplementer(instanceID)
 			return true
 		}
+		return false
 	}
 
 	// Check for stuck reviewer
 	if isReviewer && session.Phase == PhaseReviewing {
-		// Check if review file exists
-		ready, err := c.CheckReviewReady()
-		if err != nil {
-			// Filesystem error - cannot reliably determine stuck state
-			c.logger.Warn("error checking review file during stuck detection",
-				"instance_id", instanceID,
-				"error", err,
-			)
-			return false
-		}
-		if !ready {
+		result := c.checkStuckWithGracePeriod(
+			instanceID, "reviewer", c.CheckReviewReady, &c.reviewerFirstCompleted,
+		)
+		if result == graceCheckStuck {
 			c.handleStuckReviewer(instanceID)
 			return true
 		}
+		return false
 	}
 
 	return false
