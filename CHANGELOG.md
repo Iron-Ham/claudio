@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **False Positive Stale Detection** - Fixed instances being incorrectly marked as "stuck" in two scenarios: (1) When Claude was actively working but the output wasn't changing (e.g., running explore agents with collapsed output, or showing a static spinner during thinking phase) - the stale counter now only increments when no working indicators (spinners, "Reading...", "Analyzing...", etc.) are present. (2) When Claude was waiting for user input but the patterns didn't match Claude Code's actual UI - the state detection patterns now correctly recognize Claude Code's input prompt (`❯`), plan/auto/focus mode indicators (`⏸`), and case variations in mode cycling hints.
 
+- **Sidebar Auto-Scroll on Navigation** - Fixed sidebar not scrolling when navigating to instances or groups that are off-screen. When using h/l (tab/shift+tab) to switch instances or gn/gp to navigate between groups, the sidebar now automatically scrolls to ensure the selected item is visible. This also fixes a bug where `ensureActiveVisible()` used the wrong position in grouped mode due to not accounting for group headers.
+
 ## [0.13.0] - 2026-01-29
 
 This release introduces **Adversarial Review Mode** and **Color Themes** - two major features that enhance workflow quality and user experience.
