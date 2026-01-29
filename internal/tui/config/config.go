@@ -72,6 +72,14 @@ func New() Model {
 			Name: "TUI",
 			Items: []ConfigItem{
 				{
+					Key:         "tui.theme",
+					Label:       "Color Theme",
+					Description: "Color theme for the TUI (changes apply immediately)",
+					Type:        "select",
+					Options:     styles.ValidThemes(),
+					Category:    "tui",
+				},
+				{
 					Key:         "tui.auto_focus_on_input",
 					Label:       "Auto Focus on Input",
 					Description: "Automatically focus new instances for input",
@@ -699,9 +707,15 @@ func (m *Model) handleEditingKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if item.Type == "select" {
 			// Apply selected option
-			viper.Set(item.Key, item.Options[m.selectIndex])
+			selectedValue := item.Options[m.selectIndex]
+			viper.Set(item.Key, selectedValue)
 			m.saveConfig()
 			m.editing = false
+
+			// Apply theme change immediately for live preview
+			if item.Key == "tui.theme" {
+				styles.SetActiveTheme(styles.ThemeName(selectedValue))
+			}
 		} else {
 			// Validate and apply text input
 			value := m.textInput.Value()
@@ -1141,6 +1155,7 @@ func (m *Model) resetCurrentToDefault() {
 		// Completion
 		"completion.default_action": defaults.Completion.DefaultAction,
 		// TUI
+		"tui.theme":                defaults.TUI.Theme,
 		"tui.auto_focus_on_input":  defaults.TUI.AutoFocusOnInput,
 		"tui.max_output_lines":     defaults.TUI.MaxOutputLines,
 		"tui.verbose_command_help": defaults.TUI.VerboseCommandHelp,
@@ -1215,6 +1230,13 @@ func (m *Model) resetCurrentToDefault() {
 		viper.Set(item.Key, defaultVal)
 		m.saveConfig()
 		m.infoMsg = fmt.Sprintf("Reset %s to default", item.Label)
+
+		// Apply theme change immediately when resetting theme
+		if item.Key == "tui.theme" {
+			if themeName, ok := defaultVal.(string); ok {
+				styles.SetActiveTheme(styles.ThemeName(themeName))
+			}
+		}
 	}
 }
 

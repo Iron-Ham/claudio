@@ -332,6 +332,14 @@ func (a *App) Run() error {
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tuimsg.Tick()}
 
+	// Apply theme from config at startup
+	// The styles package initializes with the default theme, but we need to
+	// respect the user's saved preference from config.
+	cfg := config.Get()
+	if cfg.TUI.Theme != "" && styles.IsValidTheme(cfg.TUI.Theme) {
+		styles.SetActiveTheme(styles.ThemeName(cfg.TUI.Theme))
+	}
+
 	// Schedule ultra-plan initialization if needed
 	if m.ultraPlan != nil && m.ultraPlan.Coordinator != nil {
 		session := m.ultraPlan.Coordinator.Session()

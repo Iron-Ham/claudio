@@ -205,6 +205,54 @@ func TestConfig_Validate_TUI(t *testing.T) {
 			t.Error("expected error for large sidebar width")
 		}
 	})
+
+	t.Run("valid themes", func(t *testing.T) {
+		for _, theme := range []string{"default", "monokai", "dracula", "nord", ""} {
+			cfg := Default()
+			cfg.TUI.Theme = theme
+			errs := cfg.Validate()
+
+			for _, err := range errs {
+				if err.Field == "tui.theme" {
+					t.Errorf("theme %q should be valid, got error: %v", theme, err)
+				}
+			}
+		}
+	})
+
+	t.Run("invalid theme", func(t *testing.T) {
+		cfg := Default()
+		cfg.TUI.Theme = "invalid_theme"
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "tui.theme" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for invalid theme")
+		}
+	})
+
+	t.Run("case sensitive theme", func(t *testing.T) {
+		cfg := Default()
+		cfg.TUI.Theme = "Default" // Wrong case
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "tui.theme" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for uppercase theme name")
+		}
+	})
 }
 
 func TestConfig_Validate_Instance(t *testing.T) {
