@@ -27,8 +27,8 @@ const (
 	ThemeAyu            ThemeName = "ayu"             // Ayu Dark clean theme
 )
 
-// ValidThemes returns all valid theme names.
-func ValidThemes() []string {
+// BuiltinThemes returns all built-in theme names.
+func BuiltinThemes() []string {
 	return []string{
 		string(ThemeDefault),
 		string(ThemeMonokai),
@@ -47,9 +47,21 @@ func ValidThemes() []string {
 	}
 }
 
-// IsValidTheme checks if a theme name is valid.
+// ValidThemes returns all valid theme names (built-in + custom).
+func ValidThemes() []string {
+	themes := BuiltinThemes()
+	themes = append(themes, CustomThemeNames()...)
+	return themes
+}
+
+// IsValidTheme checks if a theme name is valid (built-in or custom).
 func IsValidTheme(name string) bool {
-	return slices.Contains(ValidThemes(), name)
+	// Check built-in themes first (faster)
+	if slices.Contains(BuiltinThemes(), name) {
+		return true
+	}
+	// Check custom themes
+	return IsCustomTheme(name)
 }
 
 // ColorPalette defines the color scheme for a theme.
@@ -708,8 +720,15 @@ func AyuPalette() *ColorPalette {
 }
 
 // GetPalette returns the color palette for the given theme name.
+// Checks custom themes first, then falls back to built-in themes.
 // Returns the default palette for unknown theme names.
 func GetPalette(name ThemeName) *ColorPalette {
+	// Check custom themes first
+	if custom := GetCustomTheme(name); custom != nil {
+		return custom.ToPalette()
+	}
+
+	// Fall back to built-in themes
 	switch name {
 	case ThemeMonokai:
 		return MonokaiPalette()

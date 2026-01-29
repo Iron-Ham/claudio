@@ -49,6 +49,9 @@ type Model struct {
 
 // New creates a new config model
 func New() Model {
+	// Discover custom themes so they appear in the theme selector
+	_, _ = styles.DiscoverCustomThemes()
+
 	ti := textinput.New()
 	ti.Focus()
 	ti.CharLimit = 100
