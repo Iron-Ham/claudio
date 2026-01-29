@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Group Progress Display** - Fixed group title progress indicators (e.g., `[0/4]`) always showing `[0/x]` for orchestrated workflows. Progress now accurately reflects work completion for tripleshot (including adversarial reviewers), adversarial, and ralph session types by using workflow-specific completion tracking rather than just instance process status. For example, a tripleshot with 3 completed attempts now shows `[3/4]` instead of `[0/4]`.
+
 - **TUI Tripleshot Config Settings** - The `:tripleshot` command in the TUI now properly respects the `tripleshot.auto_approve` and `tripleshot.adversarial` settings from the config file. Previously, starting a tripleshot from the TUI always used hardcoded defaults, ignoring user configuration.
 
 - **False Positive Stale Detection** - Fixed instances being incorrectly marked as "stuck" in two scenarios: (1) When Claude was actively working but the output wasn't changing (e.g., running explore agents with collapsed output, or showing a static spinner during thinking phase) - the stale counter now only increments when no working indicators (spinners, "Reading...", "Analyzing...", etc.) are present. (2) When Claude was waiting for user input but the patterns didn't match Claude Code's actual UI - the state detection patterns now correctly recognize Claude Code's input prompt (`❯`), plan/auto/focus mode indicators (`⏸`), and case variations in mode cycling hints.
