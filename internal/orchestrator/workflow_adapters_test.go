@@ -382,6 +382,138 @@ func TestAdversarialGroupAdapterNilGroup(t *testing.T) {
 	if adapter.GetSubGroupByName("name") != nil {
 		t.Error("expected nil from GetSubGroupByName with nil group")
 	}
+	if adapter.GetSubGroupByID("id") != nil {
+		t.Error("expected nil from GetSubGroupByID with nil group")
+	}
+	if adapter.MoveSubGroupUnder("sub", "target", "Target") {
+		t.Error("expected false from MoveSubGroupUnder with nil group")
+	}
+}
+
+// TestAdversarialGroupAdapterGetSubGroupByID tests sub-group lookup by ID.
+func TestAdversarialGroupAdapterGetSubGroupByID(t *testing.T) {
+	group := NewInstanceGroup("parent")
+	adapter := &adversarialGroupAdapter{group: group}
+
+	// Should return nil when no sub-groups exist
+	if adapter.GetSubGroupByID("sub-1") != nil {
+		t.Error("expected nil for non-existent sub-group ID")
+	}
+
+	// Create a sub-group
+	adapter.GetOrCreateSubGroup("sub-1", "Round 1")
+
+	// Should find the sub-group by ID
+	found := adapter.GetSubGroupByID("sub-1")
+	if found == nil {
+		t.Error("expected to find sub-group by ID 'sub-1'")
+	}
+
+	// Should return nil for non-existent ID
+	if adapter.GetSubGroupByID("sub-2") != nil {
+		t.Error("expected nil for 'sub-2'")
+	}
+}
+
+// TestAdversarialGroupAdapterMoveSubGroupUnder tests moving sub-groups.
+func TestAdversarialGroupAdapterMoveSubGroupUnder(t *testing.T) {
+	group := NewInstanceGroup("parent")
+	adapter := &adversarialGroupAdapter{group: group}
+
+	// Create round 1 sub-group
+	adapter.GetOrCreateSubGroup("sub-round-1", "Round 1")
+
+	// Initially parent has 1 sub-group
+	if len(group.SubGroups) != 1 {
+		t.Errorf("expected 1 sub-group, got %d", len(group.SubGroups))
+	}
+
+	// Move round 1 under "Previous Rounds" (which doesn't exist yet)
+	result := adapter.MoveSubGroupUnder("sub-round-1", "sub-previous-rounds", "Previous Rounds")
+	if !result {
+		t.Error("MoveSubGroupUnder should return true when successful")
+	}
+
+	// Now parent should have 1 sub-group (Previous Rounds) since Round 1 was moved
+	if len(group.SubGroups) != 1 {
+		t.Errorf("expected 1 sub-group after move, got %d", len(group.SubGroups))
+	}
+
+	// Previous Rounds should exist
+	var previousRounds *InstanceGroup
+	for _, sg := range group.SubGroups {
+		if sg.Name == "Previous Rounds" {
+			previousRounds = sg
+			break
+		}
+	}
+	if previousRounds == nil {
+		t.Fatal("Previous Rounds sub-group should have been created")
+	}
+
+	// Round 1 should be under Previous Rounds
+	if len(previousRounds.SubGroups) != 1 {
+		t.Errorf("expected 1 sub-group under Previous Rounds, got %d", len(previousRounds.SubGroups))
+	}
+	if previousRounds.SubGroups[0].Name != "Round 1" {
+		t.Errorf("expected Round 1 under Previous Rounds, got %s", previousRounds.SubGroups[0].Name)
+	}
+
+	// Round 1's ParentID should be updated
+	if previousRounds.SubGroups[0].ParentID != previousRounds.ID {
+		t.Errorf("Round 1's ParentID should be Previous Rounds ID")
+	}
+}
+
+// TestAdversarialGroupAdapterMoveSubGroupUnder_MultipleRounds tests moving multiple rounds.
+func TestAdversarialGroupAdapterMoveSubGroupUnder_MultipleRounds(t *testing.T) {
+	group := NewInstanceGroup("parent")
+	adapter := &adversarialGroupAdapter{group: group}
+
+	// Create round 1 and round 2 sub-groups
+	adapter.GetOrCreateSubGroup("sub-round-1", "Round 1")
+	adapter.GetOrCreateSubGroup("sub-round-2", "Round 2")
+
+	if len(group.SubGroups) != 2 {
+		t.Errorf("expected 2 sub-groups initially, got %d", len(group.SubGroups))
+	}
+
+	// Move round 1 under Previous Rounds
+	adapter.MoveSubGroupUnder("sub-round-1", "sub-previous-rounds", "Previous Rounds")
+
+	// Now should have Previous Rounds + Round 2
+	if len(group.SubGroups) != 2 {
+		t.Errorf("expected 2 sub-groups after first move, got %d", len(group.SubGroups))
+	}
+
+	// Move round 2 under Previous Rounds (which now exists)
+	adapter.MoveSubGroupUnder("sub-round-2", "sub-previous-rounds", "Previous Rounds")
+
+	// Now should have only Previous Rounds
+	if len(group.SubGroups) != 1 {
+		t.Errorf("expected 1 sub-group after second move, got %d", len(group.SubGroups))
+	}
+
+	// Previous Rounds should have both rounds
+	previousRounds := group.SubGroups[0]
+	if previousRounds.Name != "Previous Rounds" {
+		t.Errorf("expected Previous Rounds, got %s", previousRounds.Name)
+	}
+	if len(previousRounds.SubGroups) != 2 {
+		t.Errorf("expected 2 sub-groups under Previous Rounds, got %d", len(previousRounds.SubGroups))
+	}
+}
+
+// TestAdversarialGroupAdapterMoveSubGroupUnder_NonExistent tests moving non-existent sub-group.
+func TestAdversarialGroupAdapterMoveSubGroupUnder_NonExistent(t *testing.T) {
+	group := NewInstanceGroup("parent")
+	adapter := &adversarialGroupAdapter{group: group}
+
+	// Try to move a non-existent sub-group
+	result := adapter.MoveSubGroupUnder("nonexistent", "target", "Target")
+	if result {
+		t.Error("MoveSubGroupUnder should return false for non-existent sub-group")
+	}
 }
 
 // TestRalphInterfaceSatisfaction verifies adapters satisfy their interfaces.

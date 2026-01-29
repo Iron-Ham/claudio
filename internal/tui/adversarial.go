@@ -305,9 +305,14 @@ func (m *Model) handleAdversarialReviewProcessed(msg tuimsg.AdversarialReviewPro
 	return m, nil
 }
 
-// collapseAdversarialRound collapses the sub-group for a completed adversarial round.
-// This keeps the UI clean by hiding completed rounds while preserving the ability
-// for users to expand them manually if needed.
+// collapseAdversarialRound collapses the "Previous Rounds" container group when
+// a round is rejected. This keeps the UI clean by hiding all completed rounds
+// in a single collapsed group while preserving the ability for users to expand
+// them manually if needed.
+//
+// Note: Individual rounds are now moved into the "Previous Rounds" container
+// by the coordinator when a new round starts. This function just ensures the
+// container is collapsed.
 func (m *Model) collapseAdversarialRound(session *adversarial.Session, round int) {
 	if session == nil {
 		return
@@ -318,24 +323,24 @@ func (m *Model) collapseAdversarialRound(session *adversarial.Session, round int
 		m.groupViewState = view.NewGroupViewState()
 	}
 
-	// Find the round in history
-	if round < 1 || round > len(session.History) {
+	// Guard against invalid round numbers
+	if round < 1 {
 		return
 	}
 
-	// Get the sub-group ID for this round
-	subGroupID := session.History[round-1].SubGroupID
-	if subGroupID == "" {
+	// Get the "Previous Rounds" container group ID
+	previousRoundsID := adversarial.GetPreviousRoundsGroupID(session)
+	if previousRoundsID == "" {
 		return
 	}
 
-	// Collapse the sub-group (user can toggle to expand)
-	m.groupViewState.CollapsedGroups[subGroupID] = true
+	// Collapse the "Previous Rounds" container (user can toggle to expand)
+	m.groupViewState.CollapsedGroups[previousRoundsID] = true
 
 	if m.logger != nil {
-		m.logger.Info("auto-collapsed adversarial round sub-group",
+		m.logger.Info("auto-collapsed previous rounds container",
 			"round", round,
-			"sub_group_id", subGroupID,
+			"container_id", previousRoundsID,
 		)
 	}
 }

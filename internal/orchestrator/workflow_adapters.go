@@ -220,6 +220,68 @@ func (a *adversarialGroupAdapter) GetSubGroupByName(name string) adversarial.Gro
 	return nil
 }
 
+// GetSubGroupByID returns a sub-group by ID, or nil if not found.
+// This implements adversarial.GroupWithSubGroupsInterface.
+func (a *adversarialGroupAdapter) GetSubGroupByID(id string) adversarial.GroupInterface {
+	if a.group == nil {
+		return nil
+	}
+
+	for _, sg := range a.group.SubGroups {
+		if sg.ID == id {
+			return &adversarialGroupAdapter{group: sg}
+		}
+	}
+	return nil
+}
+
+// MoveSubGroupUnder moves a sub-group to become a child of another sub-group.
+// If the target doesn't exist, it will be created with the given targetName.
+// This implements adversarial.GroupWithSubGroupsInterface.
+func (a *adversarialGroupAdapter) MoveSubGroupUnder(subGroupID, targetID, targetName string) bool {
+	if a.group == nil {
+		return false
+	}
+
+	// Find the sub-group to move
+	var subGroupToMove *InstanceGroup
+	subGroupIndex := -1
+	for i, sg := range a.group.SubGroups {
+		if sg.ID == subGroupID {
+			subGroupToMove = sg
+			subGroupIndex = i
+			break
+		}
+	}
+
+	if subGroupToMove == nil {
+		return false // Sub-group not found
+	}
+
+	// Find or create the target sub-group
+	var targetGroup *InstanceGroup
+	for _, sg := range a.group.SubGroups {
+		if sg.ID == targetID {
+			targetGroup = sg
+			break
+		}
+	}
+
+	if targetGroup == nil {
+		// Create the target sub-group
+		targetGroup = NewInstanceGroupWithID(targetID, targetName)
+		a.group.AddSubGroup(targetGroup)
+	}
+
+	// Remove the sub-group from the parent's direct children
+	a.group.SubGroups = append(a.group.SubGroups[:subGroupIndex], a.group.SubGroups[subGroupIndex+1:]...)
+
+	// Add it to the target sub-group
+	targetGroup.AddSubGroup(subGroupToMove)
+
+	return true
+}
+
 // DefaultAdversarialConfig returns the default adversarial configuration
 func DefaultAdversarialConfig() adversarial.Config {
 	return adversarial.DefaultConfig()

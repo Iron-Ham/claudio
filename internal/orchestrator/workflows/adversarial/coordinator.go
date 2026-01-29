@@ -49,6 +49,12 @@ type GroupWithSubGroupsInterface interface {
 	GetOrCreateSubGroup(id, name string) GroupInterface
 	// GetSubGroupByName returns a sub-group by name, or nil if not found.
 	GetSubGroupByName(name string) GroupInterface
+	// GetSubGroupByID returns a sub-group by ID, or nil if not found.
+	GetSubGroupByID(id string) GroupInterface
+	// MoveSubGroupUnder moves a sub-group (identified by ID) to become a child
+	// of another sub-group (target, identified by ID). Returns true if successful.
+	// If target doesn't exist, it will be created with the given targetName.
+	MoveSubGroupUnder(subGroupID, targetID, targetName string) bool
 }
 
 // CoordinatorCallbacks holds callbacks for coordinator events
@@ -283,9 +289,15 @@ func (c *Coordinator) notifyComplete(success bool, summary string) {
 	}
 }
 
+// PreviousRoundsGroupName is the display name for the "Previous Rounds" container group.
+const PreviousRoundsGroupName = "Previous Rounds"
+
 // getOrCreateRoundSubGroup gets or creates a sub-group for the given round.
 // If the group supports sub-groups, it creates a "Round N" sub-group.
 // Otherwise, it returns the main group.
+//
+// When round > 1, this also moves the previous round's sub-group into a
+// "Previous Rounds" container to reduce visual clutter.
 func (c *Coordinator) getOrCreateRoundSubGroup(advGroup GroupInterface, round int) (GroupInterface, string) {
 	// Check if the group supports sub-groups
 	groupWithSubGroups, ok := advGroup.(GroupWithSubGroupsInterface)
@@ -309,10 +321,51 @@ func (c *Coordinator) getOrCreateRoundSubGroup(advGroup GroupInterface, round in
 		return existing, subGroupID
 	}
 
-	// Create new sub-group
+	// For round > 1, move the previous round into "Previous Rounds" container
+	if round > 1 {
+		c.movePreviousRoundToContainer(groupWithSubGroups, groupIDPrefix, round-1)
+	}
+
+	// Create new sub-group for the current round
 	subGroup := groupWithSubGroups.GetOrCreateSubGroup(subGroupID, subGroupName)
 
 	return subGroup, subGroupID
+}
+
+// movePreviousRoundToContainer moves a completed round's sub-group into the
+// "Previous Rounds" container group. This reduces navigation clutter by
+// condensing all previous rounds into a single collapsible group.
+func (c *Coordinator) movePreviousRoundToContainer(group GroupWithSubGroupsInterface, groupIDPrefix string, prevRound int) {
+	prevRoundSubGroupID := fmt.Sprintf("%s-round-%d", groupIDPrefix, prevRound)
+	previousRoundsID := fmt.Sprintf("%s-previous-rounds", groupIDPrefix)
+
+	// Check if the previous round's sub-group exists at the top level
+	if group.GetSubGroupByID(prevRoundSubGroupID) == nil {
+		// Previous round sub-group doesn't exist or was already moved
+		return
+	}
+
+	// Move the previous round into "Previous Rounds" container
+	if group.MoveSubGroupUnder(prevRoundSubGroupID, previousRoundsID, PreviousRoundsGroupName) {
+		c.logger.Info("moved previous round to container",
+			"round", prevRound,
+			"sub_group_id", prevRoundSubGroupID,
+			"container_id", previousRoundsID,
+		)
+	}
+}
+
+// GetPreviousRoundsGroupID returns the ID of the "Previous Rounds" container group
+// for a given session, or empty string if not applicable.
+func GetPreviousRoundsGroupID(session *Session) string {
+	if session == nil {
+		return ""
+	}
+	groupIDPrefix := session.GroupID
+	if groupIDPrefix == "" {
+		groupIDPrefix = session.ID
+	}
+	return fmt.Sprintf("%s-previous-rounds", groupIDPrefix)
 }
 
 // StartImplementer starts the implementer instance for the current round
