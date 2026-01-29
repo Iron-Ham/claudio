@@ -232,6 +232,63 @@ func TestSendKeyToTmux_AltRunes(t *testing.T) {
 	}
 }
 
+func TestSendKeyToTmux_AltArrowKeys(t *testing.T) {
+	tests := []struct {
+		name         string
+		keyType      tea.KeyType
+		expectedKeys []string
+	}{
+		{"alt-up", tea.KeyUp, []string{"Escape", "Up"}},
+		{"alt-down", tea.KeyDown, []string{"Escape", "Down"}},
+		{"alt-left", tea.KeyLeft, []string{"Escape", "Left"}},
+		{"alt-right", tea.KeyRight, []string{"Escape", "Right"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sender := &mockKeySender{}
+			msg := tea.KeyMsg{Type: tt.keyType, Alt: true}
+			SendKeyToTmux(sender, msg)
+
+			if len(sender.keys) != len(tt.expectedKeys) {
+				t.Errorf("SendKeyToTmux() sent %d keys = %v, want %d keys %v",
+					len(sender.keys), sender.keys, len(tt.expectedKeys), tt.expectedKeys)
+				return
+			}
+			for i, expected := range tt.expectedKeys {
+				if sender.keys[i] != expected {
+					t.Errorf("SendKeyToTmux() key[%d] = %v, want %v", i, sender.keys[i], expected)
+				}
+			}
+			if len(sender.literals) != 0 {
+				t.Errorf("SendKeyToTmux() unexpectedly sent literals = %v", sender.literals)
+			}
+		})
+	}
+}
+
+func TestSendKeyToTmux_AltBackspace(t *testing.T) {
+	sender := &mockKeySender{}
+	msg := tea.KeyMsg{Type: tea.KeyBackspace, Alt: true}
+	SendKeyToTmux(sender, msg)
+
+	// Alt+Backspace (Opt+Backspace on macOS) sends Escape then BSpace
+	expectedKeys := []string{"Escape", "BSpace"}
+	if len(sender.keys) != len(expectedKeys) {
+		t.Errorf("SendKeyToTmux() sent %d keys = %v, want %d keys %v",
+			len(sender.keys), sender.keys, len(expectedKeys), expectedKeys)
+		return
+	}
+	for i, expected := range expectedKeys {
+		if sender.keys[i] != expected {
+			t.Errorf("SendKeyToTmux() key[%d] = %v, want %v", i, sender.keys[i], expected)
+		}
+	}
+	if len(sender.literals) != 0 {
+		t.Errorf("SendKeyToTmux() unexpectedly sent literals = %v", sender.literals)
+	}
+}
+
 func TestKeySender_Interface(t *testing.T) {
 	// This test verifies that the KeySender interface is satisfied by the mock.
 	var _ KeySender = (*mockKeySender)(nil)
