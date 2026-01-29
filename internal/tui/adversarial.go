@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 
+	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
@@ -89,13 +90,26 @@ func (m *Model) handleAdversarialCheckResult(msg tuimsg.AdversarialCheckResultMs
 			m.errorMessage = "Adversarial review failed: " + session.Error
 		}
 		return m, nil
+
+	case adversarial.PhaseStuck:
+		// Show error message for stuck adversarial session with recovery hint
+		if m.errorMessage == "" {
+			roleName := "instance"
+			if session.StuckRole == string(adversarial.StuckRoleImplementer) {
+				roleName = "implementer"
+			} else if session.StuckRole == string(adversarial.StuckRoleReviewer) {
+				roleName = "reviewer"
+			}
+			m.errorMessage = fmt.Sprintf("Adversarial %s stuck! Use :adversarial-retry to restart.", roleName)
+		}
+		return m, nil
 	}
 
 	return m, nil
 }
 
 // processAdversarialIncrementCheck handles completion check results for the increment file.
-// Returns async command to process the increment file if ready.
+// Returns async command to process the increment file if ready, or check for stuck condition.
 func (m *Model) processAdversarialIncrementCheck(
 	coordinator *adversarial.Coordinator,
 	msg tuimsg.AdversarialCheckResultMsg,
@@ -115,11 +129,19 @@ func (m *Model) processAdversarialIncrementCheck(
 		return m, tuimsg.ProcessAdversarialIncrementAsync(coordinator, msg.GroupID)
 	}
 
+	// File not ready - check if the implementer instance is completed/waiting (stuck condition)
+	session := coordinator.Session()
+	if session != nil && session.ImplementerID != "" {
+		if cmd := m.checkAdversarialInstanceStuck(coordinator, msg.GroupID, session.ImplementerID); cmd != nil {
+			return m, cmd
+		}
+	}
+
 	return m, nil
 }
 
 // processAdversarialReviewCheck handles completion check results for the review file.
-// Returns async command to process the review file if ready.
+// Returns async command to process the review file if ready, or check for stuck condition.
 func (m *Model) processAdversarialReviewCheck(
 	coordinator *adversarial.Coordinator,
 	msg tuimsg.AdversarialCheckResultMsg,
@@ -137,6 +159,14 @@ func (m *Model) processAdversarialReviewCheck(
 	if msg.ReviewReady {
 		// Dispatch async command to process the review file
 		return m, tuimsg.ProcessAdversarialReviewAsync(coordinator, msg.GroupID)
+	}
+
+	// File not ready - check if the reviewer instance is completed/waiting (stuck condition)
+	session := coordinator.Session()
+	if session != nil && session.ReviewerID != "" {
+		if cmd := m.checkAdversarialInstanceStuck(coordinator, msg.GroupID, session.ReviewerID); cmd != nil {
+			return m, cmd
+		}
 	}
 
 	return m, nil
@@ -373,4 +403,163 @@ func (m Model) GetAdversarialCoordinators() []*adversarial.Coordinator {
 		return nil
 	}
 	return m.adversarial.GetAllCoordinators()
+}
+
+// checkAdversarialInstanceStuck checks if an adversarial instance is stuck by checking
+// its state from the orchestrator. Returns a command to dispatch the stuck check if
+// the instance appears to be completed/waiting without having written its file.
+func (m *Model) checkAdversarialInstanceStuck(
+	coordinator *adversarial.Coordinator,
+	groupID string,
+	instanceID string,
+) tea.Cmd {
+	if m.orchestrator == nil {
+		return nil
+	}
+
+	// Get the instance manager to check its state
+	mgr := m.orchestrator.GetInstanceManager(instanceID)
+	if mgr == nil {
+		return nil
+	}
+
+	// Check if the instance is completed or waiting for input
+	state := mgr.CurrentState()
+	isCompleted := state == detect.StateCompleted
+	isWaitingInput := state == detect.StateWaitingInput ||
+		state == detect.StateWaitingQuestion ||
+		state == detect.StateWaitingPermission
+
+	if isCompleted || isWaitingInput {
+		// Instance completed/waiting without file - dispatch stuck check
+		return tuimsg.CheckAdversarialInstanceStuckAsync(
+			coordinator, groupID, instanceID, isCompleted, isWaitingInput,
+		)
+	}
+
+	return nil
+}
+
+// handleAdversarialStuck handles the stuck detection result.
+func (m *Model) handleAdversarialStuck(msg tuimsg.AdversarialStuckMsg) (tea.Model, tea.Cmd) {
+	if m.adversarial == nil {
+		return m, nil
+	}
+
+	// Find the coordinator for this result
+	coordinator := m.adversarial.GetCoordinatorForGroup(msg.GroupID)
+	if coordinator == nil {
+		return m, nil
+	}
+
+	session := coordinator.Session()
+	if session == nil {
+		return m, nil
+	}
+
+	// Show error message with recovery hint
+	var roleName string
+	switch msg.StuckRole {
+	case adversarial.StuckRoleImplementer:
+		roleName = "implementer"
+	case adversarial.StuckRoleReviewer:
+		roleName = "reviewer"
+	default:
+		roleName = "instance"
+	}
+
+	m.errorMessage = fmt.Sprintf("Adversarial %s stuck! Completed without writing required file. "+
+		"Use :adversarial-retry to restart or check instance output.", roleName)
+
+	// Notify user via bell
+	m.adversarial.NeedsNotification = true
+
+	if m.logger != nil {
+		m.logger.Warn("adversarial instance stuck",
+			"group_id", msg.GroupID,
+			"instance_id", msg.InstanceID,
+			"stuck_role", string(msg.StuckRole),
+			"round", session.CurrentRound,
+		)
+	}
+
+	return m, nil
+}
+
+// handleAdversarialRestart handles the restart result.
+func (m *Model) handleAdversarialRestart(msg tuimsg.AdversarialRestartMsg) (tea.Model, tea.Cmd) {
+	if m.adversarial == nil {
+		return m, nil
+	}
+
+	// Find the coordinator for this result
+	coordinator := m.adversarial.GetCoordinatorForGroup(msg.GroupID)
+	if coordinator == nil {
+		return m, nil
+	}
+
+	if msg.Err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to restart stuck adversarial role",
+				"error", msg.Err,
+				"group_id", msg.GroupID,
+			)
+		}
+		m.errorMessage = fmt.Sprintf("Failed to restart: %v", msg.Err)
+		return m, nil
+	}
+
+	session := coordinator.Session()
+	if session == nil {
+		return m, nil
+	}
+
+	m.infoMessage = fmt.Sprintf("Round %d: Restarting %s...",
+		session.CurrentRound, session.Phase)
+	m.errorMessage = "" // Clear error message on successful restart
+
+	if m.logger != nil {
+		m.logger.Info("restarted stuck adversarial role",
+			"group_id", msg.GroupID,
+			"phase", string(session.Phase),
+			"round", session.CurrentRound,
+		)
+	}
+
+	return m, nil
+}
+
+// RestartStuckAdversarial restarts the stuck role for a specific adversarial session.
+// Returns a command to dispatch the restart.
+func (m *Model) RestartStuckAdversarial(groupID string) tea.Cmd {
+	if m.adversarial == nil {
+		return nil
+	}
+
+	coordinator := m.adversarial.GetCoordinatorForGroup(groupID)
+	if coordinator == nil {
+		return nil
+	}
+
+	if !coordinator.IsStuck() {
+		return nil
+	}
+
+	return tuimsg.RestartAdversarialStuckRoleAsync(coordinator, groupID)
+}
+
+// RestartFirstStuckAdversarial finds the first stuck adversarial session and restarts it.
+// This is called from the :adversarial-retry command.
+func (m *Model) RestartFirstStuckAdversarial() tea.Cmd {
+	if m.adversarial == nil {
+		return nil
+	}
+
+	for groupID, coordinator := range m.adversarial.Coordinators {
+		if coordinator.IsStuck() {
+			return tuimsg.RestartAdversarialStuckRoleAsync(coordinator, groupID)
+		}
+	}
+
+	return nil
 }

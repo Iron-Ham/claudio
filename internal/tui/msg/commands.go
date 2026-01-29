@@ -588,3 +588,40 @@ func ProcessRalphCompletionAsync(
 		}
 	}
 }
+
+// CheckAdversarialInstanceStuckAsync checks if an adversarial instance has completed
+// without writing its required file (stuck condition). This should be called when
+// an instance state changes to completed or waiting-for-input.
+func CheckAdversarialInstanceStuckAsync(
+	coordinator *adversarial.Coordinator,
+	groupID string,
+	instanceID string,
+	isCompleted bool,
+	isWaitingInput bool,
+) tea.Cmd {
+	return func() tea.Msg {
+		wasStuck := coordinator.HandleInstanceCompletion(instanceID, isCompleted, isWaitingInput)
+		if wasStuck {
+			return AdversarialStuckMsg{
+				GroupID:    groupID,
+				InstanceID: instanceID,
+				StuckRole:  coordinator.GetStuckRole(),
+			}
+		}
+		return nil
+	}
+}
+
+// RestartAdversarialStuckRoleAsync restarts the stuck role in an adversarial session.
+func RestartAdversarialStuckRoleAsync(
+	coordinator *adversarial.Coordinator,
+	groupID string,
+) tea.Cmd {
+	return func() tea.Msg {
+		err := coordinator.RestartStuckRole()
+		return AdversarialRestartMsg{
+			GroupID: groupID,
+			Err:     err,
+		}
+	}
+}

@@ -25,6 +25,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/viper"
 )
 
@@ -48,6 +49,9 @@ type mockDeps struct {
 	isTripleShotJudge     bool
 	ralphMode             bool
 	ralphCoordinators     []*ralph.Coordinator
+	// restartStuckAdversarialCmd is the tea.Cmd to return from RestartFirstStuckAdversarial.
+	// If nil, indicates no stuck session was found.
+	restartStuckAdversarialCmd tea.Cmd
 }
 
 func (m *mockDeps) GetOrchestrator() *orchestrator.Orchestrator { return m.orchestrator }
@@ -77,6 +81,7 @@ func (m *mockDeps) IsRalphMode() bool                     { return m.ralphMode }
 func (m *mockDeps) GetRalphCoordinators() []*ralph.Coordinator {
 	return m.ralphCoordinators
 }
+func (m *mockDeps) RestartFirstStuckAdversarial() tea.Cmd { return m.restartStuckAdversarialCmd }
 
 func newMockDeps() *mockDeps {
 	return &mockDeps{
@@ -1050,7 +1055,7 @@ func TestAllCommandsRecognized(t *testing.T) {
 		// Plan mode
 		"plan",
 		// Adversarial mode
-		"adversarial", "adv",
+		"adversarial", "adv", "adversarial-retry",
 		// Ultraplan arg commands (need viper config)
 		// "ultraplan", "up", // These are arg commands, tested separately
 		// Help and quit
@@ -1428,6 +1433,61 @@ func TestAdversarialCommand(t *testing.T) {
 		result := h.Execute("adv", deps)
 		if result.StartAdversarial == nil || !*result.StartAdversarial {
 			t.Error("adv alias should start adversarial mode")
+		}
+	})
+}
+
+// TestAdversarialRetryCommand tests the adversarial-retry command
+func TestAdversarialRetryCommand(t *testing.T) {
+	t.Run("error when not in adversarial mode", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.adversarialMode = false
+
+		result := h.Execute("adversarial-retry", deps)
+
+		if result.ErrorMessage != "Not in adversarial mode" {
+			t.Errorf("expected 'Not in adversarial mode', got: %q", result.ErrorMessage)
+		}
+		if result.TeaCmd != nil {
+			t.Error("expected no TeaCmd when not in adversarial mode")
+		}
+	})
+
+	t.Run("error when no stuck sessions found", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.adversarialMode = true
+		deps.restartStuckAdversarialCmd = nil // No stuck sessions
+
+		result := h.Execute("adversarial-retry", deps)
+
+		if result.ErrorMessage != "No stuck adversarial sessions found" {
+			t.Errorf("expected 'No stuck adversarial sessions found', got: %q", result.ErrorMessage)
+		}
+		if result.TeaCmd != nil {
+			t.Error("expected no TeaCmd when no stuck sessions")
+		}
+	})
+
+	t.Run("success when stuck session found", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.adversarialMode = true
+		// Create a mock tea.Cmd to return
+		mockCmd := func() tea.Msg { return nil }
+		deps.restartStuckAdversarialCmd = mockCmd
+
+		result := h.Execute("adversarial-retry", deps)
+
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.TeaCmd == nil {
+			t.Error("expected TeaCmd to be set when stuck session found")
+		}
+		if result.InfoMessage != "Restarting stuck adversarial instance..." {
+			t.Errorf("expected info message, got: %q", result.InfoMessage)
 		}
 	})
 }

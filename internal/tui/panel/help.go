@@ -183,6 +183,7 @@ func DefaultHelpSections() []HelpSection {
 			Title: "Adversarial Mode",
 			Items: []HelpItem{
 				{Key: ":adversarial  :adv", Description: "Start implementer + reviewer feedback loop"},
+				{Key: ":adversarial-retry", Description: "Restart a stuck adversarial instance"},
 			},
 		},
 		{

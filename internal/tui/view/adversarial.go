@@ -148,6 +148,10 @@ func RenderAdversarialHeader(ctx AdversarialRenderContext) string {
 		phaseIcon = "✗"
 		phaseText = "Failed"
 		phaseStyle = advError
+	case adversarial.PhaseStuck:
+		phaseIcon = "⚠"
+		phaseText = "Stuck"
+		phaseStyle = advError
 	}
 
 	// Build the header line
@@ -241,6 +245,9 @@ func renderSingleAdversarialSection(ctx AdversarialRenderContext, session *adver
 	case adversarial.PhaseFailed:
 		phaseStyle = advError
 		phaseText = "failed"
+	case adversarial.PhaseStuck:
+		phaseStyle = advError
+		phaseText = "stuck"
 	default:
 		phaseStyle = advSubtle
 		phaseText = "pending"
