@@ -1486,18 +1486,111 @@ func TestCoordinator_ProcessAdversarialReviewCompletion_Approved(t *testing.T) {
 	}
 }
 
-func TestCoordinator_ProcessAdversarialReviewCompletion_Rejected(t *testing.T) {
+func TestCoordinator_ProcessAdversarialReviewCompletion_Rejected_RestartsImplementer(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	cfg := DefaultConfig()
 	cfg.Adversarial = true
+	cfg.MaxAdversarialRounds = 3 // Allow multiple rounds
 	session := NewSession("test task", cfg)
 	session.Attempts[0] = Attempt{
 		InstanceID:   "inst-1",
 		WorktreePath: tmpDir,
 		Status:       AttemptStatusUnderReview,
 		ReviewerID:   "reviewer-1",
-		ReviewRound:  1,
+		ReviewRound:  1, // First round, so we should restart
+	}
+	session.Attempts[1] = Attempt{InstanceID: "inst-2", WorktreePath: tmpDir, Status: AttemptStatusCompleted}
+	session.Attempts[2] = Attempt{InstanceID: "inst-3", WorktreePath: tmpDir, Status: AttemptStatusCompleted}
+
+	// Write a completion file that will be read when restarting implementer
+	completion := CompletionFile{
+		AttemptIndex: 0,
+		Status:       "complete",
+		Summary:      "First attempt",
+		Approach:     "Initial approach",
+	}
+	completeData, _ := json.MarshalIndent(completion, "", "  ")
+	if err := os.WriteFile(CompletionFilePath(tmpDir), completeData, 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	orch := newMockOrchestrator()
+	baseSession := newMockBaseSession()
+	group := &mockGroup{}
+	baseSession.groups["tripleshot"] = group
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   baseSession,
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	var reviewRejectedCalled bool
+	var attemptStartCalled bool
+	coord.SetCallbacks(&CoordinatorCallbacks{
+		OnReviewRejected: func(attemptIndex int, score int, issues []string) {
+			reviewRejectedCalled = true
+		},
+		OnAttemptStart: func(attemptIndex int, instanceID string) {
+			attemptStartCalled = true
+		},
+	})
+
+	// Write rejection review file
+	review := AdversarialReviewFile{
+		AttemptIndex:    0,
+		Round:           1,
+		Approved:        false,
+		Score:           5,
+		Summary:         "Needs work",
+		Issues:          []string{"Missing error handling", "No tests"},
+		RequiredChanges: []string{"Add error handling", "Add tests"},
+	}
+	data, _ := json.MarshalIndent(review, "", "  ")
+	if err := os.WriteFile(AdversarialReviewFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	err := coord.ProcessAdversarialReviewCompletion(0)
+
+	if err != nil {
+		t.Fatalf("ProcessAdversarialReviewCompletion() error = %v", err)
+	}
+	if !reviewRejectedCalled {
+		t.Error("OnReviewRejected callback should have been called")
+	}
+	if !attemptStartCalled {
+		t.Error("OnAttemptStart callback should have been called for restarted implementer")
+	}
+	// The attempt should be back to working status (not failed)
+	if session.Attempts[0].Status != AttemptStatusWorking {
+		t.Errorf("session.Attempts[0].Status = %v, want %v", session.Attempts[0].Status, AttemptStatusWorking)
+	}
+	// ReviewRound should be incremented
+	if session.Attempts[0].ReviewRound != 2 {
+		t.Errorf("session.Attempts[0].ReviewRound = %d, want 2", session.Attempts[0].ReviewRound)
+	}
+	// A new instance should have been created
+	if orch.addInstanceToWorktreeCalls != 1 {
+		t.Errorf("AddInstanceToWorktree called %d times, want 1", orch.addInstanceToWorktreeCalls)
+	}
+}
+
+func TestCoordinator_ProcessAdversarialReviewCompletion_Rejected_MaxRoundsExhausted(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	cfg.MaxAdversarialRounds = 3
+	session := NewSession("test task", cfg)
+	session.Attempts[0] = Attempt{
+		InstanceID:   "inst-1",
+		WorktreePath: tmpDir,
+		Status:       AttemptStatusUnderReview,
+		ReviewerID:   "reviewer-1",
+		ReviewRound:  3, // At max rounds - should fail permanently
 	}
 	session.Attempts[1] = Attempt{InstanceID: "inst-2", WorktreePath: tmpDir, Status: AttemptStatusCompleted}
 	session.Attempts[2] = Attempt{InstanceID: "inst-3", WorktreePath: tmpDir, Status: AttemptStatusCompleted}
@@ -1511,28 +1604,26 @@ func TestCoordinator_ProcessAdversarialReviewCompletion_Rejected(t *testing.T) {
 	})
 
 	var attemptFailedCalled bool
+	var failedReason string
 	var reviewRejectedCalled bool
-	var rejectedScore int
-	var rejectedIssues []string
 	coord.SetCallbacks(&CoordinatorCallbacks{
 		OnAttemptFailed: func(attemptIndex int, reason string) {
 			attemptFailedCalled = true
+			failedReason = reason
 		},
 		OnReviewRejected: func(attemptIndex int, score int, issues []string) {
 			reviewRejectedCalled = true
-			rejectedScore = score
-			rejectedIssues = issues
 		},
 	})
 
 	// Write rejection review file
 	review := AdversarialReviewFile{
 		AttemptIndex: 0,
-		Round:        1,
+		Round:        3,
 		Approved:     false,
 		Score:        5,
-		Summary:      "Needs work",
-		Issues:       []string{"Missing error handling", "No tests"},
+		Summary:      "Still not good enough",
+		Issues:       []string{"Still broken"},
 	}
 	data, _ := json.MarshalIndent(review, "", "  ")
 	if err := os.WriteFile(AdversarialReviewFilePath(tmpDir), data, 0644); err != nil {
@@ -1545,19 +1636,103 @@ func TestCoordinator_ProcessAdversarialReviewCompletion_Rejected(t *testing.T) {
 		t.Fatalf("ProcessAdversarialReviewCompletion() error = %v", err)
 	}
 	if !attemptFailedCalled {
-		t.Error("OnAttemptFailed callback should have been called")
+		t.Error("OnAttemptFailed callback should have been called when max rounds exhausted")
+	}
+	if !strings.Contains(failedReason, "Exhausted 3 adversarial rounds") {
+		t.Errorf("failedReason should mention exhausted rounds, got: %s", failedReason)
 	}
 	if !reviewRejectedCalled {
 		t.Error("OnReviewRejected callback should have been called")
 	}
-	if rejectedScore != 5 {
-		t.Errorf("rejectedScore = %d, want 5", rejectedScore)
+	// The attempt should be marked as failed (not working)
+	if session.Attempts[0].Status != AttemptStatusFailed {
+		t.Errorf("session.Attempts[0].Status = %v, want %v", session.Attempts[0].Status, AttemptStatusFailed)
 	}
-	if len(rejectedIssues) != 2 {
-		t.Errorf("len(rejectedIssues) = %d, want 2", len(rejectedIssues))
+	// No new instance should have been created
+	if orch.addInstanceToWorktreeCalls != 0 {
+		t.Errorf("AddInstanceToWorktree called %d times, want 0 (shouldn't restart at max rounds)", orch.addInstanceToWorktreeCalls)
 	}
-	if session.Attempts[0].ReviewApproved != false {
-		t.Error("session.Attempts[0].ReviewApproved should be false")
+}
+
+func TestCoordinator_RestartImplementerWithFeedback(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	session := NewSession("test task", cfg)
+	session.Attempts[0] = Attempt{
+		InstanceID:   "inst-1",
+		WorktreePath: tmpDir,
+		Status:       AttemptStatusUnderReview,
+		ReviewerID:   "reviewer-1",
+		ReviewRound:  1,
+	}
+
+	orch := newMockOrchestrator()
+	baseSession := newMockBaseSession()
+	group := &mockGroup{}
+	baseSession.groups["tripleshot"] = group
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   baseSession,
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	var attemptStartCalled bool
+	var startedInstanceID string
+	coord.SetCallbacks(&CoordinatorCallbacks{
+		OnAttemptStart: func(attemptIndex int, instanceID string) {
+			attemptStartCalled = true
+			startedInstanceID = instanceID
+		},
+	})
+
+	review := &AdversarialReviewFile{
+		AttemptIndex:    0,
+		Round:           1,
+		Approved:        false,
+		Score:           5,
+		Summary:         "Needs improvements",
+		Issues:          []string{"Issue 1", "Issue 2"},
+		RequiredChanges: []string{"Change 1", "Change 2"},
+	}
+
+	err := coord.RestartImplementerWithFeedback(0, review)
+
+	if err != nil {
+		t.Fatalf("RestartImplementerWithFeedback() error = %v", err)
+	}
+	if !attemptStartCalled {
+		t.Error("OnAttemptStart callback should have been called")
+	}
+	if startedInstanceID == "" {
+		t.Error("startedInstanceID should not be empty")
+	}
+	// Round should be incremented
+	if session.Attempts[0].ReviewRound != 2 {
+		t.Errorf("ReviewRound = %d, want 2", session.Attempts[0].ReviewRound)
+	}
+	// Status should be working
+	if session.Attempts[0].Status != AttemptStatusWorking {
+		t.Errorf("Status = %v, want %v", session.Attempts[0].Status, AttemptStatusWorking)
+	}
+	// ReviewerID should be cleared
+	if session.Attempts[0].ReviewerID != "" {
+		t.Errorf("ReviewerID = %q, should be empty", session.Attempts[0].ReviewerID)
+	}
+	// Instance ID should be updated
+	if session.Attempts[0].InstanceID == "inst-1" {
+		t.Error("InstanceID should be updated to new instance")
+	}
+	// AddInstanceToWorktree should have been called
+	if orch.addInstanceToWorktreeCalls != 1 {
+		t.Errorf("AddInstanceToWorktree called %d times, want 1", orch.addInstanceToWorktreeCalls)
+	}
+	// SaveSession should have been called
+	if orch.saveSessionCalls == 0 {
+		t.Error("SaveSession should have been called")
 	}
 }
 
@@ -2042,6 +2217,80 @@ func TestCoordinator_AllAttemptsReady(t *testing.T) {
 			got := coord.AllAttemptsReady()
 			if got != tt.want {
 				t.Errorf("AllAttemptsReady() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatImplementerPromptWithFeedback(t *testing.T) {
+	tests := []struct {
+		name         string
+		task         string
+		attemptIndex int
+		round        int
+		review       *AdversarialReviewFile
+		wantContains []string
+	}{
+		{
+			name:         "includes task and feedback",
+			task:         "Implement authentication",
+			attemptIndex: 0,
+			round:        2, // Starting round 2
+			review: &AdversarialReviewFile{
+				AttemptIndex:    0,
+				Round:           1,
+				Approved:        false,
+				Score:           5,
+				Summary:         "Needs improvement",
+				Issues:          []string{"Missing validation", "No error handling"},
+				RequiredChanges: []string{"Add input validation", "Handle errors properly"},
+			},
+			wantContains: []string{
+				"Implement authentication",           // Original task
+				"Previous Review Feedback (Round 1)", // Previous round
+				"5/10",                               // Score
+				"Missing validation",                 // Issue 1
+				"No error handling",                  // Issue 2
+				"Add input validation",               // Required change 1
+				"Handle errors properly",             // Required change 2
+				"Needs improvement",                  // Summary
+				"Address ALL issues listed above",    // Instruction
+				".claudio-tripleshot-complete.json",  // Completion file from base prompt
+			},
+		},
+		{
+			name:         "handles empty issues and changes",
+			task:         "Fix the bug",
+			attemptIndex: 1,
+			round:        3,
+			review: &AdversarialReviewFile{
+				AttemptIndex:    1,
+				Round:           2,
+				Approved:        false,
+				Score:           6,
+				Summary:         "Getting better but not there yet",
+				Issues:          []string{},
+				RequiredChanges: []string{},
+			},
+			wantContains: []string{
+				"Fix the bug",
+				"Previous Review Feedback (Round 2)",
+				"6/10",
+				"(No specific issues listed)",
+				"(No specific changes listed)",
+				"Getting better but not there yet",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FormatImplementerPromptWithFeedback(tt.task, tt.attemptIndex, tt.round, tt.review)
+
+			for _, want := range tt.wantContains {
+				if !strings.Contains(result, want) {
+					t.Errorf("FormatImplementerPromptWithFeedback() result should contain %q", want)
+				}
 			}
 		})
 	}

@@ -31,7 +31,7 @@ func (m *Model) dispatchTripleShotCompletionChecks() []tea.Cmd {
 
 		// Only check if in a phase that requires polling
 		switch session.Phase {
-		case tripleshot.PhaseWorking, tripleshot.PhaseEvaluating:
+		case tripleshot.PhaseWorking, tripleshot.PhaseAdversarialReview, tripleshot.PhaseEvaluating:
 			cmds = append(cmds, tuimsg.CheckTripleShotCompletionAsync(coordinator, groupID))
 		}
 	}
@@ -69,7 +69,7 @@ func (m *Model) handleTripleShotCheckResult(msg tuimsg.TripleShotCheckResultMsg)
 	}
 
 	switch msg.Phase {
-	case tripleshot.PhaseWorking:
+	case tripleshot.PhaseWorking, tripleshot.PhaseAdversarialReview:
 		return m.processAttemptCheckResults(coordinator, session, msg)
 
 	case tripleshot.PhaseEvaluating:
@@ -88,6 +88,7 @@ func (m *Model) handleTripleShotCheckResult(msg tuimsg.TripleShotCheckResultMsg)
 
 // processAttemptCheckResults handles completion check results for attempts.
 // Returns async commands to process any completed attempts without blocking the UI.
+// During PhaseAdversarialReview, also processes reviewer completions.
 func (m *Model) processAttemptCheckResults(
 	coordinator *tripleshot.Coordinator,
 	session *tripleshot.Session,
@@ -95,7 +96,7 @@ func (m *Model) processAttemptCheckResults(
 ) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
-	// Dispatch async processing for each completed attempt
+	// Dispatch async processing for each completed attempt (implementer completions)
 	for i, complete := range msg.AttemptResults {
 		if err, hasErr := msg.AttemptErrors[i]; hasErr && err != nil {
 			if m.logger != nil {
@@ -114,6 +115,24 @@ func (m *Model) processAttemptCheckResults(
 		}
 	}
 
+	// During adversarial review phase, also process reviewer completions
+	for i, complete := range msg.ReviewResults {
+		if err, hasErr := msg.ReviewErrors[i]; hasErr && err != nil {
+			if m.logger != nil {
+				m.logger.Warn("failed to check review completion",
+					"attempt_index", i,
+					"error", err,
+				)
+			}
+			continue
+		}
+
+		if complete {
+			// Dispatch async command to process the review file
+			cmds = append(cmds, tuimsg.ProcessAdversarialReviewCompletionAsync(coordinator, msg.GroupID, i))
+		}
+	}
+
 	if len(cmds) > 0 {
 		return m, tea.Batch(cmds...)
 	}
@@ -126,7 +145,6 @@ func (m *Model) handleTripleShotAttemptProcessed(msg tuimsg.TripleShotAttemptPro
 		return m, nil
 	}
 
-	// Find the coordinator for this result
 	coordinator := m.tripleShot.GetCoordinatorForGroup(msg.GroupID)
 	if coordinator == nil {
 		return m, nil
@@ -140,34 +158,12 @@ func (m *Model) handleTripleShotAttemptProcessed(msg tuimsg.TripleShotAttemptPro
 			)
 		}
 		m.errorMessage = fmt.Sprintf("Failed to process attempt %d completion", msg.AttemptIndex+1)
-		// Don't return early - the attempt may have been marked as failed, and we still
-		// need to check if all attempts are complete to trigger the judge
 	} else {
 		m.infoMessage = "Attempt completed - checking progress..."
 	}
 
-	// Check if all attempts are complete and we should start the judge
-	// This check runs even when msg.Err != nil because the attempt may have been
-	// marked as failed (e.g., due to parse error), and this could be the last
-	// attempt to finish - we still need to start the judge if we have >= 2 successes
-	session := coordinator.Session()
-	if session != nil && session.AllAttemptsComplete() && session.JudgeID == "" {
-		if session.SuccessfulAttemptCount() >= 2 {
-			// Return a command to start the judge in a goroutine
-			return m, func() tea.Msg {
-				if err := coordinator.StartJudge(); err != nil {
-					return tuimsg.TripleShotErrorMsg{Err: fmt.Errorf("failed to start judge: %w", err)}
-				}
-				// Get the implementers group ID from the session (set by StartJudge)
-				implementersGroupID := coordinator.Session().ImplementersGroupID
-				return tuimsg.TripleShotJudgeStartedMsg{
-					ImplementersGroupID: implementersGroupID,
-				}
-			}
-		}
-	}
-
-	return m, nil
+	// Check if we should start the judge (even on error - attempt may have been marked failed)
+	return m, m.maybeStartJudgeCmd(coordinator)
 }
 
 // processJudgeCheckResult handles completion check results for the judge.
@@ -210,6 +206,53 @@ func (m *Model) handleTripleShotJudgeProcessed(msg tuimsg.TripleShotJudgeProcess
 	m.tripleShot.NeedsNotification = true
 
 	return m, nil
+}
+
+// handleTripleShotReviewProcessed handles the result of async adversarial review processing.
+func (m *Model) handleTripleShotReviewProcessed(msg tuimsg.TripleShotReviewProcessedMsg) (tea.Model, tea.Cmd) {
+	if m.tripleShot == nil {
+		return m, nil
+	}
+
+	coordinator := m.tripleShot.GetCoordinatorForGroup(msg.GroupID)
+	if coordinator == nil {
+		return m, nil
+	}
+
+	if msg.Err != nil {
+		if m.logger != nil {
+			m.logger.Error("failed to process adversarial review",
+				"attempt_index", msg.AttemptIndex,
+				"error", msg.Err,
+			)
+		}
+		m.errorMessage = fmt.Sprintf("Failed to process review for attempt %d", msg.AttemptIndex+1)
+	}
+
+	// Check if we should start the judge (even on error - attempt may have been marked failed)
+	return m, m.maybeStartJudgeCmd(coordinator)
+}
+
+// maybeStartJudgeCmd returns a command to start the judge if all attempts are complete
+// and at least 2 succeeded. Returns nil if conditions are not met.
+func (m *Model) maybeStartJudgeCmd(coordinator *tripleshot.Coordinator) tea.Cmd {
+	session := coordinator.Session()
+	if session == nil || !session.AllAttemptsComplete() || session.JudgeID != "" {
+		return nil
+	}
+	if session.SuccessfulAttemptCount() < 2 {
+		return nil
+	}
+
+	return func() tea.Msg {
+		if err := coordinator.StartJudge(); err != nil {
+			return tuimsg.TripleShotErrorMsg{Err: fmt.Errorf("failed to start judge: %w", err)}
+		}
+		implementersGroupID := coordinator.Session().ImplementersGroupID
+		return tuimsg.TripleShotJudgeStartedMsg{
+			ImplementersGroupID: implementersGroupID,
+		}
+	}
 }
 
 // handleTripleShotJudgeStopped handles cleanup when a triple-shot judge instance is stopped.

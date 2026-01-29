@@ -67,14 +67,18 @@ type Config struct {
 	Adversarial bool `json:"adversarial"`
 	// MinPassingScore is the minimum score required for approval in adversarial mode (1-10, default: 8)
 	MinPassingScore int `json:"min_passing_score,omitempty"`
+	// MaxAdversarialRounds is the maximum number of implement-review cycles per attempt.
+	// This is populated from adversarial.max_iterations config (default: 10, 0 = unlimited).
+	MaxAdversarialRounds int `json:"max_adversarial_rounds,omitempty"`
 }
 
 // DefaultConfig returns the default configuration
 func DefaultConfig() Config {
 	return Config{
-		AutoApprove:     false,
-		Adversarial:     false,
-		MinPassingScore: 8,
+		AutoApprove:          false,
+		Adversarial:          false,
+		MinPassingScore:      8,
+		MaxAdversarialRounds: 10,
 	}
 }
 
@@ -539,6 +543,56 @@ func FormatAdversarialReviewerPrompt(task string, attemptIndex int, round int, c
 		minPassingScore,
 		minPassingScore,
 	)
+}
+
+// TripleShotFeedbackTemplate is the template appended to the implementer prompt when restarting after rejection
+const TripleShotFeedbackTemplate = `
+
+## Previous Review Feedback (Round %d)
+
+The reviewer found issues that must be addressed before this attempt can be approved.
+
+**Score:** %d/10
+
+**Issues to Fix:**
+%s
+
+**Required Changes:**
+%s
+
+**Reviewer's Summary:**
+%s
+
+---
+
+**IMPORTANT:** Address ALL issues listed above before signaling completion.
+Your previous implementation has already been rejected. Focus on fixing the specific problems identified.
+`
+
+// FormatImplementerPromptWithFeedback creates the implementer prompt with previous review feedback appended.
+// This is used when restarting an implementer after a rejection.
+func FormatImplementerPromptWithFeedback(task string, attemptIndex int, round int, review *AdversarialReviewFile) string {
+	basePrompt := fmt.Sprintf(AttemptPromptTemplate, task, attemptIndex)
+	feedback := fmt.Sprintf(TripleShotFeedbackTemplate,
+		round-1,
+		review.Score,
+		formatBulletList(review.Issues, "(No specific issues listed)"),
+		formatBulletList(review.RequiredChanges, "(No specific changes listed)"),
+		review.Summary,
+	)
+	return basePrompt + feedback
+}
+
+// formatBulletList formats a slice of strings as a bullet list, or returns the fallback if empty.
+func formatBulletList(items []string, fallback string) string {
+	if len(items) == 0 {
+		return fallback + "\n"
+	}
+	var result string
+	for _, item := range items {
+		result += "- " + item + "\n"
+	}
+	return result
 }
 
 // JudgePromptTemplate is the prompt template for the judge instance

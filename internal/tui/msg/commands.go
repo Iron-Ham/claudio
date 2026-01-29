@@ -245,19 +245,30 @@ func CheckTripleShotCompletionAsync(
 			GroupID:        groupID,
 			AttemptResults: make(map[int]bool),
 			AttemptErrors:  make(map[int]error),
+			ReviewResults:  make(map[int]bool),
+			ReviewErrors:   make(map[int]error),
 			Phase:          session.Phase,
 		}
 
 		switch session.Phase {
-		case tripleshot.PhaseWorking:
-			// Check each attempt's completion file
+		case tripleshot.PhaseWorking, tripleshot.PhaseAdversarialReview:
+			// Check each attempt based on its status
 			for i := range 3 {
 				attempt := session.Attempts[i]
-				if attempt.Status == tripleshot.AttemptStatusWorking {
+				switch attempt.Status {
+				case tripleshot.AttemptStatusWorking:
+					// Check for implementer completion
 					complete, err := coordinator.CheckAttemptCompletion(i)
 					result.AttemptResults[i] = complete
 					if err != nil {
 						result.AttemptErrors[i] = err
+					}
+				case tripleshot.AttemptStatusUnderReview:
+					// Check for reviewer completion
+					complete, err := coordinator.CheckAdversarialReviewCompletion(i)
+					result.ReviewResults[i] = complete
+					if err != nil {
+						result.ReviewErrors[i] = err
 					}
 				}
 			}
@@ -283,6 +294,23 @@ func ProcessAttemptCompletionAsync(
 	return func() tea.Msg {
 		err := coordinator.ProcessAttemptCompletion(attemptIndex)
 		return TripleShotAttemptProcessedMsg{
+			GroupID:      groupID,
+			AttemptIndex: attemptIndex,
+			Err:          err,
+		}
+	}
+}
+
+// ProcessAdversarialReviewCompletionAsync returns a command that processes an adversarial
+// review file in a goroutine, avoiding blocking the UI event loop with file I/O.
+func ProcessAdversarialReviewCompletionAsync(
+	coordinator *tripleshot.Coordinator,
+	groupID string,
+	attemptIndex int,
+) tea.Cmd {
+	return func() tea.Msg {
+		err := coordinator.ProcessAdversarialReviewCompletion(attemptIndex)
+		return TripleShotReviewProcessedMsg{
 			GroupID:      groupID,
 			AttemptIndex: attemptIndex,
 			Err:          err,
