@@ -506,6 +506,12 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "k", "up":
 		return m.handleScrollUp()
 
+	case "J":
+		return m.handleSidebarScrollDown()
+
+	case "K":
+		return m.handleSidebarScrollUp()
+
 	case "ctrl+u":
 		return m.handleHalfPageUp()
 
@@ -933,6 +939,22 @@ func (m Model) handleGoToBottom() (tea.Model, tea.Cmd) {
 	}
 	if inst := m.activeInstance(); inst != nil {
 		m.scrollOutputToBottom(inst.ID)
+	}
+	return m, nil
+}
+
+// handleSidebarScrollUp scrolls the sidebar viewport up without changing selection.
+func (m Model) handleSidebarScrollUp() (tea.Model, tea.Cmd) {
+	if m.sidebarScrollOffset > 0 {
+		m.sidebarScrollOffset--
+	}
+	return m, nil
+}
+
+// handleSidebarScrollDown scrolls the sidebar viewport down without changing selection.
+func (m Model) handleSidebarScrollDown() (tea.Model, tea.Cmd) {
+	if maxOffset := m.calculateSidebarMaxScrollOffset(); m.sidebarScrollOffset < maxOffset {
+		m.sidebarScrollOffset++
 	}
 	return m, nil
 }

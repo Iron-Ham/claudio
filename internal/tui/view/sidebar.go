@@ -221,7 +221,7 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 	if len(items) > 0 {
 		hintStyle := styles.Muted
 		helpHint := hintStyle.Render("[h/l]") + " " + hintStyle.Render("nav") + "  " +
-			hintStyle.Render("[gn/gp]") + " " + hintStyle.Render("groups") + "  " +
+			hintStyle.Render("[J/K]") + " " + hintStyle.Render("scroll") + "  " +
 			hintStyle.Render("[gc]") + " " + hintStyle.Render("toggle")
 		b.WriteString(helpHint)
 	} else {

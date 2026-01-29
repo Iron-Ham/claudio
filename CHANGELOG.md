@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Adversarial Round Auto-Collapse** - Completed rounds in adversarial mode now automatically collapse into sub-groups, keeping the sidebar clean while preserving access to round history. Each round (implementer + reviewer instances) is organized into a "Round N" sub-group. When a round is rejected and a new round starts, the completed round's sub-group automatically collapses. The final approved round remains expanded so users can see the successful review. Users can manually toggle any round's expansion state.
 
+- **Sidebar Scroll-Only Navigation** - Added `J` (Shift+j) and `K` (Shift+k) keybindings to scroll the sidebar viewport without changing the selected instance. This allows users to view instances "above the fold" (indicated by "▲ N more above") without losing their current selection. Previously, users had to cycle through all instances using `tab`/`h`/`l` to see items outside the viewport.
+
 ### Fixed
 
 - **Input Mode Not Exited When Plan Editor Opens** - Fixed a UI bug where users in input mode (tmux passthrough) would remain stuck in input mode when an ultraplan became ready and the plan editor opened. Keystrokes intended for plan editor navigation (j/k, Enter, etc.) would be sent to the tmux session instead of being handled by the plan editor. The plan editor now automatically exits input mode when entering, ensuring users can immediately interact with the plan.
