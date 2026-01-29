@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Adversarial Mode Sentinel File Search** - Improved file detection for adversarial mode's increment and review files. The system now searches multiple locations (worktree root, subdirectories, and parent directory) to handle cases where Claude writes the file to an unexpected location (e.g., monorepo root instead of worktree, or a subdirectory). When the worktree path is known (round > 1), the prompt now includes the absolute file path for clarity.
 
+- **Hash and Tilde Characters in Input** - Fixed an issue where hash (`#`) and tilde (`~`) characters were not being sent correctly to underlying Claude sessions when using tmux control mode. These characters are now properly quoted to prevent tmux from interpreting them as format specifiers or tilde expansion. Unicode characters like `£`, `€`, and emoji continue to work correctly.
+
 ## [0.13.0] - 2026-01-29
 
 This release introduces **Adversarial Review Mode** and **Color Themes** - two major features that enhance workflow quality and user experience.

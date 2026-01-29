@@ -242,6 +242,75 @@ func TestEscapeForControlMode(t *testing.T) {
 			input:    ";",
 			expected: "';'",
 		},
+		// Hash/pound sign tests - critical for tmux format specifiers
+		{
+			name:     "string with hash",
+			input:    "#hello",
+			expected: "'#hello'",
+		},
+		{
+			name:     "hash only",
+			input:    "#",
+			expected: "'#'",
+		},
+		{
+			name:     "hashtag",
+			input:    "#golang",
+			expected: "'#golang'",
+		},
+		{
+			name:     "markdown header",
+			input:    "# Header",
+			expected: "'# Header'",
+		},
+		{
+			name:     "shell comment",
+			input:    "echo hello # comment",
+			expected: "'echo hello # comment'",
+		},
+		// Tilde tests
+		{
+			name:     "string with tilde",
+			input:    "~/Documents",
+			expected: "'~/Documents'",
+		},
+		{
+			name:     "tilde only",
+			input:    "~",
+			expected: "'~'",
+		},
+		// Unicode characters (should pass through unquoted if no special chars)
+		{
+			name:     "british pound",
+			input:    "£100",
+			expected: "£100",
+		},
+		{
+			name:     "euro symbol",
+			input:    "€50",
+			expected: "€50",
+		},
+		{
+			name:     "chinese characters",
+			input:    "你好",
+			expected: "你好",
+		},
+		{
+			name:     "emoji",
+			input:    "👍",
+			expected: "👍",
+		},
+		// Unicode with special characters (should be quoted)
+		{
+			name:     "british pound with space",
+			input:    "£100 total",
+			expected: "'£100 total'",
+		},
+		{
+			name:     "unicode with hash",
+			input:    "価格#1",
+			expected: "'価格#1'",
+		},
 	}
 
 	for _, tt := range tests {
@@ -337,6 +406,45 @@ func TestPersistentTmuxSender_BuildCommand(t *testing.T) {
 			keys:     "console.log('hello'); return;",
 			literal:  true,
 			expected: "send-keys -t my-session -l 'console.log('\\''hello'\\''); return;'\n",
+		},
+		// Hash/pound sign tests - must be quoted to avoid tmux format specifier interpretation
+		{
+			name:     "literal hash",
+			keys:     "#",
+			literal:  true,
+			expected: "send-keys -t my-session -l '#'\n",
+		},
+		{
+			name:     "literal hashtag",
+			keys:     "#hello",
+			literal:  true,
+			expected: "send-keys -t my-session -l '#hello'\n",
+		},
+		{
+			name:     "literal markdown header",
+			keys:     "# Title",
+			literal:  true,
+			expected: "send-keys -t my-session -l '# Title'\n",
+		},
+		// Tilde tests
+		{
+			name:     "literal tilde path",
+			keys:     "~/file",
+			literal:  true,
+			expected: "send-keys -t my-session -l '~/file'\n",
+		},
+		// Unicode tests - should not need quoting
+		{
+			name:     "literal unicode",
+			keys:     "£100",
+			literal:  true,
+			expected: "send-keys -t my-session -l £100\n",
+		},
+		{
+			name:     "literal emoji",
+			keys:     "👍",
+			literal:  true,
+			expected: "send-keys -t my-session -l 👍\n",
 		},
 	}
 
