@@ -158,7 +158,11 @@ func (m *Model) handleTripleShotAttemptProcessed(msg tuimsg.TripleShotAttemptPro
 				if err := coordinator.StartJudge(); err != nil {
 					return tuimsg.TripleShotErrorMsg{Err: fmt.Errorf("failed to start judge: %w", err)}
 				}
-				return tuimsg.TripleShotJudgeStartedMsg{}
+				// Get the implementers group ID from the session (set by StartJudge)
+				implementersGroupID := coordinator.Session().ImplementersGroupID
+				return tuimsg.TripleShotJudgeStartedMsg{
+					ImplementersGroupID: implementersGroupID,
+				}
 			}
 		}
 	}

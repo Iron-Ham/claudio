@@ -550,7 +550,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Judge started evaluating the attempts
 		m.infoMessage = "All attempts complete - judge is evaluating solutions..."
 		if m.logger != nil {
-			m.logger.Info("triple-shot judge started")
+			m.logger.Info("triple-shot judge started", "implementers_group_id", msg.ImplementersGroupID)
+		}
+		// Auto-collapse the implementers sub-group when the judge starts.
+		// This focuses attention on the judge instance while keeping
+		// implementers accessible via manual expand.
+		if msg.ImplementersGroupID != "" {
+			if m.groupViewState == nil {
+				m.groupViewState = view.NewGroupViewState()
+			}
+			m.groupViewState.SetLockedCollapsed(msg.ImplementersGroupID, true)
 		}
 		return m, nil
 

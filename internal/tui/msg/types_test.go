@@ -276,8 +276,15 @@ func TestTripleShotStartedMsg(t *testing.T) {
 }
 
 func TestTripleShotJudgeStartedMsg(t *testing.T) {
+	// Test empty struct
 	msg := TripleShotJudgeStartedMsg{}
 	_ = msg // Just verify it can be constructed
+
+	// Test with implementers group ID
+	msgWithID := TripleShotJudgeStartedMsg{ImplementersGroupID: "group-123"}
+	if msgWithID.ImplementersGroupID != "group-123" {
+		t.Errorf("ImplementersGroupID = %q, want %q", msgWithID.ImplementersGroupID, "group-123")
+	}
 }
 
 func TestTripleShotErrorMsg(t *testing.T) {

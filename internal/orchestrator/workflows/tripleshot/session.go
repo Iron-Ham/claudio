@@ -11,18 +11,19 @@ import (
 
 // Session represents a triple-shot orchestration session
 type Session struct {
-	ID          string      `json:"id"`
-	GroupID     string      `json:"group_id,omitempty"` // Link to InstanceGroup for multi-tripleshot support
-	Task        string      `json:"task"`               // The original task/problem
-	Phase       Phase       `json:"phase"`
-	Config      Config      `json:"config"`
-	Attempts    [3]Attempt  `json:"attempts"`           // Exactly 3 attempts
-	JudgeID     string      `json:"judge_id,omitempty"` // Instance ID of the judge
-	Created     time.Time   `json:"created"`
-	StartedAt   *time.Time  `json:"started_at,omitempty"`
-	CompletedAt *time.Time  `json:"completed_at,omitempty"`
-	Evaluation  *Evaluation `json:"evaluation,omitempty"` // Judge's evaluation
-	Error       string      `json:"error,omitempty"`      // Error message if failed
+	ID                  string      `json:"id"`
+	GroupID             string      `json:"group_id,omitempty"`              // Link to InstanceGroup for multi-tripleshot support
+	ImplementersGroupID string      `json:"implementers_group_id,omitempty"` // ID of the Implementers sub-group (for TUI collapse)
+	Task                string      `json:"task"`                            // The original task/problem
+	Phase               Phase       `json:"phase"`
+	Config              Config      `json:"config"`
+	Attempts            [3]Attempt  `json:"attempts"`           // Exactly 3 attempts
+	JudgeID             string      `json:"judge_id,omitempty"` // Instance ID of the judge
+	Created             time.Time   `json:"created"`
+	StartedAt           *time.Time  `json:"started_at,omitempty"`
+	CompletedAt         *time.Time  `json:"completed_at,omitempty"`
+	Evaluation          *Evaluation `json:"evaluation,omitempty"` // Judge's evaluation
+	Error               string      `json:"error,omitempty"`      // Error message if failed
 }
 
 // generateID creates a unique identifier for the session

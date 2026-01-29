@@ -92,6 +92,7 @@ func (m *mockInstance) GetWorktreePath() string { return m.worktreePath }
 func (m *mockInstance) GetBranch() string       { return m.branch }
 
 type mockGroup struct {
+	id          string
 	instances   []string
 	subGroups   []GroupInterface
 	sessionType string
@@ -111,6 +112,10 @@ func (m *mockGroup) GetInstances() []string {
 
 func (m *mockGroup) SetInstances(instances []string) {
 	m.instances = instances
+}
+
+func (m *mockGroup) GetID() string {
+	return m.id
 }
 
 // Test cases
