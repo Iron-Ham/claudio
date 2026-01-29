@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Plan File Written to Wrong Location in Worktrees** - Fixed a bug where ultraplan coordinators would write `.claudio-plan.json` to the main repository root instead of the worktree directory. The planning prompt instructed Claude to write "at the repository root", which was ambiguous when running in a git worktree—Claude would follow the worktree's `.git` reference and write to the main repo. Changed the prompt to explicitly say "in your current working directory" with the `./` prefix, ensuring the plan file is written to the correct worktree location where the detection code expects it.
 - **Theme Persistence** - Theme selection now persists across application restarts. The TUI's `Init()` function now applies the user's saved theme preference from config at startup.
 - **Theme Config Validation** - Invalid theme names in config are now caught during validation and reported with a clear error message listing valid theme options.
 
