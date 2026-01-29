@@ -113,6 +113,18 @@ func New() Model {
 			},
 		},
 		{
+			Name: "Session",
+			Items: []ConfigItem{
+				{
+					Key:         "session.auto_start_on_add",
+					Label:       "Auto-Start on Add",
+					Description: "Automatically start instances when added via :a (disable to add in pending state)",
+					Type:        "bool",
+					Category:    "session",
+				},
+			},
+		},
+		{
 			Name: "Instance",
 			Items: []ConfigItem{
 				{
@@ -1163,6 +1175,8 @@ func (m *Model) resetCurrentToDefault() {
 		"tui.max_output_lines":     defaults.TUI.MaxOutputLines,
 		"tui.verbose_command_help": defaults.TUI.VerboseCommandHelp,
 		"tui.sidebar_width":        defaults.TUI.SidebarWidth,
+		// Session
+		"session.auto_start_on_add": defaults.Session.AutoStartOnAdd,
 		// Instance
 		"instance.output_buffer_size":         defaults.Instance.OutputBufferSize,
 		"instance.capture_interval_ms":        defaults.Instance.CaptureIntervalMs,

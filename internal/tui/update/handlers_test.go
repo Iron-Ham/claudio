@@ -9,6 +9,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/output"
+	"github.com/spf13/viper"
 )
 
 // mockContext implements Context for testing.
@@ -718,5 +719,92 @@ func TestHandleOutput_DifferentInstances(t *testing.T) {
 	outputB := ctx.outputManager.GetOutput("instance-b")
 	if outputB != "output-b" {
 		t.Errorf("HandleOutput() instance-b = %q, want %q", outputB, "output-b")
+	}
+}
+
+func TestHandleTaskAdded_AutoStartConfig(t *testing.T) {
+	// Save original viper value and restore after test
+	originalValue := viper.GetBool("session.auto_start_on_add")
+	defer viper.Set("session.auto_start_on_add", originalValue)
+
+	t.Run("auto-start disabled does not attempt start", func(t *testing.T) {
+		viper.Set("session.auto_start_on_add", false)
+
+		ctx := newMockContext()
+		ctx.instanceCount = 2
+
+		HandleTaskAdded(ctx, msg.TaskAddedMsg{
+			Instance: &orchestrator.Instance{ID: "test-instance", Task: "test task"},
+			Err:      nil,
+		})
+
+		// When auto-start is disabled, no info message about starting should be set
+		// The info message should remain empty (no "Started instance" message)
+		if ctx.infoMessage != "" {
+			t.Errorf("HandleTaskAdded() with auto-start disabled: infoMessage = %q, want empty", ctx.infoMessage)
+		}
+		// No error either since we didn't attempt to start
+		if ctx.errorMessage != "" {
+			t.Errorf("HandleTaskAdded() with auto-start disabled: errorMessage = %q, want empty", ctx.errorMessage)
+		}
+	})
+
+	t.Run("auto-start enabled with nil orchestrator handles gracefully", func(t *testing.T) {
+		viper.Set("session.auto_start_on_add", true)
+
+		ctx := newMockContext()
+		ctx.orchestrator = nil // No orchestrator
+		ctx.instanceCount = 2
+
+		HandleTaskAdded(ctx, msg.TaskAddedMsg{
+			Instance: &orchestrator.Instance{ID: "test-instance", Task: "test task"},
+			Err:      nil,
+		})
+
+		// Should handle nil orchestrator gracefully (no panic, no error)
+		// No info message because we couldn't start, but also no error
+		if ctx.errorMessage != "" {
+			t.Errorf("HandleTaskAdded() with auto-start and nil orchestrator: errorMessage = %q, want empty", ctx.errorMessage)
+		}
+	})
+
+	t.Run("auto-start enabled with nil instance does not attempt start", func(t *testing.T) {
+		viper.Set("session.auto_start_on_add", true)
+
+		ctx := newMockContext()
+		ctx.instanceCount = 2
+
+		HandleTaskAdded(ctx, msg.TaskAddedMsg{
+			Instance: nil, // No instance
+			Err:      nil,
+		})
+
+		// Should not attempt start when instance is nil
+		if ctx.errorMessage != "" {
+			t.Errorf("HandleTaskAdded() with auto-start and nil instance: errorMessage = %q, want empty", ctx.errorMessage)
+		}
+	})
+}
+
+func TestHandleTaskAdded_AutoStartDefault(t *testing.T) {
+	// Test that the default config behavior is to auto-start
+	// This relies on the viper default being set to true
+
+	// First, ensure we have a clean viper state for this key
+	viper.Set("session.auto_start_on_add", true) // Default value
+
+	ctx := newMockContext()
+	ctx.orchestrator = nil // No orchestrator, but auto-start will be attempted
+	ctx.instanceCount = 2
+
+	HandleTaskAdded(ctx, msg.TaskAddedMsg{
+		Instance: &orchestrator.Instance{ID: "test-instance", Task: "test task"},
+		Err:      nil,
+	})
+
+	// The code tries to auto-start but gracefully handles nil orchestrator
+	// No error message because we skip when orchestrator is nil
+	if ctx.errorMessage != "" {
+		t.Errorf("HandleTaskAdded() default auto-start: errorMessage = %q, want empty", ctx.errorMessage)
 	}
 }

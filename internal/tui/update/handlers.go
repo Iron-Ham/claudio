@@ -8,6 +8,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/output"
+	"github.com/spf13/viper"
 )
 
 // Context provides the interface for update handlers to interact with the TUI Model.
@@ -134,6 +135,7 @@ func HandleTimeout(ctx Context, m msg.TimeoutMsg) {
 
 // HandleTaskAdded processes a TaskAddedMsg when async task addition completes.
 // It clears pending messages, switches to the new task, and logs the event.
+// If session.auto_start_on_add is enabled (default), the instance is started automatically.
 func HandleTaskAdded(ctx Context, m msg.TaskAddedMsg) {
 	ctx.ClearInfoMessage()
 
@@ -153,6 +155,24 @@ func HandleTaskAdded(ctx Context, m msg.TaskAddedMsg) {
 	// Switch to the newly added task and ensure it's visible in sidebar
 	ctx.SetActiveTab(ctx.InstanceCount() - 1)
 	ctx.EnsureActiveVisible()
+
+	// Auto-start the instance if configured (default: true)
+	if viper.GetBool("session.auto_start_on_add") && m.Instance != nil {
+		orch := ctx.Orchestrator()
+		if orch != nil {
+			if err := orch.StartInstance(m.Instance); err != nil {
+				ctx.SetErrorMessage(fmt.Sprintf("Failed to auto-start instance: %v", err))
+				if logger := ctx.Logger(); logger != nil {
+					logger.Error("failed to auto-start instance", "error", err.Error())
+				}
+			} else {
+				ctx.SetInfoMessage(fmt.Sprintf("Started instance %s", m.Instance.ID))
+				if logger := ctx.Logger(); logger != nil {
+					logger.Info("auto-started instance", "task", m.Instance.Task)
+				}
+			}
+		}
+	}
 
 	// Log user adding instance
 	if logger := ctx.Logger(); logger != nil && m.Instance != nil {
