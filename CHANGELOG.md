@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Release Skill** - Added a Claude skill for cutting releases with professional release notes and GitHub Releases. The `/release` command handles the complete workflow: validating release readiness, parsing CHANGELOG.md, determining semantic version bumps, generating narrative release notes, updating the changelog, creating git tags, and publishing GitHub Releases. Includes `/release-preview` for dry-run previews, `/release-notes` for generating standalone release notes in multiple formats (markdown, Slack, Discord, Twitter, email), and `/release-notes-from-git` for auditing changelog completeness against git history.
+
 - **Enhanced Keyboard Navigation** - Added support for macOS-style keyboard shortcuts in input mode and the task prompt writer. Input mode now properly forwards `Opt+Left/Right` (word navigation) and `Opt+Backspace` (word deletion) to Claude instances. The task prompt writer now supports both the `msg.Alt` flag and string-based key reporting for `Opt+Arrow/Backspace`, as well as `Cmd+Left/Right/Backspace` (line navigation and delete-to-line-start) for terminals that forward these keys.
 
 ### Changed
