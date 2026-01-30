@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-01-30
+
 ### Added
 
 - **Release Skills** - Added project-local Claude skills for cutting releases with professional release notes and GitHub Releases. The `/release` skill handles the complete workflow: validating release readiness, parsing CHANGELOG.md, determining semantic version bumps, generating narrative release notes, updating the changelog, creating git tags, and publishing GitHub Releases. Includes `/release-preview` for dry-run previews, `/release-notes` for generating standalone release notes in multiple formats (markdown, Slack, Discord, Twitter, email), and `/release-notes-from-git` for auditing changelog completeness against git history. Skills are automatically available when working in this project without requiring plugin installation.
@@ -875,6 +877,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.14.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.14.0
 [0.13.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.13.0
 [0.12.7]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.7
 [0.12.6]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.6
