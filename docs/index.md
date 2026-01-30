@@ -25,6 +25,8 @@ Claudio enables parallel AI-assisted development by running multiple Claude Code
 - **Cost Tracking** - Monitor token usage with configurable limits
 - **Session Recovery** - Resume sessions after disconnection
 - **Structured Logging** - JSON logs with filtering, rotation, and export
+- **Color Themes** - 14 built-in themes plus custom theme support
+- **Plan Validation** - Validate ultraplan JSON before execution
 
 ## Quick Start
 

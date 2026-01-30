@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Documentation Updates** - Refreshed documentation to cover v0.13.0 and v0.14.0 features: color themes, sidebar scroll navigation (J/K), macOS keyboard shortcuts, `validate` command, background cleanup options, tripleshot adversarial integration, and stuck instance recovery.
+
 ## [0.14.1] - 2026-01-30
 
 ### Fixed

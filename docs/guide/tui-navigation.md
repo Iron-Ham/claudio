@@ -36,8 +36,15 @@ Claudio's Terminal User Interface (TUI) provides a real-time dashboard for manag
 | `Shift+Tab` | Previous instance |
 | `l` or `→` | Next instance |
 | `h` or `←` | Previous instance |
-| `j` or `↓` | Scroll sidebar down (when many instances) |
-| `k` or `↑` | Scroll sidebar up |
+
+## Sidebar Navigation
+
+| Key | Action |
+|-----|--------|
+| `J` (Shift+j) | Scroll sidebar viewport down without changing selection |
+| `K` (Shift+k) | Scroll sidebar viewport up without changing selection |
+
+Use `J`/`K` to view instances that are off-screen (indicated by "▲ N more above" or "▼ N more below") without losing your current selection. This is useful when you want to see what other instances are doing without switching away from your focused instance.
 
 ## Instance Control
 
@@ -150,6 +157,15 @@ The input field supports editing:
 | `Ctrl+u` | Delete to beginning |
 | `Backspace` | Delete character |
 
+**macOS keyboard shortcuts (when terminal supports them):**
+
+| Key | Action |
+|-----|--------|
+| `Opt+←` / `Opt+→` | Move cursor by word |
+| `Opt+Backspace` | Delete word |
+| `Cmd+←` / `Cmd+→` | Move to line start/end |
+| `Cmd+Backspace` | Delete to line start |
+
 ## Command Mode
 
 Press `:` to enter command mode for advanced operations. Type a command and press `Enter` to execute.
@@ -158,10 +174,15 @@ Press `:` to enter command mode for advanced operations. Type a command and pres
 
 | Command | Description |
 |---------|-------------|
+| `:a "task"` | Add a new instance with the given task |
+| `:s` | Start the selected instance |
+| `:d` | Show diff for selected instance |
+| `:D` | Remove selected instance (with confirmation) |
 | `:plan "objective"` | Start inline plan generation |
 | `:ultraplan "objective"` | Start inline UltraPlan workflow |
 | `:multiplan "objective"` | Multi-pass planning (requires `experimental.inline_plan`) |
-| `:tripleshot "task"` | Start TripleShot execution (requires `experimental.triple_shot`) |
+| `:tripleshot "task"` | Start TripleShot execution (aliases: `:triple`, `:3shot`) |
+| `:adversarial-retry` | Restart a stuck adversarial implementer or reviewer |
 | `:group create [name]` | Create a new instance group |
 | `:group add <instance> <group>` | Add instance to a group |
 | `:group remove <instance>` | Remove instance from its group |
@@ -244,12 +265,12 @@ The sidebar uses colors to indicate state:
 When enabled, the sidebar shows:
 ```
 1. auth-api
-   [working]
-   $0.12 | 5.2k tokens
+   [working] 5m | $0.12 | 3 files
+   30s ago
 ```
 
-- `$0.12` - Estimated cost
-- `5.2k` - Token count (input + output)
+- Elapsed time, estimated cost, and files modified count
+- Last activity time for running instances
 
 ## Quitting
 

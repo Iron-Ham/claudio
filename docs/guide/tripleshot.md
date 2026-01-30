@@ -353,6 +353,53 @@ If `tripleshot.auto_approve` is enabled in your config, the winner is applied au
 2. Create a PR from that branch
 3. Optionally incorporate suggested improvements
 
+## Configuration
+
+Configure TripleShot behavior in your config file:
+
+```yaml
+tripleshot:
+  # Automatically apply the winning solution
+  auto_approve: false
+
+  # Enable adversarial review for each implementer
+  adversarial: false
+```
+
+### Adversarial Mode Integration
+
+When `tripleshot.adversarial` is enabled, each of the three implementers is paired with a critical reviewer:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                 TRIPLESHOT + ADVERSARIAL MODE                     │
+├──────────────────────────────────────────────────────────────────┤
+│  ┌─ Pair 1 ─────────┐  ┌─ Pair 2 ─────────┐  ┌─ Pair 3 ─────────┐ │
+│  │ Implementer 0    │  │ Implementer 1    │  │ Implementer 2    │ │
+│  │       ↓          │  │       ↓          │  │       ↓          │ │
+│  │ Reviewer 0       │  │ Reviewer 1       │  │ Reviewer 2       │ │
+│  │ (8/10 ✓)         │  │ (7/10 ✗)         │  │ (9/10 ✓)         │ │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘ │
+│                                                                   │
+│                      Only approved pairs                          │
+│                      proceed to judge                             │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+The workflow becomes:
+1. Three implementers work on the task in parallel
+2. Each implementer is paired with a reviewer
+3. The implementer and reviewer iterate until approval (score >= 8/10)
+4. Only approved implementations proceed to the judge phase
+5. The judge evaluates and selects the best approved solution
+
+This ensures higher quality implementations but requires more time and API calls.
+
+The sidebar shows clear implementer/reviewer pair status:
+- Phase indicator (Implementing, Under Review, Judging, Complete)
+- Reviewer approval status with scores
+- Count of active pairs during review phase
+
 ## See Also
 
 - [Adversarial Review](adversarial.md) - Iterative implementation with reviewer feedback

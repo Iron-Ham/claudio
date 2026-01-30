@@ -49,12 +49,61 @@ Controls the Terminal UI behavior.
 |-----|------|---------|-------------|
 | `tui.auto_focus_on_input` | bool | `true` | Auto-focus new instances for input |
 | `tui.max_output_lines` | int | `1000` | Maximum output lines to display |
+| `tui.sidebar_width` | int | `30` | Width of the sidebar in characters |
+| `tui.theme` | string | `"default"` | Color theme for the TUI |
 
 ```yaml
 tui:
   auto_focus_on_input: true
   max_output_lines: 1000
+  sidebar_width: 36
+  theme: default
 ```
+
+#### Color Themes
+
+Claudio includes 14 built-in color themes. Set your theme via config:
+
+```yaml
+tui:
+  theme: dracula  # or: monokai, nord, claude-code, etc.
+```
+
+**Built-in themes:**
+
+| Theme | Description |
+|-------|-------------|
+| `default` | Original purple/green |
+| `monokai` | Classic Monokai editor colors |
+| `dracula` | Dracula theme |
+| `nord` | Cool blue-gray Nord theme |
+| `claude-code` | Claude Code inspired orange/coral |
+| `solarized-dark` | Solarized Dark |
+| `solarized-light` | Solarized Light |
+| `one-dark` | Atom One Dark |
+| `github-dark` | GitHub Dark mode |
+| `gruvbox` | Retro groove |
+| `tokyo-night` | Modern Tokyo nights |
+| `catppuccin` | Catppuccin Mocha pastel |
+| `synthwave` | Synthwave '84 retro neon |
+| `ayu` | Ayu Dark |
+
+**Custom themes:**
+
+Create custom themes in `~/.config/claudio/themes/`:
+
+```bash
+# Generate a template
+claudio config theme create my-theme
+
+# Export an existing theme for customization
+claudio config theme export dracula > ~/.config/claudio/themes/my-dracula.yaml
+
+# List all available themes
+claudio config theme list
+```
+
+Custom theme files are automatically discovered and available when running `claudio config`.
 
 ---
 
@@ -326,6 +375,23 @@ resources:
 
 ---
 
+### session
+
+Controls session behavior.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `session.auto_start_on_add` | bool | `true` | Automatically start instances when added via TUI |
+
+```yaml
+session:
+  auto_start_on_add: true
+```
+
+When enabled, instances added via `:a` in the TUI will automatically start instead of remaining in pending state. Disable this if you prefer to manually start instances with `:s`.
+
+---
+
 ### ultraplan
 
 Controls ultra-plan mode behavior.
@@ -350,6 +416,66 @@ ultraplan:
     enabled: true
     use_sound: false
     sound_path: ""
+```
+
+---
+
+### tripleshot
+
+Controls TripleShot mode behavior.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `tripleshot.auto_approve` | bool | `false` | Automatically apply the winning solution |
+| `tripleshot.adversarial` | bool | `false` | Enable adversarial review for each implementer |
+
+```yaml
+tripleshot:
+  auto_approve: false
+  adversarial: false
+```
+
+**adversarial mode:**
+
+When `tripleshot.adversarial` is enabled, each of the three implementers is paired with a critical reviewer. An implementation isn't considered complete until its reviewer approves the work (score >= 8/10). This creates higher-quality solutions but takes longer and uses more API calls.
+
+---
+
+### adversarial
+
+Controls adversarial review mode behavior.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `adversarial.max_iterations` | int | `10` | Maximum implement-review cycles (0 = unlimited) |
+| `adversarial.min_passing_score` | int | `8` | Minimum score (1-10) required for approval |
+
+```yaml
+adversarial:
+  max_iterations: 10
+  min_passing_score: 8
+```
+
+---
+
+### plan
+
+Controls Plan mode behavior.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `plan.output_format` | string | `"issues"` | Output format: `json`, `issues`, or `both` |
+| `plan.multi_pass` | bool | `false` | Enable multi-pass planning by default |
+| `plan.labels` | []string | `[]` | Default labels for GitHub Issues |
+| `plan.output_file` | string | `".claudio-plan.json"` | Default output filename |
+
+```yaml
+plan:
+  output_format: issues
+  multi_pass: false
+  labels:
+    - claudio-generated
+  output_file: .claudio-plan.json
 ```
 
 ---
