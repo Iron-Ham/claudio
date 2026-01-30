@@ -2710,3 +2710,214 @@ func TestCoordinator_StartImplementerThenReviewer_NoDuplicatePreviousRounds(t *t
 		t.Errorf("expected SubGroupID = %q, got %q", "adv-group-1-round-1", advSession.History[0].SubGroupID)
 	}
 }
+
+func TestCoordinator_CheckIncrementReady_CachesLocation(t *testing.T) {
+	// Test that when an increment file is found in a non-standard location,
+	// subsequent checks use the cached location for fast access.
+	tmpDir, err := os.MkdirTemp("", "adversarial-cache-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create increment file in a subdirectory (non-standard location)
+	subDir := tmpDir + "/subdir"
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdir: %v", err)
+	}
+	incrementPath := subDir + "/" + IncrementFileName
+	content := `{"round": 1, "status": "ready_for_review", "summary": "test", "files_modified": ["a.go"], "approach": "test", "notes": ""}`
+	if err := os.WriteFile(incrementPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write increment file: %v", err)
+	}
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	cfg := CoordinatorConfig{
+		AdvSession: advSession,
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	// First check - should find file in subdirectory via full search
+	ready, err := coord.CheckIncrementReady()
+	if err != nil {
+		t.Fatalf("first CheckIncrementReady failed: %v", err)
+	}
+	if !ready {
+		t.Fatal("expected increment file to be found on first check")
+	}
+
+	// Verify cache was populated
+	coord.mu.Lock()
+	cachedDir := coord.incrementFileDir
+	coord.mu.Unlock()
+	if cachedDir != subDir {
+		t.Errorf("expected cached dir = %q, got %q", subDir, cachedDir)
+	}
+
+	// Second check - should use cache (fast path)
+	ready, err = coord.CheckIncrementReady()
+	if err != nil {
+		t.Fatalf("second CheckIncrementReady failed: %v", err)
+	}
+	if !ready {
+		t.Fatal("expected increment file to be found on second check (from cache)")
+	}
+}
+
+func TestCoordinator_CheckIncrementReady_RateLimitsFullSearch(t *testing.T) {
+	// Test that full directory searches are rate-limited to prevent UI lag.
+	tmpDir, err := os.MkdirTemp("", "adversarial-ratelimit-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	cfg := CoordinatorConfig{
+		AdvSession: advSession,
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	// First check - file doesn't exist, triggers full search
+	ready, err := coord.CheckIncrementReady()
+	if err != nil {
+		t.Fatalf("first CheckIncrementReady failed: %v", err)
+	}
+	if ready {
+		t.Fatal("expected increment file to not be found")
+	}
+
+	// Verify full search timestamp was set
+	coord.mu.Lock()
+	firstSearchTime := coord.lastIncrementFullSearch
+	coord.mu.Unlock()
+	if firstSearchTime.IsZero() {
+		t.Fatal("expected lastIncrementFullSearch to be set after first check")
+	}
+
+	// Immediate second check - should skip full search due to rate limiting
+	ready, err = coord.CheckIncrementReady()
+	if err != nil {
+		t.Fatalf("second CheckIncrementReady failed: %v", err)
+	}
+	if ready {
+		t.Fatal("expected increment file to not be found")
+	}
+
+	// Timestamp should be unchanged (no new full search)
+	coord.mu.Lock()
+	secondSearchTime := coord.lastIncrementFullSearch
+	coord.mu.Unlock()
+	if !secondSearchTime.Equal(firstSearchTime) {
+		t.Error("expected lastIncrementFullSearch to be unchanged within rate limit window")
+	}
+}
+
+func TestCoordinator_CheckIncrementReady_ClearsStaleCache(t *testing.T) {
+	// Test that if a cached file location becomes invalid (file deleted),
+	// the cache is cleared and full search resumes.
+	tmpDir, err := os.MkdirTemp("", "adversarial-cache-clear-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create increment file in a subdirectory
+	subDir := tmpDir + "/subdir"
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdir: %v", err)
+	}
+	incrementPath := subDir + "/" + IncrementFileName
+	content := `{"round": 1, "status": "ready_for_review", "summary": "test", "files_modified": ["a.go"], "approach": "test", "notes": ""}`
+	if err := os.WriteFile(incrementPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write increment file: %v", err)
+	}
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	cfg := CoordinatorConfig{
+		AdvSession: advSession,
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	// First check - find and cache the location
+	ready, _ := coord.CheckIncrementReady()
+	if !ready {
+		t.Fatal("expected increment file to be found")
+	}
+
+	// Remove the file
+	if err := os.Remove(incrementPath); err != nil {
+		t.Fatalf("failed to remove increment file: %v", err)
+	}
+
+	// Second check - should clear cache and return false
+	ready, _ = coord.CheckIncrementReady()
+	if ready {
+		t.Fatal("expected increment file to not be found after deletion")
+	}
+
+	// Verify cache was cleared
+	coord.mu.Lock()
+	cachedDir := coord.incrementFileDir
+	coord.mu.Unlock()
+	if cachedDir != "" {
+		t.Errorf("expected cache to be cleared, got %q", cachedDir)
+	}
+}
+
+func TestCoordinator_CheckReviewReady_CachesLocation(t *testing.T) {
+	// Test that when a review file is found in a non-standard location,
+	// subsequent checks use the cached location for fast access.
+	tmpDir, err := os.MkdirTemp("", "adversarial-review-cache-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	// Create review file in a subdirectory (non-standard location)
+	subDir := tmpDir + "/subdir"
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create subdir: %v", err)
+	}
+	reviewPath := subDir + "/" + ReviewFileName
+	content := `{"round": 1, "approved": true, "score": 8, "strengths": ["good"], "issues": [], "suggestions": [], "summary": "test", "required_changes": []}`
+	if err := os.WriteFile(reviewPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	cfg := CoordinatorConfig{
+		AdvSession: advSession,
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	// First check - should find file in subdirectory via full search
+	ready, err := coord.CheckReviewReady()
+	if err != nil {
+		t.Fatalf("first CheckReviewReady failed: %v", err)
+	}
+	if !ready {
+		t.Fatal("expected review file to be found on first check")
+	}
+
+	// Verify cache was populated
+	coord.mu.Lock()
+	cachedDir := coord.reviewFileDir
+	coord.mu.Unlock()
+	if cachedDir != subDir {
+		t.Errorf("expected cached dir = %q, got %q", subDir, cachedDir)
+	}
+
+	// Second check - should use cache (fast path)
+	ready, err = coord.CheckReviewReady()
+	if err != nil {
+		t.Fatalf("second CheckReviewReady failed: %v", err)
+	}
+	if !ready {
+		t.Fatal("expected review file to be found on second check (from cache)")
+	}
+}

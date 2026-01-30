@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -116,6 +117,14 @@ type Coordinator struct {
 	// completing and file being written)
 	implementerFirstCompleted *time.Time
 	reviewerFirstCompleted    *time.Time
+
+	// File search optimization - prevents expensive directory traversal on every poll.
+	// On large repos, os.ReadDir() on the worktree can cause UI hitches.
+	// We cache discovered file locations and rate-limit full searches.
+	incrementFileDir        string    // Directory where increment file was found (empty = use default)
+	reviewFileDir           string    // Directory where review file was found (empty = use default)
+	lastIncrementFullSearch time.Time // Time of last full directory search for increment file
+	lastReviewFullSearch    time.Time // Time of last full directory search for review file
 }
 
 // CoordinatorConfig holds configuration for creating a Coordinator
@@ -309,6 +318,12 @@ const PreviousRoundsGroupName = "Previous Rounds"
 // false positive stuck detection caused by a race condition where the instance
 // state transitions to "completed" before the sentinel file write finishes.
 const StuckDetectionGracePeriod = 3 * time.Second
+
+// FullSearchMinInterval is the minimum time between expensive directory traversals
+// when searching for sentinel files. On large repos with many subdirectories,
+// os.ReadDir() can cause noticeable UI lag. By rate-limiting the full search
+// and caching discovered locations, we keep polling responsive.
+const FullSearchMinInterval = 5 * time.Second
 
 // getCurrentRoundGroup returns the group where current round's instances should be added.
 // Current round instances are added directly to the main adversarial group (not a sub-group).
@@ -583,40 +598,119 @@ func (c *Coordinator) StartReviewer(increment *IncrementFile) error {
 	return nil
 }
 
-// CheckIncrementReady checks if the implementer has written their increment file.
-// It searches multiple locations to handle cases where Claude writes the file
-// to the wrong directory (e.g., subdirectory or parent in a monorepo).
-func (c *Coordinator) CheckIncrementReady() (bool, error) {
-	if c.implementerWorktree == "" {
+// checkFileReady is a generic helper for checking if a sentinel file exists.
+// It implements caching and rate-limiting to optimize performance on large repos.
+//
+// Parameters:
+//   - worktree: the worktree path to search in
+//   - fileName: the name of the sentinel file (e.g., IncrementFileName)
+//   - cachedDir: pointer to the cached directory field
+//   - lastFullSearch: pointer to the last full search timestamp field
+//   - findFile: function to perform full directory search
+//   - fileType: description for error messages (e.g., "increment", "review")
+func (c *Coordinator) checkFileReady(
+	worktree string,
+	fileName string,
+	cachedDir *string,
+	lastFullSearch *time.Time,
+	findFile func(string) (string, error),
+	fileType string,
+) (bool, error) {
+	if worktree == "" {
 		return false, nil
 	}
 
-	_, err := FindIncrementFile(c.implementerWorktree)
+	c.mu.Lock()
+	cached := *cachedDir
+	lastSearch := *lastFullSearch
+	c.mu.Unlock()
+
+	// Fast path: check cached location first
+	if cached != "" {
+		path := filepath.Join(cached, fileName)
+		_, err := os.Stat(path)
+		if err == nil {
+			return true, nil
+		}
+		if os.IsNotExist(err) {
+			// File not at cached location - clear cache and continue
+			c.mu.Lock()
+			*cachedDir = ""
+			c.mu.Unlock()
+		} else {
+			// Unexpected error (permissions, I/O, etc.) - propagate it
+			return false, fmt.Errorf("failed to check cached %s file: %w", fileType, err)
+		}
+	}
+
+	// Check expected location (worktree root) - this is always fast
+	expectedPath := filepath.Join(worktree, fileName)
+	_, err := os.Stat(expectedPath)
 	if err == nil {
+		return true, nil
+	}
+	if !os.IsNotExist(err) {
+		// Unexpected error at expected location - propagate it
+		return false, fmt.Errorf("failed to check %s file at expected location: %w", fileType, err)
+	}
+
+	// Rate-limit expensive full search to avoid UI lag on large repos.
+	// If we've done a full search recently, skip it this poll cycle.
+	if time.Since(lastSearch) < FullSearchMinInterval {
+		return false, nil
+	}
+
+	// Do full search (includes subdirectories and parent) - expensive on large repos
+	c.mu.Lock()
+	*lastFullSearch = time.Now()
+	c.mu.Unlock()
+
+	path, err := findFile(worktree)
+	if err == nil {
+		// Cache the directory where we found the file for fast future checks
+		c.mu.Lock()
+		*cachedDir = filepath.Dir(path)
+		c.mu.Unlock()
 		return true, nil
 	}
 	if os.IsNotExist(err) {
 		return false, nil
 	}
-	return false, fmt.Errorf("failed to check increment file: %w", err)
+	return false, fmt.Errorf("failed to check %s file: %w", fileType, err)
+}
+
+// CheckIncrementReady checks if the implementer has written their increment file.
+// It searches multiple locations to handle cases where Claude writes the file
+// to the wrong directory (e.g., subdirectory or parent in a monorepo).
+//
+// Performance optimization: Uses cached file locations and rate-limits expensive
+// directory traversals to prevent UI lag on large repos during polling.
+func (c *Coordinator) CheckIncrementReady() (bool, error) {
+	return c.checkFileReady(
+		c.implementerWorktree,
+		IncrementFileName,
+		&c.incrementFileDir,
+		&c.lastIncrementFullSearch,
+		FindIncrementFile,
+		"increment",
+	)
 }
 
 // CheckReviewReady checks if the reviewer has written their review file.
 // It searches multiple locations to handle cases where Claude writes the file
 // to the wrong directory (e.g., subdirectory or parent in a monorepo).
+//
+// Performance optimization: Uses cached file locations and rate-limits expensive
+// directory traversals to prevent UI lag on large repos during polling.
 func (c *Coordinator) CheckReviewReady() (bool, error) {
-	if c.reviewerWorktree == "" {
-		return false, nil
-	}
-
-	_, err := FindReviewFile(c.reviewerWorktree)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, fmt.Errorf("failed to check review file: %w", err)
+	return c.checkFileReady(
+		c.reviewerWorktree,
+		ReviewFileName,
+		&c.reviewFileDir,
+		&c.lastReviewFullSearch,
+		FindReviewFile,
+		"review",
+	)
 }
 
 // ProcessIncrementCompletion handles when the implementer completes
