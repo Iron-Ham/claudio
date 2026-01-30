@@ -20,7 +20,24 @@ import (
 // handleKeypress processes keyboard input and routes to appropriate mode handlers.
 // This is the main entry point for all keyboard input in the TUI.
 func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Sync router state for mode tracking
+	// FAST PATH: Input mode and terminal mode bypass syncRouterState() entirely.
+	// These modes just forward keystrokes to tmux and don't need router state
+	// synchronization, which involves multiple setter calls, pointer dereferences,
+	// and state checks. This significantly improves typing responsiveness.
+	//
+	// The router state will sync naturally when exiting these modes (Ctrl+]).
+
+	// Fast path: INPUT mode - forward keys to the active instance's tmux session
+	if m.inputMode {
+		return m.handleInputMode(msg)
+	}
+
+	// Fast path: TERMINAL mode - forward keys to the terminal pane's tmux session
+	if m.terminalManager.IsFocused() {
+		return m.handleTerminalMode(msg)
+	}
+
+	// For all other modes, sync router state for mode tracking
 	m.syncRouterState()
 
 	// Handle search mode - typing search pattern
@@ -31,16 +48,6 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle filter mode - selecting categories
 	if m.filterMode {
 		return m.handleFilterInput(msg)
-	}
-
-	// Handle input mode - forward keys to the active instance's tmux session
-	if m.inputMode {
-		return m.handleInputMode(msg)
-	}
-
-	// Handle terminal mode - forward keys to the terminal pane's tmux session
-	if m.terminalManager.IsFocused() {
-		return m.handleTerminalMode(msg)
 	}
 
 	// Handle task input mode
@@ -66,22 +73,23 @@ func (m Model) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Ctrl+] exits input mode (traditional telnet escape)
 	if msg.Type == tea.KeyCtrlCloseBracket {
 		m.inputMode = false
+		m.inputModeManager = nil // Clear cached manager
 		return m, nil
 	}
 
-	// Forward the key to the active instance's tmux session
-	if inst := m.activeInstance(); inst != nil {
-		mgr := m.orchestrator.GetInstanceManager(inst.ID)
-		if mgr != nil && mgr.Running() {
-			// Check if this is a paste operation
-			// Note: msg is tea.KeyMsg which embeds tea.Key, so we can access Paste directly
-			if msg.Paste && msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
-				// Send pasted text with bracketed paste sequences
-				// This preserves paste context for Claude Code
-				mgr.SendPaste(string(msg.Runes))
-			} else {
-				input.SendKeyToTmux(mgr, msg)
-			}
+	// FAST PATH: Use cached manager to avoid per-keystroke mutex locks and map lookups.
+	// The manager was cached when entering INPUT mode in handleEnterInputMode().
+	// We skip the Running() check here to avoid a mutex lock per keystroke - if the
+	// instance stops, keys simply won't be received (harmless).
+	if mgr := m.inputModeManager; mgr != nil {
+		// Check if this is a paste operation
+		// Note: msg is tea.KeyMsg which embeds tea.Key, so we can access Paste directly
+		if msg.Paste && msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+			// Send pasted text with bracketed paste sequences
+			// This preserves paste context for Claude Code
+			mgr.SendPaste(string(msg.Runes))
+		} else {
+			input.SendKeyToTmux(mgr, msg)
 		}
 	}
 	return m, nil
@@ -724,6 +732,8 @@ func (m Model) handleEnterInputMode() (tea.Model, tea.Cmd) {
 		mgr := m.orchestrator.GetInstanceManager(inst.ID)
 		if mgr != nil && mgr.TmuxSessionExists() {
 			m.inputMode = true
+			// Cache the manager to avoid per-keystroke lookups
+			m.inputModeManager = mgr
 		}
 	}
 	return m, nil
