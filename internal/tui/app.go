@@ -1245,6 +1245,13 @@ func (m Model) renderUnifiedHeader() string {
 		title = fmt.Sprintf("Claudio Ultra-Plan: %s", objective)
 	} else if m.session != nil && m.session.Name != "" {
 		title = fmt.Sprintf("Claudio: %s", m.session.Name)
+	} else if count := m.instanceCount(); count > 0 {
+		// Show instance count for context
+		if count == 1 {
+			title = "Claudio (1 instance)"
+		} else {
+			title = fmt.Sprintf("Claudio (%d instances)", count)
+		}
 	}
 
 	// Build mode indicator state
@@ -1375,6 +1382,11 @@ func (m Model) renderContent(width int) string {
 
 	inst := m.activeInstance()
 	if inst == nil {
+		// Show welcome panel when no instances exist
+		if m.instanceCount() == 0 {
+			welcomeView := view.NewWelcomeView()
+			return welcomeView.Render(width)
+		}
 		return styles.ContentBox.Width(width - 4).Render(
 			"No instance selected.\n\nPress [:a] to add a new Claude instance.",
 		)
@@ -1601,6 +1613,14 @@ func (m Model) buildHelpBarState() *view.HelpBarState {
 		FilterMode:    m.filterMode,
 		SearchMode:    m.searchMode,
 		ConflictCount: len(m.conflicts),
+	}
+
+	// Populate instance-related fields for context-aware help
+	if m.session != nil {
+		state.InstanceCount = len(m.session.Instances)
+		if inst := m.activeInstance(); inst != nil {
+			state.ActiveInstanceStatus = string(inst.Status)
+		}
 	}
 
 	// Terminal manager may be nil in tests

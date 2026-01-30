@@ -112,21 +112,22 @@ var (
 		Foreground(SecondaryColor)
 
 	// Mode badges for footer - used to clearly indicate current mode
+	// Each mode has a distinct color for easy visual identification
 	ModeBadgeNormal = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(MutedColor).
+			Foreground(TextColor).
 			Background(SurfaceColor).
 			Padding(0, 1)
 
 	ModeBadgeInput = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(TextColor).
+			Foreground(lipgloss.Color("#1F2937")).
 			Background(WarningColor).
 			Padding(0, 1)
 
 	ModeBadgeTerminal = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(TextColor).
+				Foreground(lipgloss.Color("#1F2937")).
 				Background(SecondaryColor).
 				Padding(0, 1)
 
@@ -138,14 +139,14 @@ var (
 
 	ModeBadgeSearch = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(TextColor).
-			Background(PrimaryColor).
+			Foreground(lipgloss.Color("#1F2937")).
+			Background(YellowColor).
 			Padding(0, 1)
 
 	ModeBadgeFilter = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(TextColor).
-			Background(PrimaryColor).
+			Background(lipgloss.Color("#8B5CF6")).
 			Padding(0, 1)
 
 	ModeBadgeDiff = lipgloss.NewStyle().

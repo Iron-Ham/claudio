@@ -56,22 +56,18 @@ func NewDashboardView() *DashboardView {
 func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) string {
 	var b strings.Builder
 
-	// Sidebar title
-	b.WriteString(styles.SidebarTitle.Render("Instances"))
-	b.WriteString("\n")
-
 	session := state.Session()
 	instanceCount := 0
 	if session != nil {
 		instanceCount = len(session.Instances)
 	}
 
+	renderSidebarTitle(&b, instanceCount)
+
 	isAddingTask := state.IsAddingTask()
 
 	if instanceCount == 0 && !isAddingTask {
-		b.WriteString(styles.Muted.Render("No instances"))
-		b.WriteString("\n")
-		b.WriteString(styles.Muted.Render("Press [:a] to add"))
+		renderSidebarEmptyState(&b)
 	} else {
 		// Calculate available lines for content (not slots - actual lines!)
 		// Reserve: 1 for title, 1 for blank line, 1 for add hint, 2 for scroll indicators, plus border padding
@@ -378,6 +374,31 @@ func (dv *DashboardView) buildConflictMap(conflicts []conflict.FileConflict) map
 		}
 	}
 	return conflictingInstances
+}
+
+// renderSidebarTitle renders the sidebar title with optional instance count.
+func renderSidebarTitle(b *strings.Builder, instanceCount int) {
+	if instanceCount > 0 {
+		title := fmt.Sprintf("Instances (%d)", instanceCount)
+		b.WriteString(styles.SidebarTitle.Render(title))
+	} else {
+		b.WriteString(styles.SidebarTitle.Render("Instances"))
+	}
+	b.WriteString("\n")
+}
+
+// renderSidebarEmptyState renders the empty state shown when no instances exist.
+// This is shared between flat and grouped sidebar views.
+func renderSidebarEmptyState(b *strings.Builder) {
+	b.WriteString(styles.Muted.Render("No instances yet"))
+	b.WriteString("\n\n")
+	b.WriteString(styles.HelpKey.Render("[:a]"))
+	b.WriteString(styles.Muted.Render(" Add instance"))
+	b.WriteString("\n")
+	b.WriteString(styles.HelpKey.Render("[?]"))
+	b.WriteString(styles.Muted.Render(" Help"))
+	b.WriteString("\n\n")
+	b.WriteString(styles.Muted.Italic(true).Render("See main panel →"))
 }
 
 // truncate truncates a string to max length, adding ellipsis if needed.

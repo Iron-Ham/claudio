@@ -822,33 +822,34 @@ func RenderGroupedInstance(gi GroupedInstance, isActiveInstance bool, hasConflic
 	return b.String()
 }
 
-// instanceStatusAbbrev returns a short status abbreviation.
+// instanceStatusAbbrev returns a short but readable status label.
+// These are designed to be understandable without memorizing abbreviations.
 func instanceStatusAbbrev(status orchestrator.InstanceStatus) string {
 	switch status {
 	case orchestrator.StatusPending:
-		return "PEND"
+		return "Ready"
 	case orchestrator.StatusPreparing:
-		return "PREP"
+		return "Setup"
 	case orchestrator.StatusWorking:
-		return "WORK"
+		return "Working"
 	case orchestrator.StatusWaitingInput:
-		return "WAIT"
+		return "Input?"
 	case orchestrator.StatusPaused:
-		return "PAUS"
+		return "Paused"
 	case orchestrator.StatusCompleted:
-		return "DONE"
+		return "Done"
 	case orchestrator.StatusError:
-		return "ERR!"
+		return "Error"
 	case orchestrator.StatusCreatingPR:
-		return "PR.."
+		return "PR..."
 	case orchestrator.StatusStuck:
-		return "STUK"
+		return "Stuck"
 	case orchestrator.StatusTimeout:
-		return "TIME"
+		return "Timeout"
 	case orchestrator.StatusInterrupted:
-		return "INT!"
+		return "Stopped"
 	default:
-		return "????"
+		return "?"
 	}
 }
 

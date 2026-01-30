@@ -764,15 +764,17 @@ func TestInstanceStatusAbbrev(t *testing.T) {
 		status   orchestrator.InstanceStatus
 		expected string
 	}{
-		{orchestrator.StatusPending, "PEND"},
-		{orchestrator.StatusWorking, "WORK"},
-		{orchestrator.StatusWaitingInput, "WAIT"},
-		{orchestrator.StatusPaused, "PAUS"},
-		{orchestrator.StatusCompleted, "DONE"},
-		{orchestrator.StatusError, "ERR!"},
-		{orchestrator.StatusCreatingPR, "PR.."},
-		{orchestrator.StatusStuck, "STUK"},
-		{orchestrator.StatusTimeout, "TIME"},
+		{orchestrator.StatusPending, "Ready"},
+		{orchestrator.StatusPreparing, "Setup"},
+		{orchestrator.StatusWorking, "Working"},
+		{orchestrator.StatusWaitingInput, "Input?"},
+		{orchestrator.StatusPaused, "Paused"},
+		{orchestrator.StatusCompleted, "Done"},
+		{orchestrator.StatusError, "Error"},
+		{orchestrator.StatusCreatingPR, "PR..."},
+		{orchestrator.StatusStuck, "Stuck"},
+		{orchestrator.StatusTimeout, "Timeout"},
+		{orchestrator.StatusInterrupted, "Stopped"},
 	}
 
 	for _, tt := range tests {
@@ -1525,9 +1527,9 @@ func TestRenderGroupedInstance_UngroupedInstance(t *testing.T) {
 		t.Errorf("should contain task name, got: %s", result)
 	}
 
-	// Should contain status abbreviation
-	if !strings.Contains(result, "WORK") {
-		t.Errorf("should contain status abbreviation WORK, got: %s", result)
+	// Should contain status label
+	if !strings.Contains(result, "Working") {
+		t.Errorf("should contain status label Working, got: %s", result)
 	}
 }
 

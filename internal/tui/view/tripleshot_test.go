@@ -110,8 +110,8 @@ func TestRenderTripleShotPlanGroups(t *testing.T) {
 		if !strings.Contains(result, "Test task") {
 			t.Error("expected instance task name in output")
 		}
-		if !strings.Contains(result, "WORK") {
-			t.Error("expected status abbreviation in output")
+		if !strings.Contains(result, "Working") {
+			t.Error("expected status label in output")
 		}
 	})
 
