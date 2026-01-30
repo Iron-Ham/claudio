@@ -46,6 +46,25 @@ type GroupInterface interface {
 	GetID() string
 }
 
+// GroupWithSubGroupsInterface extends GroupInterface with sub-group support.
+// Groups that implement this interface can organize instances into sub-groups
+// (e.g., one sub-group per tripleshot attempt in adversarial mode).
+type GroupWithSubGroupsInterface interface {
+	GroupInterface
+	// GetOrCreateSubGroup finds or creates a sub-group with the given name.
+	// If a sub-group with the name already exists, it returns that sub-group.
+	// Otherwise, it creates a new sub-group with the given ID and name.
+	GetOrCreateSubGroup(id, name string) GroupInterface
+	// GetSubGroupByID returns a sub-group by ID, or nil if not found.
+	GetSubGroupByID(id string) GroupInterface
+	// MoveSubGroupUnder moves a sub-group (identified by ID) to become a child
+	// of another sub-group (target, identified by ID). Returns true if successful.
+	// If target doesn't exist, it will be created with the given targetName.
+	MoveSubGroupUnder(subGroupID, targetID, targetName string) bool
+	// RemoveInstance removes an instance from the group.
+	RemoveInstance(instanceID string)
+}
+
 // NewGroupFunc is a function type for creating new instance groups.
 type NewGroupFunc func(name string) GroupInterface
 
@@ -207,6 +226,174 @@ func (c *Coordinator) findTripleGroup() GroupInterface {
 	return c.baseSession.GetGroupBySessionType(c.sessionType)
 }
 
+// PreviousRoundsGroupName is the display name for the "Previous Rounds" container group.
+const PreviousRoundsGroupName = "Previous Rounds"
+
+// getOrCreateAttemptSubGroup returns the sub-group for a specific attempt in adversarial mode.
+// Creates the sub-group if it doesn't exist. Returns nil if the group doesn't support sub-groups.
+func (c *Coordinator) getOrCreateAttemptSubGroup(tripleGroup GroupInterface, attemptIndex int) GroupInterface {
+	session := c.Session()
+
+	// Check if the group supports sub-groups
+	groupWithSubGroups, ok := tripleGroup.(GroupWithSubGroupsInterface)
+	if !ok {
+		return tripleGroup // Fall back to adding to main group
+	}
+
+	// Build unique IDs for this attempt's sub-group
+	groupIDPrefix := session.GroupID
+	if groupIDPrefix == "" {
+		groupIDPrefix = session.ID
+	}
+
+	attempt := &session.Attempts[attemptIndex]
+
+	// If we already have a sub-group ID, use it
+	if attempt.AttemptGroupID != "" {
+		if subGroup := groupWithSubGroups.GetSubGroupByID(attempt.AttemptGroupID); subGroup != nil {
+			return subGroup
+		}
+	}
+
+	// Create the attempt sub-group
+	subGroupID := fmt.Sprintf("%s-attempt-%d", groupIDPrefix, attemptIndex+1)
+	subGroupName := fmt.Sprintf("Attempt %d", attemptIndex+1)
+	subGroup := groupWithSubGroups.GetOrCreateSubGroup(subGroupID, subGroupName)
+
+	// Store the sub-group ID
+	attempt.AttemptGroupID = subGroupID
+
+	c.logger.Debug("created attempt sub-group",
+		"attempt_index", attemptIndex,
+		"sub_group_id", subGroupID,
+	)
+
+	return subGroup
+}
+
+// getCurrentRoundGroupForAttempt returns the group where current round's instances should be added.
+// For round > 1, this first moves the previous round's instances to a sub-group.
+func (c *Coordinator) getCurrentRoundGroupForAttempt(attemptGroup GroupInterface, attemptIndex int, round int) GroupInterface {
+	// For round > 1, first move previous round's instances to a sub-group
+	if round > 1 {
+		c.movePreviousRoundToSubGroup(attemptGroup, attemptIndex, round-1)
+	}
+
+	// Current round's instances go directly in the attempt group
+	return attemptGroup
+}
+
+// movePreviousRoundToSubGroup moves the previous round's instances from the attempt
+// group into a "Round N" sub-group, then moves that sub-group under "Previous Rounds".
+func (c *Coordinator) movePreviousRoundToSubGroup(attemptGroup GroupInterface, attemptIndex int, prevRound int) {
+	// Check if the group supports sub-groups
+	groupWithSubGroups, ok := attemptGroup.(GroupWithSubGroupsInterface)
+	if !ok {
+		return
+	}
+
+	session := c.Session()
+	attempt := &session.Attempts[attemptIndex]
+
+	// Check if this round was already moved (idempotency guard)
+	for _, history := range attempt.RoundHistory {
+		if history.Round == prevRound && history.SubGroupID != "" {
+			return // Already moved
+		}
+	}
+
+	// Build IDs
+	groupIDPrefix := attempt.AttemptGroupID
+	if groupIDPrefix == "" {
+		return // No attempt group set up yet
+	}
+
+	// Collect instance IDs from the previous round
+	var prevInstanceIDs []string
+
+	// Find the previous round's history entry, or use current attempt state for round 1
+	if prevRound <= len(attempt.RoundHistory) {
+		prevRoundHistory := attempt.RoundHistory[prevRound-1]
+		if prevRoundHistory.ImplementerID != "" {
+			prevInstanceIDs = append(prevInstanceIDs, prevRoundHistory.ImplementerID)
+		}
+		if prevRoundHistory.ReviewerID != "" {
+			prevInstanceIDs = append(prevInstanceIDs, prevRoundHistory.ReviewerID)
+		}
+	}
+
+	if len(prevInstanceIDs) == 0 {
+		return // No instances to move
+	}
+
+	// Create a sub-group for the previous round
+	subGroupID := fmt.Sprintf("%s-round-%d", groupIDPrefix, prevRound)
+	subGroupName := fmt.Sprintf("Round %d", prevRound)
+	prevRoundSubGroup := groupWithSubGroups.GetOrCreateSubGroup(subGroupID, subGroupName)
+
+	// Move instances from attempt group to the sub-group
+	for _, instID := range prevInstanceIDs {
+		groupWithSubGroups.RemoveInstance(instID)
+		prevRoundSubGroup.AddInstance(instID)
+	}
+
+	// Update the history to record the sub-group ID
+	for i := range attempt.RoundHistory {
+		if attempt.RoundHistory[i].Round == prevRound {
+			attempt.RoundHistory[i].SubGroupID = subGroupID
+			break
+		}
+	}
+
+	// Create or get the "Previous Rounds" container
+	previousRoundsID := fmt.Sprintf("%s-previous-rounds", groupIDPrefix)
+	if attempt.PreviousRoundsGroupID == "" {
+		attempt.PreviousRoundsGroupID = previousRoundsID
+	}
+
+	// Move the sub-group under "Previous Rounds" container
+	if groupWithSubGroups.MoveSubGroupUnder(subGroupID, previousRoundsID, PreviousRoundsGroupName) {
+		c.logger.Info("moved previous round instances to container",
+			"attempt_index", attemptIndex,
+			"round", prevRound,
+			"instance_count", len(prevInstanceIDs),
+			"sub_group_id", subGroupID,
+			"container_id", previousRoundsID,
+		)
+	}
+}
+
+// recordCurrentRoundHistory records the current round's instance IDs in the attempt's history.
+// This should be called after creating instances for a new round.
+func (c *Coordinator) recordCurrentRoundHistory(attemptIndex int, round int, implementerID, reviewerID string) {
+	attempt := &c.Session().Attempts[attemptIndex]
+
+	// Grow history slice to accommodate this round
+	for len(attempt.RoundHistory) < round {
+		attempt.RoundHistory = append(attempt.RoundHistory, AttemptRoundHistory{
+			Round: len(attempt.RoundHistory) + 1,
+		})
+	}
+
+	// Update the current round entry (round is 1-based, slice is 0-based)
+	history := &attempt.RoundHistory[round-1]
+	if implementerID != "" {
+		history.ImplementerID = implementerID
+	}
+	if reviewerID != "" {
+		history.ReviewerID = reviewerID
+	}
+}
+
+// GetPreviousRoundsGroupIDForAttempt returns the ID of the "Previous Rounds" container group
+// for a given attempt, or empty string if not applicable.
+func GetPreviousRoundsGroupIDForAttempt(session *Session, attemptIndex int) string {
+	if session == nil || attemptIndex < 0 || attemptIndex >= 3 {
+		return ""
+	}
+	return session.Attempts[attemptIndex].PreviousRoundsGroupID
+}
+
 // notifyAttemptStart notifies callbacks of attempt start
 func (c *Coordinator) notifyAttemptStart(attemptIndex int, instanceID string) {
 	c.logger.Info("attempt started",
@@ -328,18 +515,30 @@ func (c *Coordinator) StartAttempts() error {
 			return fmt.Errorf("failed to create attempt %d instance: %w", i, err)
 		}
 
-		// Add instance to the triple-shot group for sidebar display
-		if tripleGroup != nil {
-			tripleGroup.AddInstance(inst.GetID())
-		}
-
-		// Record attempt info
+		// Record attempt info first so sub-group methods can update it
 		session.Attempts[i] = Attempt{
 			InstanceID:   inst.GetID(),
 			WorktreePath: inst.GetWorktreePath(),
 			Branch:       inst.GetBranch(),
 			Status:       AttemptStatusWorking,
 			StartedAt:    &now,
+		}
+
+		// Determine which group to add the instance to
+		var targetGroup GroupInterface
+		if session.Config.Adversarial && tripleGroup != nil {
+			// In adversarial mode, use attempt sub-groups for better organization
+			targetGroup = c.getOrCreateAttemptSubGroup(tripleGroup, i)
+			// Record round 1 history
+			c.recordCurrentRoundHistory(i, 1, inst.GetID(), "")
+		} else if tripleGroup != nil {
+			// Non-adversarial mode: add directly to main group
+			targetGroup = tripleGroup
+		}
+
+		// Add instance to the target group for sidebar display
+		if targetGroup != nil {
+			targetGroup.AddInstance(inst.GetID())
 		}
 
 		c.mu.Lock()
@@ -589,9 +788,17 @@ func (c *Coordinator) StartAdversarialReviewer(attemptIndex int, completion *Com
 	// Store reviewer ID
 	attempt.ReviewerID = inst.GetID()
 
-	// Add reviewer to the triple-shot group
-	if tripleGroup := c.findTripleGroup(); tripleGroup != nil {
-		tripleGroup.AddInstance(inst.GetID())
+	// Determine which group to add the reviewer to
+	tripleGroup := c.findTripleGroup()
+	if tripleGroup != nil {
+		// In adversarial mode, add to the attempt sub-group
+		attemptGroup := c.getOrCreateAttemptSubGroup(tripleGroup, attemptIndex)
+		// Get the current round group (moves previous round instances if needed)
+		targetGroup := c.getCurrentRoundGroupForAttempt(attemptGroup, attemptIndex, attempt.ReviewRound)
+		targetGroup.AddInstance(inst.GetID())
+
+		// Record reviewer in round history
+		c.recordCurrentRoundHistory(attemptIndex, attempt.ReviewRound, "", inst.GetID())
 	}
 
 	// Start the reviewer instance
@@ -784,9 +991,17 @@ func (c *Coordinator) RestartImplementerWithFeedback(attemptIndex int, review *A
 	attempt.InstanceID = inst.GetID()
 	attempt.ReviewerID = "" // Clear the old reviewer ID
 
-	// Add new instance to the triple-shot group
-	if tripleGroup := c.findTripleGroup(); tripleGroup != nil {
-		tripleGroup.AddInstance(inst.GetID())
+	// Add new instance to the appropriate group
+	tripleGroup := c.findTripleGroup()
+	if tripleGroup != nil {
+		// In adversarial mode, add to the attempt sub-group
+		attemptGroup := c.getOrCreateAttemptSubGroup(tripleGroup, attemptIndex)
+		// Get the current round group (moves previous round instances to sub-group)
+		targetGroup := c.getCurrentRoundGroupForAttempt(attemptGroup, attemptIndex, attempt.ReviewRound)
+		targetGroup.AddInstance(inst.GetID())
+
+		// Record new implementer in round history
+		c.recordCurrentRoundHistory(attemptIndex, attempt.ReviewRound, inst.GetID(), "")
 	}
 
 	// Start the new instance
