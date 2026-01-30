@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **TripleShot-Adversarial Feedback Loop** - Each implementer now properly iterates with reviewer feedback instead of failing on first rejection. When a reviewer rejects an attempt, the implementer is restarted with the reviewer's feedback, issues, and required changes. This continues until the reviewer approves or max rounds are exhausted (uses `adversarial.max_iterations`, default 10, 0 = unlimited). Also fixed the TUI not polling during the adversarial review phase, which prevented reviewer completions from being detected.
 
+- **Alt/Option Arrow Keys in Input Mode** - Fixed Opt+Left and Opt+Right being incorrectly interpreted as Escape key presses by underlying Claude sessions. The issue was caused by sending Alt+key combinations as two separate key events (Escape then arrow) instead of a single atomic Meta+key event. All Alt/Option modified keys now use tmux's `M-` prefix notation (e.g., `M-Left`, `M-Right`), which sends them as proper word-navigation commands.
+
 - **Tripleshot UI Responsiveness** - Fixed UI stalling when starting a tripleshot on large repositories. Worktree creation is now performed asynchronously in parallel, allowing the UI to remain responsive. Instances appear immediately with "Preparing" status while worktrees are created in the background.
 
 - **TUI Tripleshot Config Settings** - The `:tripleshot` command in the TUI now properly respects the `tripleshot.auto_approve` and `tripleshot.adversarial` settings from the config file. Previously, starting a tripleshot from the TUI always used hardcoded defaults, ignoring user configuration.

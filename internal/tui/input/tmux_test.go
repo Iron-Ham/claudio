@@ -223,25 +223,25 @@ func TestSendKeyToTmux_AltRunes(t *testing.T) {
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}, Alt: true}
 	SendKeyToTmux(sender, msg)
 
-	// Alt+key sends Escape first, then the character as literal
-	if len(sender.keys) != 1 || sender.keys[0] != "Escape" {
-		t.Errorf("SendKeyToTmux() sent keys = %v, want [Escape]", sender.keys)
+	// Alt+key sends M- prefixed key (Meta key in tmux)
+	if len(sender.keys) != 1 || sender.keys[0] != "M-x" {
+		t.Errorf("SendKeyToTmux() sent keys = %v, want [M-x]", sender.keys)
 	}
-	if len(sender.literals) != 1 || sender.literals[0] != "x" {
-		t.Errorf("SendKeyToTmux() sent literals = %v, want [x]", sender.literals)
+	if len(sender.literals) != 0 {
+		t.Errorf("SendKeyToTmux() unexpectedly sent literals = %v", sender.literals)
 	}
 }
 
 func TestSendKeyToTmux_AltArrowKeys(t *testing.T) {
 	tests := []struct {
-		name         string
-		keyType      tea.KeyType
-		expectedKeys []string
+		name        string
+		keyType     tea.KeyType
+		expectedKey string
 	}{
-		{"alt-up", tea.KeyUp, []string{"Escape", "Up"}},
-		{"alt-down", tea.KeyDown, []string{"Escape", "Down"}},
-		{"alt-left", tea.KeyLeft, []string{"Escape", "Left"}},
-		{"alt-right", tea.KeyRight, []string{"Escape", "Right"}},
+		{"alt-up", tea.KeyUp, "M-Up"},
+		{"alt-down", tea.KeyDown, "M-Down"},
+		{"alt-left", tea.KeyLeft, "M-Left"},
+		{"alt-right", tea.KeyRight, "M-Right"},
 	}
 
 	for _, tt := range tests {
@@ -250,15 +250,8 @@ func TestSendKeyToTmux_AltArrowKeys(t *testing.T) {
 			msg := tea.KeyMsg{Type: tt.keyType, Alt: true}
 			SendKeyToTmux(sender, msg)
 
-			if len(sender.keys) != len(tt.expectedKeys) {
-				t.Errorf("SendKeyToTmux() sent %d keys = %v, want %d keys %v",
-					len(sender.keys), sender.keys, len(tt.expectedKeys), tt.expectedKeys)
-				return
-			}
-			for i, expected := range tt.expectedKeys {
-				if sender.keys[i] != expected {
-					t.Errorf("SendKeyToTmux() key[%d] = %v, want %v", i, sender.keys[i], expected)
-				}
+			if len(sender.keys) != 1 || sender.keys[0] != tt.expectedKey {
+				t.Errorf("SendKeyToTmux() sent keys = %v, want [%v]", sender.keys, tt.expectedKey)
 			}
 			if len(sender.literals) != 0 {
 				t.Errorf("SendKeyToTmux() unexpectedly sent literals = %v", sender.literals)
@@ -272,17 +265,9 @@ func TestSendKeyToTmux_AltBackspace(t *testing.T) {
 	msg := tea.KeyMsg{Type: tea.KeyBackspace, Alt: true}
 	SendKeyToTmux(sender, msg)
 
-	// Alt+Backspace (Opt+Backspace on macOS) sends Escape then BSpace
-	expectedKeys := []string{"Escape", "BSpace"}
-	if len(sender.keys) != len(expectedKeys) {
-		t.Errorf("SendKeyToTmux() sent %d keys = %v, want %d keys %v",
-			len(sender.keys), sender.keys, len(expectedKeys), expectedKeys)
-		return
-	}
-	for i, expected := range expectedKeys {
-		if sender.keys[i] != expected {
-			t.Errorf("SendKeyToTmux() key[%d] = %v, want %v", i, sender.keys[i], expected)
-		}
+	// Alt+Backspace (Opt+Backspace on macOS) sends M-BSpace (Meta+Backspace in tmux)
+	if len(sender.keys) != 1 || sender.keys[0] != "M-BSpace" {
+		t.Errorf("SendKeyToTmux() sent keys = %v, want [M-BSpace]", sender.keys)
 	}
 	if len(sender.literals) != 0 {
 		t.Errorf("SendKeyToTmux() unexpectedly sent literals = %v", sender.literals)

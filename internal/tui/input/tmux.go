@@ -32,8 +32,7 @@ func SendKeyToTmux(sender KeySender, msg tea.KeyMsg) {
 	case tea.KeyBackspace:
 		// Check for Alt modifier (Opt+Backspace on macOS)
 		if msg.Alt {
-			sender.SendKey("Escape")
-			sender.SendKey("BSpace")
+			sender.SendKey("M-BSpace")
 			return
 		}
 		key = "BSpace"
@@ -48,31 +47,28 @@ func SendKeyToTmux(sender KeySender, msg tea.KeyMsg) {
 		key = "Escape"
 
 	// Arrow keys - check for Alt modifier (Opt+Arrow on macOS)
+	// Use M- prefix (Meta) for Alt combinations - tmux sends this as a single key event
 	case tea.KeyUp:
 		if msg.Alt {
-			sender.SendKey("Escape")
-			sender.SendKey("Up")
+			sender.SendKey("M-Up")
 			return
 		}
 		key = "Up"
 	case tea.KeyDown:
 		if msg.Alt {
-			sender.SendKey("Escape")
-			sender.SendKey("Down")
+			sender.SendKey("M-Down")
 			return
 		}
 		key = "Down"
 	case tea.KeyRight:
 		if msg.Alt {
-			sender.SendKey("Escape")
-			sender.SendKey("Right")
+			sender.SendKey("M-Right")
 			return
 		}
 		key = "Right"
 	case tea.KeyLeft:
 		if msg.Alt {
-			sender.SendKey("Escape")
-			sender.SendKey("Left")
+			sender.SendKey("M-Left")
 			return
 		}
 		key = "Left"
@@ -173,10 +169,9 @@ func SendKeyToTmux(sender KeySender, msg tea.KeyMsg) {
 		// Send literal characters
 		// Handle Alt+key combinations
 		if msg.Alt {
-			// For alt combinations, tmux uses M- prefix or Escape followed by char
+			// For alt combinations, tmux uses M- prefix for Meta key
 			key = string(msg.Runes)
-			sender.SendKey("Escape") // Send escape first
-			sender.SendLiteral(key)  // Then send the character
+			sender.SendKey("M-" + key)
 			return
 		}
 		key = string(msg.Runes)
@@ -208,16 +203,11 @@ func SendKeyToTmux(sender KeySender, msg tea.KeyMsg) {
 				key = keyStr
 			}
 		case strings.HasPrefix(keyStr, "alt+"):
-			// Alt combinations: send Escape then the key
+			// Alt combinations: use M- prefix (Meta) for tmux
 			baseKey := strings.TrimPrefix(keyStr, "alt+")
-			sender.SendKey("Escape")
-			if len(baseKey) == 1 {
-				sender.SendLiteral(baseKey)
-			} else {
-				// Map Bubble Tea key names to tmux key names
-				tmuxKey := tmux.MapKeyToTmux(baseKey)
-				sender.SendKey(tmuxKey)
-			}
+			// Map Bubble Tea key names to tmux key names and add M- prefix
+			tmuxKey := tmux.MapKeyToTmux(baseKey)
+			sender.SendKey("M-" + tmuxKey)
 			return
 		case strings.HasPrefix(keyStr, "ctrl+"):
 			// Try to handle ctrl combinations not caught above
