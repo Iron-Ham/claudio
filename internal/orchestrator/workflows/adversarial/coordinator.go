@@ -345,6 +345,15 @@ func (c *Coordinator) movePreviousRoundInstancesToSubGroup(advGroup GroupInterfa
 	}
 	prevRoundHistory := session.History[prevRound-1]
 
+	// Check if this round was already moved (idempotency guard).
+	// This prevents duplicate "Round N" sub-groups when both StartImplementer
+	// and StartReviewer call getCurrentRoundGroup for the same round.
+	// SubGroupID is set at the end of this function after the move completes,
+	// making it a reliable marker that the operation already succeeded.
+	if prevRoundHistory.SubGroupID != "" {
+		return // Already moved to a sub-group
+	}
+
 	// Collect instance IDs from the previous round
 	var prevInstanceIDs []string
 	if prevRoundHistory.ImplementerID != "" {

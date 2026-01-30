@@ -2570,3 +2570,143 @@ func TestCoordinator_MovePreviousRoundInstancesToSubGroup_MovesToPreviousRoundsC
 		t.Errorf("MoveSubGroupUnder ParentName = %q, want %q", call.ParentName, expectedParentName)
 	}
 }
+
+func TestCoordinator_MovePreviousRoundInstancesToSubGroup_IdempotencyGuard(t *testing.T) {
+	// Test that calling movePreviousRoundInstancesToSubGroup twice for the same round
+	// only creates one sub-group (prevents duplicate "Round N" entries in Previous Rounds).
+	// This bug manifested when both StartImplementer and StartReviewer called
+	// getCurrentRoundGroup for the same round > 1.
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.GroupID = "adv-group-1"
+	advSession.History = []Round{
+		{
+			Round:         1,
+			ImplementerID: "impl-1",
+			ReviewerID:    "reviewer-1",
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: &mockOrchestrator{},
+		BaseSession:  newMockSession(),
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+
+	mainGroup := newMockGroupWithSubGroups()
+	mainGroup.AddInstance("impl-1")
+	mainGroup.AddInstance("reviewer-1")
+
+	// First call - should move instances and record SubGroupID
+	coord.movePreviousRoundInstancesToSubGroup(mainGroup, 1)
+
+	// Verify first call worked
+	if advSession.History[0].SubGroupID == "" {
+		t.Fatal("SubGroupID should be recorded after first call")
+	}
+	firstCallCount := len(mainGroup.moveSubGroupUnderCalls)
+	if firstCallCount != 1 {
+		t.Fatalf("expected 1 MoveSubGroupUnder call after first invocation, got %d", firstCallCount)
+	}
+
+	// Second call - should be a no-op due to idempotency guard (SubGroupID already set)
+	coord.movePreviousRoundInstancesToSubGroup(mainGroup, 1)
+
+	// Verify second call was a no-op - MoveSubGroupUnder should NOT be called again
+	secondCallCount := len(mainGroup.moveSubGroupUnderCalls)
+	if secondCallCount != 1 {
+		t.Errorf("expected still 1 MoveSubGroupUnder call after second invocation (idempotency guard should prevent duplicate), got %d", secondCallCount)
+	}
+}
+
+func TestCoordinator_StartImplementerThenReviewer_NoDuplicatePreviousRounds(t *testing.T) {
+	// Integration test: verify that when StartImplementer and StartReviewer are both
+	// called for round > 1, the previous round is only moved to "Previous Rounds" once.
+	// This exercises the full public API flow rather than the internal function directly.
+	tmpDir, err := os.MkdirTemp("", "adversarial-coord-integration-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.GroupID = "adv-group-1"
+	advSession.CurrentRound = 2
+	// Round 1 history with a rejection review (to trigger round 2)
+	advSession.History = []Round{
+		{
+			Round:         1,
+			ImplementerID: "impl-1",
+			ReviewerID:    "reviewer-1",
+			Review: &ReviewFile{
+				Round:    1,
+				Approved: false,
+				Score:    5,
+				Summary:  "Needs work",
+				Issues:   []string{"Missing tests"},
+			},
+		},
+	}
+
+	baseSession := newMockSession()
+	mainGroup := newMockGroupWithSubGroups()
+	mainGroup.AddInstance("impl-1")
+	mainGroup.AddInstance("reviewer-1")
+	baseSession.groups["adv-group-1"] = mainGroup
+
+	mockOrch := &mockOrchestrator{
+		addInstanceToWorktreeFunc: func(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error) {
+			return &mockInstance{id: "new-inst", worktreePath: worktreePath, branch: "test-branch"}, nil
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: mockOrch,
+		BaseSession:  baseSession,
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	cb := &CoordinatorCallbacks{
+		OnImplementerStart: func(round int, instanceID string) {},
+		OnReviewerStart:    func(round int, instanceID string) {},
+		OnPhaseChange:      func(phase Phase) {},
+	}
+	coord.SetCallbacks(cb)
+
+	// Start implementer for round 2 - this should move round 1 to Previous Rounds
+	err = coord.StartImplementer()
+	if err != nil {
+		t.Fatalf("StartImplementer failed: %v", err)
+	}
+
+	moveCallsAfterImpl := len(mainGroup.moveSubGroupUnderCalls)
+	if moveCallsAfterImpl != 1 {
+		t.Fatalf("expected 1 MoveSubGroupUnder call after StartImplementer, got %d", moveCallsAfterImpl)
+	}
+
+	// Start reviewer for round 2 - this should NOT move round 1 again (idempotency)
+	increment := &IncrementFile{
+		Round:   2,
+		Status:  "ready_for_review",
+		Summary: "Implemented feature",
+	}
+	err = coord.StartReviewer(increment)
+	if err != nil {
+		t.Fatalf("StartReviewer failed: %v", err)
+	}
+
+	// Verify MoveSubGroupUnder was only called once total (not twice)
+	moveCallsAfterReviewer := len(mainGroup.moveSubGroupUnderCalls)
+	if moveCallsAfterReviewer != 1 {
+		t.Errorf("expected still 1 MoveSubGroupUnder call after StartReviewer (idempotency guard), got %d", moveCallsAfterReviewer)
+	}
+
+	// Verify SubGroupID was set correctly
+	if advSession.History[0].SubGroupID != "adv-group-1-round-1" {
+		t.Errorf("expected SubGroupID = %q, got %q", "adv-group-1-round-1", advSession.History[0].SubGroupID)
+	}
+}

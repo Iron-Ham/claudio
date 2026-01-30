@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Release Skill Changelog Link** - The `/release` skill now links to the changelog at the release tag (e.g., `blob/v0.14.0/CHANGELOG.md`) instead of `main`, ensuring stable references.
 
+- **Duplicate Previous Rounds in Adversarial Mode** - Fixed a bug where "Round N" entries would appear duplicated in the "Previous Rounds" section of the sidebar. The issue occurred because both `StartImplementer` and `StartReviewer` called `getCurrentRoundGroup`, which would move previous round instances to a sub-group. On the second call, the sub-group had already been moved into "Previous Rounds" and couldn't be found as a direct child, causing a duplicate to be created. Added an idempotency guard that checks if a round was already moved before performing the operation.
+
 ## [0.14.0] - 2026-01-30
 
 ### Added
