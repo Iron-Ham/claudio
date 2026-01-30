@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Adversarial Mode Polling Optimization** - Fixed UI hitching/freezing when starting adversarial tasks in large repositories. The sentinel file polling (which checks for increment and review files every 100ms) now uses a fast-path optimization: expected file locations are cached after first discovery, and expensive full directory traversals are rate-limited to once every 5 seconds. This eliminates the overhead of `os.ReadDir()` calls on worktrees with many subdirectories.
 
+- **INPUT Mode Fast Path** - Dramatically improved typing responsiveness in INPUT mode by eliminating per-keystroke overhead. Previously, every keystroke triggered: (1) `syncRouterState()` calls with multiple setter operations, (2) `GetInstanceManager()` with mutex lock + map lookup, and (3) `Running()` check with another mutex lock. The fast path now caches the instance manager when entering INPUT mode and reuses it for all keystrokes, completely bypassing these expensive operations. This reduces per-keystroke overhead from 3+ mutex acquisitions to zero.
+
 ## [0.14.1] - 2026-01-30
 
 ### Fixed

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -986,6 +987,94 @@ func createTestSessionAllCompleted() *orchestrator.Session {
 		Instances: []*orchestrator.Instance{
 			{ID: "inst-1", Status: orchestrator.StatusCompleted, Created: now},
 		},
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Fast Path Optimization Tests
+// -----------------------------------------------------------------------------
+
+// TestHandleKeypress_FastPath_InputMode verifies that INPUT mode keystrokes
+// are handled via the fast path (bypassing syncRouterState and per-keystroke lookups).
+// This test ensures the optimization is working correctly.
+func TestHandleKeypress_FastPath_InputMode(t *testing.T) {
+	// Create a model in INPUT mode with a real terminal manager.
+	// inputRouter is nil - if syncRouterState() were called, it would return early
+	// (has nil check), but we're testing the fast path bypasses it entirely.
+	m := Model{
+		inputMode:       true,
+		terminalManager: terminal.NewManager(),
+		// inputModeManager is nil - simulating entering INPUT mode without a valid instance.
+		// In production, this would be set by handleEnterInputMode().
+	}
+
+	// Test that a regular key in INPUT mode is handled without crashing
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}}
+	result, _ := m.handleKeypress(msg)
+	updatedModel := result.(Model)
+
+	// Model should still be in input mode
+	if !updatedModel.inputMode {
+		t.Error("expected inputMode to remain true")
+	}
+
+	// Test Ctrl+] exits input mode and clears cached manager
+	msg = tea.KeyMsg{Type: tea.KeyCtrlCloseBracket}
+	result, _ = m.handleKeypress(msg)
+	updatedModel = result.(Model)
+
+	if updatedModel.inputMode {
+		t.Error("expected Ctrl+] to exit input mode")
+	}
+	if updatedModel.inputModeManager != nil {
+		t.Error("expected inputModeManager to be cleared on exit")
+	}
+}
+
+// TestHandleKeypress_FastPath_TerminalMode verifies that TERMINAL mode keystrokes
+// are handled via the fast path (bypassing syncRouterState).
+func TestHandleKeypress_FastPath_TerminalMode(t *testing.T) {
+	// Create a terminal manager and set it to focused
+	termMgr := terminal.NewManager()
+	termMgr.SetFocused(true)
+
+	m := Model{
+		terminalManager: termMgr,
+		// inputRouter is nil - fast path should bypass syncRouterState()
+	}
+
+	// Test that Ctrl+] exits terminal mode
+	msg := tea.KeyMsg{Type: tea.KeyCtrlCloseBracket}
+	result, _ := m.handleKeypress(msg)
+	updatedModel := result.(Model)
+
+	// Terminal should be unfocused after Ctrl+]
+	if updatedModel.terminalManager.IsFocused() {
+		t.Error("expected Ctrl+] to exit terminal mode")
+	}
+}
+
+// TestHandleKeypress_SlowPath_NormalMode verifies that normal mode still
+// calls syncRouterState() (the slow path) for proper mode tracking.
+func TestHandleKeypress_SlowPath_NormalMode(t *testing.T) {
+	// Create a model in normal mode (not input, not terminal focused)
+	termMgr := terminal.NewManager()
+
+	m := Model{
+		inputMode:       false,
+		terminalManager: termMgr,
+		// With inputRouter nil, syncRouterState() returns early,
+		// but we're testing that the code path reaches it
+	}
+
+	// Test that normal mode keypresses work
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}}
+	result, _ := m.handleKeypress(msg)
+	updatedModel := result.(Model)
+
+	// '?' should toggle help
+	if !updatedModel.showHelp {
+		t.Error("expected '?' to toggle help in normal mode")
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/conflict"
+	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
@@ -315,7 +316,8 @@ type Model struct {
 	infoMessage    string    // Non-error status message
 	messageSetAt   time.Time // When the current message was set (for auto-dismiss)
 	lastMessageKey string    // Used to detect message changes (concatenation of both messages)
-	inputMode      bool      // When true, all keys are forwarded to the active instance's tmux session
+	inputMode        bool              // When true, all keys are forwarded to the active instance's tmux session
+	inputModeManager *instance.Manager // Cached manager for INPUT mode - avoids per-keystroke lookups
 
 	// Command mode state (vim-style ex commands with ':' prefix)
 	commandMode   bool   // When true, we're typing a command after ':'
