@@ -1,4 +1,5 @@
 ---
+name: release-preview
 description: "Preview a release without making changes (dry-run)"
 argument-hint: "[major|minor|patch|vX.Y.Z]"
 allowed-tools: Bash(git tag:*), Bash(git log:*), Bash(git status:*), Bash(git branch:*), Bash(git rev-parse:*), Bash(gh release view:*), Bash(gh auth status:*), Bash(date:*), Read

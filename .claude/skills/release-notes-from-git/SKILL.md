@@ -1,4 +1,5 @@
 ---
+name: release-notes-from-git
 description: "Generate release notes from git history and pull requests"
 allowed-tools: Read, Bash(git log:*), Bash(git describe:*), Bash(gh pr:*), Bash(gh api:*)
 ---

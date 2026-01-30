@@ -1,4 +1,5 @@
 ---
+name: release-notes
 description: "Generate release notes from CHANGELOG.md without cutting a release"
 argument-hint: "[version] [--format markdown|slack|discord|twitter]"
 allowed-tools: Bash(git tag:*), Bash(git log:*), Bash(date:*), Bash(gh repo view:*), Read

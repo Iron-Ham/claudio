@@ -1,4 +1,5 @@
 ---
+name: release
 description: "Cut a new release with changelog updates and GitHub Release"
 argument-hint: "[major|minor|patch|vX.Y.Z]"
 allowed-tools: Bash(git tag:*), Bash(git log:*), Bash(git diff:*), Bash(git status:*), Bash(git branch:*), Bash(git push:*), Bash(git add:*), Bash(git commit:*), Bash(gh release create:*), Bash(gh release view:*), Bash(gh auth status:*), Bash(date:*), Bash(head:*), Bash(tail:*), Read, Edit

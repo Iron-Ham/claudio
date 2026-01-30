@@ -1,8 +1,0 @@
-{
-  "name": "release-commands",
-  "description": "Cut releases with detailed release notes, GitHub Releases, and semantic versioning",
-  "author": {
-    "name": "Iron-Ham",
-    "email": "noreply@github.com"
-  }
-}
