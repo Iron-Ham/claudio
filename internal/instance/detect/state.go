@@ -166,6 +166,12 @@ var (
 		`(?i)(?:let me (?:check|look|see|analyze|examine|investigate|read|search|find)|i'?ll (?:check|look|start|begin)|going to (?:check|look|analyze|implement)|about to (?:start|begin|run))`,
 		`(?i)(?:working on|processing|loading|fetching)`,
 		`⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏`, // Spinner characters
+		// Claude Code spinner/thinking status words - these appear in the status line
+		// when Claude is actively processing (e.g., "* Thinking..." or "· thinking")
+		// Full list from Claude Code's spinner word pool
+		`(?i)(?:thinking|thought|accomplishing|actioning|actualizing|architecting|baking|brewing|calculating|cerebrating|churning|clauding|coalescing|cogitating|computing|conjuring|considering|contemplating|cooking|crafting|creating|crunching|deliberating|determining|doing|effecting|finagling|forging|forming|frosting|generating|hatching|herding|honking|hustling|ideating|inferring|manifesting|marinating|moseying|mulling|mustering|musing|noodling|percolating|pondering|processing|puttering|razzmatazzing|reticulating|ruminating|scampering|schlepping|shucking|simmering|smooshing|spinning|stewing|synthesizing|transmuting|vibing|working)`,
+		// Token count indicator (e.g., "12.6k tokens") - appears during active processing
+		`\d+(?:\.\d+)?k?\s*tokens`,
 	}
 
 	// PROpenedPatterns detect when a pull request URL appears in output.

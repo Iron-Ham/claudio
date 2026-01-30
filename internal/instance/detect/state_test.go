@@ -436,6 +436,63 @@ func TestDetector_Detect_Working(t *testing.T) {
 			name:   "spinner char braille 3",
 			output: "⠹ Compiling",
 		},
+		// Claude Code thinking/processing spinner words
+		{
+			name:   "thinking indicator",
+			output: "* Thinking...",
+		},
+		{
+			name:   "thinking in status line",
+			output: "· thinking",
+		},
+		{
+			name:   "thought indicator",
+			output: "thought for 5 seconds",
+		},
+		{
+			name:   "frosting indicator",
+			output: "* Frosting...",
+		},
+		{
+			name:   "cogitating indicator",
+			output: "Cogitating...",
+		},
+		{
+			name:   "manifesting indicator",
+			output: "Manifesting...",
+		},
+		{
+			name:   "pondering indicator",
+			output: "* Pondering...",
+		},
+		{
+			name:   "contemplating indicator",
+			output: "Contemplating the problem...",
+		},
+		{
+			name:   "token count indicator",
+			output: "12.6k tokens",
+		},
+		{
+			name:   "token count with context",
+			output: "esc to interrupt · 3m 36s · ↓ 12.6k tokens · thinking",
+		},
+		{
+			name:   "small token count",
+			output: "500 tokens",
+		},
+		{
+			name:   "architecting indicator",
+			output: "* Architecting...",
+		},
+		{
+			name:   "determining indicator",
+			output: "Determining approach...",
+		},
+		{
+			name:   "forging indicator",
+			output: "* Forging...",
+		},
 	}
 
 	for _, tc := range tests {

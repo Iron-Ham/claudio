@@ -888,7 +888,13 @@ func (c *Coordinator) checkStuckWithGracePeriod(
 
 // HandleInstanceCompletion checks if an adversarial instance completed without writing
 // its required file. This should be called when the orchestrator detects that an instance
-// has transitioned to a completed or waiting-for-input state.
+// has transitioned to a completed state.
+//
+// Note: We only trigger stuck detection for StateCompleted, not waiting states.
+// Waiting states (StateWaitingInput, StateWaitingQuestion, StateWaitingPermission) can
+// occur during normal operation - Claude Code shows UI elements like "(shift+Tab to cycle)"
+// even while actively processing/thinking, which triggers StateWaitingInput detection.
+// Only StateCompleted definitively indicates Claude has finished and won't write the file.
 //
 // To prevent false positive stuck detection (race condition between instance completing
 // and file being written), this method uses a grace period. The first time an instance
@@ -911,7 +917,8 @@ func (c *Coordinator) HandleInstanceCompletion(instanceID string, isCompleted bo
 		return false // Instance doesn't belong to this session
 	}
 
-	// Only check stuck condition if instance completed/waiting and we're in the right phase
+	// Only check stuck condition if instance is completed (not waiting states)
+	// isWaitingInput is kept for API compatibility but should always be false
 	if !isCompleted && !isWaitingInput {
 		// Instance is not completed - reset grace period tracking
 		c.mu.Lock()

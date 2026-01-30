@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 
-	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
@@ -109,7 +108,7 @@ func (m *Model) handleAdversarialCheckResult(msg tuimsg.AdversarialCheckResultMs
 }
 
 // processAdversarialIncrementCheck handles completion check results for the increment file.
-// Returns async command to process the increment file if ready, or check for stuck condition.
+// Returns async command to process the increment file if ready.
 func (m *Model) processAdversarialIncrementCheck(
 	coordinator *adversarial.Coordinator,
 	msg tuimsg.AdversarialCheckResultMsg,
@@ -129,19 +128,13 @@ func (m *Model) processAdversarialIncrementCheck(
 		return m, tuimsg.ProcessAdversarialIncrementAsync(coordinator, msg.GroupID)
 	}
 
-	// File not ready - check if the implementer instance is completed/waiting (stuck condition)
-	session := coordinator.Session()
-	if session != nil && session.ImplementerID != "" {
-		if cmd := m.checkAdversarialInstanceStuck(coordinator, msg.GroupID, session.ImplementerID); cmd != nil {
-			return m, cmd
-		}
-	}
-
+	// File not ready - just wait for next poll (like tripleshot does).
+	// If Claude gets stuck, the user can interact with it directly.
 	return m, nil
 }
 
 // processAdversarialReviewCheck handles completion check results for the review file.
-// Returns async command to process the review file if ready, or check for stuck condition.
+// Returns async command to process the review file if ready.
 func (m *Model) processAdversarialReviewCheck(
 	coordinator *adversarial.Coordinator,
 	msg tuimsg.AdversarialCheckResultMsg,
@@ -161,14 +154,8 @@ func (m *Model) processAdversarialReviewCheck(
 		return m, tuimsg.ProcessAdversarialReviewAsync(coordinator, msg.GroupID)
 	}
 
-	// File not ready - check if the reviewer instance is completed/waiting (stuck condition)
-	session := coordinator.Session()
-	if session != nil && session.ReviewerID != "" {
-		if cmd := m.checkAdversarialInstanceStuck(coordinator, msg.GroupID, session.ReviewerID); cmd != nil {
-			return m, cmd
-		}
-	}
-
+	// File not ready - just wait for next poll (like tripleshot does).
+	// If Claude gets stuck, the user can interact with it directly.
 	return m, nil
 }
 
@@ -405,42 +392,10 @@ func (m Model) GetAdversarialCoordinators() []*adversarial.Coordinator {
 	return m.adversarial.GetAllCoordinators()
 }
 
-// checkAdversarialInstanceStuck checks if an adversarial instance is stuck by checking
-// its state from the orchestrator. Returns a command to dispatch the stuck check if
-// the instance appears to be completed/waiting without having written its file.
-func (m *Model) checkAdversarialInstanceStuck(
-	coordinator *adversarial.Coordinator,
-	groupID string,
-	instanceID string,
-) tea.Cmd {
-	if m.orchestrator == nil {
-		return nil
-	}
-
-	// Get the instance manager to check its state
-	mgr := m.orchestrator.GetInstanceManager(instanceID)
-	if mgr == nil {
-		return nil
-	}
-
-	// Check if the instance is completed or waiting for input
-	state := mgr.CurrentState()
-	isCompleted := state == detect.StateCompleted
-	isWaitingInput := state == detect.StateWaitingInput ||
-		state == detect.StateWaitingQuestion ||
-		state == detect.StateWaitingPermission
-
-	if isCompleted || isWaitingInput {
-		// Instance completed/waiting without file - dispatch stuck check
-		return tuimsg.CheckAdversarialInstanceStuckAsync(
-			coordinator, groupID, instanceID, isCompleted, isWaitingInput,
-		)
-	}
-
-	return nil
-}
-
 // handleAdversarialStuck handles the stuck detection result.
+// Note: This is now only triggered for sessions restored from a stuck state,
+// not for runtime detection. Runtime stuck detection was removed because
+// the user can interact with stuck instances directly.
 func (m *Model) handleAdversarialStuck(msg tuimsg.AdversarialStuckMsg) (tea.Model, tea.Cmd) {
 	if m.adversarial == nil {
 		return m, nil
