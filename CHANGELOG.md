@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Welcome Panel for New Users** - When launching Claudio with no instances, users now see a comprehensive welcome panel with getting started guidance, quick command references (`:a`, `:tripleshot`, `:adversarial`, `:ultraplan`), and a visual status icon legend explaining what each icon means.
+
+- **Status Legend in Help Panel** - Added a status icons legend as the first section in the help panel (`?`), explaining what each status icon means (●, ○, ◐, ?, ⏸, ✓, ✗, ⏱, ⏰, ⚡).
+
 ### Changed
+
+- **Clearer Status Labels** - Sidebar status abbreviations are now human-readable words ("Working", "Ready", "Done", "Input?") instead of cryptic uppercase abbreviations ("WORK", "PEND", "DONE", "WAIT").
+
+- **Context-Aware Help Bar** - The help bar now adapts based on current state: shows getting started hints when no instances exist, and status-specific hints ("Press [:s] to start", "Press [i] to respond") based on the active instance status.
+
+- **Distinct Mode Badge Colors** - Each mode (NORMAL, INPUT, TERMINAL, SEARCH, FILTER, DIFF) now has a unique color for easier visual identification.
+
+- **Enhanced Empty States** - Sidebar and content areas show improved guidance when no instances exist, with clear quick-start hints and visual hierarchy.
+
+- **Instance Count in Header** - The header now shows the instance count (e.g., "Claudio (3 instances)") when multiple instances are running.
+
+- **Instance Count in Sidebar Title** - The sidebar title now shows "Instances (N)" when instances exist.
+
+- **Actionable Status Hints** - Status indicators for waiting, stuck, timeout, paused, and interrupted states now include hints on how to proceed (e.g., "? Claude needs your input - Press [i] to respond").
 
 - **Documentation Updates** - Refreshed documentation to cover v0.13.0 and v0.14.0 features: color themes, sidebar scroll navigation (J/K), macOS keyboard shortcuts, `validate` command, background cleanup options, tripleshot adversarial integration, and stuck instance recovery.
 

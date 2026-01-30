@@ -538,11 +538,24 @@ func (v *InstanceView) RenderOutput(instanceID string, state RenderState) string
 
 	output := state.Output
 	if output == "" {
-		output = "No output yet. Press [s] to start this instance."
+		// Build a helpful empty state message
+		var emptyMsg strings.Builder
+		emptyMsg.WriteString(styles.Muted.Render("No output yet."))
+		emptyMsg.WriteString("\n\n")
+		emptyMsg.WriteString(styles.Secondary.Bold(true).Render("Quick Start:"))
+		emptyMsg.WriteString("\n")
+		emptyMsg.WriteString("  " + styles.HelpKey.Render(":s") + styles.Muted.Render(" or ") + styles.HelpKey.Render(":start") + styles.Muted.Render("  Start this instance"))
+		emptyMsg.WriteString("\n")
+		emptyMsg.WriteString("  " + styles.HelpKey.Render("[i]") + styles.Muted.Render("           Enter input mode"))
+		emptyMsg.WriteString("\n")
+		emptyMsg.WriteString("  " + styles.HelpKey.Render("[Tab]") + styles.Muted.Render("         Switch instances"))
+		emptyMsg.WriteString("\n")
+		emptyMsg.WriteString("  " + styles.HelpKey.Render("[?]") + styles.Muted.Render("           Toggle help panel"))
+
 		outputBox := styles.OutputArea.
 			Width(v.Width - 4).
 			Height(v.MaxOutputLines).
-			Render(output)
+			Render(emptyMsg.String())
 		b.WriteString(outputBox)
 		return b.String()
 	}
@@ -716,18 +729,24 @@ func (v *InstanceView) RenderSearchBar(state RenderState) string {
 
 // RenderWaitingState renders a waiting state indicator for instances
 // that are waiting for user input or in a stuck state.
+// Includes actionable hints to help users understand what to do next.
 func (v *InstanceView) RenderWaitingState(status orchestrator.InstanceStatus) string {
 	switch status {
 	case orchestrator.StatusWaitingInput:
-		return styles.Warning.Render("⏳ Waiting for user input...")
+		return styles.Warning.Render("? Claude needs your input") + "  " +
+			styles.Muted.Render("Press ") + styles.HelpKey.Render("[i]") + styles.Muted.Render(" to respond")
 	case orchestrator.StatusStuck:
-		return styles.Warning.Render("⚠ Instance appears stuck - no activity detected")
+		return styles.Warning.Render("⏱ No activity detected") + "  " +
+			styles.Muted.Render("Try ") + styles.HelpKey.Render(":restart") + styles.Muted.Render(" or ") + styles.HelpKey.Render(":kill")
 	case orchestrator.StatusTimeout:
-		return styles.Error.Render("⏰ Instance timed out")
+		return styles.Error.Render("⏰ Instance timed out") + "  " +
+			styles.Muted.Render("Use ") + styles.HelpKey.Render(":restart") + styles.Muted.Render(" to try again")
 	case orchestrator.StatusPaused:
-		return styles.Muted.Render("⏸ Instance paused")
+		return styles.Muted.Render("⏸ Paused") + "  " +
+			styles.Muted.Render("Press ") + styles.HelpKey.Render(":p") + styles.Muted.Render(" to resume")
 	case orchestrator.StatusInterrupted:
-		return styles.Warning.Render("⚡ Session interrupted - press 'r' to resume")
+		return styles.Warning.Render("⚡ Session interrupted") + "  " +
+			styles.Muted.Render("Press ") + styles.HelpKey.Render(":reconnect") + styles.Muted.Render(" to resume")
 	default:
 		return ""
 	}

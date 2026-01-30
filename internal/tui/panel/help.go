@@ -129,6 +129,21 @@ func (p *HelpPanel) Height() int {
 func DefaultHelpSections() []HelpSection {
 	return []HelpSection{
 		{
+			Title: "Status Icons Legend",
+			Items: []HelpItem{
+				{Key: "●", Description: "Working - Claude is actively processing"},
+				{Key: "○", Description: "Pending - Waiting to start"},
+				{Key: "◐", Description: "Preparing - Setting up worktree"},
+				{Key: "?", Description: "Waiting Input - Claude needs your response"},
+				{Key: "⏸", Description: "Paused - Instance is paused"},
+				{Key: "✓", Description: "Completed - Task finished successfully"},
+				{Key: "✗", Description: "Error - Something went wrong"},
+				{Key: "⏱", Description: "Stuck - No activity detected"},
+				{Key: "⏰", Description: "Timeout - Exceeded time limit"},
+				{Key: "⚡", Description: "Interrupted - Session needs resume"},
+			},
+		},
+		{
 			Title: "Navigation",
 			Items: []HelpItem{
 				{Key: "Tab/l  Shift+Tab/h", Description: "Next / Previous instance"},

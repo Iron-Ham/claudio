@@ -112,13 +112,16 @@ func (sv *SidebarView) RenderSidebar(state DashboardState, width, height int) st
 func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height int) string {
 	var b strings.Builder
 
-	// Sidebar title
-	b.WriteString(styles.SidebarTitle.Render("Instances"))
-	b.WriteString("\n")
-
 	session := state.Session()
 	groupState := state.GroupViewState()
 	isAddingTask := state.IsAddingTask()
+
+	// Sidebar title with instance count
+	instanceCount := 0
+	if session != nil {
+		instanceCount = len(session.Instances)
+	}
+	renderSidebarTitle(&b, instanceCount)
 
 	// Build conflict map
 	conflicts := state.Conflicts()
@@ -139,9 +142,7 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 	items = enrichAdversarialRoundInfo(items, state.AdversarialStateData())
 
 	if len(items) == 0 && !isAddingTask {
-		b.WriteString(styles.Muted.Render("No instances"))
-		b.WriteString("\n")
-		b.WriteString(styles.Muted.Render("Press [:a] to add"))
+		renderSidebarEmptyState(&b)
 	} else {
 		// Calculate scroll offset for grouped view
 		scrollOffset := state.SidebarScrollOffset()

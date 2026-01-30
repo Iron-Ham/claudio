@@ -49,6 +49,12 @@ type HelpBarState struct {
 
 	// SearchMatchCount is the total number of search matches
 	SearchMatchCount int
+
+	// InstanceCount is the number of instances (used to show new user hints)
+	InstanceCount int
+
+	// ActiveInstanceStatus is the status of the currently active instance
+	ActiveInstanceStatus string
 }
 
 // HelpBarView handles rendering of help bars for different modes.
@@ -57,6 +63,46 @@ type HelpBarView struct{}
 // NewHelpBarView creates a new HelpBarView instance.
 func NewHelpBarView() *HelpBarView {
 	return &HelpBarView{}
+}
+
+// getStatusHint returns a brief, context-aware hint for the given instance status.
+// These hints guide users on what action to take next.
+func (v *HelpBarView) getStatusHint(status string) string {
+	switch status {
+	case "pending":
+		return "Press [:s] to start"
+	case "waiting_input":
+		return "Press [i] to respond"
+	case "paused":
+		return "Press [:p] to resume"
+	case "completed":
+		return "Done! [:d] for diff"
+	case "error", "stuck", "timeout":
+		return "Try [:restart]"
+	default:
+		return ""
+	}
+}
+
+// renderInputModeHelp renders the help bar for input mode.
+func renderInputModeHelp() string {
+	badge := styles.ModeBadgeInput.Render("INPUT")
+	help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
+		styles.Muted.Render("All keystrokes forwarded to Claude")
+	return styles.HelpBar.Render(badge + "  " + help)
+}
+
+// renderTerminalModeHelp renders the help bar for terminal mode.
+func renderTerminalModeHelp(dirMode string) string {
+	badge := styles.ModeBadgeTerminal.Render("TERMINAL")
+	mode := "invoke"
+	if dirMode == "worktree" {
+		mode = "worktree"
+	}
+	help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
+		styles.HelpKey.Render("[Ctrl+Shift+T]") + " switch dir  " +
+		styles.Muted.Render("("+mode+")")
+	return styles.HelpBar.Render(badge + "  " + help)
 }
 
 // RenderCommandModeHelp renders the help bar when in command mode.
@@ -128,22 +174,11 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 	}
 
 	if state.InputMode {
-		badge := styles.ModeBadgeInput.Render("INPUT")
-		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
-			styles.Muted.Render("All keystrokes forwarded to Claude")
-		return styles.HelpBar.Render(badge + "  " + help)
+		return renderInputModeHelp()
 	}
 
 	if state.TerminalFocused {
-		badge := styles.ModeBadgeTerminal.Render("TERMINAL")
-		dirMode := "invoke"
-		if state.TerminalDirMode == "worktree" {
-			dirMode = "worktree"
-		}
-		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
-			styles.HelpKey.Render("[Ctrl+Shift+T]") + " switch dir  " +
-			styles.Muted.Render("("+dirMode+")")
-		return styles.HelpBar.Render(badge + "  " + help)
+		return renderTerminalModeHelp(state.TerminalDirMode)
 	}
 
 	if state.ShowDiff {
@@ -172,36 +207,68 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 		return styles.HelpBar.Render(badge + "  " + help)
 	}
 
-	// Normal mode - show NORMAL badge
-	badge := styles.ModeBadgeNormal.Render("NORMAL")
+	// Normal mode - show NORMAL badge with diamond indicator
+	badge := styles.ModeBadgeNormal.Render("◆ NORMAL")
 
-	keys := []string{
-		styles.HelpKey.Render("[:]") + " cmd",
-		styles.HelpKey.Render("[j/k]") + " scroll",
-		styles.HelpKey.Render("[Tab]") + " switch",
-		styles.HelpKey.Render("[i]") + " input",
-		styles.HelpKey.Render("[/]") + " search",
-		styles.HelpKey.Render("[?]") + " help",
-		styles.HelpKey.Render("[:q]") + " quit",
+	// Show context-aware help based on current state
+	var keys []string
+
+	// If no instances, show new user guidance
+	if state.InstanceCount == 0 {
+		keys = []string{
+			styles.HelpKey.Render("[:a]") + " add task",
+			styles.HelpKey.Render("[:]") + " commands",
+			styles.HelpKey.Render("[?]") + " help",
+			styles.HelpKey.Render("[:q]") + " quit",
+		}
+		return styles.HelpBar.Render(badge + "  " + styles.Secondary.Render("Start by adding a task →") + "  " + strings.Join(keys, "  "))
 	}
+
+	// Add conflict indicator when conflicts exist (high priority - at start)
+	if state.ConflictCount > 0 {
+		conflictKey := styles.Warning.Bold(true).Render("⚠ [:c]") + styles.Warning.Render(" conflicts")
+		keys = append(keys, conflictKey)
+	}
+
+	// Show status-specific hints for the active instance
+	if state.ActiveInstanceStatus != "" {
+		hint := v.getStatusHint(state.ActiveInstanceStatus)
+		if hint != "" {
+			keys = append(keys, styles.Muted.Render(hint))
+		}
+	}
+
+	// Standard navigation keys
+	keys = append(keys,
+		styles.HelpKey.Render("[:]")+" command",
+		styles.HelpKey.Render("[j/k]")+" scroll",
+		styles.HelpKey.Render("[Tab]")+" switch",
+	)
+
+	// Context-aware keys based on instance status
+	if state.ActiveInstanceStatus == "waiting_input" || state.ActiveInstanceStatus == "working" {
+		keys = append(keys, styles.HelpKey.Render("[i]")+" input")
+	}
+
+	keys = append(keys,
+		styles.HelpKey.Render("[/]")+" search",
+		styles.HelpKey.Render("[?]")+" help",
+	)
 
 	// Add terminal key based on visibility
 	if state.TerminalVisible {
-		keys = append(keys, styles.HelpKey.Render("[:t]")+" term "+styles.HelpKey.Render("[`]")+" hide")
+		keys = append(keys, styles.HelpKey.Render("[`]")+" hide term")
 	} else {
-		keys = append(keys, styles.HelpKey.Render("[`]")+" term")
+		keys = append(keys, styles.HelpKey.Render("[`]")+" terminal")
 	}
 
-	// Add conflict indicator when conflicts exist
-	if state.ConflictCount > 0 {
-		conflictKey := styles.Warning.Bold(true).Render("[:c]") + styles.Warning.Render(" conflicts")
-		keys = append([]string{conflictKey}, keys...)
-	}
+	// Add quit at the end (muted since less commonly needed)
+	keys = append(keys, styles.Muted.Render("[:q] quit"))
 
 	// Add search status indicator if search is active
 	if state.SearchHasMatches {
 		searchStatus := styles.Secondary.Render(fmt.Sprintf("[%d/%d]", state.SearchCurrentIndex+1, state.SearchMatchCount))
-		keys = append(keys, searchStatus+" "+styles.HelpKey.Render("[n/N]")+" match")
+		keys = append(keys, searchStatus+" "+styles.HelpKey.Render("[n/N]")+" next")
 	}
 
 	return styles.HelpBar.Render(badge + "  " + strings.Join(keys, "  "))
@@ -210,25 +277,13 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 // RenderTripleShotHelp renders the help bar for triple-shot mode.
 // Accepts optional state to properly display INPUT mode when active.
 func (v *HelpBarView) RenderTripleShotHelp(state *HelpBarState) string {
-	// Check for input mode first - this takes priority
-	if state != nil && state.InputMode {
-		badge := styles.ModeBadgeInput.Render("INPUT")
-		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
-			styles.Muted.Render("All keystrokes forwarded to Claude")
-		return styles.HelpBar.Render(badge + "  " + help)
-	}
-
-	// Check for terminal focused mode
-	if state != nil && state.TerminalFocused {
-		badge := styles.ModeBadgeTerminal.Render("TERMINAL")
-		dirMode := "invoke"
-		if state.TerminalDirMode == "worktree" {
-			dirMode = "worktree"
+	if state != nil {
+		if state.InputMode {
+			return renderInputModeHelp()
 		}
-		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
-			styles.HelpKey.Render("[Ctrl+Shift+T]") + " switch dir  " +
-			styles.Muted.Render("("+dirMode+")")
-		return styles.HelpBar.Render(badge + "  " + help)
+		if state.TerminalFocused {
+			return renderTerminalModeHelp(state.TerminalDirMode)
+		}
 	}
 
 	// Normal triple-shot mode

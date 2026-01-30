@@ -110,14 +110,24 @@ func TestRenderHelp(t *testing.T) {
 			contains: []string{"SEARCH", "pattern", "regex"},
 		},
 		{
-			name:     "normal mode shows default keys with NORMAL badge",
-			state:    &HelpBarState{},
-			contains: []string{"NORMAL", "cmd", "scroll", "switch", "help", "quit"},
+			name: "normal mode shows default keys with NORMAL badge",
+			state: &HelpBarState{
+				InstanceCount: 1, // Need at least one instance for full help bar
+			},
+			contains: []string{"NORMAL", "command", "scroll", "switch", "help", "quit"},
+		},
+		{
+			name: "new user mode shows getting started guidance",
+			state: &HelpBarState{
+				InstanceCount: 0, // No instances shows new user guidance
+			},
+			contains: []string{"NORMAL", "add task", "Start by adding"},
 		},
 		{
 			name: "terminal visible shows hide option",
 			state: &HelpBarState{
 				TerminalVisible: true,
+				InstanceCount:   1, // Need at least one instance
 			},
 			contains: []string{"hide"},
 		},
@@ -125,6 +135,7 @@ func TestRenderHelp(t *testing.T) {
 			name: "conflicts present shows conflict indicator",
 			state: &HelpBarState{
 				ConflictCount: 3,
+				InstanceCount: 1, // Need at least one instance
 			},
 			contains: []string{"conflicts"},
 		},
@@ -134,6 +145,7 @@ func TestRenderHelp(t *testing.T) {
 				SearchHasMatches:   true,
 				SearchCurrentIndex: 2,
 				SearchMatchCount:   5,
+				InstanceCount:      1, // Need at least one instance
 			},
 			contains: []string{"3/5"}, // 2+1 = 3 (0-indexed to 1-indexed)
 		},
