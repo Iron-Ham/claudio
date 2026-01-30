@@ -1098,12 +1098,14 @@ func (m *Model) scrollOutputToTop(instanceID string) {
 // scrollOutputToBottom scrolls to the bottom and re-enables auto-scroll
 func (m *Model) scrollOutputToBottom(instanceID string) {
 	m.outputManager.SetFilterFunc(m.filterOutput)
+	_ = m.outputManager.GetFilteredOutput(instanceID) // Prime cache for scroll calculation
 	m.outputManager.ScrollToBottom(instanceID, m.getOutputMaxLines())
 }
 
 // updateOutputScroll updates scroll position based on new output (if auto-scroll is enabled)
 func (m *Model) updateOutputScroll(instanceID string) {
 	m.outputManager.SetFilterFunc(m.filterOutput)
+	_ = m.outputManager.GetFilteredOutput(instanceID) // Prime cache for scroll calculation
 	m.outputManager.UpdateScroll(instanceID, m.getOutputMaxLines())
 }
 

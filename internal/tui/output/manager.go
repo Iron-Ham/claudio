@@ -251,15 +251,7 @@ func (m *Manager) GetMaxScroll(instanceID string, maxVisibleLines int) int {
 
 // getLineCountLocked returns line count (caller must hold lock).
 func (m *Manager) getLineCountLocked(instanceID string) int {
-	output := m.outputs[instanceID]
-	if output == "" {
-		return 0
-	}
-
-	// Apply filter if set
-	if m.filterFunc != nil {
-		output = m.filterFunc(output)
-	}
+	output := m.getFilteredOutputLocked(instanceID)
 	if output == "" {
 		return 0
 	}
@@ -272,6 +264,25 @@ func (m *Manager) getLineCountLocked(instanceID string) int {
 		}
 	}
 	return count
+}
+
+// getFilteredOutputLocked returns the filtered output, using cache when available.
+// Caller must hold at least a read lock. On cache miss, returns recomputed result
+// without caching (to avoid lock upgrade). Cache is populated by GetFilteredOutput().
+func (m *Manager) getFilteredOutputLocked(instanceID string) string {
+	output := m.outputs[instanceID]
+	if output == "" || m.filterFunc == nil {
+		return output
+	}
+
+	outputVersion := m.outputVersions[instanceID]
+	if entry, ok := m.filteredCache[instanceID]; ok &&
+		entry.outputVersion == outputVersion &&
+		entry.filterVersion == m.filterVersion {
+		return entry.filtered
+	}
+
+	return m.filterFunc(output)
 }
 
 // getMaxScrollLocked returns max scroll offset (caller must hold lock).
@@ -323,7 +334,7 @@ func (m *Manager) GetAllOutputs() map[string]string {
 // If no filter is set, returns the raw output.
 // Results are cached and only recomputed when the output or filter settings change.
 func (m *Manager) GetFilteredOutput(instanceID string) string {
-	// First try read-only path to check cache
+	// Fast path: check cache with read lock
 	m.mu.RLock()
 	output := m.outputs[instanceID]
 	if output == "" || m.filterFunc == nil {
@@ -331,28 +342,29 @@ func (m *Manager) GetFilteredOutput(instanceID string) string {
 		return output
 	}
 
-	// Check if cache is valid
 	outputVersion := m.outputVersions[instanceID]
-	entry, ok := m.filteredCache[instanceID]
-	if ok && entry.outputVersion == outputVersion && entry.filterVersion == m.filterVersion {
+	if entry, ok := m.filteredCache[instanceID]; ok &&
+		entry.outputVersion == outputVersion &&
+		entry.filterVersion == m.filterVersion {
 		m.mu.RUnlock()
 		return entry.filtered
 	}
 	m.mu.RUnlock()
 
-	// Cache miss - need to recompute with write lock
+	// Cache miss - recompute with write lock
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Double-check after acquiring write lock
+	// Double-check after acquiring write lock (another goroutine may have updated)
 	output = m.outputs[instanceID]
 	if output == "" || m.filterFunc == nil {
 		return output
 	}
 
-	// Check cache again (another goroutine may have updated it)
 	outputVersion = m.outputVersions[instanceID]
-	if entry, ok := m.filteredCache[instanceID]; ok && entry.outputVersion == outputVersion && entry.filterVersion == m.filterVersion {
+	if entry, ok := m.filteredCache[instanceID]; ok &&
+		entry.outputVersion == outputVersion &&
+		entry.filterVersion == m.filterVersion {
 		return entry.filtered
 	}
 
@@ -373,15 +385,7 @@ func (m *Manager) GetVisibleLines(instanceID string, maxVisibleLines int) []stri
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	output := m.outputs[instanceID]
-	if output == "" {
-		return nil
-	}
-
-	// Apply filter if set
-	if m.filterFunc != nil {
-		output = m.filterFunc(output)
-	}
+	output := m.getFilteredOutputLocked(instanceID)
 	if output == "" {
 		return nil
 	}

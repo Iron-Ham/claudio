@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Input Mode Typing Responsiveness** - Fixed typing lag and stuttering in INPUT mode when interacting with Claude instances. The output filtering logic now caches filtered results per instance and only recomputes when the raw output or filter settings change. Previously, every keystroke triggered expensive string operations (line splitting, regex matching, case conversion) on the entire output buffer, even when nothing had changed.
 
+- **Scroll Calculation Cache Optimization** - Fixed remaining INPUT mode lag caused by scroll calculations bypassing the filter cache. Line counting and visible line calculations now use cached filtered output instead of recomputing filtering on every 100ms tick. Previously, these operations called the filter function directly, causing redundant O(n) filtering even when output hadn't changed.
+
+- **Input/Terminal Mode Keystroke Optimization** - Further improved INPUT mode and terminal mode responsiveness by adding fast paths that skip expensive state synchronization. Keystrokes in passthrough modes now bypass the full router state sync, which previously performed multiple state updates on every keystroke. Also removed a redundant write lock acquisition in the render path.
+
 ### Fixed
 
 - **TripleShot-Adversarial Feedback Loop** - Each implementer now properly iterates with reviewer feedback instead of failing on first rejection. When a reviewer rejects an attempt, the implementer is restarted with the reviewer's feedback, issues, and required changes. This continues until the reviewer approves or max rounds are exhausted (uses `adversarial.max_iterations`, default 10, 0 = unlimited). Also fixed the TUI not polling during the adversarial review phase, which prevented reviewer completions from being detected.

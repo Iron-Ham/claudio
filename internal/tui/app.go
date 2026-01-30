@@ -1390,8 +1390,10 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	isRunning := mgr != nil && mgr.Running()
 
 	// Get filtered output using cache (avoids expensive recomputation on every render)
-	// Ensure filter function is set for cached filtering to work
-	m.outputManager.SetFilterFunc(m.filterOutput)
+	// Note: filterFunc is set via updateOutputScroll() on each tick, not here.
+	// Setting it here would acquire a write lock on every render/keystroke.
+	// The filter settings (filterCategories map, filterRegex pointer) are reference
+	// types, so the same filterFunc closure works across Model copies.
 	output := m.outputManager.GetFilteredOutput(inst.ID)
 
 	renderState := view.RenderState{
