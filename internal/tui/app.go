@@ -228,8 +228,10 @@ func NewWithAdversarials(orch *orchestrator.Orchestrator, session *orchestrator.
 
 // Run starts the TUI application
 func (a *App) Run() error {
-	// Ensure session lock is released when TUI exits (both normal and signal-based)
-	defer func() { _ = a.orchestrator.ReleaseLock() }()
+	// Ensure Claude processes are stopped and session lock is released when TUI exits.
+	// This handles all exit paths: normal quit, Ctrl+C, SIGTERM, etc.
+	// Shutdown() stops instances but preserves session state for potential resume.
+	defer func() { _ = a.orchestrator.Shutdown() }()
 
 	a.program = tea.NewProgram(
 		a.model,

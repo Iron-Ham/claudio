@@ -1181,6 +1181,80 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 	return nil
 }
 
+// Shutdown gracefully stops all running Claude processes without removing session state.
+// This is called on normal exit (quit, Ctrl+C, SIGTERM) to clean up tmux sessions
+// while preserving worktrees and session data for potential resume.
+//
+// Unlike StopSession which removes the session file and optionally worktrees,
+// Shutdown preserves them so users can resume work later.
+//
+// Shutdown is idempotent - safe to call multiple times.
+func (o *Orchestrator) Shutdown() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Stop conflict detector (nil it out to prevent double-close on repeated calls)
+	if o.conflictDetector != nil {
+		o.conflictDetector.Stop()
+		o.conflictDetector = nil
+	}
+
+	// Stop namer service
+	if o.namer != nil {
+		o.namer.Stop()
+		o.namer = nil
+	}
+
+	// Stop all instances (kills tmux sessions with Claude)
+	if o.session != nil {
+		for _, inst := range o.session.Instances {
+			if mgr, ok := o.instances[inst.ID]; ok {
+				if err := mgr.Stop(); err != nil {
+					if o.logger != nil {
+						o.logger.Warn("failed to stop instance during shutdown",
+							"instance_id", inst.ID,
+							"error", err,
+						)
+					}
+				}
+			}
+		}
+	}
+
+	// Stop all PR workflows
+	if o.prWorkflowMgr != nil {
+		o.prWorkflowMgr.StopAll()
+	}
+
+	// Mark session as cleanly shutdown and release lock
+	// (preserves session file for resume)
+	if o.session != nil {
+		o.session.CleanShutdown = true
+		o.session.RecoveryState = RecoveryNone
+		if err := o.saveSession(); err != nil && o.logger != nil {
+			o.logger.Error("failed to save clean shutdown state",
+				"error", err.Error())
+		}
+	}
+
+	if o.lock != nil {
+		if err := o.lock.Release(); err != nil {
+			if o.logger != nil {
+				o.logger.Warn("failed to release session lock during shutdown",
+					"error", err,
+				)
+			}
+		}
+		o.lock = nil
+	}
+
+	if o.logger != nil {
+		o.logger.Info("orchestrator shutdown complete")
+	}
+
+	return nil
+}
+
 // GetInstanceManager returns the manager for an instance
 func (o *Orchestrator) GetInstanceManager(id string) *instance.Manager {
 	o.mu.RLock()
