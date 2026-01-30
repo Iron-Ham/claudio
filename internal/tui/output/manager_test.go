@@ -485,6 +485,69 @@ func TestGetFilteredOutput(t *testing.T) {
 	}
 }
 
+func TestGetFilteredOutputCaching(t *testing.T) {
+	m := NewManager()
+
+	// Track how many times the filter function is called
+	filterCallCount := 0
+	filterFunc := func(output string) string {
+		filterCallCount++
+		lines := strings.Split(output, "\n")
+		var filtered []string
+		for _, line := range lines {
+			if line != "remove" {
+				filtered = append(filtered, line)
+			}
+		}
+		return strings.Join(filtered, "\n")
+	}
+
+	m.SetFilterFunc(filterFunc)
+	m.SetOutput("test", "line1\nremove\nline3")
+
+	// First call should invoke filter
+	filterCallCount = 0
+	result1 := m.GetFilteredOutput("test")
+	if filterCallCount != 1 {
+		t.Errorf("First GetFilteredOutput() should call filter once, got %d calls", filterCallCount)
+	}
+	if result1 != "line1\nline3" {
+		t.Errorf("GetFilteredOutput() = %q, want %q", result1, "line1\nline3")
+	}
+
+	// Second call with same output should use cache (no filter call)
+	filterCallCount = 0
+	result2 := m.GetFilteredOutput("test")
+	if filterCallCount != 0 {
+		t.Errorf("Second GetFilteredOutput() should use cache, but got %d filter calls", filterCallCount)
+	}
+	if result2 != result1 {
+		t.Errorf("Cached result differs: %q vs %q", result2, result1)
+	}
+
+	// Changing output should invalidate cache
+	filterCallCount = 0
+	m.SetOutput("test", "line1\nremove\nline3\nline4")
+	result3 := m.GetFilteredOutput("test")
+	if filterCallCount != 1 {
+		t.Errorf("GetFilteredOutput() after SetOutput should call filter, got %d calls", filterCallCount)
+	}
+	if result3 != "line1\nline3\nline4" {
+		t.Errorf("GetFilteredOutput() after change = %q, want %q", result3, "line1\nline3\nline4")
+	}
+
+	// InvalidateFilterCache should force recomputation
+	filterCallCount = 0
+	m.InvalidateFilterCache()
+	result4 := m.GetFilteredOutput("test")
+	if filterCallCount != 1 {
+		t.Errorf("GetFilteredOutput() after InvalidateFilterCache should call filter, got %d calls", filterCallCount)
+	}
+	if result4 != result3 {
+		t.Errorf("Result after InvalidateFilterCache differs: %q vs %q", result4, result3)
+	}
+}
+
 func TestGetVisibleLines(t *testing.T) {
 	tests := []struct {
 		name            string

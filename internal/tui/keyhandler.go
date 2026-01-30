@@ -1060,22 +1060,27 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "e", "1":
 		m.filterCategories["errors"] = !m.filterCategories["errors"]
+		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case "w", "2":
 		m.filterCategories["warnings"] = !m.filterCategories["warnings"]
+		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case "t", "3":
 		m.filterCategories["tools"] = !m.filterCategories["tools"]
+		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case "h", "4":
 		m.filterCategories["thinking"] = !m.filterCategories["thinking"]
+		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case "p", "5":
 		m.filterCategories["progress"] = !m.filterCategories["progress"]
+		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case "a":
@@ -1090,12 +1095,14 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		for k := range m.filterCategories {
 			m.filterCategories[k] = !allEnabled
 		}
+		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case "c":
 		// Clear custom filter
 		m.filterCustom = ""
 		m.filterRegex = nil
+		m.outputManager.InvalidateFilterCache()
 		return m, nil
 	}
 
@@ -1105,6 +1112,7 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.filterCustom) > 0 {
 			m.filterCustom = m.filterCustom[:len(m.filterCustom)-1]
 			m.compileFilterRegex()
+			m.outputManager.InvalidateFilterCache()
 		}
 		return m, nil
 
@@ -1114,12 +1122,14 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if char != "e" && char != "w" && char != "t" && char != "h" && char != "p" && char != "a" && char != "c" {
 			m.filterCustom += char
 			m.compileFilterRegex()
+			m.outputManager.InvalidateFilterCache()
 		}
 		return m, nil
 
 	case tea.KeySpace:
 		m.filterCustom += " "
 		m.compileFilterRegex()
+		m.outputManager.InvalidateFilterCache()
 		return m, nil
 	}
 
