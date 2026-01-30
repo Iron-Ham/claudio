@@ -141,7 +141,7 @@ Create compelling, human-readable release notes from the changelog entries. This
 - What changed and migration steps required
 
 ---
-Full changelog: [CHANGELOG.md](https://github.com/<owner>/<repo>/blob/main/CHANGELOG.md)
+Full changelog: [CHANGELOG.md](https://github.com/<owner>/<repo>/blob/vX.Y.Z/CHANGELOG.md)
 ```
 
 **Writing Guidelines:**
