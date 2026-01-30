@@ -10,6 +10,49 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 )
 
+// moveSubGroupUnder is a shared helper for moving sub-groups within an InstanceGroup.
+// It finds the sub-group by ID, finds or creates the target, and moves the sub-group.
+func moveSubGroupUnder(group *InstanceGroup, subGroupID, targetID, targetName string) bool {
+	if group == nil {
+		return false
+	}
+
+	// Find the sub-group to move
+	var subGroupToMove *InstanceGroup
+	subGroupIndex := -1
+	for i, sg := range group.SubGroups {
+		if sg.ID == subGroupID {
+			subGroupToMove = sg
+			subGroupIndex = i
+			break
+		}
+	}
+
+	if subGroupToMove == nil {
+		return false
+	}
+
+	// Find or create the target sub-group
+	var targetGroup *InstanceGroup
+	for _, sg := range group.SubGroups {
+		if sg.ID == targetID {
+			targetGroup = sg
+			break
+		}
+	}
+
+	if targetGroup == nil {
+		targetGroup = NewInstanceGroupWithID(targetID, targetName)
+		group.AddSubGroup(targetGroup)
+	}
+
+	// Remove from parent and add to target
+	group.SubGroups = append(group.SubGroups[:subGroupIndex], group.SubGroups[subGroupIndex+1:]...)
+	targetGroup.AddSubGroup(subGroupToMove)
+
+	return true
+}
+
 // orchestratorAdapter implements tripleshot.OrchestratorInterface
 type orchestratorAdapter struct {
 	orch *Orchestrator
@@ -76,7 +119,8 @@ func (a *sessionAdapter) GetInstance(id string) tripleshot.InstanceInterface {
 	return inst
 }
 
-// groupAdapter implements tripleshot.GroupInterface
+// groupAdapter implements tripleshot.GroupInterface and
+// tripleshot.GroupWithSubGroupsInterface for adversarial mode sub-grouping.
 type groupAdapter struct {
 	group *InstanceGroup
 }
@@ -100,6 +144,64 @@ func (a *groupAdapter) SetInstances(instances []string) {
 
 func (a *groupAdapter) GetID() string {
 	return a.group.ID
+}
+
+// RemoveInstance removes an instance from the group.
+// This implements tripleshot.GroupWithSubGroupsInterface.
+func (a *groupAdapter) RemoveInstance(instanceID string) {
+	if a.group == nil {
+		return
+	}
+	filtered := make([]string, 0, len(a.group.Instances))
+	for _, id := range a.group.Instances {
+		if id != instanceID {
+			filtered = append(filtered, id)
+		}
+	}
+	a.group.Instances = filtered
+}
+
+// GetOrCreateSubGroup finds or creates a sub-group with the given ID and name.
+// This implements tripleshot.GroupWithSubGroupsInterface.
+func (a *groupAdapter) GetOrCreateSubGroup(id, name string) tripleshot.GroupInterface {
+	if a.group == nil {
+		return nil
+	}
+
+	// First, try to find existing sub-group by name
+	for _, sg := range a.group.SubGroups {
+		if sg.Name == name {
+			return &groupAdapter{group: sg}
+		}
+	}
+
+	// Create new sub-group
+	subGroup := NewInstanceGroupWithID(id, name)
+	a.group.AddSubGroup(subGroup)
+
+	return &groupAdapter{group: subGroup}
+}
+
+// GetSubGroupByID returns a sub-group by ID, or nil if not found.
+// This implements tripleshot.GroupWithSubGroupsInterface.
+func (a *groupAdapter) GetSubGroupByID(id string) tripleshot.GroupInterface {
+	if a.group == nil {
+		return nil
+	}
+
+	for _, sg := range a.group.SubGroups {
+		if sg.ID == id {
+			return &groupAdapter{group: sg}
+		}
+	}
+	return nil
+}
+
+// MoveSubGroupUnder moves a sub-group to become a child of another sub-group.
+// If the target doesn't exist, it will be created with the given targetName.
+// This implements tripleshot.GroupWithSubGroupsInterface.
+func (a *groupAdapter) MoveSubGroupUnder(subGroupID, targetID, targetName string) bool {
+	return moveSubGroupUnder(a.group, subGroupID, targetID, targetName)
 }
 
 // DefaultTripleShotConfig returns the default tripleshot configuration
@@ -269,47 +371,7 @@ func (a *adversarialGroupAdapter) GetSubGroupByID(id string) adversarial.GroupIn
 // If the target doesn't exist, it will be created with the given targetName.
 // This implements adversarial.GroupWithSubGroupsInterface.
 func (a *adversarialGroupAdapter) MoveSubGroupUnder(subGroupID, targetID, targetName string) bool {
-	if a.group == nil {
-		return false
-	}
-
-	// Find the sub-group to move
-	var subGroupToMove *InstanceGroup
-	subGroupIndex := -1
-	for i, sg := range a.group.SubGroups {
-		if sg.ID == subGroupID {
-			subGroupToMove = sg
-			subGroupIndex = i
-			break
-		}
-	}
-
-	if subGroupToMove == nil {
-		return false // Sub-group not found
-	}
-
-	// Find or create the target sub-group
-	var targetGroup *InstanceGroup
-	for _, sg := range a.group.SubGroups {
-		if sg.ID == targetID {
-			targetGroup = sg
-			break
-		}
-	}
-
-	if targetGroup == nil {
-		// Create the target sub-group
-		targetGroup = NewInstanceGroupWithID(targetID, targetName)
-		a.group.AddSubGroup(targetGroup)
-	}
-
-	// Remove the sub-group from the parent's direct children
-	a.group.SubGroups = append(a.group.SubGroups[:subGroupIndex], a.group.SubGroups[subGroupIndex+1:]...)
-
-	// Add it to the target sub-group
-	targetGroup.AddSubGroup(subGroupToMove)
-
-	return true
+	return moveSubGroupUnder(a.group, subGroupID, targetID, targetName)
 }
 
 // DefaultAdversarialConfig returns the default adversarial configuration

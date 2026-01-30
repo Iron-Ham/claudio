@@ -95,6 +95,19 @@ type Attempt struct {
 	ReviewApproved bool   `json:"review_approved,omitempty"` // Whether the reviewer approved the attempt
 	ReviewScore    int    `json:"review_score,omitempty"`    // Score from the reviewer (1-10)
 	ReviewRound    int    `json:"review_round,omitempty"`    // Current review round (1-based)
+
+	// Sub-group tracking for adversarial mode display
+	AttemptGroupID        string                `json:"attempt_group_id,omitempty"`         // ID of the "Attempt N" sub-group
+	PreviousRoundsGroupID string                `json:"previous_rounds_group_id,omitempty"` // ID of the "Previous Rounds" container
+	RoundHistory          []AttemptRoundHistory `json:"round_history,omitempty"`            // History of previous rounds
+}
+
+// AttemptRoundHistory tracks instance IDs from previous adversarial rounds for an attempt.
+type AttemptRoundHistory struct {
+	Round         int    `json:"round"`
+	ImplementerID string `json:"implementer_id,omitempty"`
+	ReviewerID    string `json:"reviewer_id,omitempty"`
+	SubGroupID    string `json:"sub_group_id,omitempty"` // Set when moved to "Previous Rounds"
 }
 
 // Evaluation holds the judge's evaluation of the three attempts

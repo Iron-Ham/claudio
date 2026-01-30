@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Tripleshot Adversarial Mode Grouping** - In tripleshot with adversarial mode enabled, instances are now organized hierarchically by attempt. Each of the three attempts gets its own "Attempt N" sub-group in the sidebar, with current round instances at the top level and previous rounds collapsed under a "Previous Rounds" container. The judge instance remains at the main tripleshot group level. This makes it easy to track which attempt each implementer/reviewer pair belongs to and which round within that attempt.
+
 ### Changed
 
 - **Documentation Updates** - Refreshed documentation to cover v0.13.0 and v0.14.0 features: color themes, sidebar scroll navigation (J/K), macOS keyboard shortcuts, `validate` command, background cleanup options, tripleshot adversarial integration, and stuck instance recovery.
