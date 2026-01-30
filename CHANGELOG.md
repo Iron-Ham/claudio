@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Adversarial Mode False Positive Stuck Detection** - Fixed a race condition in adversarial mode where the implementer or reviewer would be incorrectly marked as "stuck" immediately after completion. The issue occurred because the TUI detected the instance as "completed" before Claude had finished writing the sentinel file (`.claudio-adversarial-incremental.json` or `.claudio-adversarial-review.json`). A 3-second grace period is now applied before declaring an instance stuck, allowing time for the file write to complete.
 
+- **Adversarial Mode False Positive Stuck Detection** - Removed automatic stuck detection from adversarial mode, which was causing false positives when Claude was actively thinking/processing. Claude Code shows UI elements like "(shift+Tab to cycle)" even while processing, which triggered incorrect `StateWaitingInput` detection. Adversarial mode now simply polls for completion files like tripleshot does. If an instance genuinely gets stuck, users can interact with it directly or use `:adversarial-retry` to restart.
+
+- **Improved Working State Detection** - Added comprehensive detection of Claude Code's spinner/thinking status words (Thinking, Frosting, Cogitating, Manifesting, Architecting, Razzmatazzing, etc. - the full ~60 word pool) to the working state patterns. This ensures Claude is correctly detected as "working" when these indicators appear in output, preventing false "waiting" state detection.
+
 ## [0.13.0] - 2026-01-29
 
 This release introduces **Adversarial Review Mode** and **Color Themes** - two major features that enhance workflow quality and user experience.
