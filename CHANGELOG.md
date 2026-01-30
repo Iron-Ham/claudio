@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Interactive Config Text Input** - Fixed inability to type lowercase 'k' and 'j' when editing text fields in the interactive config UI (`:config`). The vim-style navigation keys were incorrectly intercepted even when editing string values, preventing users from typing these characters. Navigation with 'k' and 'j' still works for select-type dropdowns and in normal navigation mode.
+
 - **Release Skill Changelog Link** - The `/release` skill now links to the changelog at the release tag (e.g., `blob/v0.14.0/CHANGELOG.md`) instead of `main`, ensuring stable references.
 
 ## [0.14.0] - 2026-01-30

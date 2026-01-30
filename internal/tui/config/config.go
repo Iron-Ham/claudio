@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -663,7 +664,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+d", "pgdown":
 			// Page down - move half a screen
 			halfPage := m.calculateAvailableLines() / 2
-			for i := 0; i < halfPage; i++ {
+			for range halfPage {
 				m.itemIndex++
 				if m.itemIndex >= len(m.categories[m.categoryIndex].Items) {
 					m.categoryIndex++
@@ -681,7 +682,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+u", "pgup":
 			// Page up - move half a screen
 			halfPage := m.calculateAvailableLines() / 2
-			for i := 0; i < halfPage; i++ {
+			for range halfPage {
 				m.itemIndex--
 				if m.itemIndex < 0 {
 					m.categoryIndex--
@@ -776,8 +777,8 @@ func (m *Model) handleEditingKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.selectIndex < 0 {
 				m.selectIndex = len(item.Options) - 1
 			}
+			return m, nil
 		}
-		return m, nil
 
 	case "down", "j":
 		if item.Type == "select" {
@@ -785,8 +786,8 @@ func (m *Model) handleEditingKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.selectIndex >= len(item.Options) {
 				m.selectIndex = 0
 			}
+			return m, nil
 		}
-		return m, nil
 	}
 
 	// Handle text input
@@ -849,16 +850,8 @@ func (m Model) View() string {
 	scrollOffset := m.scrollOffset
 
 	// Clamp scroll offset
-	maxScroll := totalLines - availableLines
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if scrollOffset > maxScroll {
-		scrollOffset = maxScroll
-	}
-	if scrollOffset < 0 {
-		scrollOffset = 0
-	}
+	maxScroll := max(totalLines-availableLines, 0)
+	scrollOffset = max(min(scrollOffset, maxScroll), 0)
 
 	// Show scroll up indicator
 	hasMoreAbove := scrollOffset > 0
@@ -868,10 +861,7 @@ func (m Model) View() string {
 	}
 
 	// Render visible lines
-	endLine := scrollOffset + availableLines
-	if endLine > totalLines {
-		endLine = totalLines
-	}
+	endLine := min(scrollOffset+availableLines, totalLines)
 
 	for i := scrollOffset; i < endLine; i++ {
 		b.WriteString(allLines[i])
@@ -1013,11 +1003,7 @@ func (m Model) currentItem() ConfigItem {
 func (m Model) calculateAvailableLines() int {
 	// Reserve lines for: header (2), config path (2), description (2), messages (2), help (2), scroll indicators (2)
 	const reservedLines = 12
-	availableLines := m.height - reservedLines
-	if availableLines < 5 {
-		availableLines = 5 // Minimum visible lines
-	}
-	return availableLines
+	return max(m.height-reservedLines, 5) // Minimum 5 visible lines
 }
 
 // totalLines returns the total number of lines needed to render all categories and items
@@ -1067,16 +1053,8 @@ func (m *Model) ensureSelectionVisible(availableLines int) {
 	}
 
 	// Clamp scroll offset
-	maxScroll := m.totalLines() - availableLines
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if m.scrollOffset > maxScroll {
-		m.scrollOffset = maxScroll
-	}
-	if m.scrollOffset < 0 {
-		m.scrollOffset = 0
-	}
+	maxScroll := max(m.totalLines()-availableLines, 0)
+	m.scrollOffset = max(min(m.scrollOffset, maxScroll), 0)
 }
 
 func (m Model) getCurrentValue() string {
@@ -1152,14 +1130,7 @@ func (m *Model) validateAndSet(item ConfigItem, value string) error {
 		}
 		viper.Set(item.Key, value == "true")
 	case "select":
-		valid := false
-		for _, opt := range item.Options {
-			if opt == value {
-				valid = true
-				break
-			}
-		}
-		if !valid {
+		if !slices.Contains(item.Options, value) {
 			return fmt.Errorf("invalid option: %s", value)
 		}
 		viper.Set(item.Key, value)
