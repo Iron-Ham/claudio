@@ -259,6 +259,34 @@ Reset configuration to defaults.
 claudio config reset
 ```
 
+#### claudio config theme
+Manage color themes.
+
+```bash
+claudio config theme [command]
+```
+
+**Subcommands:**
+| Command | Description |
+|---------|-------------|
+| `list` | List all available themes (built-in and custom) |
+| `create <name>` | Generate a custom theme template |
+| `export <theme>` | Export a theme's YAML definition |
+
+**Examples:**
+```bash
+# List all themes
+claudio config theme list
+
+# Create a custom theme
+claudio config theme create my-theme
+
+# Export for customization
+claudio config theme export dracula > ~/.config/claudio/themes/my-dracula.yaml
+```
+
+Custom themes are stored in `~/.config/claudio/themes/` and automatically discovered.
+
 ---
 
 ### claudio cleanup
@@ -277,14 +305,31 @@ claudio cleanup [flags]
 | `--worktrees` | | Clean up only worktrees |
 | `--branches` | | Clean up only branches |
 | `--tmux` | | Clean up only tmux sessions |
+| `--all-sessions` | | Clean resources from all sessions, not just current |
+| `--deep-clean` | | Perform thorough cleanup including orphaned resources |
+| `--foreground` | | Run synchronously instead of in background |
+| `--job-status` | | Check status of a background cleanup job |
+
+**Background Execution:**
+
+By default, cleanup runs in the background. Resources are snapshotted at invocation time, so new worktrees created during cleanup are not affected.
 
 **Examples:**
 ```bash
 # Preview cleanup
 claudio cleanup --dry-run
 
-# Clean everything
+# Clean everything (runs in background)
 claudio cleanup --force
+
+# Run synchronously
+claudio cleanup --force --foreground
+
+# Check background job status
+claudio cleanup --job-status abc123
+
+# Deep clean all sessions
+claudio cleanup --all-sessions --force --deep-clean
 
 # Clean only worktrees
 claudio cleanup --worktrees
@@ -294,6 +339,7 @@ claudio cleanup --worktrees
 - Worktrees in `.claudio/worktrees/` with no active session
 - Branches matching `<prefix>/*` not associated with active work
 - Orphaned `claudio-*` tmux sessions
+- Background job files older than 24 hours (auto-cleaned)
 
 ---
 
@@ -404,6 +450,14 @@ List recoverable sessions and orphaned tmux sessions.
 ```bash
 claudio sessions list
 ```
+
+#### claudio sessions attach
+Attach to an existing session by ID.
+```bash
+claudio sessions attach <session-id>
+```
+
+Reconnects to an existing session and launches the TUI.
 
 #### claudio sessions recover
 Recover a previous session.
@@ -564,6 +618,45 @@ claudio adversarial --max-iterations 5 --min-passing-score 9 "Implement auth tok
 4. Loop continues until approved with passing score, or max iterations reached
 
 See [Adversarial Review Guide](../guide/adversarial.md) for detailed documentation.
+
+---
+
+### claudio validate
+
+Validate ultraplan JSON files before execution.
+
+```bash
+claudio validate <plan-file> [flags]
+```
+
+**Arguments:**
+| Argument | Description |
+|----------|-------------|
+| `plan-file` | Path to the ultraplan JSON file to validate |
+
+**Flags:**
+| Flag | Description |
+|------|-------------|
+| `--json` | Output results as JSON for CI/CD integration |
+
+**Validation checks:**
+- Valid JSON syntax
+- Required fields present
+- Task dependency validity (no cycles, no missing references)
+- File conflict detection between parallel tasks
+- Warnings for high complexity tasks
+
+**Examples:**
+```bash
+# Validate a plan file
+claudio validate .claudio-plan.json
+
+# JSON output for CI/CD
+claudio validate --json my-plan.json
+
+# Validate before executing
+claudio validate plan.json && claudio ultraplan --plan plan.json
+```
 
 ---
 

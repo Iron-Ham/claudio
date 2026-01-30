@@ -242,12 +242,23 @@ The header displays:
 └──────────────────────────────┘
 ```
 
+### Round Organization
+
+**Auto-Collapse:** Completed rounds automatically collapse into sub-groups, keeping the sidebar clean while preserving access to round history. The final approved round remains expanded.
+
+**Previous Rounds Container:** When round 2+ starts, previous rounds are condensed into a single "Previous Rounds" container group. This reduces sidebar clutter when tasks span many rounds. You'll see only two groups:
+- "Previous Rounds" (collapsed) - Contains all completed rounds
+- Current round (expanded) - Shows active implementer/reviewer
+
+You can expand "Previous Rounds" to access any historical round's details.
+
 ### Viewing History
 
 Review previous rounds to understand the evolution:
 - Each round's feedback is preserved
 - See how issues were addressed
 - Track score progression
+- Expand collapsed rounds using `gc` key
 
 ## When to Use Adversarial Mode
 
@@ -374,6 +385,29 @@ If iterations don't converge:
 - Check that required_changes are being addressed
 - Look for contradictory feedback
 - Consider breaking into smaller tasks
+
+### Stuck Instance Detection
+
+Claudio automatically detects when an adversarial instance (implementer or reviewer) completes without writing its required sentinel file. When this happens:
+
+1. The workflow transitions to a "stuck" phase
+2. The TUI sidebar shows which role (implementer/reviewer) got stuck
+3. You're notified with recovery options
+
+**Recovery:**
+
+Use the `:adversarial-retry` command in the TUI to restart the stuck role:
+
+```
+:adversarial-retry
+```
+
+This restarts the stuck implementer or reviewer with the appropriate context, allowing the workflow to continue.
+
+**Common causes:**
+- Claude finishes work but fails to write the completion file
+- Network interruptions during file write
+- Task ambiguity causing Claude to wait for clarification
 
 ## Example Workflow
 

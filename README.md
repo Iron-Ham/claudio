@@ -35,12 +35,15 @@ Claudio enables parallel AI-assisted development by orchestrating multiple Claud
 - **UltraPlan Mode** - Hierarchical 4-phase planning with automatic parallel execution
 - **Multi-Pass Planning** - Three competing strategies evaluate and select the best approach
 - **TripleShot Mode** - Spawn 3 parallel attempts per task, then judge selects the best
+- **Adversarial Review** - Iterative implementation with critical reviewer feedback loops
 
 ### Workflow Automation
 - **PR Automation** - AI-generated pull requests with smart reviewer assignment
 - **Cost Tracking** - Monitor token usage and API costs with configurable limits
 - **Session Recovery** - Resume sessions after disconnection
 - **Structured Logging** - JSON logs with filtering, rotation, and export capabilities
+- **Color Themes** - 14 built-in themes plus custom theme support
+- **Plan Validation** - Validate ultraplan JSON files before execution
 
 ## Requirements
 
@@ -124,6 +127,7 @@ claudio add "Update API documentation"
 |-----|--------|
 | `Tab` / `l` / `→` | Next instance |
 | `Shift+Tab` / `h` / `←` | Previous instance |
+| `J` / `K` | Scroll sidebar without changing selection |
 | `a` | Add new instance |
 | `s` | Start selected instance |
 | `p` | Pause/resume instance |
@@ -141,10 +145,12 @@ Press `:` to enter command mode for advanced operations:
 
 | Command | Description |
 |---------|-------------|
+| `:a "task"` | Add a new instance |
 | `:plan "objective"` | Start inline plan generation |
 | `:ultraplan "objective"` | Start inline ultraplan workflow |
 | `:multiplan "objective"` | Multi-pass planning (requires experimental flag) |
-| `:tripleshot "task"` | Start tripleshot execution |
+| `:tripleshot "task"` | Start tripleshot execution (aliases: `:triple`, `:3shot`) |
+| `:adversarial-retry` | Restart stuck adversarial role |
 | `:group create [name]` | Create a new instance group |
 | `:group add <instance> <group>` | Add instance to a group |
 | `:q!` or `:quit!` | Force quit with cleanup |
@@ -248,7 +254,12 @@ completion:
 tui:
   auto_focus_on_input: true
   max_output_lines: 1000
-  sidebar_width: 30
+  sidebar_width: 36
+  theme: default  # or: monokai, dracula, nord, claude-code, etc.
+
+# Session settings
+session:
+  auto_start_on_add: true  # Auto-start instances when added via TUI
 
 # Instance settings
 instance:
@@ -281,6 +292,16 @@ resources:
 # UltraPlan settings
 ultraplan:
   max_parallel: 3
+
+# TripleShot settings
+tripleshot:
+  auto_approve: false
+  adversarial: false  # Pair each implementer with a reviewer
+
+# Adversarial review settings
+adversarial:
+  max_iterations: 10
+  min_passing_score: 8
 
 # Experimental features
 experimental:

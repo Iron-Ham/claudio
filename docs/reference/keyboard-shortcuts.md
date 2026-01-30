@@ -11,6 +11,15 @@ Quick reference for TUI keyboard shortcuts.
 | `l` / `→` | Next instance |
 | `h` / `←` | Previous instance |
 
+## Sidebar Navigation
+
+| Key | Action |
+|-----|--------|
+| `J` (Shift+j) | Scroll sidebar down without changing selection |
+| `K` (Shift+k) | Scroll sidebar up without changing selection |
+
+Use `J`/`K` to view instances "above the fold" (indicated by "▲ N more above" or "▼ N more below") without losing your current selection. Regular `j`/`k` scrolls the output panel.
+
 ## Instance Control
 
 | Key | Action |
@@ -79,6 +88,19 @@ These shortcuts use a vim-style `g` prefix. Press `g` first, then the action key
 | `Enter` | Send input |
 | `Esc` | Cancel input |
 
+### macOS Navigation (Input Mode)
+
+| Key | Action |
+|-----|--------|
+| `Opt+←` | Move cursor one word left |
+| `Opt+→` | Move cursor one word right |
+| `Opt+Backspace` | Delete word before cursor |
+| `Cmd+←` | Move to beginning of line |
+| `Cmd+→` | Move to end of line |
+| `Cmd+Backspace` | Delete to beginning of line |
+
+> **Note:** macOS shortcuts require terminal support for forwarding these key combinations.
+
 ## Global
 
 | Key | Action |
@@ -94,13 +116,18 @@ Press `:` to enter command mode, then type a command:
 
 | Command | Action |
 |---------|--------|
+| `:a "task"` | Add new instance |
+| `:s` | Start selected instance |
 | `:plan "..."` | Inline plan generation |
 | `:ultraplan "..."` | Inline UltraPlan workflow |
 | `:multiplan "..."` | Multi-pass planning |
-| `:tripleshot "..."` | TripleShot execution |
+| `:tripleshot "..."` | TripleShot execution (aliases: `:triple`, `:3shot`) |
+| `:adversarial-retry` | Restart stuck adversarial role |
 | `:group create` | Create new group |
 | `:group add` | Add instance to group |
 | `:group show` | Toggle grouped view |
+| `:d` | Show diff for selected instance |
+| `:D` | Remove selected instance |
 | `:q!` | Force quit with cleanup |
 
 ## Status Indicators
