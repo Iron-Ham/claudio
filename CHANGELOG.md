@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-01-30
+
 ### Fixed
 
 - **Interactive Config Text Input** - Fixed inability to type lowercase 'k' and 'j' when editing text fields in the interactive config UI (`:config`). The vim-style navigation keys were incorrectly intercepted even when editing string values, preventing users from typing these characters. Navigation with 'k' and 'j' still works for select-type dropdowns and in normal navigation mode.
@@ -885,6 +887,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.14.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.14.1
 [0.14.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.14.0
 [0.13.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.13.0
 [0.12.7]: https://github.com/Iron-Ham/claudio/releases/tag/v0.12.7
