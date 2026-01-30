@@ -825,3 +825,100 @@ func TestEmptyOutputHandling(t *testing.T) {
 		t.Errorf("GetMaxScroll(empty) = %d, want 0", got)
 	}
 }
+
+// TestGetLineCountUsesFilterCache verifies that line counting uses the filter cache
+// to avoid redundant expensive filter computations on every tick.
+func TestGetLineCountUsesFilterCache(t *testing.T) {
+	m := NewManager()
+	instanceID := "test"
+
+	// Create output with a mix of lines that will and won't be filtered
+	// Some lines have "error", some don't
+	var sb strings.Builder
+	for i := 0; i < 50; i++ {
+		sb.WriteString("line with error\n") // Will be filtered out
+		sb.WriteString("clean line\n")      // Will be kept
+	}
+	m.SetOutput(instanceID, sb.String())
+
+	// Track how many times the filter function is called
+	filterCallCount := 0
+	m.SetFilterFunc(func(output string) string {
+		filterCallCount++
+		// Simple filter that removes "error" lines
+		var result strings.Builder
+		for _, line := range strings.Split(output, "\n") {
+			if !strings.Contains(line, "error") {
+				result.WriteString(line)
+				result.WriteString("\n")
+			}
+		}
+		return strings.TrimSuffix(result.String(), "\n")
+	})
+
+	// First call to GetFilteredOutput should call the filter and cache the result
+	filtered1 := m.GetFilteredOutput(instanceID)
+	if filterCallCount != 1 {
+		t.Errorf("First GetFilteredOutput: filter called %d times, want 1", filterCallCount)
+	}
+
+	// GetLineCount should use the cache, not call filter again
+	lineCount1 := m.GetLineCount(instanceID)
+	if filterCallCount != 1 {
+		t.Errorf("After GetLineCount: filter called %d times, want 1 (should use cache)", filterCallCount)
+	}
+
+	// GetVisibleLines should also use the cache
+	_ = m.GetVisibleLines(instanceID, 10)
+	if filterCallCount != 1 {
+		t.Errorf("After GetVisibleLines: filter called %d times, want 1 (should use cache)", filterCallCount)
+	}
+
+	// UpdateScroll should also use the cache
+	m.UpdateScroll(instanceID, 10)
+	if filterCallCount != 1 {
+		t.Errorf("After UpdateScroll: filter called %d times, want 1 (should use cache)", filterCallCount)
+	}
+
+	// Calling GetFilteredOutput again should still use the cache
+	_ = m.GetFilteredOutput(instanceID)
+	if filterCallCount != 1 {
+		t.Errorf("After second GetFilteredOutput (no change): filter called %d times, want 1", filterCallCount)
+	}
+
+	// Now change the output - cache should be invalidated
+	m.SetOutput(instanceID, sb.String()+"extra clean line\n")
+	filtered2 := m.GetFilteredOutput(instanceID) // Prime the cache again
+	if filterCallCount != 2 {
+		t.Errorf("After SetOutput + GetFilteredOutput: filter called %d times, want 2", filterCallCount)
+	}
+
+	// Line count should increase after adding content
+	lineCount2 := m.GetLineCount(instanceID)
+	if lineCount2 <= lineCount1 {
+		t.Errorf("GetLineCount after adding output = %d, want > %d", lineCount2, lineCount1)
+	}
+	if filterCallCount != 2 {
+		t.Errorf("After second GetLineCount: filter called %d times, want 2 (should use cache)", filterCallCount)
+	}
+
+	// Verify filtered output changed appropriately
+	if !strings.Contains(filtered2, "extra clean line") {
+		t.Error("Filtered output should contain 'extra clean line'")
+	}
+	if filtered1 == filtered2 {
+		t.Error("Filtered output should have changed after SetOutput")
+	}
+
+	// Key test: multiple scroll/line operations should NOT call filter again
+	m.UpdateScroll(instanceID, 10)
+	m.UpdateScroll(instanceID, 10)
+	m.UpdateScroll(instanceID, 10)
+	_ = m.GetLineCount(instanceID)
+	_ = m.GetVisibleLines(instanceID, 5)
+	_ = m.GetVisibleLines(instanceID, 10)
+
+	if filterCallCount != 2 {
+		t.Errorf("After multiple operations: filter called %d times, want 2 (all should use cache)", filterCallCount)
+	}
+}

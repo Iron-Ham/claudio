@@ -20,7 +20,23 @@ import (
 // handleKeypress processes keyboard input and routes to appropriate mode handlers.
 // This is the main entry point for all keyboard input in the TUI.
 func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Sync router state for mode tracking
+	// Fast path for INPUT mode: skip syncRouterState when forwarding keys to tmux
+	if m.inputMode {
+		if m.inputRouter != nil {
+			m.inputRouter.SetMode(input.ModeInput)
+		}
+		return m.handleInputMode(msg)
+	}
+
+	// Fast path for terminal mode: skip syncRouterState when forwarding keys to terminal pane
+	if m.terminalManager.IsFocused() {
+		if m.inputRouter != nil {
+			m.inputRouter.SetMode(input.ModeTerminal)
+		}
+		return m.handleTerminalMode(msg)
+	}
+
+	// Sync router state for other modes
 	m.syncRouterState()
 
 	// Handle search mode - typing search pattern
@@ -31,16 +47,6 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle filter mode - selecting categories
 	if m.filterMode {
 		return m.handleFilterInput(msg)
-	}
-
-	// Handle input mode - forward keys to the active instance's tmux session
-	if m.inputMode {
-		return m.handleInputMode(msg)
-	}
-
-	// Handle terminal mode - forward keys to the terminal pane's tmux session
-	if m.terminalManager.IsFocused() {
-		return m.handleTerminalMode(msg)
 	}
 
 	// Handle task input mode
