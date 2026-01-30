@@ -11,6 +11,13 @@ import (
 	"sync"
 )
 
+// cacheEntry holds a cached filtered output and its invalidation metadata.
+type cacheEntry struct {
+	filtered      string
+	outputVersion uint64
+	filterVersion uint64
+}
+
 // Manager handles output buffer management for TUI instances.
 // It maintains output buffers per instance with scrolling state and
 // auto-scroll behavior for following new output.
@@ -33,6 +40,17 @@ type Manager struct {
 	// filterFunc is an optional function to apply when counting visible lines
 	// This allows the manager to account for filtered output when calculating scroll
 	filterFunc func(output string) string
+
+	// filteredCache stores cached filtered output per instance ID with version metadata.
+	// Cache entries are invalidated when raw output changes or filter settings change.
+	filteredCache map[string]cacheEntry
+
+	// outputVersions tracks the "version" of each instance's output for cache invalidation.
+	// Incremented each time SetOutput/AddOutput is called with changed content.
+	outputVersions map[string]uint64
+
+	// filterVersion is incremented when filter settings change, invalidating all caches
+	filterVersion uint64
 }
 
 // NewManager creates a new output Manager with initialized maps.
@@ -42,15 +60,27 @@ func NewManager() *Manager {
 		scrollOffsets:  make(map[string]int),
 		autoScroll:     make(map[string]bool),
 		lineCountCache: make(map[string]int),
+		filteredCache:  make(map[string]cacheEntry),
+		outputVersions: make(map[string]uint64),
 	}
 }
 
 // SetFilterFunc sets the filter function used when calculating visible line counts.
 // This should be set to match the filter applied during rendering.
+// Note: This does NOT invalidate the cache. Call InvalidateFilterCache() when
+// the filter settings change to force recomputation.
 func (m *Manager) SetFilterFunc(f func(output string) string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.filterFunc = f
+}
+
+// InvalidateFilterCache marks all cached filtered outputs as stale.
+// Call this when filter settings (categories, custom pattern, etc.) change.
+func (m *Manager) InvalidateFilterCache() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.filterVersion++
 }
 
 // AddOutput appends output to an instance's buffer.
@@ -58,7 +88,10 @@ func (m *Manager) SetFilterFunc(f func(output string) string) {
 func (m *Manager) AddOutput(instanceID string, output string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.outputs[instanceID] += output
+	if output != "" {
+		m.outputs[instanceID] += output
+		m.outputVersions[instanceID]++
+	}
 }
 
 // SetOutput replaces the entire output buffer for an instance.
@@ -66,7 +99,11 @@ func (m *Manager) AddOutput(instanceID string, output string) {
 func (m *Manager) SetOutput(instanceID string, output string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.outputs[instanceID] = output
+	// Only increment version if output actually changed
+	if m.outputs[instanceID] != output {
+		m.outputs[instanceID] = output
+		m.outputVersions[instanceID]++
+	}
 }
 
 // GetOutput returns the output for an instance.
@@ -85,6 +122,8 @@ func (m *Manager) Clear(instanceID string) {
 	delete(m.scrollOffsets, instanceID)
 	delete(m.autoScroll, instanceID)
 	delete(m.lineCountCache, instanceID)
+	delete(m.filteredCache, instanceID)
+	delete(m.outputVersions, instanceID)
 }
 
 // ClearAll removes all output and state for all instances.
@@ -95,6 +134,8 @@ func (m *Manager) ClearAll() {
 	m.scrollOffsets = make(map[string]int)
 	m.autoScroll = make(map[string]bool)
 	m.lineCountCache = make(map[string]int)
+	m.filteredCache = make(map[string]cacheEntry)
+	m.outputVersions = make(map[string]uint64)
 }
 
 // Scroll adjusts the scroll position by delta lines.
@@ -280,15 +321,50 @@ func (m *Manager) GetAllOutputs() map[string]string {
 
 // GetFilteredOutput returns the output after applying the filter function.
 // If no filter is set, returns the raw output.
+// Results are cached and only recomputed when the output or filter settings change.
 func (m *Manager) GetFilteredOutput(instanceID string) string {
+	// First try read-only path to check cache
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	output := m.outputs[instanceID]
+	if output == "" || m.filterFunc == nil {
+		m.mu.RUnlock()
+		return output
+	}
+
+	// Check if cache is valid
+	outputVersion := m.outputVersions[instanceID]
+	entry, ok := m.filteredCache[instanceID]
+	if ok && entry.outputVersion == outputVersion && entry.filterVersion == m.filterVersion {
+		m.mu.RUnlock()
+		return entry.filtered
+	}
+	m.mu.RUnlock()
+
+	// Cache miss - need to recompute with write lock
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	output = m.outputs[instanceID]
 	if output == "" || m.filterFunc == nil {
 		return output
 	}
-	return m.filterFunc(output)
+
+	// Check cache again (another goroutine may have updated it)
+	outputVersion = m.outputVersions[instanceID]
+	if entry, ok := m.filteredCache[instanceID]; ok && entry.outputVersion == outputVersion && entry.filterVersion == m.filterVersion {
+		return entry.filtered
+	}
+
+	// Compute and cache
+	filtered := m.filterFunc(output)
+	m.filteredCache[instanceID] = cacheEntry{
+		filtered:      filtered,
+		outputVersion: outputVersion,
+		filterVersion: m.filterVersion,
+	}
+
+	return filtered
 }
 
 // GetVisibleLines returns the lines that should be visible based on scroll offset.

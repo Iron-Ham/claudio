@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`claudio tripleshot` CLI Command** - The standalone `claudio tripleshot` command has been removed. TripleShot mode is now exclusively accessed through the TUI via the `:tripleshot` command (or aliases `:triple`, `:3shot`). This consolidates all tripleshot functionality within the standard TUI, providing a more consistent user experience. To use tripleshot, run `claudio start` and then use `:tripleshot` in command mode.
 
+### Performance
+
+- **Input Mode Typing Responsiveness** - Fixed typing lag and stuttering in INPUT mode when interacting with Claude instances. The output filtering logic now caches filtered results per instance and only recomputes when the raw output or filter settings change. Previously, every keystroke triggered expensive string operations (line splitting, regex matching, case conversion) on the entire output buffer, even when nothing had changed.
+
 ### Fixed
 
 - **TripleShot-Adversarial Feedback Loop** - Each implementer now properly iterates with reviewer feedback instead of failing on first rejection. When a reviewer rejects an attempt, the implementer is restarted with the reviewer's feedback, issues, and required changes. This continues until the reviewer approves or max rounds are exhausted (uses `adversarial.max_iterations`, default 10, 0 = unlimited). Also fixed the TUI not polling during the adversarial review phase, which prevented reviewer completions from being detected.

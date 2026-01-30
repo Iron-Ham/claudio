@@ -1389,11 +1389,10 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	mgr := m.orchestrator.GetInstanceManager(inst.ID)
 	isRunning := mgr != nil && mgr.Running()
 
-	// Apply filters to output
-	output := m.outputManager.GetOutput(inst.ID)
-	if output != "" {
-		output = m.filterOutput(output)
-	}
+	// Get filtered output using cache (avoids expensive recomputation on every render)
+	// Ensure filter function is set for cached filtering to work
+	m.outputManager.SetFilterFunc(m.filterOutput)
+	output := m.outputManager.GetFilteredOutput(inst.ID)
 
 	renderState := view.RenderState{
 		Output:            output,
