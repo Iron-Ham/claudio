@@ -351,6 +351,127 @@ func TestTUIConfigCoversAllConfigFields(t *testing.T) {
 	}
 }
 
+// toModel converts a tea.Model to *Model, handling both Model and *Model types
+func toModel(m tea.Model) *Model {
+	switch v := m.(type) {
+	case Model:
+		return &v
+	case *Model:
+		return v
+	default:
+		panic("unexpected model type")
+	}
+}
+
+// TestEditingModeAllowsTypingKAndJ verifies that when editing a text field,
+// pressing 'k' or 'j' types those characters instead of navigating.
+// This is a regression test for a bug where 'k' and 'j' were consumed by
+// navigation even when editing text inputs.
+func TestEditingModeAllowsTypingKAndJ(t *testing.T) {
+	m := New()
+	m.width = 80
+	m.height = 30
+
+	// Find a string-type config item (not bool or select)
+	// Navigate to "Branch Prefix" which is a string type
+	for ci, cat := range m.categories {
+		for ii, item := range cat.Items {
+			if item.Type == "string" {
+				m.categoryIndex = ci
+				m.itemIndex = ii
+				goto found
+			}
+		}
+	}
+found:
+
+	// Enter editing mode (returns Model)
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mp := toModel(newModel)
+
+	if !mp.editing {
+		t.Fatal("should be in editing mode after pressing enter on a string field")
+	}
+
+	// Clear any default value
+	mp.textInput.SetValue("")
+
+	// Type 'k' - should add 'k' to the text input, not navigate
+	// handleEditingKeypress returns *Model, so we need to handle both types
+	newModel, _ = mp.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	mp = toModel(newModel)
+
+	if mp.textInput.Value() != "k" {
+		t.Errorf("pressing 'k' in text edit mode should type 'k', got %q", mp.textInput.Value())
+	}
+
+	// Type 'j' - should add 'j' to the text input
+	newModel, _ = mp.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	mp = toModel(newModel)
+
+	if mp.textInput.Value() != "kj" {
+		t.Errorf("pressing 'j' in text edit mode should type 'j', got %q", mp.textInput.Value())
+	}
+
+	// Verify we're still in editing mode
+	if !mp.editing {
+		t.Error("should still be in editing mode after typing")
+	}
+}
+
+// TestSelectModeNavigationWithKAndJ verifies that 'k' and 'j' still work
+// for navigation when editing a select-type field.
+func TestSelectModeNavigationWithKAndJ(t *testing.T) {
+	m := New()
+	m.width = 80
+	m.height = 30
+
+	// Find a select-type config item
+	for ci, cat := range m.categories {
+		for ii, item := range cat.Items {
+			if item.Type == "select" && len(item.Options) > 1 {
+				m.categoryIndex = ci
+				m.itemIndex = ii
+				goto found
+			}
+		}
+	}
+found:
+
+	item := m.currentItem()
+	if item.Type != "select" {
+		t.Skip("no select-type item found")
+	}
+
+	// Enter editing mode (returns Model)
+	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	mp := toModel(newModel)
+
+	if !mp.editing {
+		t.Fatal("should be in editing mode after pressing enter on a select field")
+	}
+
+	initialIndex := mp.selectIndex
+
+	// Press 'j' - should move down in select options
+	// handleEditingKeypress returns *Model
+	newModel, _ = mp.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	mp = toModel(newModel)
+
+	expectedAfterJ := (initialIndex + 1) % len(item.Options)
+	if mp.selectIndex != expectedAfterJ {
+		t.Errorf("pressing 'j' in select mode should navigate down, expected index %d, got %d", expectedAfterJ, mp.selectIndex)
+	}
+
+	// Press 'k' - should move up in select options
+	newModel, _ = mp.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	mp = toModel(newModel)
+
+	if mp.selectIndex != initialIndex {
+		t.Errorf("pressing 'k' in select mode should navigate up, expected index %d, got %d", initialIndex, mp.selectIndex)
+	}
+}
+
 // extractConfigKeys uses reflection to get all leaf field keys from a struct.
 // It recursively handles nested structs and builds dot-separated keys like "instance.tmux_width".
 func extractConfigKeys(t reflect.Type, prefix string) []string {
