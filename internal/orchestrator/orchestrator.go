@@ -2319,6 +2319,114 @@ func (o *Orchestrator) AddInstanceStub(session *Session, task string) (*Instance
 	return inst, nil
 }
 
+// AddBlankInstanceStub creates a new Claude instance with no task (blank session).
+// This is for users who want to start an interactive Claude session without a specific prompt.
+// The displayName is used for the sidebar; if empty, a generic "Session N" name is generated.
+// ManuallyNamed is set to true to prevent auto-rename by the LLM namer.
+//
+// This uses the same two-phase async pattern as AddInstanceStub.
+func (o *Orchestrator) AddBlankInstanceStub(session *Session, displayName string) (*Instance, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	// Generate display name if not provided
+	if displayName == "" {
+		displayName = o.generateBlankSessionName(session)
+	}
+
+	// Create instance with empty task
+	inst := NewInstance("")
+	inst.Status = StatusPreparing
+	inst.DisplayName = displayName
+	inst.ManuallyNamed = true // Prevent auto-rename since user named it or we generated a session number
+
+	// Generate branch name from display name
+	branchSlug := slugify(displayName)
+	inst.Branch = o.generateBranchName(inst.ID, branchSlug)
+
+	// Set the worktree path (but don't create it yet)
+	inst.WorktreePath = filepath.Join(o.worktreeDir, inst.ID)
+
+	// Add to session immediately so it shows in the UI
+	session.Instances = append(session.Instances, inst)
+
+	// Save session with the stub
+	if err := o.saveSession(); err != nil {
+		// Remove from session on failure
+		session.Instances = session.Instances[:len(session.Instances)-1]
+		if o.logger != nil {
+			o.logger.Error("failed to save session after adding blank stub",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
+		return nil, fmt.Errorf("failed to save session: %w", err)
+	}
+
+	// Log stub creation
+	if o.logger != nil {
+		o.logger.Info("blank instance stub added",
+			"instance_id", inst.ID,
+			"display_name", displayName,
+			"branch", inst.Branch,
+		)
+	}
+
+	return inst, nil
+}
+
+// generateBlankSessionName generates a unique "Session N" name for blank sessions.
+// It finds the highest existing session number and returns the next one.
+func (o *Orchestrator) generateBlankSessionName(session *Session) string {
+	maxNum := 0
+	prefix := "Session "
+
+	for _, inst := range session.Instances {
+		name := inst.EffectiveName()
+		if numStr, found := strings.CutPrefix(name, prefix); found {
+			if num, err := strconv.Atoi(numStr); err == nil && num > maxNum {
+				maxNum = num
+			}
+		}
+	}
+
+	return fmt.Sprintf("%s%d", prefix, maxNum+1)
+}
+
+// RenameInstance changes the display name of an instance.
+// Setting an empty name clears the display name and re-enables auto-naming.
+func (o *Orchestrator) RenameInstance(session *Session, instanceID string, newName string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	inst := session.GetInstance(instanceID)
+	if inst == nil {
+		return fmt.Errorf("instance %s not found", instanceID)
+	}
+
+	if newName == "" {
+		// Clear name and re-enable auto-naming
+		inst.DisplayName = ""
+		inst.ManuallyNamed = false
+	} else {
+		inst.DisplayName = newName
+		inst.ManuallyNamed = true
+	}
+
+	if err := o.saveSession(); err != nil {
+		return fmt.Errorf("failed to save session: %w", err)
+	}
+
+	if o.logger != nil {
+		o.logger.Info("instance renamed",
+			"instance_id", instanceID,
+			"new_name", newName,
+		)
+	}
+
+	return nil
+}
+
 // CompleteInstanceSetupByID finds an instance by ID and completes its async setup.
 // This is a convenience wrapper around CompleteInstanceSetup for use by components
 // that only have the instance ID (e.g., tripleshot coordinator).

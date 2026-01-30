@@ -743,6 +743,12 @@ func TestInstance_EffectiveName(t *testing.T) {
 			task:        "A very long task description",
 			expected:    "X",
 		},
+		{
+			name:        "blank session with DisplayName",
+			displayName: "Session 1",
+			task:        "", // Blank session has empty task
+			expected:    "Session 1",
+		},
 	}
 
 	for _, tt := range tests {

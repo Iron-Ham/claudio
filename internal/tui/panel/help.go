@@ -166,6 +166,8 @@ func DefaultHelpSections() []HelpSection {
 			Title: "Instance Management",
 			Items: []HelpItem{
 				{Key: ":a  :add", Description: "Create and add new instance"},
+				{Key: ":n  :new [name]", Description: "Create blank session (no prompt)"},
+				{Key: ":rename <name>", Description: "Rename the selected instance"},
 				{Key: ":chain [N]  :dep  :depends", Description: "Add dependent task (N = sidebar #, or #N)"},
 				{Key: ":D  :remove", Description: "Remove instance (keeps branch)"},
 				{Key: ":kill", Description: "Force kill and remove instance"},

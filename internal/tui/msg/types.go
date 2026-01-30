@@ -67,6 +67,13 @@ type InstanceSetupCompleteMsg struct {
 	Err        error
 }
 
+// BlankInstanceStubCreatedMsg is sent when a blank instance stub creation completes.
+// Blank instances have no task/prompt - they start Claude in interactive mode.
+type BlankInstanceStubCreatedMsg struct {
+	Instance *orchestrator.Instance
+	Err      error
+}
+
 // DependentTaskAddedMsg is sent when async dependent task addition completes.
 type DependentTaskAddedMsg struct {
 	Instance  *orchestrator.Instance

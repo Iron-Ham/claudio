@@ -131,6 +131,10 @@ type Result struct {
 	RalphPrompt            *string // The prompt for ralph loop
 	RalphMaxIterations     *int    // Max iterations (safety limit)
 	RalphCompletionPromise *string // Phrase that signals completion
+
+	// Instance renaming
+	RenameInstance     *bool   // Request to rename the active instance
+	RenameInstanceName *string // New name for the instance
 }
 
 // CommandInfo contains metadata about a command for help display.
@@ -252,6 +256,9 @@ func (h *Handler) registerCommands() {
 	// Instance management commands
 	h.commands["a"] = cmdAdd
 	h.commands["add"] = cmdAdd
+	h.argCommands["n"] = cmdNew
+	h.argCommands["new"] = cmdNew
+	h.argCommands["rename"] = cmdRename
 	h.argCommands["chain"] = cmdChain
 	h.argCommands["dep"] = cmdChain
 	h.argCommands["depends"] = cmdChain
@@ -348,6 +355,8 @@ func (h *Handler) buildCategories() {
 			Name: "Instance Management",
 			Commands: []CommandInfo{
 				{ShortKey: "a", LongKey: "add", Description: "Create and add a new instance", Category: "management"},
+				{ShortKey: "n", LongKey: "new", Description: "Create blank session (no prompt)", Category: "management"},
+				{ShortKey: "", LongKey: "rename", Description: "Rename the selected instance", Category: "management"},
 				{ShortKey: "", LongKey: "chain", Description: "Add task that auto-starts after selected instance", Category: "management"},
 				{ShortKey: "D", LongKey: "remove", Description: "Remove instance from session", Category: "management"},
 				{ShortKey: "", LongKey: "kill", Description: "Force kill instance process and remove from session", Category: "management"},
@@ -648,6 +657,51 @@ func cmdRestart(deps Dependencies) Result {
 func cmdAdd(_ Dependencies) Result {
 	addingTask := true
 	return Result{AddingTask: &addingTask}
+}
+
+// cmdNew creates a new blank Claude session without a prompt.
+// Usage:
+//   - :new           - Creates "Session 1", "Session 2", etc.
+//   - :new my-name   - Creates a session named "my-name"
+//   - :n             - Short alias for :new
+func cmdNew(deps Dependencies, args string) Result {
+	orch := deps.GetOrchestrator()
+	session := deps.GetSession()
+	if orch == nil || session == nil {
+		return Result{ErrorMessage: "No orchestrator or session available"}
+	}
+
+	// Parse optional name argument
+	name := strings.TrimSpace(args)
+
+	return Result{
+		InfoMessage: "Creating new session...",
+		TeaCmd:      msg.AddBlankInstanceStubAsync(orch, session, name),
+	}
+}
+
+// cmdRename renames the currently selected instance.
+// Usage:
+//   - :rename my-name   - Renames the instance to "my-name"
+//   - :rename           - Shows usage error (name required)
+func cmdRename(deps Dependencies, args string) Result {
+	inst := deps.ActiveInstance()
+	if inst == nil {
+		return Result{InfoMessage: "No instance selected"}
+	}
+
+	name := strings.TrimSpace(args)
+	if name == "" {
+		return Result{ErrorMessage: "Usage: :rename <name>"}
+	}
+
+	// Signal to rename the instance
+	rename := true
+	return Result{
+		RenameInstance:     &rename,
+		RenameInstanceName: &name,
+		InfoMessage:        fmt.Sprintf("Renamed to: %s", name),
+	}
 }
 
 func cmdChain(deps Dependencies, args string) Result {

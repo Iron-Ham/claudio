@@ -128,6 +128,22 @@ func CompleteInstanceSetupAsync(o *orchestrator.Orchestrator, session *orchestra
 	}
 }
 
+// AddBlankInstanceStubAsync returns a command that creates a blank instance stub asynchronously.
+// Blank instances have no task/prompt - they start Claude in interactive mode.
+// The displayName is optional; if empty, a generic "Session N" name is generated.
+func AddBlankInstanceStubAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, displayName string) tea.Cmd {
+	return func() tea.Msg {
+		if o == nil {
+			return BlankInstanceStubCreatedMsg{Instance: nil, Err: fmt.Errorf("orchestrator is nil")}
+		}
+		if session == nil {
+			return BlankInstanceStubCreatedMsg{Instance: nil, Err: fmt.Errorf("session is nil")}
+		}
+		inst, err := o.AddBlankInstanceStub(session, displayName)
+		return BlankInstanceStubCreatedMsg{Instance: inst, Err: err}
+	}
+}
+
 // AddTaskFromBranchAsync returns a command that adds a task from a specific base branch asynchronously.
 // The baseBranch parameter specifies which branch the new worktree should be created from.
 func AddTaskFromBranchAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, task string, baseBranch string) tea.Cmd {

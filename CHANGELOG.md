@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Blank Session Command** - Added `:new` (alias `:n`) command to create a blank Claude session without requiring a prompt. This starts Claude in interactive mode, allowing users to work with the assistant directly. Sessions can be optionally named (`:new my-session`) or automatically numbered ("Session 1", "Session 2", etc.). Also added `:rename <name>` command to change the display name of any instance, which is useful for both blank sessions and task-based instances.
+
 - **Release Skill** - Added a Claude skill for cutting releases with professional release notes and GitHub Releases. The `/release` command handles the complete workflow: validating release readiness, parsing CHANGELOG.md, determining semantic version bumps, generating narrative release notes, updating the changelog, creating git tags, and publishing GitHub Releases. Includes `/release-preview` for dry-run previews, `/release-notes` for generating standalone release notes in multiple formats (markdown, Slack, Discord, Twitter, email), and `/release-notes-from-git` for auditing changelog completeness against git history.
 
 - **Enhanced Keyboard Navigation** - Added support for macOS-style keyboard shortcuts in input mode and the task prompt writer. Input mode now properly forwards `Opt+Left/Right` (word navigation) and `Opt+Backspace` (word deletion) to Claude instances. The task prompt writer now supports both the `msg.Alt` flag and string-based key reporting for `Opt+Arrow/Backspace`, as well as `Cmd+Left/Right/Backspace` (line navigation and delete-to-line-start) for terminals that forward these keys.

@@ -551,6 +551,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tuimsg.BlankInstanceStubCreatedMsg:
+		// Fast first phase of blank instance creation completed
+		if msg.Err != nil {
+			m.errorMessage = fmt.Sprintf("Failed to create session: %v", msg.Err)
+			return m, nil
+		}
+		if msg.Instance != nil {
+			m.infoMessage = fmt.Sprintf("Created: %s", msg.Instance.EffectiveName())
+			// Select the new instance
+			for i, inst := range m.session.Instances {
+				if inst.ID == msg.Instance.ID {
+					m.activeTab = i
+					break
+				}
+			}
+			// Kick off the slow second phase (worktree creation)
+			return m, tuimsg.CompleteInstanceSetupAsync(m.orchestrator, m.session, msg.Instance)
+		}
+		return m, nil
+
 	case tuimsg.InstanceSetupCompleteMsg:
 		// Slow second phase completed - worktree is ready, optionally auto-start
 		update.HandleInstanceSetupComplete(m.newUpdateContext(), msg)
@@ -950,6 +970,15 @@ func (m *Model) applyCommandResult(result command.Result) {
 	// Handle grouped view toggle
 	if result.ToggleGroupedView != nil && *result.ToggleGroupedView {
 		m.toggleGroupedView()
+	}
+
+	// Handle instance renaming
+	if result.RenameInstance != nil && *result.RenameInstance && result.RenameInstanceName != nil {
+		if inst := m.activeInstance(); inst != nil {
+			if err := m.orchestrator.RenameInstance(m.session, inst.ID, *result.RenameInstanceName); err != nil {
+				m.errorMessage = fmt.Sprintf("Rename failed: %v", err)
+			}
+		}
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/config"
@@ -609,6 +611,162 @@ func TestOrchestrator_EnsureInstanceManagers_NilSession(t *testing.T) {
 
 	// Verify no managers were created (nothing to create)
 	// This is a no-op when session is nil
+}
+
+func TestOrchestrator_AddBlankInstanceStub(t *testing.T) {
+	testutil.SkipIfNoGit(t)
+
+	repoDir := testutil.SetupTestRepo(t)
+	orch, err := New(repoDir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	session, err := orch.StartSession("test")
+	if err != nil {
+		t.Fatalf("StartSession() error = %v", err)
+	}
+
+	t.Run("creates instance with provided display name", func(t *testing.T) {
+		inst, err := orch.AddBlankInstanceStub(session, "My Custom Session")
+		if err != nil {
+			t.Fatalf("AddBlankInstanceStub() error = %v", err)
+		}
+
+		if inst == nil {
+			t.Fatal("AddBlankInstanceStub() returned nil instance")
+		}
+
+		if inst.Task != "" {
+			t.Errorf("inst.Task = %q, want empty string", inst.Task)
+		}
+
+		if inst.DisplayName != "My Custom Session" {
+			t.Errorf("inst.DisplayName = %q, want %q", inst.DisplayName, "My Custom Session")
+		}
+
+		if !inst.ManuallyNamed {
+			t.Error("inst.ManuallyNamed should be true")
+		}
+
+		if inst.Status != StatusPreparing {
+			t.Errorf("inst.Status = %v, want %v", inst.Status, StatusPreparing)
+		}
+
+		if inst.WorktreePath == "" {
+			t.Error("inst.WorktreePath should not be empty")
+		}
+
+		if inst.Branch == "" {
+			t.Error("inst.Branch should not be empty")
+		}
+	})
+
+	t.Run("generates Session N name when display name is empty", func(t *testing.T) {
+		inst, err := orch.AddBlankInstanceStub(session, "")
+		if err != nil {
+			t.Fatalf("AddBlankInstanceStub() error = %v", err)
+		}
+
+		// Should start with "Session " prefix
+		if !strings.HasPrefix(inst.DisplayName, "Session ") {
+			t.Errorf("inst.DisplayName = %q, want prefix 'Session '", inst.DisplayName)
+		}
+
+		if !inst.ManuallyNamed {
+			t.Error("inst.ManuallyNamed should be true even for auto-generated names")
+		}
+	})
+
+	t.Run("increments session number for subsequent blank sessions", func(t *testing.T) {
+		// Add two more blank sessions
+		inst1, err := orch.AddBlankInstanceStub(session, "")
+		if err != nil {
+			t.Fatalf("AddBlankInstanceStub() error = %v", err)
+		}
+
+		inst2, err := orch.AddBlankInstanceStub(session, "")
+		if err != nil {
+			t.Fatalf("AddBlankInstanceStub() error = %v", err)
+		}
+
+		// Extract numbers and verify they're incrementing
+		num1 := extractSessionNumber(inst1.DisplayName)
+		num2 := extractSessionNumber(inst2.DisplayName)
+
+		if num2 <= num1 {
+			t.Errorf("session numbers should increment: got %d then %d", num1, num2)
+		}
+	})
+}
+
+// extractSessionNumber extracts the number from "Session N" format
+func extractSessionNumber(name string) int {
+	prefix := "Session "
+	if numStr, found := strings.CutPrefix(name, prefix); found {
+		if num, err := strconv.Atoi(numStr); err == nil {
+			return num
+		}
+	}
+	return 0
+}
+
+func TestOrchestrator_RenameInstance(t *testing.T) {
+	testutil.SkipIfNoGit(t)
+
+	repoDir := testutil.SetupTestRepo(t)
+	orch, err := New(repoDir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	session, err := orch.StartSession("test")
+	if err != nil {
+		t.Fatalf("StartSession() error = %v", err)
+	}
+
+	// Add an instance to rename
+	inst, err := orch.AddInstance(session, "original task")
+	if err != nil {
+		t.Fatalf("AddInstance() error = %v", err)
+	}
+
+	t.Run("renames instance with new name", func(t *testing.T) {
+		err := orch.RenameInstance(session, inst.ID, "New Display Name")
+		if err != nil {
+			t.Fatalf("RenameInstance() error = %v", err)
+		}
+
+		if inst.DisplayName != "New Display Name" {
+			t.Errorf("inst.DisplayName = %q, want %q", inst.DisplayName, "New Display Name")
+		}
+
+		if !inst.ManuallyNamed {
+			t.Error("inst.ManuallyNamed should be true after rename")
+		}
+	})
+
+	t.Run("empty name clears display name and re-enables auto-naming", func(t *testing.T) {
+		err := orch.RenameInstance(session, inst.ID, "")
+		if err != nil {
+			t.Fatalf("RenameInstance() error = %v", err)
+		}
+
+		if inst.DisplayName != "" {
+			t.Errorf("inst.DisplayName = %q, want empty string", inst.DisplayName)
+		}
+
+		if inst.ManuallyNamed {
+			t.Error("inst.ManuallyNamed should be false after clearing name")
+		}
+	})
+
+	t.Run("returns error for non-existent instance", func(t *testing.T) {
+		err := orch.RenameInstance(session, "non-existent-id", "Some Name")
+		if err == nil {
+			t.Error("RenameInstance() should return error for non-existent instance")
+		}
+	})
 }
 
 // TestSlugify moved to branch_test.go

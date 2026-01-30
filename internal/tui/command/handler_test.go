@@ -2038,6 +2038,166 @@ func TestArgCommandsPrecedence(t *testing.T) {
 	})
 }
 
+// TestCmdNew tests the :new and :n commands for blank session creation
+func TestCmdNew(t *testing.T) {
+	t.Run("new without orchestrator returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.orchestrator = nil
+		deps.session = orchestrator.NewSession("test", "/repo")
+
+		result := h.Execute("new", deps)
+		if result.ErrorMessage == "" {
+			t.Error("expected error when orchestrator is nil")
+		}
+	})
+
+	t.Run("new without session returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.orchestrator = &orchestrator.Orchestrator{}
+		deps.session = nil
+
+		result := h.Execute("new", deps)
+		if result.ErrorMessage == "" {
+			t.Error("expected error when session is nil")
+		}
+	})
+
+	t.Run("new returns TeaCmd", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.orchestrator = &orchestrator.Orchestrator{}
+		deps.session = orchestrator.NewSession("test", "/repo")
+
+		result := h.Execute("new", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.TeaCmd == nil {
+			t.Error("expected TeaCmd to be set for async operation")
+		}
+		if result.InfoMessage != "Creating new session..." {
+			t.Errorf("expected info message, got: %q", result.InfoMessage)
+		}
+	})
+
+	t.Run("new with name returns TeaCmd", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.orchestrator = &orchestrator.Orchestrator{}
+		deps.session = orchestrator.NewSession("test", "/repo")
+
+		result := h.Execute("new my-session", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.TeaCmd == nil {
+			t.Error("expected TeaCmd to be set")
+		}
+	})
+
+	t.Run("n alias works", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.orchestrator = &orchestrator.Orchestrator{}
+		deps.session = orchestrator.NewSession("test", "/repo")
+
+		result := h.Execute("n", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.TeaCmd == nil {
+			t.Error("expected TeaCmd to be set")
+		}
+	})
+
+	t.Run("n with name works", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.orchestrator = &orchestrator.Orchestrator{}
+		deps.session = orchestrator.NewSession("test", "/repo")
+
+		result := h.Execute("n custom-name", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.TeaCmd == nil {
+			t.Error("expected TeaCmd to be set")
+		}
+	})
+}
+
+// TestCmdRename tests the :rename command for instance renaming
+func TestCmdRename(t *testing.T) {
+	t.Run("rename without instance returns info message", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = nil
+
+		result := h.Execute("rename new-name", deps)
+		if result.InfoMessage != "No instance selected" {
+			t.Errorf("expected 'No instance selected', got: %q", result.InfoMessage)
+		}
+	})
+
+	t.Run("rename without name returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{ID: "inst-1"}
+
+		result := h.Execute("rename", deps)
+		if result.ErrorMessage != "Usage: :rename <name>" {
+			t.Errorf("expected usage error, got: %q", result.ErrorMessage)
+		}
+	})
+
+	t.Run("rename with empty name returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{ID: "inst-1"}
+
+		result := h.Execute("rename   ", deps)
+		if result.ErrorMessage != "Usage: :rename <name>" {
+			t.Errorf("expected usage error, got: %q", result.ErrorMessage)
+		}
+	})
+
+	t.Run("rename with name sets result fields", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{ID: "inst-1"}
+
+		result := h.Execute("rename my-new-name", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.RenameInstance == nil || !*result.RenameInstance {
+			t.Error("expected RenameInstance to be true")
+		}
+		if result.RenameInstanceName == nil || *result.RenameInstanceName != "my-new-name" {
+			t.Errorf("expected RenameInstanceName to be 'my-new-name', got: %v", result.RenameInstanceName)
+		}
+		if result.InfoMessage != "Renamed to: my-new-name" {
+			t.Errorf("expected info message, got: %q", result.InfoMessage)
+		}
+	})
+
+	t.Run("rename preserves whitespace in name", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.activeInstance = &orchestrator.Instance{ID: "inst-1"}
+
+		result := h.Execute("rename Fix auth bug", deps)
+		if result.ErrorMessage != "" {
+			t.Errorf("unexpected error: %q", result.ErrorMessage)
+		}
+		if result.RenameInstanceName == nil || *result.RenameInstanceName != "Fix auth bug" {
+			t.Errorf("expected name with spaces, got: %v", result.RenameInstanceName)
+		}
+	})
+}
+
 // Ensure mockDeps satisfies the interface at compile time
 var _ Dependencies = (*mockDeps)(nil)
 
