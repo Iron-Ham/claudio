@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Tripleshot Adversarial Mode Grouping** - In tripleshot with adversarial mode enabled, instances are now organized hierarchically by attempt. Each of the three attempts gets its own "Attempt N" sub-group in the sidebar, with current round instances at the top level and previous rounds collapsed under a "Previous Rounds" container. The judge instance remains at the main tripleshot group level. This makes it easy to track which attempt each implementer/reviewer pair belongs to and which round within that attempt.
 
+### Fixed
+
+- **Frozen Session Recovery** - Fixed a critical bug where individual Claude sessions could become permanently frozen/unresponsive while other sessions in the same Claudio instance continued working. When the tmux socket for a session becomes unresponsive (commands timeout but don't definitively fail), the capture loop would retry indefinitely without recovery, causing the display to freeze and input to stop working. Now tracks consecutive capture failures and time since last successful capture; if both exceed thresholds (10 failures AND 30 seconds), the session is force-terminated and marked as completed, allowing users to restart or recover.
+
 ### Changed
 
 - **Documentation Updates** - Refreshed documentation to cover v0.13.0 and v0.14.0 features: color themes, sidebar scroll navigation (J/K), macOS keyboard shortcuts, `validate` command, background cleanup options, tripleshot adversarial integration, and stuck instance recovery.

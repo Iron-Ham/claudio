@@ -884,3 +884,78 @@ func TestTmuxSessionInfo_KillCommand(t *testing.T) {
 		})
 	}
 }
+
+// Tests for unresponsive session detection
+
+func TestUnresponsiveTimeoutConstants(t *testing.T) {
+	// Verify the unresponsive detection constants are reasonable
+	if unresponsiveTimeout < 10*time.Second {
+		t.Errorf("unresponsiveTimeout = %v, should be at least 10s to avoid false positives", unresponsiveTimeout)
+	}
+
+	if unresponsiveFailureThreshold < 5 {
+		t.Errorf("unresponsiveFailureThreshold = %d, should be at least 5 to avoid false positives", unresponsiveFailureThreshold)
+	}
+
+	// Verify the combination of timeout + failure threshold is meaningful
+	// The failure threshold should reasonably accumulate within the timeout period
+	// At 100ms capture interval with 2s tmux timeout, each failure takes ~2s
+	// So 10 failures * 2s = 20s, which is less than 30s timeout - this is reasonable
+	minTimeForFailures := time.Duration(unresponsiveFailureThreshold) * 2 * time.Second
+	if minTimeForFailures > unresponsiveTimeout {
+		t.Errorf("unresponsive detection may never trigger: %d failures * 2s/failure = %v > %v timeout",
+			unresponsiveFailureThreshold, minTimeForFailures, unresponsiveTimeout)
+	}
+}
+
+func TestManager_UnresponsiveFieldsInitialized(t *testing.T) {
+	mgr := newTestManager("test-unresponsive", "/tmp", "task")
+
+	// Before starting, fields should be zero values
+	if !mgr.lastSuccessfulCapture.IsZero() {
+		t.Errorf("lastSuccessfulCapture should be zero initially, got %v", mgr.lastSuccessfulCapture)
+	}
+
+	if mgr.consecutiveCaptureErrors != 0 {
+		t.Errorf("consecutiveCaptureErrors should be 0 initially, got %d", mgr.consecutiveCaptureErrors)
+	}
+}
+
+func TestManager_UnresponsiveFieldsSetOnStartMethods(t *testing.T) {
+	// Test that the unresponsive tracking fields are initialized when OnStarted is called
+	// (simulating lifecycle manager startup)
+	mgr := newTestManager("test-onstarted", "/tmp", "task")
+
+	// Manually set running to true to simulate pre-start state from lifecycle manager
+	mgr.mu.Lock()
+	mgr.running = true
+	mgr.mu.Unlock()
+
+	// Capture time before OnStarted
+	beforeStart := time.Now()
+
+	// Call OnStarted which should initialize tracking fields
+	mgr.OnStarted()
+
+	// Give a tiny window for timing
+	afterStart := time.Now()
+
+	mgr.mu.Lock()
+	lastCapture := mgr.lastSuccessfulCapture
+	consecutiveErrors := mgr.consecutiveCaptureErrors
+	mgr.mu.Unlock()
+
+	// lastSuccessfulCapture should be set to approximately now
+	if lastCapture.Before(beforeStart) || lastCapture.After(afterStart) {
+		t.Errorf("lastSuccessfulCapture = %v, expected between %v and %v", lastCapture, beforeStart, afterStart)
+	}
+
+	// consecutiveCaptureErrors should be reset to 0
+	if consecutiveErrors != 0 {
+		t.Errorf("consecutiveCaptureErrors = %d, expected 0", consecutiveErrors)
+	}
+
+	// Clean up - stop the capture loop
+	close(mgr.doneChan)
+	mgr.captureTick.Stop()
+}
