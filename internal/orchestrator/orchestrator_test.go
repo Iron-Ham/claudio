@@ -397,6 +397,64 @@ func TestOrchestrator_StopSession(t *testing.T) {
 	}
 }
 
+func TestOrchestrator_Shutdown(t *testing.T) {
+	testutil.SkipIfNoGit(t)
+
+	repoDir := testutil.SetupTestRepo(t)
+	orch, err := New(repoDir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	session, err := orch.StartSession("test")
+	if err != nil {
+		t.Fatalf("StartSession() error = %v", err)
+	}
+
+	// Add some instances
+	for i := 0; i < 3; i++ {
+		if _, err := orch.AddInstance(session, fmt.Sprintf("shutdown task %d", i)); err != nil {
+			t.Fatalf("AddInstance() error = %v", err)
+		}
+	}
+
+	// Shutdown should stop instances but preserve session file
+	if err := orch.Shutdown(); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+
+	// Session file should still exist (Shutdown preserves it for resume)
+	sessionFile := filepath.Join(repoDir, ".claudio", "session.json")
+	if _, err := os.Stat(sessionFile); os.IsNotExist(err) {
+		t.Error("session.json should be preserved after Shutdown()")
+	}
+
+	// Session should be marked as cleanly shutdown
+	if !session.CleanShutdown {
+		t.Error("session.CleanShutdown should be true after Shutdown()")
+	}
+
+	// Lock should be released (calling Shutdown again should be safe)
+	if err := orch.Shutdown(); err != nil {
+		t.Errorf("Second Shutdown() call should be safe, got error = %v", err)
+	}
+}
+
+func TestOrchestrator_Shutdown_NoSession(t *testing.T) {
+	testutil.SkipIfNoGit(t)
+
+	repoDir := testutil.SetupTestRepo(t)
+	orch, err := New(repoDir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	// Shutdown without a session should not panic
+	if err := orch.Shutdown(); err != nil {
+		t.Errorf("Shutdown() with no session should not error, got = %v", err)
+	}
+}
+
 func TestOrchestrator_GetSessionMetrics(t *testing.T) {
 	testutil.SkipIfNoGit(t)
 
