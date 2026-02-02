@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-02-02
+
 ### Added
 
 - **Tripleshot Adversarial Mode Grouping** - In tripleshot with adversarial mode enabled, instances are now organized hierarchically by attempt. Each of the three attempts gets its own "Attempt N" sub-group in the sidebar, with current round instances at the top level and previous rounds collapsed under a "Previous Rounds" container. The judge instance remains at the main tripleshot group level. This makes it easy to track which attempt each implementer/reviewer pair belongs to and which round within that attempt.
@@ -905,6 +907,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.15.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.15.0
 [0.14.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.14.1
 [0.14.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.14.0
 [0.13.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.13.0
