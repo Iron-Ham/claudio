@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Frozen Session Recovery** - Fixed a critical bug where individual Claude sessions could become permanently frozen/unresponsive while other sessions in the same Claudio instance continued working. When the tmux socket for a session becomes unresponsive (commands timeout but don't definitively fail), the capture loop would retry indefinitely without recovery, causing the display to freeze and input to stop working. Now tracks consecutive capture failures and time since last successful capture; if both exceed thresholds (10 failures AND 30 seconds), the session is force-terminated and marked as completed, allowing users to restart or recover.
+
 - **Process Cleanup on Exit** - Claude processes (running in tmux sessions) are now properly terminated when Claudio exits. Previously, normal quit (`:quit`, Ctrl+C, SIGTERM) would leave Claude processes running indefinitely, causing resource accumulation over time. The new `Shutdown()` method stops all instances while preserving session state for potential resume. Force quit (`:quit!`) behavior remains unchanged.
 
 ### Changed

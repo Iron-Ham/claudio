@@ -52,6 +52,18 @@ const pausedHeartbeatInterval = 50
 // This prevents the capture loop from hanging indefinitely if tmux becomes unresponsive.
 const tmuxCommandTimeout = 2 * time.Second
 
+// unresponsiveTimeout is the maximum time to allow without a successful capture before
+// considering the session unresponsive. When this threshold is exceeded AND consecutive
+// failures exceed unresponsiveFailureThreshold, the session is force-terminated.
+// This prevents indefinitely frozen displays when tmux becomes unresponsive.
+const unresponsiveTimeout = 30 * time.Second
+
+// unresponsiveFailureThreshold is the minimum number of consecutive capture failures
+// required (in addition to exceeding unresponsiveTimeout) before force-terminating.
+// This prevents false positives from transient failures. At 100ms capture interval
+// with 2s tmux timeout, each failure takes ~2s, so 10 failures = ~20s of continuous failure.
+const unresponsiveFailureThreshold = 10
+
 // TimeoutCallback is called when a timeout condition is detected
 type TimeoutCallback func(instanceID string, timeoutType TimeoutType)
 
@@ -160,6 +172,11 @@ type Manager struct {
 
 	// Paused heartbeat - tracks ticks while paused to do periodic session checks
 	pausedHeartbeatCounter int
+
+	// Unresponsive session detection - tracks consecutive capture failures
+	// to detect when tmux becomes unresponsive and the session should be terminated
+	lastSuccessfulCapture    time.Time // Last time a capture succeeded
+	consecutiveCaptureErrors int       // Count of consecutive capture failures
 
 	// Bell tracking - delegated to stateMonitor
 	bellCallback BellCallback
@@ -459,6 +476,10 @@ func (m *Manager) Start() error {
 	now := time.Now()
 	m.startTime = &now
 
+	// Initialize unresponsive session tracking
+	m.lastSuccessfulCapture = now
+	m.consecutiveCaptureErrors = 0
+
 	// Register with state monitor for state/timeout/bell tracking
 	m.stateMonitor.Start(m.id)
 
@@ -570,6 +591,10 @@ func (m *Manager) StartWithResume() error {
 	// Record start time for duration tracking
 	now := time.Now()
 	m.startTime = &now
+
+	// Initialize unresponsive session tracking
+	m.lastSuccessfulCapture = now
+	m.consecutiveCaptureErrors = 0
 
 	// Register with state monitor for state/timeout/bell tracking
 	m.stateMonitor.Start(m.id)
@@ -686,14 +711,38 @@ func (m *Manager) captureLoop() {
 				output, err = m.captureVisiblePane(sessionName)
 			}
 			if err != nil {
-				m.mu.RLock()
+				m.mu.Lock()
+				m.consecutiveCaptureErrors++
+				consecutiveErrors := m.consecutiveCaptureErrors
+				lastSuccess := m.lastSuccessfulCapture
 				logger := m.logger
-				m.mu.RUnlock()
+				m.mu.Unlock()
+
 				if logger != nil {
 					logger.Debug("capture failed",
 						"session_name", sessionName,
 						"full_capture", doFullCapture,
+						"consecutive_errors", consecutiveErrors,
 						"error", err.Error())
+				}
+
+				// Check for unresponsive session: if we've exceeded both the time threshold
+				// AND the consecutive failure threshold, the session is considered unrecoverable.
+				// This prevents indefinitely frozen displays when tmux becomes unresponsive
+				// but doesn't definitively report session termination.
+				timeSinceSuccess := time.Since(lastSuccess)
+				if timeSinceSuccess > unresponsiveTimeout && consecutiveErrors >= unresponsiveFailureThreshold {
+					if logger != nil {
+						logger.Warn("session unresponsive, force terminating",
+							"session_name", sessionName,
+							"instance_id", instanceID,
+							"time_since_success", timeSinceSuccess,
+							"consecutive_errors", consecutiveErrors)
+					}
+					// Attempt to kill the tmux session to clean up resources
+					_ = m.tmuxCmd("kill-session", "-t", sessionName).Run()
+					m.handleSessionEnded(instanceID)
+					return
 				}
 
 				// When capture fails, verify the session still exists.
@@ -712,6 +761,12 @@ func (m *Manager) captureLoop() {
 
 				continue
 			}
+
+			// Capture succeeded - reset failure tracking
+			m.mu.Lock()
+			m.lastSuccessfulCapture = time.Now()
+			m.consecutiveCaptureErrors = 0
+			m.mu.Unlock()
 
 			// Check if content changed
 			currentOutput := string(output)
@@ -1330,6 +1385,10 @@ func (m *Manager) Reconnect() error {
 	m.paused = false
 	m.doneChan = make(chan struct{})
 
+	// Initialize unresponsive session tracking for reconnection
+	m.lastSuccessfulCapture = time.Now()
+	m.consecutiveCaptureErrors = 0
+
 	// Register with state monitor for state/timeout/bell tracking
 	m.stateMonitor.Start(m.id)
 
@@ -1504,6 +1563,10 @@ func (m *Manager) SetStartTime(t time.Time) {
 func (m *Manager) OnStarted() {
 	m.mu.Lock()
 	m.paused = false
+
+	// Initialize unresponsive session tracking
+	m.lastSuccessfulCapture = time.Now()
+	m.consecutiveCaptureErrors = 0
 
 	// Start background goroutine to capture output periodically
 	m.doneChan = make(chan struct{})
