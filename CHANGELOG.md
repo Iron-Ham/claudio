@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Adversarial Round Disambiguation** - Ignore stale increment/review files from prior rounds so new rounds don't start early
+
 ## [0.15.0] - 2026-02-02
 
 ### Added

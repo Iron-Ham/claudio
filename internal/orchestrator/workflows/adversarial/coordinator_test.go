@@ -853,6 +853,65 @@ func TestCoordinator_ProcessIncrementCompletion(t *testing.T) {
 	}
 }
 
+func TestCoordinator_ProcessIncrementCompletion_RoundMismatch(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "adversarial-coord-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.CurrentRound = 2
+	baseSession := newMockSession()
+
+	// Create a group for the session type
+	group := &mockGroup{}
+	baseSession.groups["adversarial"] = group
+
+	addInstanceToWorktreeCalled := false
+	mockOrch := &mockOrchestrator{
+		addInstanceToWorktreeFunc: func(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error) {
+			addInstanceToWorktreeCalled = true
+			return &mockInstance{id: "reviewer-inst", worktreePath: worktreePath, branch: "test-branch"}, nil
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: mockOrch,
+		BaseSession:  baseSession,
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	// Start round 2
+	coord.Manager().StartRound()
+
+	increment := IncrementFile{
+		Round:         1,
+		Status:        "ready_for_review",
+		Summary:       "Test increment",
+		FilesModified: []string{"test.go"},
+		Approach:      "Test approach",
+	}
+	data, _ := json.MarshalIndent(increment, "", "  ")
+	if err := os.WriteFile(IncrementFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write increment file: %v", err)
+	}
+
+	err = coord.ProcessIncrementCompletion()
+	if err == nil {
+		t.Fatal("expected error for round mismatch")
+	}
+	if addInstanceToWorktreeCalled {
+		t.Error("reviewer should not start on round mismatch")
+	}
+	if IncrementFileExists(tmpDir) {
+		t.Error("expected stale increment file to be removed")
+	}
+}
+
 func TestCoordinator_ProcessIncrementCompletion_Failed(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "adversarial-coord-test-*")
 	if err != nil {
@@ -1033,6 +1092,68 @@ func TestCoordinator_ProcessReviewCompletion_Rejected(t *testing.T) {
 	}
 	if !addInstanceToWorktreeCalled {
 		t.Error("AddInstanceToWorktree should have been called for next round")
+	}
+}
+
+func TestCoordinator_ProcessReviewCompletion_RoundMismatch(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "adversarial-coord-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+	advSession := NewSession("test-id", "test task", DefaultConfig())
+	advSession.CurrentRound = 2
+	advSession.Config.MaxIterations = 5 // Allow more iterations
+	baseSession := newMockSession()
+
+	// Create a group for the session type
+	group := &mockGroup{}
+	baseSession.groups["adversarial"] = group
+
+	addInstanceToWorktreeCalled := false
+	mockOrch := &mockOrchestrator{
+		addInstanceToWorktreeFunc: func(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error) {
+			addInstanceToWorktreeCalled = true
+			return &mockInstance{id: "impl-inst-r2", worktreePath: worktreePath, branch: "test-branch"}, nil
+		},
+	}
+
+	cfg := CoordinatorConfig{
+		Orchestrator: mockOrch,
+		BaseSession:  baseSession,
+		AdvSession:   advSession,
+		SessionType:  "adversarial",
+	}
+	coord := NewCoordinator(cfg)
+	coord.SetWorktrees(tmpDir)
+
+	// Start round 2
+	coord.Manager().StartRound()
+
+	review := ReviewFile{
+		Round:    1,
+		Approved: false,
+		Score:    5,
+		Summary:  "Stale review",
+	}
+	data, _ := json.MarshalIndent(review, "", "  ")
+	if err := os.WriteFile(ReviewFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	err = coord.ProcessReviewCompletion()
+	if err == nil {
+		t.Fatal("expected error for round mismatch")
+	}
+	if addInstanceToWorktreeCalled {
+		t.Error("implementer should not restart on round mismatch")
+	}
+	if advSession.CurrentRound != 2 {
+		t.Errorf("expected round to remain 2, got %d", advSession.CurrentRound)
+	}
+	if ReviewFileExists(tmpDir) {
+		t.Error("expected stale review file to be removed")
 	}
 }
 

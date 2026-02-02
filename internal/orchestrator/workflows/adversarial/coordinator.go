@@ -732,6 +732,8 @@ func (c *Coordinator) ProcessIncrementCompletion() error {
 			"expected", round,
 			"got", increment.Round,
 		)
+		c.removeIncrementFile()
+		return fmt.Errorf("increment round mismatch: expected %d got %d", round, increment.Round)
 	}
 
 	// Check for failure status
@@ -744,13 +746,7 @@ func (c *Coordinator) ProcessIncrementCompletion() error {
 	c.notifyIncrementReady(round, increment)
 
 	// Clear the increment file so it's fresh for next round.
-	// Use FindIncrementFile to get the actual path (which may be in a subdirectory
-	// or parent if Claude wrote it to the wrong location).
-	if incrementPath, err := FindIncrementFile(c.implementerWorktree); err == nil {
-		if err := os.Remove(incrementPath); err != nil && !os.IsNotExist(err) {
-			c.logger.Warn("failed to remove increment file", "error", err, "path", incrementPath)
-		}
-	}
+	c.removeIncrementFile()
 
 	// Start the reviewer
 	return c.StartReviewer(increment)
@@ -775,6 +771,8 @@ func (c *Coordinator) ProcessReviewCompletion() error {
 			"expected", round,
 			"got", review.Round,
 		)
+		c.removeReviewFile()
+		return fmt.Errorf("review round mismatch: expected %d got %d", round, review.Round)
 	}
 
 	// Enforce score/approval consistency: if approved but score < minPassingScore, treat as rejection
@@ -800,13 +798,7 @@ func (c *Coordinator) ProcessReviewCompletion() error {
 	c.notifyReviewReady(round, review)
 
 	// Clear the review file so it's fresh for next round.
-	// Use FindReviewFile to get the actual path (which may be in a subdirectory
-	// or parent if Claude wrote it to the wrong location).
-	if reviewPath, err := FindReviewFile(c.reviewerWorktree); err == nil {
-		if err := os.Remove(reviewPath); err != nil && !os.IsNotExist(err) {
-			c.logger.Warn("failed to remove review file", "error", err, "path", reviewPath)
-		}
-	}
+	c.removeReviewFile()
 
 	if review.Approved {
 		// Work approved - complete the session
@@ -855,12 +847,7 @@ func (c *Coordinator) ProcessRejectionAfterApproval() error {
 			"score", review.Score,
 		)
 		// Remove the file so we don't keep re-processing it.
-		// Use FindReviewFile to get the actual path.
-		if reviewPath, err := FindReviewFile(c.reviewerWorktree); err == nil {
-			if err := os.Remove(reviewPath); err != nil && !os.IsNotExist(err) {
-				c.logger.Warn("failed to remove review file", "error", err, "path", reviewPath)
-			}
-		}
+		c.removeReviewFile()
 		return nil
 	}
 
@@ -878,12 +865,7 @@ func (c *Coordinator) ProcessRejectionAfterApproval() error {
 	c.notifyReviewReady(session.CurrentRound, review)
 
 	// Remove the review file so it's fresh for next round.
-	// Use FindReviewFile to get the actual path.
-	if reviewPath, err := FindReviewFile(c.reviewerWorktree); err == nil {
-		if err := os.Remove(reviewPath); err != nil && !os.IsNotExist(err) {
-			c.logger.Warn("failed to remove review file", "error", err, "path", reviewPath)
-		}
-	}
+	c.removeReviewFile()
 
 	// Check iteration limits
 	if c.manager.IsMaxIterationsReached() {
@@ -898,6 +880,22 @@ func (c *Coordinator) ProcessRejectionAfterApproval() error {
 
 	// Start implementer again with the review feedback
 	return c.StartImplementer()
+}
+
+func (c *Coordinator) removeIncrementFile() {
+	if incrementPath, err := FindIncrementFile(c.implementerWorktree); err == nil {
+		if err := os.Remove(incrementPath); err != nil && !os.IsNotExist(err) {
+			c.logger.Warn("failed to remove increment file", "error", err, "path", incrementPath)
+		}
+	}
+}
+
+func (c *Coordinator) removeReviewFile() {
+	if reviewPath, err := FindReviewFile(c.reviewerWorktree); err == nil {
+		if err := os.Remove(reviewPath); err != nil && !os.IsNotExist(err) {
+			c.logger.Warn("failed to remove review file", "error", err, "path", reviewPath)
+		}
+	}
 }
 
 // Stop stops the adversarial execution
