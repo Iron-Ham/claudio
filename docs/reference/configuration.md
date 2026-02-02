@@ -136,6 +136,31 @@ instance:
 
 ---
 
+### ai
+
+Selects and configures the AI backend used for instances and AI-assisted workflows.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `ai.backend` | string | `"claude"` | Backend to use (`claude` or `codex`) |
+| `ai.claude.command` | string | `"claude"` | Claude CLI command name/path |
+| `ai.claude.skip_permissions` | bool | `true` | Add `--dangerously-skip-permissions` when starting Claude |
+| `ai.codex.command` | string | `"codex"` | Codex CLI command name/path |
+| `ai.codex.approval_mode` | string | `"full-auto"` | Codex approval mode: `bypass`, `full-auto`, or `default` |
+
+```yaml
+ai:
+  backend: claude
+  claude:
+    command: claude
+    skip_permissions: true
+  codex:
+    command: codex
+    approval_mode: full-auto
+```
+
+---
+
 ### branch
 
 Controls branch naming conventions.
@@ -165,7 +190,7 @@ Controls pull request creation behavior.
 |-----|------|---------|-------------|
 | `pr.draft` | bool | `false` | Create PRs as drafts |
 | `pr.auto_rebase` | bool | `true` | Rebase on main before PR |
-| `pr.use_ai` | bool | `true` | Use Claude for PR title/description |
+| `pr.use_ai` | bool | `true` | Use the configured backend for PR title/description |
 | `pr.auto_pr_on_stop` | bool | `false` | Auto-create PR when stopping with 'x' |
 | `pr.template` | string | `""` | Custom PR body template |
 | `pr.labels` | []string | `[]` | Default labels for all PRs |
@@ -283,7 +308,7 @@ paths:
 **Benefits:**
 - Faster worktree creation
 - Less disk space usage
-- Claude only sees relevant code
+- Backend only sees relevant code
 
 **cone_mode:**
 - `true` (default): Uses git's cone mode for faster sparse-checkout operations
@@ -486,7 +511,7 @@ Controls experimental features that may change or be removed. These features are
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `experimental.intelligent_naming` | bool | `false` | Use Claude to generate short, descriptive instance names |
+| `experimental.intelligent_naming` | bool | `false` | Use Claude (Anthropic API) to generate short, descriptive instance names |
 | `experimental.triple_shot` | bool | `false` | Spawn three parallel instances and select the best solution |
 | `experimental.inline_plan` | bool | `false` | Enable `:multiplan` command in the TUI (`:plan` is always available) |
 | `experimental.inline_ultraplan` | bool | `false` | Enable `:ultraplan` command in the TUI |
@@ -496,7 +521,7 @@ Controls experimental features that may change or be removed. These features are
 
 | Feature | Description |
 |---------|-------------|
-| `intelligent_naming` | Uses Claude to generate short, descriptive instance names for the sidebar based on the task and Claude's initial output. Requires `ANTHROPIC_API_KEY`. |
+| `intelligent_naming` | Uses Claude (Anthropic API) to generate short, descriptive instance names for the sidebar based on the task and Claude's initial output. Requires `ANTHROPIC_API_KEY`. |
 | `triple_shot` | Spawns three parallel instances working on the same problem, then uses a judge instance to evaluate and select the best solution. |
 | `inline_plan` | Enables the `:multiplan` command in the standard TUI for multi-pass planning with 3 planners + assessor. The `:plan` command is always available without this setting. |
 | `inline_ultraplan` | Enables the `:ultraplan` command in the standard TUI, allowing you to start an UltraPlan workflow with parallel task execution. |

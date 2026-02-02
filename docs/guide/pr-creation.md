@@ -1,6 +1,6 @@
 # PR Creation
 
-Claudio streamlines the process of creating pull requests from your Claude instances' work.
+Claudio streamlines the process of creating pull requests from your backend instances' work.
 
 ## Overview
 
@@ -50,14 +50,14 @@ When you create a PR, Claudio:
 1. **Checks for changes** - Verifies there are commits to push
 2. **Rebases** (if enabled) - Updates branch with latest main
 3. **Pushes** - Pushes the branch to remote
-4. **Generates content** (if enabled) - Uses Claude to create title/description
+4. **Generates content** (if enabled) - Uses the configured backend to create title/description
 5. **Creates PR** - Opens the PR via `gh` CLI
 6. **Assigns reviewers** - Based on config and files changed
 7. **Adds labels** - Applies configured labels
 
 ## AI-Generated Content
 
-When `use_ai: true` (default), Claude generates:
+When `use_ai: true` (default), the backend generates:
 
 ### Title
 
@@ -263,7 +263,7 @@ Flags:
 ### "No changes to push"
 
 The branch has no commits beyond main:
-- Check if Claude made changes: `claudio status`
+- Check if the backend made changes: `claudio status`
 - View the diff: Press `d` in TUI
 - The instance may not have completed its work
 

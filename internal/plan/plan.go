@@ -11,6 +11,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/plan/tracker"
 )
@@ -117,21 +118,21 @@ Balance these concerns:
 	},
 }
 
-// RunPlanningSync runs the planning phase synchronously using claude --print
-func RunPlanningSync(objective string, multiPass bool) (*orchestrator.PlanSpec, error) {
+// RunPlanningSync runs the planning phase synchronously using the configured backend.
+func RunPlanningSync(objective string, multiPass bool, backend ai.Backend) (*orchestrator.PlanSpec, error) {
 	if multiPass {
-		return runMultiPassPlanningSync(objective)
+		return runMultiPassPlanningSync(objective, backend)
 	}
-	return runSinglePassPlanningSync(objective)
+	return runSinglePassPlanningSync(objective, backend)
 }
 
-func runSinglePassPlanningSync(objective string) (*orchestrator.PlanSpec, error) {
+func runSinglePassPlanningSync(objective string, backend ai.Backend) (*orchestrator.PlanSpec, error) {
 	prompt, err := buildPlanningPrompt(objective, "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to build planning prompt: %w", err)
 	}
 
-	output, err := runClaude(prompt)
+	output, err := runBackend(prompt, backend)
 	if err != nil {
 		return nil, fmt.Errorf("planning failed: %w", err)
 	}
@@ -139,7 +140,7 @@ func runSinglePassPlanningSync(objective string) (*orchestrator.PlanSpec, error)
 	return parsePlanFromOutput(output, objective)
 }
 
-func runMultiPassPlanningSync(objective string) (*orchestrator.PlanSpec, error) {
+func runMultiPassPlanningSync(objective string, backend ai.Backend) (*orchestrator.PlanSpec, error) {
 	// Run all three strategies and collect plans
 	var plans []*orchestrator.PlanSpec
 
@@ -151,7 +152,7 @@ func runMultiPassPlanningSync(objective string) (*orchestrator.PlanSpec, error) 
 			return nil, fmt.Errorf("failed to build planning prompt for %s: %w", strategy.Name, err)
 		}
 
-		output, err := runClaude(prompt)
+		output, err := runBackend(prompt, backend)
 		if err != nil {
 			fmt.Printf("Warning: %s strategy failed: %v\n", strategy.Name, err)
 			continue
@@ -201,14 +202,48 @@ func buildPlanningPrompt(objective, extraPrompt string) (string, error) {
 	return prompt, nil
 }
 
-func runClaude(prompt string) (string, error) {
-	cmd := exec.Command("claude", "--print", prompt)
+func runBackend(prompt string, backend ai.Backend) (string, error) {
+	if backend == nil {
+		backend = ai.DefaultBackend()
+	}
+
+	promptFile, err := os.CreateTemp("", "claudio-plan-*.prompt")
+	if err != nil {
+		return "", fmt.Errorf("failed to create prompt file: %w", err)
+	}
+	if _, err := promptFile.Write([]byte(prompt)); err != nil {
+		_ = promptFile.Close()
+		_ = os.Remove(promptFile.Name())
+		return "", fmt.Errorf("failed to write prompt file: %w", err)
+	}
+	if err := promptFile.Close(); err != nil {
+		_ = os.Remove(promptFile.Name())
+		return "", fmt.Errorf("failed to close prompt file: %w", err)
+	}
+	defer func() {
+		_ = os.Remove(promptFile.Name())
+	}()
+
+	cmdString, err := backend.BuildStartCommand(ai.StartOptions{
+		PromptFile: promptFile.Name(),
+		Mode:       ai.StartModeOneShot,
+		OutputOnly: true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to build backend command: %w", err)
+	}
+
+	cmd := exec.Command("sh", "-c", cmdString)
+	cmd.Env = os.Environ()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("claude command failed: %w\nstderr: %s", err, string(exitErr.Stderr))
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg == "" {
+			errMsg = "unknown error"
 		}
-		return "", fmt.Errorf("failed to run claude: %w", err)
+		return "", fmt.Errorf("backend command failed: %w\nstderr: %s", err, errMsg)
 	}
 
 	return string(output), nil

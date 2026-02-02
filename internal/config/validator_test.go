@@ -394,6 +394,41 @@ func TestConfig_Validate_Instance(t *testing.T) {
 	})
 }
 
+func TestConfig_Validate_AI(t *testing.T) {
+	cfg := Default()
+
+	t.Run("invalid backend", func(t *testing.T) {
+		cfg.AI.Backend = "unknown"
+		errs := cfg.Validate()
+		hasError := false
+		for _, err := range errs {
+			if err.Field == "ai.backend" {
+				hasError = true
+				break
+			}
+		}
+		if !hasError {
+			t.Error("expected validation error for ai.backend")
+		}
+	})
+
+	t.Run("invalid codex approval mode", func(t *testing.T) {
+		cfg := Default()
+		cfg.AI.Codex.ApprovalMode = "nope"
+		errs := cfg.Validate()
+		hasError := false
+		for _, err := range errs {
+			if err.Field == "ai.codex.approval_mode" {
+				hasError = true
+				break
+			}
+		}
+		if !hasError {
+			t.Error("expected validation error for ai.codex.approval_mode")
+		}
+	})
+}
+
 func TestConfig_Validate_Branch(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -91,12 +91,12 @@ func IncrementFilePath(worktreePath string) string {
 }
 
 // findSentinelFile searches for a sentinel file by name in multiple locations.
-// This handles cases where Claude instances write the file to the wrong directory.
+// This handles cases where backend instances write the file to the wrong directory.
 //
 // Search order:
 // 1. Worktree root (expected location)
 // 2. Immediate subdirectories of worktree (handles cd into subdirectory)
-// 3. Parent directory (handles monorepo case where Claude works in parent)
+// 3. Parent directory (handles monorepo case where the backend works in parent)
 func findSentinelFile(worktreePath, fileName, fileDescription string) (string, error) {
 	// First, check the expected location (worktree root)
 	expectedPath := filepath.Join(worktreePath, fileName)
@@ -135,7 +135,7 @@ func findSentinelFile(worktreePath, fileName, fileDescription string) (string, e
 		}
 	}
 
-	// Search parent directory (handles monorepo case where Claude might write
+	// Search parent directory (handles monorepo case where the backend might write
 	// to the repository root instead of the worktree subdirectory).
 	// Note: We intentionally don't propagate permission errors from parent
 	// directory access. In shared environments or CI systems, the parent
@@ -154,7 +154,7 @@ func findSentinelFile(worktreePath, fileName, fileDescription string) (string, e
 }
 
 // FindIncrementFile searches for the increment file in multiple locations.
-// This handles cases where Claude writes the file to the wrong directory.
+// This handles cases where the backend writes the file to the wrong directory.
 func FindIncrementFile(worktreePath string) (string, error) {
 	return findSentinelFile(worktreePath, IncrementFileName, "increment")
 }
@@ -329,7 +329,7 @@ func validateIncrementContent(increment *IncrementFile) error {
 // ParseIncrementFile reads and parses an increment file with comprehensive validation.
 // It sanitizes the input to handle common LLM quirks, validates the JSON structure,
 // and checks semantic content to catch malformed files with actionable error messages.
-// The file is searched in multiple locations to handle cases where Claude writes it
+// The file is searched in multiple locations to handle cases where the backend writes it
 // to the wrong directory.
 func ParseIncrementFile(worktreePath string) (*IncrementFile, error) {
 	path, err := FindIncrementFile(worktreePath)
@@ -387,7 +387,7 @@ func ReviewFilePath(worktreePath string) string {
 }
 
 // FindReviewFile searches for the review file in multiple locations.
-// This handles cases where Claude writes the file to the wrong directory.
+// This handles cases where the backend writes the file to the wrong directory.
 func FindReviewFile(worktreePath string) (string, error) {
 	return findSentinelFile(worktreePath, ReviewFileName, "review")
 }
@@ -402,7 +402,7 @@ func ReviewFileExists(worktreePath string) bool {
 // ParseReviewFile reads and parses a review file.
 // It applies sanitization to handle common LLM quirks like smart quotes,
 // markdown code blocks, and surrounding text.
-// The file is searched in multiple locations to handle cases where Claude writes it
+// The file is searched in multiple locations to handle cases where the backend writes it
 // to the wrong directory.
 func ParseReviewFile(worktreePath string) (*ReviewFile, error) {
 	path, err := FindReviewFile(worktreePath)

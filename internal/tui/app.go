@@ -486,7 +486,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if err := m.ultraPlan.Coordinator.RunPlanning(); err != nil {
 					m.errorMessage = fmt.Sprintf("Failed to start planning: %v", err)
 				} else {
-					m.infoMessage = "Planning started. Claude is analyzing the codebase..."
+					m.infoMessage = "Planning started. The AI backend is analyzing the codebase..."
 					// Pause the old active instance before switching
 					if oldInst := m.activeInstance(); oldInst != nil {
 						m.pauseInstance(oldInst.ID)
@@ -1378,7 +1378,7 @@ func (m Model) renderContent(width int) string {
 	inst := m.activeInstance()
 	if inst == nil {
 		return styles.ContentBox.Width(width - 4).Render(
-			"No instance selected.\n\nPress [:a] to add a new Claude instance.",
+			"No instance selected.\n\nPress [:a] to add a new instance.",
 		)
 	}
 

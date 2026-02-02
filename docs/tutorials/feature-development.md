@@ -92,12 +92,12 @@ This is expected for files like `index.ts` that might need imports from multiple
 When an instance shows `[waiting_input]`:
 
 1. Select that instance
-2. Read what Claude is asking
+2. Read what the backend is asking
 3. Press `Enter` to focus input
 4. Type your response
 5. Press `Enter` to send
 
-Example prompt from Claude:
+Example prompt from the backend:
 ```
 Should I use bcrypt or argon2 for password hashing?
 ```

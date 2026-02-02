@@ -1,4 +1,4 @@
-// Package instance provides CLI commands for managing Claude instances.
+// Package instance provides CLI commands for managing AI backend instances.
 // This includes adding, removing, and querying instance status.
 package instance
 
@@ -13,8 +13,8 @@ import (
 
 var addCmd = &cobra.Command{
 	Use:   "add [task description]",
-	Short: "Add a new Claude instance with a task",
-	Long: `Add a new Claude Code instance to the current session.
+	Short: "Add a new AI backend instance with a task",
+	Long: `Add a new AI backend instance (Claude Code or Codex) to the current session.
 The instance will be created in its own worktree and start working on the specified task.
 
 Task Chaining:

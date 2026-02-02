@@ -153,7 +153,7 @@ type Session struct {
 	GroupConsolidatedBranches []string `json:"group_consolidated_branches,omitempty"`
 
 	// Per-group consolidator instance IDs: index -> instance ID
-	// Each group has a dedicated Claude session that consolidates its task branches
+	// Each group has a dedicated backend session that consolidates its task branches
 	GroupConsolidatorIDs []string `json:"group_consolidator_ids,omitempty"`
 
 	// Per-group consolidation contexts: index -> completion file data

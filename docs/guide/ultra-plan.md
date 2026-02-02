@@ -1,6 +1,6 @@
 # Ultra-Plan Mode
 
-Ultra-plan mode enables intelligent orchestration of parallel Claude sessions through a hierarchical planning approach. A "coordinator" session analyzes your objective, creates an execution plan, and manages parallel task execution.
+Ultra-plan mode enables intelligent orchestration of parallel backend sessions through a hierarchical planning approach. A "coordinator" session analyzes your objective, creates an execution plan, and manages parallel task execution.
 
 ## Overview
 
@@ -9,7 +9,7 @@ Ultra-plan mode enables intelligent orchestration of parallel Claude sessions th
 │                        ULTRA-PLAN MODE                            │
 ├──────────────────────────────────────────────────────────────────┤
 │  Phase 1: PLANNING                                                │
-│  • Claude explores the codebase                                   │
+│  • Backend explores the codebase                                  │
 │  • Generates structured execution plan                            │
 │  • Identifies parallel vs sequential dependencies                 │
 │                                                                   │

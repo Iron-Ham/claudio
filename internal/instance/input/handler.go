@@ -1,8 +1,8 @@
-// Package input provides input handling for Claude Code instances.
+// Package input provides input handling for AI backend instances.
 //
 // This package extracts input-related logic from the instance manager,
 // providing a focused component for handling input encoding, buffering,
-// and history tracking for tmux-based Claude sessions.
+// and history tracking for tmux-based backend sessions.
 package input
 
 import (

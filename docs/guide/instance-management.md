@@ -1,6 +1,6 @@
 # Instance Management
 
-Instances are the core unit of work in Claudio. Each instance is a Claude Code process working on a specific task in its own isolated environment.
+Instances are the core unit of work in Claudio. Each instance is an AI backend process (Claude Code or Codex) working on a specific task in its own isolated environment.
 
 ## Instance Lifecycle
 
@@ -20,8 +20,8 @@ Instances are the core unit of work in Claudio. Each instance is a Claude Code p
 | State | Description |
 |-------|-------------|
 | **pending** | Instance created but not yet started |
-| **working** | Claude is actively processing |
-| **waiting_input** | Claude is waiting for user input |
+| **working** | The backend is actively processing |
+| **waiting_input** | The backend is waiting for user input |
 | **paused** | Instance manually paused |
 | **completed** | Task finished successfully |
 | **stopped** | Instance manually stopped |
@@ -194,9 +194,9 @@ Each instance tracks resource usage:
 
 | Metric | Description |
 |--------|-------------|
-| Tokens (Input) | Tokens sent to Claude |
-| Tokens (Output) | Tokens received from Claude |
-| Cost | Estimated API cost |
+| Tokens (Input) | Tokens sent to the backend (when reported) |
+| Tokens (Output) | Tokens received from the backend (when reported) |
+| Cost | Estimated API cost (Claude Code metrics only) |
 | Duration | Time since instance started |
 
 View metrics:

@@ -6,7 +6,7 @@ import (
 )
 
 // PlanningPromptTemplate is the prompt used for the planning phase.
-// It guides Claude to explore the codebase, decompose objectives into tasks,
+// It guides the backend to explore the codebase, decompose objectives into tasks,
 // and write a structured plan to a JSON file.
 const PlanningPromptTemplate = `You are a senior software architect planning a complex task.
 
@@ -26,7 +26,7 @@ Write a JSON file with this structure:
 - "tasks": Array of task objects, each with:
   - "id": Unique identifier like "task-1-setup" (string)
   - "title": Short title (string)
-  - "description": Detailed instructions for another Claude instance to execute independently (string)
+  - "description": Detailed instructions for another AI instance to execute independently (string)
   - "files": Files this task will modify (array of strings)
   - "depends_on": IDs of tasks that must complete first (array of strings, empty for independent tasks)
   - "priority": Lower = higher priority within dependency level (number)
@@ -214,7 +214,7 @@ func GetStrategy(name string) *PlanningStrategy {
 const SynthesisCompletionFileName = ".claudio-synthesis-complete.json"
 
 // SynthesisPromptTemplate is the prompt used for the synthesis phase.
-// It guides Claude to review all completed work, identify integration issues,
+// It guides the backend to review all completed work, identify integration issues,
 // and write a completion file with any revision needs.
 const SynthesisPromptTemplate = `You are reviewing the results of a parallel execution plan.
 
@@ -267,7 +267,7 @@ When your review is complete, you MUST write a completion file to signal the orc
 This file signals that your review is done and provides context for subsequent phases.`
 
 // RevisionPromptTemplate is the prompt used for the revision phase.
-// It instructs Claude to fix the identified issues in a specific task's worktree.
+// It instructs the backend to fix the identified issues in a specific task's worktree.
 const RevisionPromptTemplate = `You are addressing issues identified during review of completed work.
 
 ## Original Objective

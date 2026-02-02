@@ -184,7 +184,7 @@ func NewTaskVerifier(wt WorktreeOperations, retryTracker RetryTracker, events Ev
 // revision task completion (.claudio-revision-complete.json) since both use this monitor.
 //
 // The search first checks the worktree root (fast path), then falls back to a
-// recursive search of subdirectories to handle cases where Claude may have changed
+// recursive search of subdirectories to handle cases where the backend may have changed
 // directories during task execution.
 func (v *TaskVerifier) CheckCompletionFile(worktreePath string) (bool, error) {
 	if worktreePath == "" {
@@ -288,7 +288,7 @@ func (v *TaskVerifier) ParseTaskCompletionFile(worktreePath string) (*types.Task
 
 // FindAndParseTaskCompletionFile searches for and parses a task completion file.
 // Unlike ParseTaskCompletionFile, this uses recursive search to find the file
-// in subdirectories if not found at the root. This handles cases where Claude
+// in subdirectories if not found at the root. This handles cases where the backend
 // changed directories during task execution.
 func (v *TaskVerifier) FindAndParseTaskCompletionFile(worktreePath string) (*types.TaskCompletionFile, error) {
 	completionPath := v.findCompletionFile(worktreePath, TaskCompletionFileName)
@@ -385,7 +385,7 @@ func (v *TaskVerifier) VerifyTaskWork(taskID, instanceID, worktreePath, baseBran
 	if commitCount == 0 {
 		// Before failing, check if task wrote a completion file with status="complete"
 		// This allows tasks to explicitly signal success without code changes.
-		// Use FindAndParseTaskCompletionFile to search subdirectories in case Claude
+		// Use FindAndParseTaskCompletionFile to search subdirectories in case the backend
 		// changed directories during task execution.
 		completion, parseErr := v.FindAndParseTaskCompletionFile(worktreePath)
 		if parseErr == nil {

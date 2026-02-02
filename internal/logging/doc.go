@@ -2,7 +2,7 @@
 //
 // This package wraps Go's log/slog to provide JSON-formatted logs with
 // context propagation support for debugging and post-hoc analysis. It is
-// designed to help troubleshoot multi-instance Claude sessions by providing
+// designed to help troubleshoot multi-instance backend sessions by providing
 // structured, filterable logs that can be analyzed after the fact.
 //
 // # Features

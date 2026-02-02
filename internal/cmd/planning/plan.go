@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/plan"
@@ -127,7 +128,12 @@ func runPlan(cmd *cobra.Command, args []string) error {
 	}
 
 	// Run planning phase
-	planSpec, err := plan.RunPlanningSync(objective, planMultiPass)
+	backend, err := ai.NewFromConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to load AI backend: %w", err)
+	}
+
+	planSpec, err := plan.RunPlanningSync(objective, planMultiPass, backend)
 	if err != nil {
 		return fmt.Errorf("planning failed: %w", err)
 	}
@@ -181,7 +187,7 @@ func promptForObjective() (string, error) {
 	fmt.Println()
 	fmt.Println("Plan Mode")
 	fmt.Println("=========")
-	fmt.Println("Enter a high-level objective for Claude to plan.")
+	fmt.Println("Enter a high-level objective for the backend to plan.")
 	fmt.Println()
 	fmt.Print("Objective: ")
 

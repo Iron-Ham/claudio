@@ -96,7 +96,7 @@ Or manually copy from the TUI output.
 
 ## Step 7: Create Review Comments
 
-If you want Claude to help create PR comments:
+If you want the backend to help create PR comments:
 
 Add a new instance:
 ```
@@ -155,7 +155,7 @@ Bad: "Review the code"
 
 ### Provide Context
 
-Help Claude understand what to look for:
+Help the backend understand what to look for:
 
 ```
 Review the new payment processing code for PCI compliance issues.

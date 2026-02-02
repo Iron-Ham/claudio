@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/instance"
@@ -28,7 +29,7 @@ type InstanceInfo interface {
 
 // Config holds configuration for the PR workflow manager.
 type Config struct {
-	// UseAI enables AI-assisted PR creation via Claude
+	// UseAI enables AI-assisted PR creation via the configured backend
 	UseAI bool
 	// Draft creates PRs as drafts
 	Draft bool
@@ -59,6 +60,7 @@ type Manager struct {
 	sessionID string // Claudio session ID for multi-session support
 	eventBus  *event.Bus
 	logger    *logging.Logger
+	backend   ai.Backend
 
 	// Display dimensions (can be updated when TUI resizes)
 	displayWidth  int
@@ -73,11 +75,15 @@ type Manager struct {
 }
 
 // NewManager creates a new PR workflow manager.
-func NewManager(cfg Config, sessionID string, eventBus *event.Bus) *Manager {
+func NewManager(cfg Config, sessionID string, eventBus *event.Bus, backend ai.Backend) *Manager {
+	if backend == nil {
+		backend = ai.DefaultBackend()
+	}
 	return &Manager{
 		config:    cfg,
 		sessionID: sessionID,
 		eventBus:  eventBus,
+		backend:   backend,
 		workflows: make(map[string]*instance.PRWorkflow),
 	}
 }
@@ -124,6 +130,7 @@ func (m *Manager) Start(inst InstanceInfo) error {
 		AutoRebase: m.config.AutoRebase,
 		TmuxWidth:  m.displayWidth,
 		TmuxHeight: m.displayHeight,
+		Backend:    m.backend,
 	}
 
 	// Use config defaults if display dimensions not set

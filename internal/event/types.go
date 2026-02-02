@@ -38,7 +38,7 @@ func newBaseEvent(eventType string) baseEvent {
 // Instance Lifecycle Events
 // -----------------------------------------------------------------------------
 
-// InstanceStartedEvent is emitted when a Claude instance begins execution.
+// InstanceStartedEvent is emitted when a backend instance begins execution.
 type InstanceStartedEvent struct {
 	baseEvent
 	InstanceID   string // Unique identifier for the instance
@@ -58,7 +58,7 @@ func NewInstanceStartedEvent(instanceID, worktreePath, branch, task string) Inst
 	}
 }
 
-// InstanceStoppedEvent is emitted when a Claude instance stops execution.
+// InstanceStoppedEvent is emitted when a backend instance stops execution.
 type InstanceStoppedEvent struct {
 	baseEvent
 	InstanceID string // Unique identifier for the instance

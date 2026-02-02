@@ -79,7 +79,7 @@ When your review is complete, you MUST write a completion file to signal the orc
 This file signals that your review is done and provides context for subsequent phases.`
 
 // RevisionPromptTemplate is the prompt template used for the revision phase.
-// It instructs Claude to fix the identified issues in a specific task's worktree.
+// It instructs the backend to fix the identified issues in a specific task's worktree.
 // Format args: objective, task ID, task title, task description, revision round, issues, task ID (for JSON), revision round (for JSON)
 const RevisionPromptTemplate = `You are addressing issues identified during review of completed work.
 
@@ -199,7 +199,7 @@ type revisionTaskCompletion struct {
 // SynthesisState tracks the current state of synthesis execution.
 // This includes the instance performing synthesis and any revision-related state.
 type SynthesisState struct {
-	// InstanceID is the ID of the Claude instance performing synthesis review.
+	// InstanceID is the ID of the backend instance performing synthesis review.
 	InstanceID string
 
 	// AwaitingApproval is true when synthesis has completed but is waiting
@@ -984,7 +984,7 @@ type TaskWorktreeInfo struct {
 type SynthesisOrchestratorExtended interface {
 	OrchestratorInterface
 
-	// StopInstance stops a running Claude instance
+	// StopInstance stops a running backend instance
 	StopInstance(inst any) error
 
 	// StartRevision begins the revision phase to address identified issues
@@ -1004,7 +1004,7 @@ type RevisionOrchestratorInterface interface {
 	// This is used for revision tasks to work in the same worktree as the original task.
 	AddInstanceToWorktree(session any, task string, worktreePath string, branch string) (InstanceInterface, error)
 
-	// StopInstance stops a running Claude instance
+	// StopInstance stops a running backend instance
 	StopInstance(inst any) error
 
 	// RunSynthesis re-runs the synthesis phase after revision completes

@@ -12,7 +12,7 @@ Inline planning brings the power of Plan and UltraPlan workflows directly into t
 ├─────────────────────────────────────────────────────────────────────┤
 │  1. Start a normal Claudio session                                   │
 │  2. Run :plan or :ultraplan with an objective                        │
-│  3. Claude generates a structured task plan                          │
+│  3. Backend generates a structured task plan                         │
 │  4. Review and edit the plan in the built-in editor                  │
 │  5. Confirm to spawn instances organized in groups                   │
 │  6. Monitor progress with visual group hierarchy                     │
@@ -60,7 +60,7 @@ claudio start my-feature
 
 ### :plan
 
-Creates a simple planning workflow where Claude analyzes your objective and generates a task plan.
+Creates a simple planning workflow where the backend analyzes your objective and generates a task plan.
 
 ```
 :plan "Your objective here"
@@ -179,7 +179,7 @@ claudio start auth-feature
 # Create a plan
 :plan "Add user authentication with email/password login and session management"
 
-# Claude generates:
+# Backend generates:
 # - Task 1: Add authentication dependencies (priority 1)
 # - Task 2: Create User model (priority 1, parallel with 1)
 # - Task 3: Implement login endpoint (depends on 1, 2)

@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Codex Backend Support** - Added configurable Codex CLI support alongside Claude, including backend selection, backend-aware state detection, and AI-assisted workflows using the selected backend.
+
+### Changed
+
+- **Codex Approval Default** - Default `ai.codex.approval_mode` to `full-auto` for Codex CLI runs.
+
 ### Fixed
 
+- **Session Backend Init** - Initialize AI backend in `NewWithSession` to avoid undefined backend build errors.
 - **Adversarial Round Disambiguation** - Ignore stale increment/review files from prior rounds so new rounds don't start early
 
 ## [0.15.0] - 2026-02-02

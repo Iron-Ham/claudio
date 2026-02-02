@@ -13,7 +13,7 @@ import (
 // PlanningState tracks the current state of planning execution.
 // This includes the instance performing planning and configuration state.
 type PlanningState struct {
-	// InstanceID is the ID of the Claude instance performing planning.
+	// InstanceID is the ID of the backend instance performing planning.
 	// For single-pass, this is a single coordinator; for multi-pass,
 	// this tracks the current active planner (use PlanCoordinatorIDs for all).
 	InstanceID string

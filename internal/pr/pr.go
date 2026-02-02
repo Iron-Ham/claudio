@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"text/template"
+
+	"github.com/Iron-Ham/claudio/internal/ai"
 )
 
 // PRContent holds the generated PR title and body
@@ -35,15 +38,25 @@ type Context struct {
 	InstanceID   string
 }
 
-// Generator creates PR content using Claude
-type Generator struct{}
+// Generator creates PR content using the configured AI backend.
+type Generator struct {
+	backend ai.Backend
+}
 
 // New creates a new PR generator
 func New() *Generator {
-	return &Generator{}
+	return NewWithBackend(ai.DefaultBackend())
 }
 
-// promptTemplate is the prompt sent to Claude for generating PR content
+// NewWithBackend creates a new PR generator with the specified backend.
+func NewWithBackend(backend ai.Backend) *Generator {
+	if backend == nil {
+		backend = ai.DefaultBackend()
+	}
+	return &Generator{backend: backend}
+}
+
+// promptTemplate is the prompt sent to the backend for generating PR content
 const promptTemplate = `You are helping create a pull request. Based on the following information, generate a concise and meaningful PR title and description.
 
 ## Task Description
@@ -80,15 +93,20 @@ Important:
 - Be concise but informative
 - Do not include any text outside the JSON object`
 
-// Generate uses Claude to create PR content from the provided context
+// Generate uses the configured backend to create PR content from the provided context.
 func (g *Generator) Generate(ctx Context) (*PRContent, error) {
+	backend := g.backend
+	if backend == nil {
+		backend = ai.DefaultBackend()
+	}
+
 	// Build the prompt
 	tmpl, err := template.New("prompt").Parse(promptTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse template: %w", err)
 	}
 
-	// Truncate diff if too large (Claude has context limits)
+	// Truncate diff if too large (backend has context limits)
 	diff := ctx.Diff
 	const maxDiffSize = 50000
 	if len(diff) > maxDiffSize {
@@ -101,24 +119,53 @@ func (g *Generator) Generate(ctx Context) (*PRContent, error) {
 		return nil, fmt.Errorf("failed to execute template: %w", err)
 	}
 
-	// Call Claude CLI in one-shot mode
-	cmd := exec.Command("claude", "--print", promptBuf.String())
+	promptFile, err := os.CreateTemp("", "claudio-pr-*.prompt")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create prompt file: %w", err)
+	}
+	if _, err := promptFile.Write(promptBuf.Bytes()); err != nil {
+		_ = promptFile.Close()
+		_ = os.Remove(promptFile.Name())
+		return nil, fmt.Errorf("failed to write prompt file: %w", err)
+	}
+	if err := promptFile.Close(); err != nil {
+		_ = os.Remove(promptFile.Name())
+		return nil, fmt.Errorf("failed to close prompt file: %w", err)
+	}
+	defer func() {
+		_ = os.Remove(promptFile.Name())
+	}()
+
+	cmdString, err := backend.BuildStartCommand(ai.StartOptions{
+		PromptFile: promptFile.Name(),
+		Mode:       ai.StartModeOneShot,
+		OutputOnly: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build backend command: %w", err)
+	}
+
+	cmd := exec.Command("sh", "-c", cmdString)
+	cmd.Env = os.Environ()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	output, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("claude command failed: %w\nstderr: %s", err, string(exitErr.Stderr))
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg == "" {
+			errMsg = "unknown error"
 		}
-		return nil, fmt.Errorf("failed to run claude: %w", err)
+		return nil, fmt.Errorf("backend command failed: %w\nstderr: %s", err, errMsg)
 	}
 
 	// Parse the JSON response
-	// Claude might include markdown code blocks, so we need to extract the JSON
+	// The backend might include markdown code blocks, so we need to extract the JSON
 	responseStr := strings.TrimSpace(string(output))
 	responseStr = extractJSON(responseStr)
 
 	var content PRContent
 	if err := json.Unmarshal([]byte(responseStr), &content); err != nil {
-		return nil, fmt.Errorf("failed to parse claude response as JSON: %w\nresponse: %s", err, responseStr)
+		return nil, fmt.Errorf("failed to parse backend response as JSON: %w\nresponse: %s", err, responseStr)
 	}
 
 	return &content, nil

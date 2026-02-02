@@ -405,9 +405,9 @@ Use the `:adversarial-retry` command in the TUI to restart the stuck role:
 This restarts the stuck implementer or reviewer with the appropriate context, allowing the workflow to continue.
 
 **Common causes:**
-- Claude finishes work but fails to write the completion file
+- The backend finishes work but fails to write the completion file
 - Network interruptions during file write
-- Task ambiguity causing Claude to wait for clarification
+- Task ambiguity causing the backend to wait for clarification
 
 ## Example Workflow
 

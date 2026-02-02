@@ -129,7 +129,7 @@ func (m *Model) processAdversarialIncrementCheck(
 	}
 
 	// File not ready - just wait for next poll (like tripleshot does).
-	// If Claude gets stuck, the user can interact with it directly.
+	// If the backend gets stuck, the user can interact with it directly.
 	return m, nil
 }
 
@@ -155,7 +155,7 @@ func (m *Model) processAdversarialReviewCheck(
 	}
 
 	// File not ready - just wait for next poll (like tripleshot does).
-	// If Claude gets stuck, the user can interact with it directly.
+	// If the backend gets stuck, the user can interact with it directly.
 	return m, nil
 }
 

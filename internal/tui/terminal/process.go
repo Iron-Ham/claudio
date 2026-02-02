@@ -62,7 +62,7 @@ var (
 const captureTimeout = 500 * time.Millisecond
 
 // Process manages a persistent shell session in a tmux session for the terminal pane.
-// Unlike the instance TmuxProcess, this runs a plain shell (no Claude command).
+// Unlike the instance TmuxProcess, this runs a plain shell (no backend command).
 type Process struct {
 	sessionName   string // tmux session name
 	socketName    string // tmux socket for crash isolation

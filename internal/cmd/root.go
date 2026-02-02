@@ -27,10 +27,10 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "claudio",
-	Short: "Multi-instance Claude Code orchestrator",
-	Long: `Claudio enables running multiple Claude Code instances simultaneously
-on a single project using git worktrees, with a central orchestrator
-managing coordination between instances.`,
+	Short: "Multi-instance AI backend orchestrator",
+	Long: `Claudio enables running multiple AI backend instances (Claude Code or Codex)
+simultaneously on a single project using git worktrees, with a central
+orchestrator managing coordination between instances.`,
 }
 
 // Execute runs the root command

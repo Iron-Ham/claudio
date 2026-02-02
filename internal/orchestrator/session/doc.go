@@ -77,7 +77,7 @@
 //
 // # Context Files
 //
-// The manager also handles context files that help Claude instances
+// The manager also handles context files that help backend instances
 // coordinate their work:
 //
 //	mgr.WriteContext("# Session Context\n\n## Active Tasks\n...")

@@ -1,7 +1,7 @@
 // Package lifecycle provides instance lifecycle management for the orchestrator.
 //
 // This package encapsulates the creation, starting, stopping, and monitoring
-// of Claude Code instances within an orchestration session.
+// of AI backend instances within an orchestration session.
 //
 // Group-Aware Lifecycle:
 // The Manager supports group-based execution ordering, where instances in later
@@ -39,7 +39,7 @@ const (
 	StatusTimeout      InstanceStatus = "timeout"
 )
 
-// Instance represents a managed Claude Code instance.
+// Instance represents a managed AI backend instance.
 type Instance struct {
 	ID            string         `json:"id"`
 	WorktreePath  string         `json:"worktree_path"`
@@ -178,7 +178,7 @@ func DefaultConfig() Config {
 	}
 }
 
-// Manager manages the lifecycle of Claude Code instances.
+// Manager manages the lifecycle of backend instances.
 type Manager struct {
 	config    Config
 	callbacks Callbacks

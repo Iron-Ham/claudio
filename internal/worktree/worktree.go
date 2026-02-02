@@ -954,16 +954,23 @@ var localClaudeFiles = []string{
 	"CLAUDE.local.md",
 }
 
-// CopyLocalClaudeFiles copies gitignored Claude configuration files from the main
+// CopyLocalConfigFiles copies gitignored backend configuration files from the main
 // repository to the specified worktree. This ensures that local settings like
-// CLAUDE.local.md are available in worktrees even though they're not tracked by git.
+// CLAUDE.local.md or CODEX.local.md are available in worktrees even though they're not tracked by git.
 //
 // Files that don't exist in the source are silently skipped.
 // Errors during individual file copies are logged but don't fail the operation.
-func (m *Manager) CopyLocalClaudeFiles(worktreePath string) error {
+func (m *Manager) CopyLocalConfigFiles(worktreePath string, filenames []string, label string) error {
+	if len(filenames) == 0 {
+		return nil
+	}
+	if label == "" {
+		label = "backend"
+	}
+
 	var lastErr error
 
-	for _, filename := range localClaudeFiles {
+	for _, filename := range filenames {
 		srcPath := filepath.Join(m.repoDir, filename)
 		dstPath := filepath.Join(worktreePath, filename)
 
@@ -971,7 +978,8 @@ func (m *Manager) CopyLocalClaudeFiles(worktreePath string) error {
 			if !os.IsNotExist(err) {
 				// Log non-existence errors but continue with other files
 				if m.logger != nil {
-					m.logger.Warn("failed to copy local Claude file",
+					m.logger.Warn("failed to copy local config file",
+						"label", label,
 						"file", filename,
 						"src", srcPath,
 						"dst", dstPath,
@@ -985,7 +993,8 @@ func (m *Manager) CopyLocalClaudeFiles(worktreePath string) error {
 		}
 
 		if m.logger != nil {
-			m.logger.Debug("copied local Claude file to worktree",
+			m.logger.Debug("copied local config file to worktree",
+				"label", label,
 				"file", filename,
 				"worktree", worktreePath,
 			)
@@ -993,6 +1002,16 @@ func (m *Manager) CopyLocalClaudeFiles(worktreePath string) error {
 	}
 
 	return lastErr
+}
+
+// CopyLocalClaudeFiles copies gitignored Claude configuration files from the main
+// repository to the specified worktree. This ensures that local settings like
+// CLAUDE.local.md are available in worktrees even though they're not tracked by git.
+//
+// Files that don't exist in the source are silently skipped.
+// Errors during individual file copies are logged but don't fail the operation.
+func (m *Manager) CopyLocalClaudeFiles(worktreePath string) error {
+	return m.CopyLocalConfigFiles(worktreePath, localClaudeFiles, "Claude")
 }
 
 // copyFile copies a file from src to dst, preserving permissions.

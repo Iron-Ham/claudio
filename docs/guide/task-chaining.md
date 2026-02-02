@@ -1,6 +1,6 @@
 # Task Chaining
 
-Task chaining allows you to define dependencies between Claude instances, ensuring tasks execute in the correct order while maximizing parallelism.
+Task chaining allows you to define dependencies between backend instances, ensuring tasks execute in the correct order while maximizing parallelism.
 
 ## Overview
 

@@ -680,7 +680,7 @@ func (c *Coordinator) checkFileReady(
 }
 
 // CheckIncrementReady checks if the implementer has written their increment file.
-// It searches multiple locations to handle cases where Claude writes the file
+// It searches multiple locations to handle cases where the backend writes the file
 // to the wrong directory (e.g., subdirectory or parent in a monorepo).
 //
 // Performance optimization: Uses cached file locations and rate-limits expensive
@@ -697,7 +697,7 @@ func (c *Coordinator) CheckIncrementReady() (bool, error) {
 }
 
 // CheckReviewReady checks if the reviewer has written their review file.
-// It searches multiple locations to handle cases where Claude writes the file
+// It searches multiple locations to handle cases where the backend writes the file
 // to the wrong directory (e.g., subdirectory or parent in a monorepo).
 //
 // Performance optimization: Uses cached file locations and rate-limits expensive
@@ -993,9 +993,10 @@ func (c *Coordinator) checkStuckWithGracePeriod(
 //
 // Note: We only trigger stuck detection for StateCompleted, not waiting states.
 // Waiting states (StateWaitingInput, StateWaitingQuestion, StateWaitingPermission) can
-// occur during normal operation - Claude Code shows UI elements like "(shift+Tab to cycle)"
-// even while actively processing/thinking, which triggers StateWaitingInput detection.
-// Only StateCompleted definitively indicates Claude has finished and won't write the file.
+// occur during normal operation - some backends (e.g., Claude Code) show UI elements
+// like "(shift+Tab to cycle)" even while actively processing/thinking, which triggers
+// StateWaitingInput detection. Only StateCompleted definitively indicates the backend
+// has finished and won't write the file.
 //
 // To prevent false positive stuck detection (race condition between instance completing
 // and file being written), this method uses a grace period. The first time an instance

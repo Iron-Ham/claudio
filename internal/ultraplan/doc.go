@@ -4,7 +4,7 @@
 // Ultra-Plan enables automated task planning, parallel execution, and
 // result consolidation for large-scale code modifications. It decomposes
 // high-level objectives into smaller tasks that can run in parallel
-// across multiple Claude instances.
+// across multiple backend instances.
 //
 // # Main Types
 //
@@ -52,7 +52,7 @@
 //	config := ultraplan.DefaultConfig()
 //	session := ultraplan.NewSession("Refactor authentication module", config)
 //
-//	// Parse and validate a plan from Claude output
+//	// Parse and validate a plan from backend output
 //	spec, err := ultraplan.ParsePlanFromOutput(claudeOutput, objective)
 //	if err != nil {
 //	    return err

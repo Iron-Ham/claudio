@@ -2,12 +2,12 @@
 
 **Time: 5 minutes**
 
-This tutorial walks you through running multiple Claude instances in parallel on a real project.
+This tutorial walks you through running multiple AI backend instances in parallel on a real project.
 
 ## Prerequisites
 
 - Claudio installed (`claudio --help` works)
-- Claude Code CLI authenticated (`claude auth status` shows logged in)
+- Preferred backend CLI authenticated (Claude Code or Codex)
 - A Git repository to work in
 
 ## Step 1: Set Up Your Project
@@ -58,7 +58,7 @@ Add a greeting function to src/index.js that takes a name parameter
 Watch as Claudio:
 1. Creates a worktree in `.claudio/worktrees/`
 2. Creates a new branch
-3. Starts Claude Code with your task
+3. Starts the configured backend with your task
 
 ## Step 5: Add a Second Instance
 

@@ -24,7 +24,7 @@ func GetBaseBranchForGroup(c *Coordinator, groupIndex int) string {
 	return consolidator.GetBaseBranchForGroup(groupIndex)
 }
 
-// StartGroupConsolidatorSession creates and starts a Claude session for consolidating a group.
+// StartGroupConsolidatorSession creates and starts a backend session for consolidating a group.
 // This is a package-level function that replaces the former Coordinator method,
 // delegating to the consolidate package.
 func StartGroupConsolidatorSession(c *Coordinator, groupIndex int) error {

@@ -7,7 +7,7 @@ package group
 //   - getBaseBranchForGroup - determine base branch for a group
 //   - gatherTaskCompletionContextForGroup - collect context from completed tasks
 //   - getTaskBranchesForGroup - get branches for tasks in a group
-//   - buildGroupConsolidatorPrompt - build Claude prompt for consolidation
+//   - buildGroupConsolidatorPrompt - build backend prompt for consolidation
 //   - startGroupConsolidatorSession - start the consolidator instance
 //   - monitorGroupConsolidator - monitor consolidation progress
 //

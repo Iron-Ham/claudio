@@ -66,7 +66,7 @@ Each platform guide covers worktree considerations, build strategies, testing ap
 ### Before You Start
 
 1. Ensure Claudio is installed: `claudio --help`
-2. Have Claude Code authenticated: `claude auth status`
+2. Have your backend CLI authenticated (Claude Code or Codex)
 3. Work in a Git repository: `git status`
 4. Initialize Claudio: `claudio init`
 

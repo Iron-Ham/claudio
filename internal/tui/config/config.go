@@ -184,6 +184,29 @@ func New() Model {
 					Type:        "int",
 					Category:    "instance",
 				},
+				{
+					Key:         "ai.backend",
+					Label:       "AI Backend",
+					Description: "Select the AI backend used for instances and workflows",
+					Type:        "select",
+					Options:     config.ValidAIBackends(),
+					Category:    "ai",
+				},
+				{
+					Key:         "ai.claude.skip_permissions",
+					Label:       "Claude Skip Permissions",
+					Description: "Add --dangerously-skip-permissions when starting Claude",
+					Type:        "bool",
+					Category:    "ai",
+				},
+				{
+					Key:         "ai.codex.approval_mode",
+					Label:       "Codex Approval Mode",
+					Description: "Approval/sandbox mode for Codex (bypass, full-auto, default)",
+					Type:        "select",
+					Options:     config.ValidCodexApprovalModes(),
+					Category:    "ai",
+				},
 			},
 		},
 		{
@@ -206,7 +229,7 @@ func New() Model {
 				{
 					Key:         "pr.use_ai",
 					Label:       "Use AI",
-					Description: "Use Claude AI to generate PR content",
+					Description: "Use the configured AI backend to generate PR content",
 					Type:        "bool",
 					Category:    "pr",
 				},

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/event"
@@ -67,6 +68,7 @@ type Orchestrator struct {
 	wt               *worktree.Manager
 	conflictDetector *conflict.Detector
 	config           *config.Config
+	backend          ai.Backend
 
 	// Callback for when a PR URL is detected in instance output (inline PR creation)
 	prOpenedCallback func(instanceID string)
@@ -113,6 +115,12 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 	// Create event bus for inter-component communication
 	eventBus := event.NewBus()
 
+	// Resolve AI backend from configuration
+	backend, err := ai.NewFromConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure AI backend: %w", err)
+	}
+
 	// Create session manager (legacy single-session mode)
 	sessionMgr := orchsession.NewManager(orchsession.Config{
 		BaseDir: baseDir,
@@ -130,6 +138,7 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		prworkflow.NewConfigFromConfig(cfg),
 		"", // no session ID in legacy mode
 		eventBus,
+		backend,
 	)
 
 	// Create display manager with config-derived defaults
@@ -139,11 +148,11 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 	})
 
 	// Create centralized state monitor for all instances
-	stateMonitor := instancestate.NewMonitor(instancestate.MonitorConfig{
+	stateMonitor := instancestate.NewMonitorWithDetector(instancestate.MonitorConfig{
 		ActivityTimeoutMinutes:   cfg.Instance.ActivityTimeoutMinutes,
 		CompletionTimeoutMinutes: cfg.Instance.CompletionTimeoutMinutes,
 		StaleDetection:           cfg.Instance.StaleDetection,
-	})
+	}, backend.Detector())
 
 	orch := &Orchestrator{
 		baseDir:          baseDir,
@@ -159,6 +168,7 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		wt:               wt,
 		conflictDetector: detector,
 		config:           cfg,
+		backend:          backend,
 	}
 
 	// Initialize budget manager with orchestrator as provider and pauser
@@ -203,6 +213,12 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 	// Create event bus for inter-component communication
 	eventBus := event.NewBus()
 
+	// Resolve AI backend from configuration
+	backend, err := ai.NewFromConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure AI backend: %w", err)
+	}
+
 	// Create session manager (multi-session mode with sessionID)
 	sessionMgr := orchsession.NewManager(orchsession.Config{
 		BaseDir:   baseDir,
@@ -226,6 +242,7 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		prworkflow.NewConfigFromConfig(cfg),
 		sessionID,
 		eventBus,
+		backend,
 	)
 
 	// Create display manager with config-derived defaults
@@ -235,11 +252,11 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 	})
 
 	// Create centralized state monitor for all instances
-	stateMonitor := instancestate.NewMonitor(instancestate.MonitorConfig{
+	stateMonitor := instancestate.NewMonitorWithDetector(instancestate.MonitorConfig{
 		ActivityTimeoutMinutes:   cfg.Instance.ActivityTimeoutMinutes,
 		CompletionTimeoutMinutes: cfg.Instance.CompletionTimeoutMinutes,
 		StaleDetection:           cfg.Instance.StaleDetection,
-	})
+	}, backend.Detector())
 
 	orch := &Orchestrator{
 		baseDir:          baseDir,
@@ -257,6 +274,7 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		wt:               wt,
 		conflictDetector: detector,
 		config:           cfg,
+		backend:          backend,
 	}
 
 	// Initialize budget manager with orchestrator as provider and pauser
@@ -540,13 +558,14 @@ func (o *Orchestrator) CleanOrphanedTmuxSessions() (int, error) {
 	return cleaned, nil
 }
 
-// AddInstance adds a new Claude instance to the session
+// AddInstance adds a new AI backend instance to the session
 func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
 	// Create instance
 	inst := NewInstance(task)
+	o.initializeInstanceSessionID(inst)
 
 	// Generate branch name from task using configured naming convention
 	branchSlug := slugify(task)
@@ -583,7 +602,7 @@ func (o *Orchestrator) AddInstance(session *Session, task string) (*Instance, er
 	return inst, nil
 }
 
-// AddInstanceWithDependencies adds a new Claude instance with dependencies on other instances.
+// AddInstanceWithDependencies adds a new AI backend instance with dependencies on other instances.
 // The instance will be created in pending state. If autoStart is true, the orchestrator
 // will automatically start the instance when all dependencies complete.
 // Dependencies can be specified by instance ID or task name (partial match).
@@ -603,6 +622,7 @@ func (o *Orchestrator) AddInstanceWithDependencies(session *Session, task string
 
 	// Create instance
 	inst := NewInstance(task)
+	o.initializeInstanceSessionID(inst)
 	inst.DependsOn = resolvedDeps
 	inst.AutoStart = autoStart
 
@@ -745,16 +765,14 @@ func (o *Orchestrator) AddInstanceToWorktree(session *Session, task string, work
 
 	// Create instance with pre-set worktree info
 	inst := NewInstance(task)
+	o.initializeInstanceSessionID(inst)
 	inst.WorktreePath = worktreePath
 	inst.Branch = branch
-
-	// Generate a Claude session ID for resume capability
-	inst.ClaudeSessionID = GenerateUUID()
 
 	// Add to session
 	session.Instances = append(session.Instances, inst)
 
-	// Create instance manager with config (including Claude session ID)
+	// Create instance manager with config (including backend session ID)
 	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, task, inst.ClaudeSessionID)
 	o.instances[inst.ID] = mgr
 
@@ -766,7 +784,7 @@ func (o *Orchestrator) AddInstanceToWorktree(session *Session, task string, work
 	return inst, nil
 }
 
-// AddInstanceFromBranch adds a new Claude instance with a worktree branched from a specific base branch.
+// AddInstanceFromBranch adds a new AI backend instance with a worktree branched from a specific base branch.
 // This is used for ultraplan tasks where the next group should build on the consolidated branch from the previous group.
 func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, baseBranch string) (*Instance, error) {
 	o.mu.Lock()
@@ -774,6 +792,7 @@ func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, base
 
 	// Create instance
 	inst := NewInstance(task)
+	o.initializeInstanceSessionID(inst)
 
 	// Generate branch name from task using configured naming convention
 	branchSlug := slugify(task)
@@ -811,17 +830,15 @@ func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, base
 	return inst, nil
 }
 
-// StartInstance starts a Claude process for an instance
+// StartInstance starts an AI backend process for an instance
 func (o *Orchestrator) StartInstance(inst *Instance) error {
 	// Validate instance is ready to start - cannot start if still preparing
 	if inst.Status == StatusPreparing {
 		return fmt.Errorf("instance is still preparing (worktree being created)")
 	}
 
-	// Generate a Claude session ID if not already present (for resume capability)
-	if inst.ClaudeSessionID == "" {
-		inst.ClaudeSessionID = GenerateUUID()
-	}
+	// Ensure session ID is set when backend supports explicit IDs.
+	o.ensureInstanceSessionID(inst)
 
 	o.mu.Lock()
 	mgr, ok := o.instances[inst.ID]
@@ -833,7 +850,7 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
 	} else {
-		// Update the manager's Claude session ID if it changed
+		// Update the manager's backend session ID if it changed
 		mgr.SetClaudeSessionID(inst.ClaudeSessionID)
 	}
 
@@ -870,14 +887,14 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 			"instance_id", inst.ID,
 			"tmux_session", inst.TmuxSession,
 			"pid", inst.PID,
-			"claude_session_id", inst.ClaudeSessionID,
+			"backend_session_id", inst.ClaudeSessionID,
 		)
 	}
 
 	return o.saveSession()
 }
 
-// StopInstance stops a running Claude instance
+// StopInstance stops a running AI backend instance
 func (o *Orchestrator) StopInstance(inst *Instance) error {
 	o.mu.RLock()
 	mgr, ok := o.instances[inst.ID]
@@ -914,7 +931,7 @@ func (o *Orchestrator) StopInstance(inst *Instance) error {
 // StopInstanceWithAutoPR stops an instance and optionally starts PR workflow
 // Returns true if PR workflow was started, false if instance was just stopped
 func (o *Orchestrator) StopInstanceWithAutoPR(inst *Instance) (bool, error) {
-	// First, stop the Claude instance
+	// First, stop the backend instance
 	if err := o.StopInstance(inst); err != nil {
 		return false, err
 	}
@@ -1181,7 +1198,7 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 	return nil
 }
 
-// Shutdown gracefully stops all running Claude processes without removing session state.
+// Shutdown gracefully stops all running backend processes without removing session state.
 // This is called on normal exit (quit, Ctrl+C, SIGTERM) to clean up tmux sessions
 // while preserving worktrees and session data for potential resume.
 //
@@ -1205,7 +1222,7 @@ func (o *Orchestrator) Shutdown() error {
 		o.namer = nil
 	}
 
-	// Stop all instances (kills tmux sessions with Claude)
+	// Stop all instances (kills tmux sessions)
 	if o.session != nil {
 		for _, inst := range o.session.Instances {
 			if mgr, ok := o.instances[inst.ID]; ok {
@@ -1353,6 +1370,7 @@ func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessi
 		Callbacks:       callbacks,
 		StateMonitor:    o.stateMonitor,
 		ClaudeSessionID: claudeSessionID,
+		Backend:         o.backend,
 		// LifecycleManager not set - instances use internal Start/Stop/Reconnect
 	})
 
@@ -1366,14 +1384,14 @@ func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessi
 // This includes copying config files, registering with managers, and saving the session.
 // Must be called while holding o.mu lock.
 func (o *Orchestrator) registerInstance(session *Session, inst *Instance) error {
-	// Copy local Claude configuration files (e.g., CLAUDE.local.md) to the worktree.
+	// Copy local backend configuration files (e.g., CLAUDE.local.md) to the worktree.
 	// Failures are logged but do not block instance creation since local config is optional.
-	o.copyLocalClaudeFilesToWorktree(inst.ID, inst.WorktreePath)
+	o.copyLocalBackendFilesToWorktree(inst.ID, inst.WorktreePath)
 
 	// Add to session
 	session.Instances = append(session.Instances, inst)
 
-	// Create instance manager with config (including Claude session ID for resume capability)
+	// Create instance manager with config (including backend session ID for resume capability)
 	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
 	o.instances[inst.ID] = mgr
 
@@ -1770,18 +1788,54 @@ func slugify(text string) string {
 	return slug
 }
 
-// copyLocalClaudeFilesToWorktree copies local Claude config files (e.g., CLAUDE.local.md)
+// initializeInstanceSessionID sets or clears the backend session ID for a new instance.
+// For backends that don't support explicit session IDs, this clears any auto-generated ID.
+func (o *Orchestrator) initializeInstanceSessionID(inst *Instance) {
+	if inst == nil || o.backend == nil {
+		return
+	}
+	if !o.backend.SupportsExplicitSessionID() {
+		inst.ClaudeSessionID = ""
+		return
+	}
+	if inst.ClaudeSessionID == "" {
+		inst.ClaudeSessionID = GenerateUUID()
+	}
+}
+
+// ensureInstanceSessionID ensures an instance has a session ID when the backend supports it.
+func (o *Orchestrator) ensureInstanceSessionID(inst *Instance) {
+	if inst == nil || o.backend == nil {
+		return
+	}
+	if !o.backend.SupportsExplicitSessionID() {
+		return
+	}
+	if inst.ClaudeSessionID == "" {
+		inst.ClaudeSessionID = GenerateUUID()
+	}
+}
+
+// copyLocalBackendFilesToWorktree copies local backend config files (e.g., CLAUDE.local.md)
 // to the worktree. Errors are logged and reported to stderr but don't fail the operation.
-func (o *Orchestrator) copyLocalClaudeFilesToWorktree(instID, wtPath string) {
-	if err := o.wt.CopyLocalClaudeFiles(wtPath); err != nil {
+func (o *Orchestrator) copyLocalBackendFilesToWorktree(instID, wtPath string) {
+	if o.backend == nil {
+		return
+	}
+	files := o.backend.LocalConfigFiles()
+	if len(files) == 0 {
+		return
+	}
+	if err := o.wt.CopyLocalConfigFiles(wtPath, files, o.backend.DisplayName()); err != nil {
 		if o.logger != nil {
-			o.logger.Warn("failed to copy local Claude files to worktree",
+			o.logger.Warn("failed to copy local backend files to worktree",
 				"instance_id", instID,
 				"worktree_path", wtPath,
+				"backend", o.backend.Name(),
 				"error", err,
 			)
 		}
-		fmt.Fprintf(os.Stderr, "Warning: failed to copy local Claude files to worktree: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to copy local backend files to worktree: %v\n", err)
 	}
 }
 
@@ -1799,7 +1853,7 @@ func timeoutTypeString(t instance.TimeoutType) string {
 	}
 }
 
-// handleInstanceExit handles when a Claude instance process exits
+// handleInstanceExit handles when an instance process exits
 func (o *Orchestrator) handleInstanceExit(id string) {
 	inst := o.GetInstance(id)
 	if inst != nil {
@@ -1906,12 +1960,25 @@ func (o *Orchestrator) handleInstanceMetrics(id string, m *instmetrics.ParsedMet
 	if m.Cost > 0 {
 		inst.Metrics.Cost = m.Cost
 	} else {
-		inst.Metrics.Cost = instmetrics.CalculateCost(
-			m.InputTokens,
-			m.OutputTokens,
-			m.CacheReadTokens,
-			m.CacheWriteTokens,
-		)
+		if o.backend != nil {
+			if cost, ok := o.backend.EstimateCost(
+				m.InputTokens,
+				m.OutputTokens,
+				m.CacheReadTokens,
+				m.CacheWriteTokens,
+			); ok {
+				inst.Metrics.Cost = cost
+			} else {
+				inst.Metrics.Cost = 0
+			}
+		} else {
+			inst.Metrics.Cost = instmetrics.CalculateCost(
+				m.InputTokens,
+				m.OutputTokens,
+				m.CacheReadTokens,
+				m.CacheWriteTokens,
+			)
+		}
 	}
 
 	// Check budget limits
@@ -2032,7 +2099,7 @@ func (o *Orchestrator) PauseInstance(id string) error {
 	return nil
 }
 
-// handleInstanceWaitingInput handles when a Claude instance is waiting for input
+// handleInstanceWaitingInput handles when an instance is waiting for input
 func (o *Orchestrator) handleInstanceWaitingInput(id string) {
 	inst := o.GetInstance(id)
 	if inst != nil {
@@ -2184,9 +2251,9 @@ func (o *Orchestrator) GetMainBranch() string {
 	return o.wt.FindMainBranch()
 }
 
-// ReconnectInstance attempts to reconnect to a stopped or paused instance
-// If the tmux session still exists, it reconnects to it
-// If not, it restarts Claude with the same task in the existing worktree
+// ReconnectInstance attempts to reconnect to a stopped or paused instance.
+// If the tmux session still exists, it reconnects to it.
+// If not, it restarts the backend with the same task in the existing worktree.
 func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 	// Validate instance is ready - cannot reconnect if still preparing
 	if inst.Status == StatusPreparing {
@@ -2197,7 +2264,7 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 	mgr, ok := o.instances[inst.ID]
 	o.mu.Unlock()
 
-	// If no manager exists yet, create one (with Claude session ID for resume capability)
+	// If no manager exists yet, create one (with backend session ID for resume capability)
 	if !ok {
 		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
 		o.mu.Lock()
@@ -2214,26 +2281,26 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 		if err := mgr.Reconnect(); err != nil {
 			return fmt.Errorf("failed to reconnect to existing session: %w", err)
 		}
-	} else if inst.ClaudeSessionID != "" {
-		// Tmux session gone but we have a Claude session ID - resume Claude's conversation
+	} else if inst.ClaudeSessionID != "" && o.backend != nil && o.backend.SupportsResume() {
+		// Tmux session gone but we have a backend session ID - resume the conversation
 		if err := mgr.StartWithResume(); err != nil {
 			// Configuration errors are programming bugs - propagate them immediately
 			if errors.Is(err, instance.ErrManagerNotConfigured) {
 				return fmt.Errorf("failed to resume instance: %w", err)
 			}
 			if o.logger != nil {
-				o.logger.Warn("failed to resume with claude session, falling back to fresh start",
+				o.logger.Warn("failed to resume with backend session, falling back to fresh start",
 					"instance_id", inst.ID,
-					"claude_session_id", inst.ClaudeSessionID,
+					"backend_session_id", inst.ClaudeSessionID,
 					"error", err.Error())
 			}
-			// Fall back to fresh start if resume fails (e.g., Claude session expired)
+			// Fall back to fresh start if resume fails (e.g., session expired)
 			if err := mgr.Start(); err != nil {
 				return fmt.Errorf("failed to restart instance: %w", err)
 			}
 		}
 	} else {
-		// No tmux session and no Claude session ID - start fresh
+		// No tmux session or no resume support - start fresh
 		if err := mgr.Start(); err != nil {
 			return fmt.Errorf("failed to restart instance: %w", err)
 		}
@@ -2255,12 +2322,14 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 	return o.saveSession()
 }
 
-// ResumeInstance resumes an interrupted Claude instance using Claude's --resume flag.
-// This is useful when Claudio was interrupted but the Claude conversation can be continued.
-// Unlike ReconnectInstance, this always creates a new tmux session and uses --resume.
+// ResumeInstance resumes an interrupted instance using the backend's resume behavior.
+// Unlike ReconnectInstance, this always creates a new tmux session and uses resume.
 func (o *Orchestrator) ResumeInstance(inst *Instance) error {
+	if o.backend == nil || !o.backend.SupportsResume() {
+		return fmt.Errorf("cannot resume: backend does not support resume")
+	}
 	if inst.ClaudeSessionID == "" {
-		return fmt.Errorf("cannot resume: instance has no Claude session ID")
+		return fmt.Errorf("cannot resume: instance has no backend session ID")
 	}
 
 	o.mu.Lock()
@@ -2282,7 +2351,7 @@ func (o *Orchestrator) ResumeInstance(inst *Instance) error {
 		if o.logger != nil {
 			o.logger.Error("failed to resume instance",
 				"instance_id", inst.ID,
-				"claude_session_id", inst.ClaudeSessionID,
+				"backend_session_id", inst.ClaudeSessionID,
 				"error", err.Error())
 		}
 		return fmt.Errorf("failed to resume instance: %w", err)
@@ -2307,7 +2376,7 @@ func (o *Orchestrator) ResumeInstance(inst *Instance) error {
 	if o.logger != nil {
 		o.logger.Info("instance resumed",
 			"instance_id", inst.ID,
-			"claude_session_id", inst.ClaudeSessionID,
+			"backend_session_id", inst.ClaudeSessionID,
 			"tmux_session", inst.TmuxSession)
 	}
 
@@ -2343,7 +2412,7 @@ func (o *Orchestrator) ClearCompletedInstances(session *Session) (int, error) {
 	return removed, nil
 }
 
-// AddInstanceStub creates a new Claude instance stub with StatusPreparing.
+// AddInstanceStub creates a new instance stub with StatusPreparing.
 // This is the fast first phase of async instance creation - it creates the
 // instance metadata immediately so it can be displayed in the UI.
 // The worktree is NOT created yet - call CompleteInstanceSetup to finish setup.
@@ -2356,6 +2425,7 @@ func (o *Orchestrator) AddInstanceStub(session *Session, task string) (*Instance
 
 	// Create instance with preparing status
 	inst := NewInstance(task)
+	o.initializeInstanceSessionID(inst)
 	inst.Status = StatusPreparing
 
 	// Generate branch name from task using configured naming convention
@@ -2431,8 +2501,8 @@ func (o *Orchestrator) CompleteInstanceSetup(session *Session, inst *Instance) e
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
-	// Copy local Claude configuration files to the worktree
-	o.copyLocalClaudeFilesToWorktree(inst.ID, inst.WorktreePath)
+	// Copy local backend configuration files to the worktree
+	o.copyLocalBackendFilesToWorktree(inst.ID, inst.WorktreePath)
 
 	// Create instance manager with config
 	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)

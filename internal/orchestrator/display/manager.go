@@ -1,7 +1,7 @@
 // Package display provides display dimension management for the orchestrator.
 //
 // This package encapsulates the tracking of terminal display dimensions
-// and coordinating resize events across all running Claude instances.
+// and coordinating resize events across all running backend instances.
 package display
 
 import (
@@ -21,7 +21,7 @@ type ResizeObserver interface {
 // Manager manages display dimensions for tmux sessions.
 //
 // It tracks the current display dimensions and notifies registered observers
-// (typically running Claude instances) when the dimensions change.
+// (typically running backend instances) when the dimensions change.
 type Manager struct {
 	mu            sync.RWMutex
 	width         int

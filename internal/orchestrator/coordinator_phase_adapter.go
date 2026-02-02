@@ -110,7 +110,7 @@ func (a *coordinatorOrchestratorAdapter) AddInstance(session any, task string) (
 	return a.c.orch.AddInstance(a.c.baseSession, task)
 }
 
-// StartInstance starts a Claude process for the given instance.
+// StartInstance starts a backend process for the given instance.
 func (a *coordinatorOrchestratorAdapter) StartInstance(inst any) error {
 	if a.c == nil || a.c.orch == nil {
 		return ErrNilCoordinator

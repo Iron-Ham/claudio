@@ -12,7 +12,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 )
 
-// InstanceStatus represents the current state of a Claude instance
+// InstanceStatus represents the current state of an AI backend instance
 type InstanceStatus string
 
 const (
@@ -57,7 +57,7 @@ func (m *Metrics) Duration() time.Duration {
 	return m.EndTime.Sub(*m.StartTime)
 }
 
-// Instance represents a single Claude Code instance
+// Instance represents a single AI backend instance
 type Instance struct {
 	ID            string         `json:"id"`
 	WorktreePath  string         `json:"worktree_path"`
@@ -81,8 +81,8 @@ type Instance struct {
 	DisplayName   string `json:"display_name,omitempty"`   // Short descriptive name (e.g., "Fix auth bug")
 	ManuallyNamed bool   `json:"manually_named,omitempty"` // If true, auto-rename is disabled
 
-	// Progress persistence support - allows resuming interrupted Claude sessions
-	ClaudeSessionID string     `json:"claude_session_id,omitempty"` // Claude's internal session UUID for --resume
+	// Progress persistence support - allows resuming interrupted sessions
+	ClaudeSessionID string     `json:"claude_session_id,omitempty"` // Backend session ID for resume
 	LastActiveAt    *time.Time `json:"last_active_at,omitempty"`    // Last time output was detected
 	InterruptedAt   *time.Time `json:"interrupted_at,omitempty"`    // When session was interrupted (if applicable)
 }
@@ -177,7 +177,7 @@ func NewSession(name, baseRepo string) *Session {
 }
 
 // NewInstance creates a new instance with a generated ID.
-// Also generates a Claude session UUID for progress persistence and resume capability.
+// Backend session IDs may be overwritten based on backend capabilities.
 func NewInstance(task string) *Instance {
 	return &Instance{
 		ID:              generateID(),
@@ -273,11 +273,11 @@ func (s *Session) GetInterruptedInstances() []*Instance {
 	return interrupted
 }
 
-// GetResumableInstances returns instances that have a Claude session ID and can be resumed.
+// GetResumableInstances returns instances that have a backend session ID and can be resumed.
 func (s *Session) GetResumableInstances() []*Instance {
 	var resumable []*Instance
 	for _, inst := range s.Instances {
-		// Instances with Claude session ID can be resumed if they were running or interrupted
+		// Instances with backend session ID can be resumed if they were running or interrupted
 		if inst.ClaudeSessionID != "" && (inst.Status == StatusWorking || inst.Status == StatusWaitingInput || inst.Status == StatusPaused || inst.Status == StatusInterrupted) {
 			resumable = append(resumable, inst)
 		}
@@ -326,7 +326,7 @@ func GenerateID() string {
 	return generateID()
 }
 
-// GenerateUUID generates a new random UUID (version 4) for Claude session IDs.
+// GenerateUUID generates a new random UUID (version 4) for backend session IDs.
 // This creates a UUID in the format xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
 // where y is one of 8, 9, a, or b.
 func GenerateUUID() string {

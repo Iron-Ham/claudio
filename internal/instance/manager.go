@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/instance/capture"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	"github.com/Iron-Ham/claudio/internal/instance/input"
@@ -127,10 +128,11 @@ type ManagerOptions struct {
 	Callbacks        ManagerCallbacks   // Callbacks for state changes, metrics, timeouts, bells
 	StateMonitor     *state.Monitor     // Optional - if nil, an internal monitor is created
 	LifecycleManager *lifecycle.Manager // Optional - if set, delegates Start/Stop/Reconnect
-	ClaudeSessionID  string             // Optional - Claude's internal session UUID for resume capability
+	ClaudeSessionID  string             // Optional - backend session UUID for resume capability (legacy field name)
+	Backend          ai.Backend         // Optional - AI backend (defaults to Claude)
 }
 
-// Manager handles a single Claude Code instance running in a tmux session.
+// Manager handles a single AI backend instance running in a tmux session.
 // The Manager is a facade that delegates state tracking to its StateMonitor.
 type Manager struct {
 	id              string
@@ -139,7 +141,7 @@ type Manager struct {
 	task            string
 	sessionName     string // tmux session name
 	socketName      string // tmux socket name for isolation (claudio-{instanceID})
-	claudeSessionID string // Claude's internal session UUID for resume capability
+	claudeSessionID string // Backend session UUID for resume capability
 	outputBuf       *capture.RingBuffer
 	mu              sync.RWMutex
 	running         bool
@@ -161,6 +163,9 @@ type Manager struct {
 	currentMetrics  *metrics.ParsedMetrics
 	metricsCallback MetricsChangeCallback
 	startTime       *time.Time
+
+	// Backend configuration
+	backend ai.Backend
 
 	// Timeout tracking - delegated to stateMonitor
 	timeoutCallback TimeoutCallback
@@ -230,6 +235,12 @@ func NewManagerWithDeps(opts ManagerOptions) *Manager {
 		cfg.TmuxHistoryLimit = defaults.TmuxHistoryLimit
 	}
 
+	// Determine backend (defaults to Claude)
+	backend := opts.Backend
+	if backend == nil {
+		backend = ai.DefaultBackend()
+	}
+
 	// Use provided StateMonitor or create an internal one
 	monitor := opts.StateMonitor
 	if monitor == nil {
@@ -238,8 +249,10 @@ func NewManagerWithDeps(opts ManagerOptions) *Manager {
 			CompletionTimeoutMinutes: cfg.CompletionTimeoutMinutes,
 			StaleDetection:           cfg.StaleDetection,
 		}
-		monitor = state.NewMonitor(monitorCfg)
+		monitor = state.NewMonitorWithDetector(monitorCfg, backend.Detector())
 	}
+
+	metricsParser := backend.MetricsParser()
 
 	// Each instance gets its own tmux socket for crash isolation
 	socketName := tmux.InstanceSocketName(opts.ID)
@@ -257,7 +270,7 @@ func NewManagerWithDeps(opts ManagerOptions) *Manager {
 		config:          cfg,
 		configured:      true, // Mark as properly constructed
 		stateCallback:   opts.Callbacks.OnStateChange,
-		metricsParser:   metrics.NewMetricsParser(),
+		metricsParser:   metricsParser,
 		metricsCallback: opts.Callbacks.OnMetrics,
 		timeoutCallback: opts.Callbacks.OnTimeout,
 		bellCallback:    opts.Callbacks.OnBell,
@@ -267,6 +280,7 @@ func NewManagerWithDeps(opts ManagerOptions) *Manager {
 		),
 		stateMonitor:     monitor,
 		lifecycleManager: opts.LifecycleManager,
+		backend:          backend,
 	}
 }
 
@@ -366,7 +380,7 @@ func (m *Manager) ClearTimeout() {
 	m.stateMonitor.ClearTimeout(m.id)
 }
 
-// Start launches the Claude Code process in a tmux session.
+// Start launches the AI backend process in a tmux session.
 // If a LifecycleManager is configured, delegates to it for tmux session management.
 //
 // Returns ErrManagerNotConfigured if the manager was not created via NewManagerWithDeps.
@@ -385,6 +399,10 @@ func (m *Manager) Start() error {
 
 	if m.running {
 		return fmt.Errorf("instance already running")
+	}
+
+	if m.backend == nil {
+		m.backend = ai.DefaultBackend()
 	}
 
 	// Kill any existing session with this name (cleanup from previous run)
@@ -415,7 +433,7 @@ func (m *Manager) Start() error {
 		"-y", fmt.Sprintf("%d", m.config.TmuxHeight), // height
 	)
 	createCmd.Dir = m.workdir
-	// Inherit full environment (required for Claude credentials) and ensure TERM supports colors
+	// Inherit full environment (required for backend credentials) and ensure TERM supports colors
 	createCmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	if err := createCmd.Run(); err != nil {
 		if m.logger != nil {
@@ -434,39 +452,40 @@ func (m *Manager) Start() error {
 
 	// Write the task/prompt to a temporary file to avoid shell escaping issues
 	// (prompts with <, >, |, etc. would otherwise be interpreted by the shell)
-	promptFile := filepath.Join(m.workdir, ".claude-prompt")
+	promptFile := filepath.Join(m.workdir, m.backend.PromptFileName())
 	if err := os.WriteFile(promptFile, []byte(m.task), 0600); err != nil {
 		_ = m.tmuxCmd("kill-session", "-t", m.sessionName).Run()
 		return fmt.Errorf("failed to write prompt file: %w", err)
 	}
 
-	// Build the claude command with optional session-id for resume capability
-	// If claudeSessionID is set, use it to enable later resumption with --resume
-	var claudeCmd string
-	if m.claudeSessionID != "" {
-		claudeCmd = fmt.Sprintf("claude --dangerously-skip-permissions --session-id %q \"$(cat %q)\" && rm %q",
-			m.claudeSessionID, promptFile, promptFile)
-	} else {
-		claudeCmd = fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q",
-			promptFile, promptFile)
+	// Build the backend command with optional session-id for resume capability.
+	backendCmd, err := m.backend.BuildStartCommand(ai.StartOptions{
+		PromptFile: promptFile,
+		SessionID:  m.claudeSessionID,
+		Mode:       ai.StartModeInteractive,
+	})
+	if err != nil {
+		_ = m.tmuxCmd("kill-session", "-t", m.sessionName).Run()
+		_ = os.Remove(promptFile)
+		return fmt.Errorf("failed to build backend command: %w", err)
 	}
 
 	sendCmd := m.tmuxCmd(
 		"send-keys",
 		"-t", m.sessionName,
-		claudeCmd,
+		backendCmd,
 		"Enter",
 	)
 	if err := sendCmd.Run(); err != nil {
-		// Clean up the session if we failed to start claude
+		// Clean up the session if we failed to start the backend
 		_ = m.tmuxCmd("kill-session", "-t", m.sessionName).Run()
 		_ = os.Remove(promptFile)
 		if m.logger != nil {
-			m.logger.Error("failed to start claude in tmux session",
+			m.logger.Error("failed to start backend in tmux session",
 				"session_name", m.sessionName,
 				"error", err.Error())
 		}
-		return fmt.Errorf("failed to start claude in tmux session: %w", err)
+		return fmt.Errorf("failed to start backend in tmux session: %w", err)
 	}
 
 	m.running = true
@@ -491,14 +510,15 @@ func (m *Manager) Start() error {
 		m.logger.Info("tmux session created",
 			"session_name", m.sessionName,
 			"workdir", m.workdir,
-			"claude_session_id", m.claudeSessionID)
+			"backend_session_id", m.claudeSessionID,
+			"backend", m.backend.Name())
 	}
 
 	return nil
 }
 
-// StartWithResume launches Claude Code with --resume to continue a previous session.
-// This requires a valid ClaudeSessionID to be set (either via ManagerOptions or SetClaudeSessionID).
+// StartWithResume launches the AI backend with resume to continue a previous session.
+// This requires a valid backend session ID to be set (either via ManagerOptions or SetClaudeSessionID).
 // The resumed session will continue from where it left off.
 //
 // Returns ErrManagerNotConfigured if the manager was not created via NewManagerWithDeps.
@@ -520,7 +540,13 @@ func (m *Manager) StartWithResume() error {
 	}
 
 	if m.claudeSessionID == "" {
-		return fmt.Errorf("cannot resume: no Claude session ID set")
+		return fmt.Errorf("cannot resume: no backend session ID set")
+	}
+	if m.backend == nil {
+		m.backend = ai.DefaultBackend()
+	}
+	if !m.backend.SupportsResume() {
+		return fmt.Errorf("backend %s does not support resume", m.backend.Name())
 	}
 
 	// Kill any existing tmux session with this name (cleanup from previous run)
@@ -565,24 +591,28 @@ func (m *Manager) StartWithResume() error {
 	_ = m.tmuxCmd("set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run()
 	_ = m.tmuxCmd("set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
 
-	// Build the claude command with --resume to continue the previous session
-	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions --resume %q", m.claudeSessionID)
+	// Build the backend command with resume to continue the previous session
+	backendCmd, err := m.backend.BuildResumeCommand(m.claudeSessionID)
+	if err != nil {
+		_ = m.tmuxCmd("kill-session", "-t", m.sessionName).Run()
+		return fmt.Errorf("failed to build backend resume command: %w", err)
+	}
 
 	sendCmd := m.tmuxCmd(
 		"send-keys",
 		"-t", m.sessionName,
-		claudeCmd,
+		backendCmd,
 		"Enter",
 	)
 	if err := sendCmd.Run(); err != nil {
 		_ = m.tmuxCmd("kill-session", "-t", m.sessionName).Run()
 		if m.logger != nil {
-			m.logger.Error("failed to start claude with resume in tmux session",
+			m.logger.Error("failed to start backend with resume in tmux session",
 				"session_name", m.sessionName,
-				"claude_session_id", m.claudeSessionID,
+				"backend_session_id", m.claudeSessionID,
 				"error", err.Error())
 		}
-		return fmt.Errorf("failed to start claude with resume: %w", err)
+		return fmt.Errorf("failed to start backend with resume: %w", err)
 	}
 
 	m.running = true
@@ -607,7 +637,8 @@ func (m *Manager) StartWithResume() error {
 		m.logger.Info("tmux session created with resume",
 			"session_name", m.sessionName,
 			"workdir", m.workdir,
-			"claude_session_id", m.claudeSessionID)
+			"backend_session_id", m.claudeSessionID,
+			"backend", m.backend.Name())
 	}
 
 	return nil
@@ -1050,6 +1081,10 @@ func (m *Manager) captureFullPane(sessionName string) ([]byte, error) {
 
 // parseAndNotifyMetrics parses metrics from output and notifies if changed
 func (m *Manager) parseAndNotifyMetrics(output []byte) {
+	if m.metricsParser == nil {
+		return
+	}
+
 	newMetrics, err := m.metricsParser.Parse(output)
 	if err != nil || newMetrics == nil {
 		return
@@ -1121,7 +1156,7 @@ func (m *Manager) Stop() error {
 		_ = m.inputHandler.Close()
 	}
 
-	// Send Ctrl+C to gracefully stop Claude first
+	// Send Ctrl+C to gracefully stop the backend first
 	_ = m.tmuxCmd("send-keys", "-t", m.sessionName, "C-c").Run()
 	time.Sleep(500 * time.Millisecond)
 
@@ -1281,15 +1316,15 @@ func (m *Manager) ID() string {
 	return m.id
 }
 
-// ClaudeSessionID returns the Claude session UUID used for resume capability.
-// This is the UUID passed to `claude --session-id` when starting the instance.
+// ClaudeSessionID returns the backend session ID used for resume capability.
+// This is the backend session ID used when starting the instance (if supported).
 func (m *Manager) ClaudeSessionID() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.claudeSessionID
 }
 
-// SetClaudeSessionID sets the Claude session UUID for resume capability.
+// SetClaudeSessionID sets the backend session ID for resume capability.
 // This should be set before Start() or StartWithResume() is called.
 func (m *Manager) SetClaudeSessionID(sessionID string) {
 	m.mu.Lock()

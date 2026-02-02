@@ -12,7 +12,7 @@ import (
 // TickMsg is sent periodically to drive UI updates and polling.
 type TickMsg time.Time
 
-// OutputMsg contains output data from a Claude instance.
+// OutputMsg contains output data from a backend instance.
 type OutputMsg struct {
 	InstanceID string
 	Data       []byte

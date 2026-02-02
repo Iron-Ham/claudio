@@ -162,23 +162,24 @@ Output buffer may not have captured the prompt.
      output_buffer_size: 200000
    ```
 
-### Claude process not starting
+### Backend process not starting
 
-Claude Code CLI may not be installed or authenticated.
+The configured backend CLI (Claude Code or Codex) may not be installed or authenticated.
 
 **Solutions:**
 
-1. Verify Claude Code is installed:
+1. Verify the backend CLI is installed:
    ```bash
-   claude --version
+   claude --version  # Claude Code
+   codex --version   # Codex
    ```
 
-2. Check authentication:
+2. Check authentication (Claude Code):
    ```bash
    claude auth status
    ```
 
-3. Re-authenticate if needed:
+3. Re-authenticate if needed (Claude Code):
    ```bash
    claude auth login
    ```
@@ -189,7 +190,7 @@ Task may have been misunderstood or files may not exist.
 
 **Solutions:**
 
-1. Check the output for Claude's response
+1. Check the output for the backend's response
 
 2. Be more specific in task description:
    ```bash
@@ -427,9 +428,10 @@ AI generation may have failed silently.
 
 **Solutions:**
 
-1. Check Claude Code is working:
+1. Check the backend CLI is working:
    ```bash
-   claude --version
+   claude --version  # Claude Code
+   codex --version   # Codex
    ```
 
 2. Try without AI:

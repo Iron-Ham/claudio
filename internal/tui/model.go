@@ -118,7 +118,7 @@ type InlinePlanSession struct {
 	// AwaitingPlanCreation indicates we're waiting for the planning instance to generate a plan
 	AwaitingPlanCreation bool
 
-	// PlanningInstanceID is the instance ID of the Claude instance creating the plan (if any)
+	// PlanningInstanceID is the instance ID of the backend instance creating the plan (if any)
 	PlanningInstanceID string
 
 	// MultiPass indicates this plan uses competitive multi-pass planning (3 planners + 1 assessor)

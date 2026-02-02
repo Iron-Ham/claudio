@@ -6,9 +6,9 @@ Frequently asked questions about Claudio.
 
 ### What is Claudio?
 
-Claudio is a CLI/TUI tool for orchestrating multiple Claude Code instances simultaneously on a single project. It uses Git worktrees to isolate each instance's work, enabling truly parallel AI-assisted development.
+Claudio is a CLI/TUI tool for orchestrating multiple AI backend instances (Claude Code or Codex) simultaneously on a single project. It uses Git worktrees to isolate each instance's work, enabling truly parallel AI-assisted development.
 
-### How does it differ from running multiple Claude Code terminals?
+### How does it differ from running multiple backend terminals?
 
 Claudio provides:
 - **Automatic isolation** via Git worktrees (each instance gets its own working directory)
@@ -17,9 +17,9 @@ Claudio provides:
 - **Conflict detection** to catch overlapping changes
 - **Integrated PR workflow** with AI-generated descriptions
 
-### Does Claudio work with the Claude API directly?
+### Does Claudio work with backend APIs directly?
 
-No. Claudio orchestrates Claude Code CLI instances, which handle the API communication. You need Claude Code installed and authenticated separately.
+No. Claudio orchestrates your configured backend CLI (Claude Code or Codex), which handles API communication. You need the backend CLI installed and authenticated separately.
 
 ### What platforms are supported?
 
@@ -37,8 +37,8 @@ Native Windows support is not available due to tmux dependency.
 ### How many instances can I run simultaneously?
 
 There's no hard limit in Claudio itself. Practical limits depend on:
-- **System resources**: Each instance runs a Claude Code process
-- **API rate limits**: Claude's API may have rate limits
+- **System resources**: Each instance runs a backend process
+- **API rate limits**: Your backend API may have rate limits
 - **Cost**: More instances = more tokens = higher cost
 
 Most users run 3-5 instances effectively. Beyond 10, you may hit system or API limits.
@@ -50,7 +50,7 @@ Not directly. However, Claudio generates a `context.md` file visible to all inst
 - Current status
 - Files being modified
 
-This helps Claude understand parallel work and avoid conflicts.
+This helps the backend understand parallel work and avoid conflicts.
 
 ### What happens if I close the TUI while instances are running?
 
@@ -78,7 +78,7 @@ Yes. Press `p` in the TUI to pause an instance. Press `p` again to resume. Pause
 
 A [Git worktree](https://git-scm.com/docs/git-worktree) is an additional working directory linked to your repository. Each worktree has its own checked-out branch but shares the Git history with the main repo.
 
-Claudio creates worktrees in `.claudio/worktrees/<instance-id>/` so each Claude instance can modify files independently.
+Claudio creates worktrees in `.claudio/worktrees/<instance-id>/` so each backend instance can modify files independently.
 
 ### Can I customize branch names?
 
@@ -119,8 +119,8 @@ Changes you make there will be visible when you view the diff.
 
 When you create a PR, Claudio:
 1. Collects the diff and commit messages
-2. Sends them to Claude Code
-3. Claude generates a title and description
+2. Sends them to the configured backend
+3. The backend generates a title and description
 4. The PR is created via GitHub CLI (`gh`)
 
 You can disable this with `--no-ai` or `pr.use_ai: false` in config.
@@ -170,14 +170,14 @@ Check `claudio pr <id>` output for specific errors. See [Troubleshooting](troubl
 
 ### How much does it cost?
 
-Claudio itself is free. Costs come from Claude API usage:
+Claudio itself is free. Costs come from your backend's API usage:
 - Each instance uses tokens for input (code context) and output (responses)
 - Running multiple instances multiplies your API usage
-- Typical feature: $0.05 - $0.50 per instance depending on complexity
+- Typical feature costs vary by backend and model
 
 ### How can I track and limit costs?
 
-1. **Monitor**: `claudio stats` shows current usage
+1. **Monitor**: `claudio stats` shows current usage when the backend reports token metrics (Claude Code output)
 
 2. **Warning**: Set a threshold for warnings:
    ```yaml
@@ -224,7 +224,7 @@ claudio add "Add login feature"
 claudio add "Add logout feature"
 ```
 
-### Can Claude see what other instances are doing?
+### Can the backend see what other instances are doing?
 
 Yes, through the shared context file (`.claudio/context.md`). This is updated in real-time and shows:
 - All active instances
@@ -239,7 +239,7 @@ Yes, through the shared context file (`.claudio/context.md`). This is updated in
 
 Common causes:
 1. **Waiting for input** - Check if there's a prompt in the output
-2. **Claude is thinking** - Complex tasks take time
+2. **The backend is thinking** - Complex tasks take time
 3. **Process crashed** - Check tmux: `tmux list-sessions`
 
 See [Instance Issues](troubleshooting.md#instance-issues) for solutions.
@@ -312,7 +312,7 @@ Should reject invalid formats and return helpful error messages."
 claudio add "Fix user validation"
 ```
 
-### When should I use Claudio vs. single Claude Code?
+### When should I use Claudio vs. a single backend?
 
 **Use Claudio when:**
 - You have multiple independent tasks
@@ -320,7 +320,7 @@ claudio add "Fix user validation"
 - You want to parallelize development
 - You're doing large refactors by module
 
-**Use single Claude Code when:**
+**Use a single backend when:**
 - You have one focused task
 - Tasks are highly interdependent
 - You need tight back-and-forth iteration

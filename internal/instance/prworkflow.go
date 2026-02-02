@@ -2,10 +2,12 @@ package instance
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/instance/capture"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/tmux"
@@ -18,6 +20,7 @@ type PRWorkflowConfig struct {
 	AutoRebase bool
 	TmuxWidth  int
 	TmuxHeight int
+	Backend    ai.Backend
 }
 
 // PRWorkflowCallback is called when the PR workflow completes
@@ -36,6 +39,7 @@ type PRWorkflow struct {
 	outputBuf   *capture.RingBuffer
 	logger      *logging.Logger
 	startTime   time.Time // for tracking workflow duration
+	backend     ai.Backend
 
 	mu          sync.RWMutex
 	running     bool
@@ -47,6 +51,10 @@ type PRWorkflow struct {
 // NewPRWorkflow creates a new PR workflow manager.
 // Uses the instance's socket (claudio-{instanceID}) for crash isolation.
 func NewPRWorkflow(instanceID, workdir, branch, task string, cfg PRWorkflowConfig) *PRWorkflow {
+	backend := cfg.Backend
+	if backend == nil {
+		backend = ai.DefaultBackend()
+	}
 	return &PRWorkflow{
 		instanceID:  instanceID,
 		workdir:     workdir,
@@ -57,6 +65,7 @@ func NewPRWorkflow(instanceID, workdir, branch, task string, cfg PRWorkflowConfi
 		config:      cfg,
 		outputBuf:   capture.NewRingBuffer(100000), // 100KB buffer
 		doneChan:    make(chan struct{}),
+		backend:     backend,
 	}
 }
 
@@ -73,6 +82,11 @@ func NewPRWorkflowWithSession(sessionID, instanceID, workdir, branch, task strin
 		sessionName = fmt.Sprintf("claudio-%s-pr", instanceID)
 	}
 
+	backend := cfg.Backend
+	if backend == nil {
+		backend = ai.DefaultBackend()
+	}
+
 	return &PRWorkflow{
 		instanceID:  instanceID,
 		sessionID:   sessionID,
@@ -84,12 +98,17 @@ func NewPRWorkflowWithSession(sessionID, instanceID, workdir, branch, task strin
 		config:      cfg,
 		outputBuf:   capture.NewRingBuffer(100000), // 100KB buffer
 		doneChan:    make(chan struct{}),
+		backend:     backend,
 	}
 }
 
 // NewPRWorkflowWithSocket creates a new PR workflow manager with explicit socket isolation.
 // The socketName should match the parent instance's socket for crash isolation.
 func NewPRWorkflowWithSocket(instanceID, socketName, workdir, branch, task string, cfg PRWorkflowConfig) *PRWorkflow {
+	backend := cfg.Backend
+	if backend == nil {
+		backend = ai.DefaultBackend()
+	}
 	return &PRWorkflow{
 		instanceID:  instanceID,
 		workdir:     workdir,
@@ -100,6 +119,7 @@ func NewPRWorkflowWithSocket(instanceID, socketName, workdir, branch, task strin
 		config:      cfg,
 		outputBuf:   capture.NewRingBuffer(100000), // 100KB buffer
 		doneChan:    make(chan struct{}),
+		backend:     backend,
 	}
 }
 
@@ -198,8 +218,17 @@ func (p *PRWorkflow) Start() error {
 	// Build and send the command
 	var cmd string
 	if p.config.UseAI {
-		// Use Claude to run the /commit-push-pr skill
-		cmd = p.buildClaudeCommand()
+		// Use the configured AI backend to run the PR workflow
+		aiCmd, err := p.buildAICommand()
+		if err != nil {
+			p.logError("failed to build AI command",
+				"error", err.Error(),
+				"session_name", p.sessionName,
+			)
+			_ = tmux.CommandWithSocket(p.socketName, "kill-session", "-t", p.sessionName).Run()
+			return fmt.Errorf("failed to build AI command: %w", err)
+		}
+		cmd = aiCmd
 		p.logDebug("using AI-assisted PR workflow", "use_ai", true)
 	} else {
 		// Use direct shell commands
@@ -233,10 +262,12 @@ func (p *PRWorkflow) Start() error {
 	return nil
 }
 
-// buildClaudeCommand builds the Claude command for AI-assisted PR creation
-func (p *PRWorkflow) buildClaudeCommand() string {
-	// Use Claude's --print mode with a direct prompt for commit/push/PR
-	// This avoids needing the interactive /commit-push-pr skill
+// buildAICommand builds the AI backend command for PR creation.
+func (p *PRWorkflow) buildAICommand() (string, error) {
+	if p.backend == nil {
+		return "", fmt.Errorf("AI backend not configured")
+	}
+
 	prompt := fmt.Sprintf(`You are helping with a git workflow. The task was: %q
 
 Please do the following:
@@ -250,13 +281,36 @@ If creating a draft PR, add the --draft flag.
 
 Be concise and just execute the commands. Exit when done.`, p.task, p.branch)
 
-	// Build flags
-	flags := "--dangerously-skip-permissions"
 	if p.config.Draft {
 		prompt += "\n\nCreate the PR as a draft."
 	}
 
-	return fmt.Sprintf("claude %s %q; exit", flags, prompt)
+	tmpFile, err := os.CreateTemp(p.workdir, ".claudio-pr-prompt-")
+	if err != nil {
+		return "", fmt.Errorf("failed to create prompt file: %w", err)
+	}
+	promptFile := tmpFile.Name()
+	if _, err := tmpFile.WriteString(prompt); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(promptFile)
+		return "", fmt.Errorf("failed to write prompt file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(promptFile)
+		return "", fmt.Errorf("failed to close prompt file: %w", err)
+	}
+
+	cmd, err := p.backend.BuildStartCommand(ai.StartOptions{
+		PromptFile: promptFile,
+		Mode:       ai.StartModeOneShot,
+	})
+	if err != nil {
+		_ = os.Remove(promptFile)
+		return "", err
+	}
+
+	// Ensure the tmux session exits after the command finishes.
+	return fmt.Sprintf("%s; exit", cmd), nil
 }
 
 // buildShellCommand builds direct shell commands for PR creation without AI
