@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Exit Panic on Conflict Detector** - Fixed panic when exiting Claudio caused by the conflict detector's `Stop()` method being called multiple times (from both `StopSession` and `Shutdown`). The `Stop()` method is now idempotent using `sync.Once`.
 - **Session Backend Init** - Initialize AI backend in `NewWithSession` to avoid undefined backend build errors.
 - **Codex Detector Thread Safety** - Fixed potential race condition in Codex backend detector initialization using sync.Once for thread-safe lazy initialization.
 - **TUI Config AI Settings** - Added `ai.claude.command` and `ai.codex.command` settings to the TUI config editor for customizing CLI binary paths.

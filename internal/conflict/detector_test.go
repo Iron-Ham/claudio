@@ -19,6 +19,21 @@ func TestDetector_NewAndStop(t *testing.T) {
 	d.Stop()
 }
 
+func TestDetector_StopIsIdempotent(t *testing.T) {
+	d, err := New()
+	if err != nil {
+		t.Fatalf("Failed to create detector: %v", err)
+	}
+
+	d.Start()
+	time.Sleep(10 * time.Millisecond)
+
+	// Calling Stop() multiple times should not panic
+	d.Stop()
+	d.Stop()
+	d.Stop()
+}
+
 func TestDetector_AddInstance(t *testing.T) {
 	d, err := New()
 	if err != nil {
