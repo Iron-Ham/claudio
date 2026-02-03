@@ -111,29 +111,38 @@ func TestCodexBackend_DetectorInputPrompt(t *testing.T) {
 }
 
 func TestBackendCapabilities(t *testing.T) {
-	claude := NewClaudeBackend(config.ClaudeBackendConfig{
-		Command:         "claude",
-		SkipPermissions: true,
+	t.Run("Claude", func(t *testing.T) {
+		claude := NewClaudeBackend(config.ClaudeBackendConfig{
+			Command:         "claude",
+			SkipPermissions: true,
+		})
+		if !claude.SupportsResume() {
+			t.Error("Claude backend should support resume")
+		}
+		if !claude.SupportsExplicitSessionID() {
+			t.Error("Claude backend should support explicit session IDs")
+		}
 	})
-	if !claude.SupportsResume() || !claude.SupportsExplicitSessionID() {
-		t.Errorf("Claude backend capabilities not as expected")
-	}
 
-	codex := NewCodexBackend(config.CodexBackendConfig{
-		Command:      "codex",
-		ApprovalMode: "default",
+	t.Run("Codex", func(t *testing.T) {
+		codex := NewCodexBackend(config.CodexBackendConfig{
+			Command:      "codex",
+			ApprovalMode: "default",
+		})
+		if !codex.SupportsResume() {
+			t.Error("Codex backend should support resume")
+		}
+		if codex.SupportsExplicitSessionID() {
+			t.Error("Codex backend should not support explicit session IDs")
+		}
 	})
-	if !codex.SupportsResume() {
-		t.Errorf("Codex backend should support resume")
-	}
-	if codex.SupportsExplicitSessionID() {
-		t.Errorf("Codex backend should not support explicit session IDs")
-	}
 
-	defaultBackend := DefaultBackend()
-	if defaultBackend.Name() != BackendClaude {
-		t.Errorf("DefaultBackend() = %q, want %q", defaultBackend.Name(), BackendClaude)
-	}
+	t.Run("DefaultBackend", func(t *testing.T) {
+		backend := DefaultBackend()
+		if backend.Name() != BackendClaude {
+			t.Errorf("DefaultBackend() = %q, want %q", backend.Name(), BackendClaude)
+		}
+	})
 }
 
 // TestCodexBackend_ConcurrentDetectorAccess verifies that the Detector() method

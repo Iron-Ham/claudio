@@ -190,15 +190,13 @@ func (c *CodexBackend) BuildStartCommand(opts StartOptions) (string, error) {
 		return "", fmt.Errorf("prompt file required")
 	}
 
-	flags := c.approvalFlags()
-	switch opts.Mode {
-	case StartModeOneShot:
-		cmd := c.command + " exec" + flags
-		return fmt.Sprintf("%s \"$(cat %q)\" && rm %q", cmd, opts.PromptFile, opts.PromptFile), nil
-	default:
-		cmd := c.command + flags
-		return fmt.Sprintf("%s \"$(cat %q)\" && rm %q", cmd, opts.PromptFile, opts.PromptFile), nil
+	cmd := c.command
+	if opts.Mode == StartModeOneShot {
+		cmd += " exec"
 	}
+	cmd += c.approvalFlags()
+
+	return fmt.Sprintf("%s \"$(cat %q)\" && rm %q", cmd, opts.PromptFile, opts.PromptFile), nil
 }
 
 func (c *CodexBackend) BuildResumeCommand(sessionID string) (string, error) {

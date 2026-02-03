@@ -184,6 +184,11 @@ func New() Model {
 					Type:        "int",
 					Category:    "instance",
 				},
+			},
+		},
+		{
+			Name: "AI",
+			Items: []ConfigItem{
 				{
 					Key:         "ai.backend",
 					Label:       "AI Backend",
