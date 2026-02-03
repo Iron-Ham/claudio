@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-02-02
+
 ### Added
 
 - **Codex Backend Support** - Added configurable Codex CLI support alongside Claude, including backend selection, backend-aware state detection, and AI-assisted workflows using the selected backend.
@@ -928,6 +930,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.16.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.16.0
 [0.15.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.15.0
 [0.14.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.14.1
 [0.14.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.14.0
