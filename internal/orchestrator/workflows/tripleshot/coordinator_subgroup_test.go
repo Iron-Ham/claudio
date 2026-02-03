@@ -485,6 +485,116 @@ func TestGetPreviousRoundsGroupIDForAttempt(t *testing.T) {
 	}
 }
 
+func TestCoordinator_CreateAttemptStubs_Adversarial_CreatesSubGroups(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	session := NewSession("test task", cfg)
+	session.GroupID = "tripleshot-group"
+
+	orch := newMockOrchestrator()
+	baseSession := newMockBaseSessionWithSubGroups()
+	tripleGroup := newMockGroupWithSubGroups("tripleshot-group")
+	baseSession.groups["tripleshot-group"] = tripleGroup
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   baseSession,
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	// Create stubs - should create attempt sub-groups immediately
+	instanceIDs, err := coord.CreateAttemptStubs()
+	if err != nil {
+		t.Fatalf("CreateAttemptStubs() error = %v", err)
+	}
+
+	// Verify all instance IDs are non-empty
+	for i, id := range instanceIDs {
+		if id == "" {
+			t.Errorf("instanceIDs[%d] is empty", i)
+		}
+	}
+
+	// Verify attempt sub-groups were created for all 3 attempts
+	for i := 0; i < 3; i++ {
+		if session.Attempts[i].AttemptGroupID == "" {
+			t.Errorf("Attempts[%d].AttemptGroupID should be set in adversarial mode", i)
+		}
+	}
+
+	// Verify sub-groups exist in the tripleGroup
+	if len(tripleGroup.subGroups) != 3 {
+		t.Errorf("tripleGroup should have 3 sub-groups, got %d", len(tripleGroup.subGroups))
+	}
+
+	// Verify round history was recorded for each attempt
+	for i := 0; i < 3; i++ {
+		if len(session.Attempts[i].RoundHistory) == 0 {
+			t.Errorf("Attempts[%d].RoundHistory should have at least 1 entry", i)
+		}
+		if session.Attempts[i].RoundHistory[0].ImplementerID != instanceIDs[i] {
+			t.Errorf("Attempts[%d].RoundHistory[0].ImplementerID = %q, want %q",
+				i, session.Attempts[i].RoundHistory[0].ImplementerID, instanceIDs[i])
+		}
+	}
+
+	// Verify instances are in sub-groups, not in main tripleGroup
+	if len(tripleGroup.instances) != 0 {
+		t.Errorf("main tripleGroup should have 0 direct instances in adversarial mode, got %d", len(tripleGroup.instances))
+	}
+
+	// Verify each sub-group has exactly 1 instance
+	for attemptGroupID, sg := range tripleGroup.subGroups {
+		if len(sg.instances) != 1 {
+			t.Errorf("sub-group %q should have 1 instance, got %d", attemptGroupID, len(sg.instances))
+		}
+	}
+}
+
+func TestCoordinator_CreateAttemptStubs_NonAdversarial_NoSubGroups(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Adversarial = false // Non-adversarial mode
+	session := NewSession("test task", cfg)
+	session.GroupID = "tripleshot-group"
+
+	orch := newMockOrchestrator()
+	baseSession := newMockBaseSessionWithSubGroups()
+	tripleGroup := newMockGroupWithSubGroups("tripleshot-group")
+	baseSession.groups["tripleshot-group"] = tripleGroup
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   baseSession,
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	// Create stubs - should NOT create attempt sub-groups
+	_, err := coord.CreateAttemptStubs()
+	if err != nil {
+		t.Fatalf("CreateAttemptStubs() error = %v", err)
+	}
+
+	// Verify NO attempt sub-groups were created
+	for i := 0; i < 3; i++ {
+		if session.Attempts[i].AttemptGroupID != "" {
+			t.Errorf("Attempts[%d].AttemptGroupID should be empty in non-adversarial mode, got %q",
+				i, session.Attempts[i].AttemptGroupID)
+		}
+	}
+
+	// Verify no sub-groups were created
+	if len(tripleGroup.subGroups) != 0 {
+		t.Errorf("tripleGroup should have 0 sub-groups in non-adversarial mode, got %d", len(tripleGroup.subGroups))
+	}
+
+	// Verify instances are directly in tripleGroup
+	if len(tripleGroup.instances) != 3 {
+		t.Errorf("main tripleGroup should have 3 direct instances, got %d", len(tripleGroup.instances))
+	}
+}
+
 func TestAttemptRoundHistory_SerializationRoundTrip(t *testing.T) {
 	// Test that AttemptRoundHistory serializes and deserializes correctly
 	original := AttemptRoundHistory{
