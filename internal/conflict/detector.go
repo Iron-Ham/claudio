@@ -49,8 +49,9 @@ type Detector struct {
 	// Logger for structured logging (optional)
 	logger *logging.Logger
 
-	mu     sync.RWMutex
-	stopCh chan struct{}
+	mu       sync.RWMutex
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 // New creates a new conflict detector
@@ -219,10 +220,13 @@ func (d *Detector) Start() {
 	go d.watchLoop()
 }
 
-// Stop stops the detector and cleans up resources
+// Stop stops the detector and cleans up resources.
+// Stop is idempotent - safe to call multiple times.
 func (d *Detector) Stop() {
-	close(d.stopCh)
-	_ = d.watcher.Close()
+	d.stopOnce.Do(func() {
+		close(d.stopCh)
+		_ = d.watcher.Close()
+	})
 }
 
 // watchLoop processes filesystem events
