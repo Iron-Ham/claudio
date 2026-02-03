@@ -20,8 +20,8 @@ func TestNewManager(t *testing.T) {
 	if m.autoScroll == nil {
 		t.Error("autoScroll map not initialized")
 	}
-	if m.lineCountCache == nil {
-		t.Error("lineCountCache map not initialized")
+	if m.hasNewOutput == nil {
+		t.Error("hasNewOutput map not initialized")
 	}
 }
 
@@ -275,38 +275,36 @@ func TestUpdateScroll(t *testing.T) {
 
 func TestHasNewOutput(t *testing.T) {
 	m := NewManager()
-	m.SetOutput("test", "line1\nline2")
-	m.UpdateScroll("test", 10) // Cache current line count
 
-	// No new output yet
-	if got := m.HasNewOutput("test"); got {
-		t.Error("HasNewOutput() should be false when no new output")
+	m.SetOutput("test", "line1\nline2\nline3")
+
+	// Scrolling up disables auto-scroll
+	m.Scroll("test", -1, 1)
+	if got := m.IsAutoScroll("test"); got {
+		t.Error("IsAutoScroll() should be false after scrolling up")
 	}
 
-	// Add more output
-	m.AddOutput("test", "\nline3")
-
-	// Now has new output
+	// Add output while scrolled up
+	m.AddOutput("test", "\nline4")
 	if got := m.HasNewOutput("test"); !got {
-		t.Error("HasNewOutput() should be true after adding output")
+		t.Error("HasNewOutput() should be true after adding output while auto-scroll disabled")
 	}
 
-	// Update cache
-	m.UpdateScroll("test", 10)
-
-	// No new output again
+	// Jump back to bottom clears new output indicator
+	m.ScrollToBottom("test", 1)
 	if got := m.HasNewOutput("test"); got {
-		t.Error("HasNewOutput() should be false after UpdateScroll")
+		t.Error("HasNewOutput() should be false after ScrollToBottom")
 	}
 }
 
-func TestHasNewOutputNoPreviousCache(t *testing.T) {
+func TestHasNewOutput_AutoScrollEnabled(t *testing.T) {
 	m := NewManager()
-	m.SetOutput("test", "content")
+	m.SetOutput("test", "line1\nline2")
 
-	// Without calling UpdateScroll first, there's no previous count
+	// Auto-scroll defaults to true, so new output shouldn't trigger the indicator.
+	m.AddOutput("test", "\nline3")
 	if got := m.HasNewOutput("test"); got {
-		t.Error("HasNewOutput() should be false when no previous cache exists")
+		t.Error("HasNewOutput() should be false when auto-scroll is enabled")
 	}
 }
 
