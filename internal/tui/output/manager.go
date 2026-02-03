@@ -14,6 +14,8 @@ import (
 // cacheEntry holds a cached filtered output and its invalidation metadata.
 type cacheEntry struct {
 	filtered      string
+	lineCount     int
+	lines         []string
 	outputVersion uint64
 	filterVersion uint64
 }
@@ -34,8 +36,8 @@ type Manager struct {
 	// When true, new output automatically scrolls to bottom
 	autoScroll map[string]bool
 
-	// lineCountCache stores previous line counts for detecting new output
-	lineCountCache map[string]int
+	// hasNewOutput tracks whether new output arrived while auto-scroll was disabled
+	hasNewOutput map[string]bool
 
 	// filterFunc is an optional function to apply when counting visible lines
 	// This allows the manager to account for filtered output when calculating scroll
@@ -59,7 +61,7 @@ func NewManager() *Manager {
 		outputs:        make(map[string]string),
 		scrollOffsets:  make(map[string]int),
 		autoScroll:     make(map[string]bool),
-		lineCountCache: make(map[string]int),
+		hasNewOutput:   make(map[string]bool),
 		filteredCache:  make(map[string]cacheEntry),
 		outputVersions: make(map[string]uint64),
 	}
@@ -67,12 +69,13 @@ func NewManager() *Manager {
 
 // SetFilterFunc sets the filter function used when calculating visible line counts.
 // This should be set to match the filter applied during rendering.
-// Note: This does NOT invalidate the cache. Call InvalidateFilterCache() when
-// the filter settings change to force recomputation.
 func (m *Manager) SetFilterFunc(f func(output string) string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.filterFunc = f
+	// Changing the filter function invalidates all cached filtered outputs/lines.
+	m.filterVersion++
+	m.filteredCache = make(map[string]cacheEntry)
 }
 
 // InvalidateFilterCache marks all cached filtered outputs as stale.
@@ -81,6 +84,8 @@ func (m *Manager) InvalidateFilterCache() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.filterVersion++
+	// Drop cached filtered outputs/lines to avoid holding stale buffers.
+	m.filteredCache = make(map[string]cacheEntry)
 }
 
 // AddOutput appends output to an instance's buffer.
@@ -91,19 +96,29 @@ func (m *Manager) AddOutput(instanceID string, output string) {
 	if output != "" {
 		m.outputs[instanceID] += output
 		m.outputVersions[instanceID]++
+		delete(m.filteredCache, instanceID)
+		if !m.isAutoScrollLocked(instanceID) {
+			m.hasNewOutput[instanceID] = true
+		}
 	}
 }
 
 // SetOutput replaces the entire output buffer for an instance.
 // This is used when fetching the complete output from a ring buffer.
-func (m *Manager) SetOutput(instanceID string, output string) {
+func (m *Manager) SetOutput(instanceID string, output string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Only increment version if output actually changed
 	if m.outputs[instanceID] != output {
 		m.outputs[instanceID] = output
 		m.outputVersions[instanceID]++
+		delete(m.filteredCache, instanceID)
+		if !m.isAutoScrollLocked(instanceID) {
+			m.hasNewOutput[instanceID] = true
+		}
+		return true
 	}
+	return false
 }
 
 // GetOutput returns the output for an instance.
@@ -121,7 +136,7 @@ func (m *Manager) Clear(instanceID string) {
 	delete(m.outputs, instanceID)
 	delete(m.scrollOffsets, instanceID)
 	delete(m.autoScroll, instanceID)
-	delete(m.lineCountCache, instanceID)
+	delete(m.hasNewOutput, instanceID)
 	delete(m.filteredCache, instanceID)
 	delete(m.outputVersions, instanceID)
 }
@@ -133,7 +148,7 @@ func (m *Manager) ClearAll() {
 	m.outputs = make(map[string]string)
 	m.scrollOffsets = make(map[string]int)
 	m.autoScroll = make(map[string]bool)
-	m.lineCountCache = make(map[string]int)
+	m.hasNewOutput = make(map[string]bool)
 	m.filteredCache = make(map[string]cacheEntry)
 	m.outputVersions = make(map[string]uint64)
 }
@@ -163,6 +178,7 @@ func (m *Manager) Scroll(instanceID string, delta int, maxVisibleLines int) {
 	// If at bottom, re-enable auto-scroll
 	if newScroll >= maxScroll {
 		m.autoScroll[instanceID] = true
+		m.hasNewOutput[instanceID] = false
 	}
 }
 
@@ -180,6 +196,7 @@ func (m *Manager) ScrollToBottom(instanceID string, maxVisibleLines int) {
 	defer m.mu.Unlock()
 	m.scrollOffsets[instanceID] = m.getMaxScrollLocked(instanceID, maxVisibleLines)
 	m.autoScroll[instanceID] = true
+	m.hasNewOutput[instanceID] = false
 }
 
 // GetScrollOffset returns the current scroll offset for an instance.
@@ -213,65 +230,46 @@ func (m *Manager) UpdateScroll(instanceID string, maxVisibleLines int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.isAutoScrollLocked(instanceID) {
-		m.scrollOffsets[instanceID] = m.getMaxScrollLocked(instanceID, maxVisibleLines)
+	// Clamp scroll offset to valid range in case output shrank due to filtering.
+	maxScroll := m.getMaxScrollLocked(instanceID, maxVisibleLines)
+	if m.scrollOffsets[instanceID] > maxScroll {
+		m.scrollOffsets[instanceID] = maxScroll
 	}
 
-	// Update line count cache for detecting new output
-	m.lineCountCache[instanceID] = m.getLineCountLocked(instanceID)
+	if m.isAutoScrollLocked(instanceID) {
+		m.scrollOffsets[instanceID] = maxScroll
+		m.hasNewOutput[instanceID] = false
+	}
 }
 
-// HasNewOutput returns true if there's new output since the last UpdateScroll call.
+// HasNewOutput returns true if new output arrived while auto-scroll was disabled.
+// This is used to show a "new output" indicator when the user is scrolled up.
+//
+// Note: This tracks output arrival while scrolled up, not simply whether output grew.
+// The flag is set when AddOutput/SetOutput is called while auto-scroll is disabled,
+// and cleared when the user scrolls to bottom or UpdateScroll is called with auto-scroll enabled.
 func (m *Manager) HasNewOutput(instanceID string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	currentLines := m.getLineCountLocked(instanceID)
-	previousLines, exists := m.lineCountCache[instanceID]
-	if !exists {
-		return false
-	}
-	return currentLines > previousLines
+	return m.hasNewOutput[instanceID]
 }
 
 // GetLineCount returns the total number of lines in the output for an instance.
 // If a filter function is set, it counts lines after filtering.
 func (m *Manager) GetLineCount(instanceID string) int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.getLineCountLocked(instanceID)
+	return m.getFilteredEntry(instanceID).lineCount
 }
 
 // GetMaxScroll returns the maximum scroll offset for an instance.
 func (m *Manager) GetMaxScroll(instanceID string, maxVisibleLines int) int {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.getMaxScrollLocked(instanceID, maxVisibleLines)
+	return max(0, m.GetLineCount(instanceID)-maxVisibleLines)
 }
 
-// getLineCountLocked returns line count (caller must hold lock).
+// getLineCountLocked returns line count for the current output/filter state.
+// Caller must hold a write lock.
 func (m *Manager) getLineCountLocked(instanceID string) int {
-	output := m.outputs[instanceID]
-	if output == "" {
-		return 0
-	}
-
-	// Apply filter if set
-	if m.filterFunc != nil {
-		output = m.filterFunc(output)
-	}
-	if output == "" {
-		return 0
-	}
-
-	// Count newlines + 1 for last line
-	count := 1
-	for _, c := range output {
-		if c == '\n' {
-			count++
-		}
-	}
-	return count
+	return m.computeFilteredEntryLocked(instanceID).lineCount
 }
 
 // getMaxScrollLocked returns max scroll offset (caller must hold lock).
@@ -319,75 +317,106 @@ func (m *Manager) GetAllOutputs() map[string]string {
 	return result
 }
 
+// getFilteredEntry returns the cached filtered entry, recomputing it if necessary.
+// This method is safe for concurrent use.
+func (m *Manager) getFilteredEntry(instanceID string) cacheEntry {
+	// Fast path: read lock and cache hit
+	m.mu.RLock()
+	output := m.outputs[instanceID]
+	if output == "" {
+		m.mu.RUnlock()
+		return cacheEntry{}
+	}
+	outputVersion := m.outputVersions[instanceID]
+	filterVersion := m.filterVersion
+	entry, ok := m.filteredCache[instanceID]
+	if ok && entry.outputVersion == outputVersion && entry.filterVersion == filterVersion {
+		m.mu.RUnlock()
+		return entry
+	}
+	m.mu.RUnlock()
+
+	// Slow path: compute under write lock
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.computeFilteredEntryLocked(instanceID)
+}
+
+// computeFilteredEntryLocked recomputes and stores the filtered cache entry if stale.
+// Caller must hold a write lock.
+func (m *Manager) computeFilteredEntryLocked(instanceID string) cacheEntry {
+	output := m.outputs[instanceID]
+	if output == "" {
+		delete(m.filteredCache, instanceID)
+		return cacheEntry{}
+	}
+
+	outputVersion := m.outputVersions[instanceID]
+	filterVersion := m.filterVersion
+	if entry, ok := m.filteredCache[instanceID]; ok && entry.outputVersion == outputVersion && entry.filterVersion == filterVersion {
+		return entry
+	}
+
+	filtered := output
+	if m.filterFunc != nil {
+		filtered = m.filterFunc(output)
+	}
+
+	entry := cacheEntry{
+		filtered:      filtered,
+		lineCount:     countLines(filtered),
+		outputVersion: outputVersion,
+		filterVersion: filterVersion,
+	}
+	m.filteredCache[instanceID] = entry
+	return entry
+}
+
 // GetFilteredOutput returns the output after applying the filter function.
 // If no filter is set, returns the raw output.
 // Results are cached and only recomputed when the output or filter settings change.
 func (m *Manager) GetFilteredOutput(instanceID string) string {
-	// First try read-only path to check cache
-	m.mu.RLock()
-	output := m.outputs[instanceID]
-	if output == "" || m.filterFunc == nil {
-		m.mu.RUnlock()
-		return output
+	return m.getFilteredEntry(instanceID).filtered
+}
+
+// GetFilteredLines returns the filtered output split into lines.
+// The returned slice is owned by the manager; callers must treat it as immutable.
+func (m *Manager) GetFilteredLines(instanceID string) []string {
+	entry := m.getFilteredEntry(instanceID)
+	if entry.filtered == "" {
+		return nil
+	}
+	if entry.lines != nil {
+		return entry.lines
 	}
 
-	// Check if cache is valid
-	outputVersion := m.outputVersions[instanceID]
-	entry, ok := m.filteredCache[instanceID]
-	if ok && entry.outputVersion == outputVersion && entry.filterVersion == m.filterVersion {
-		m.mu.RUnlock()
-		return entry.filtered
-	}
-	m.mu.RUnlock()
-
-	// Cache miss - need to recompute with write lock
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Double-check after acquiring write lock
-	output = m.outputs[instanceID]
-	if output == "" || m.filterFunc == nil {
-		return output
+	entry = m.computeFilteredEntryLocked(instanceID)
+	if entry.filtered == "" {
+		return nil
+	}
+	if entry.lines != nil {
+		return entry.lines
 	}
 
-	// Check cache again (another goroutine may have updated it)
-	outputVersion = m.outputVersions[instanceID]
-	if entry, ok := m.filteredCache[instanceID]; ok && entry.outputVersion == outputVersion && entry.filterVersion == m.filterVersion {
-		return entry.filtered
-	}
-
-	// Compute and cache
-	filtered := m.filterFunc(output)
-	m.filteredCache[instanceID] = cacheEntry{
-		filtered:      filtered,
-		outputVersion: outputVersion,
-		filterVersion: m.filterVersion,
-	}
-
-	return filtered
+	entry.lines = splitLines(entry.filtered)
+	m.filteredCache[instanceID] = entry
+	return entry.lines
 }
 
 // GetVisibleLines returns the lines that should be visible based on scroll offset.
 // This is a convenience method for rendering.
 func (m *Manager) GetVisibleLines(instanceID string, maxVisibleLines int) []string {
+	lines := m.GetFilteredLines(instanceID)
+	if len(lines) == 0 {
+		return nil
+	}
+
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	output := m.outputs[instanceID]
-	if output == "" {
-		return nil
-	}
-
-	// Apply filter if set
-	if m.filterFunc != nil {
-		output = m.filterFunc(output)
-	}
-	if output == "" {
-		return nil
-	}
-
-	lines := strings.Split(output, "\n")
 	scrollOffset := m.scrollOffsets[instanceID]
+	m.mu.RUnlock()
 
 	// Clamp scroll offset
 	scrollOffset = max(0, min(scrollOffset, max(0, len(lines)-1)))
@@ -396,4 +425,25 @@ func (m *Manager) GetVisibleLines(instanceID string, maxVisibleLines int) []stri
 	endLine := min(scrollOffset+maxVisibleLines, len(lines))
 
 	return lines[scrollOffset:endLine]
+}
+
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+
+	count := 1
+	for _, c := range s {
+		if c == '\n' {
+			count++
+		}
+	}
+	return count
+}
+
+func splitLines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
 }

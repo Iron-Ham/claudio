@@ -956,54 +956,6 @@ func (m *Model) applyCommandResult(result command.Result) {
 }
 
 // shouldShowLine determines if a line should be shown based on filters
-func (m *Model) shouldShowLine(line string) bool {
-	// Custom filter takes precedence
-	if m.filterRegex != nil {
-		return m.filterRegex.MatchString(line)
-	}
-
-	lineLower := strings.ToLower(line)
-
-	// Check category filters
-	if !m.filterCategories["errors"] {
-		if strings.Contains(lineLower, "error") || strings.Contains(lineLower, "failed") ||
-			strings.Contains(lineLower, "exception") || strings.Contains(lineLower, "panic") {
-			return false
-		}
-	}
-
-	if !m.filterCategories["warnings"] {
-		if strings.Contains(lineLower, "warning") || strings.Contains(lineLower, "warn") {
-			return false
-		}
-	}
-
-	if !m.filterCategories["tools"] {
-		// Common Claude tool call patterns
-		if strings.Contains(lineLower, "read file") || strings.Contains(lineLower, "write file") ||
-			strings.Contains(lineLower, "bash") || strings.Contains(lineLower, "running") ||
-			strings.HasPrefix(line, "  ") && (strings.Contains(line, "(") || strings.Contains(line, "→")) {
-			return false
-		}
-	}
-
-	if !m.filterCategories["thinking"] {
-		if strings.Contains(lineLower, "thinking") || strings.Contains(lineLower, "let me") ||
-			strings.Contains(lineLower, "i'll") || strings.Contains(lineLower, "i will") {
-			return false
-		}
-	}
-
-	if !m.filterCategories["progress"] {
-		if strings.Contains(line, "...") || strings.Contains(line, "✓") ||
-			strings.Contains(line, "█") || strings.Contains(line, "░") {
-			return false
-		}
-	}
-
-	return true
-}
-
 // updateOutputs fetches latest output from all instances, updates their status, and checks for conflicts
 func (m *Model) updateOutputs() {
 	if m.session == nil {
@@ -1017,7 +969,10 @@ func (m *Model) updateOutputs() {
 			if workflow != nil {
 				output := workflow.GetOutput()
 				if len(output) > 0 {
-					m.outputManager.SetOutput(inst.ID, string(output))
+					if m.outputManager.SetOutput(inst.ID, string(output)) {
+						// Update scroll position (auto-scroll if enabled)
+						m.updateOutputScroll(inst.ID)
+					}
 				}
 			}
 			continue
@@ -1027,9 +982,10 @@ func (m *Model) updateOutputs() {
 		if mgr != nil {
 			output := mgr.GetOutput()
 			if len(output) > 0 {
-				m.outputManager.SetOutput(inst.ID, string(output))
-				// Update scroll position (auto-scroll if enabled)
-				m.updateOutputScroll(inst.ID)
+				if m.outputManager.SetOutput(inst.ID, string(output)) {
+					// Update scroll position (auto-scroll if enabled)
+					m.updateOutputScroll(inst.ID)
+				}
 			}
 
 			// Update instance status based on detected waiting state
@@ -1391,13 +1347,13 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 	mgr := m.orchestrator.GetInstanceManager(inst.ID)
 	isRunning := mgr != nil && mgr.Running()
 
-	// Get filtered output using cache (avoids expensive recomputation on every render)
-	// Ensure filter function is set for cached filtering to work
-	m.outputManager.SetFilterFunc(m.filterOutput)
-	output := m.outputManager.GetFilteredOutput(inst.ID)
+	// Get filtered output using output manager cache (avoids expensive recomputation on every render)
+	filteredLines := m.outputManager.GetFilteredLines(inst.ID)
+	hasOutput := m.outputManager.GetOutput(inst.ID) != ""
 
 	renderState := view.RenderState{
-		Output:            output,
+		OutputLines:       filteredLines,
+		HasOutput:         hasOutput,
 		IsRunning:         isRunning,
 		InputMode:         m.inputMode,
 		ScrollOffset:      m.outputManager.GetScrollOffset(inst.ID),
@@ -1416,11 +1372,9 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 
 // renderFilterPanel renders the filter configuration panel.
 // Delegates to filter.RenderPanel for rendering using the filter package.
+// Note: outputFilter is always initialized in NewModel(), so no nil check is needed here.
 func (m Model) renderFilterPanel(width int) string {
-	// Build a Filter from the model's current filter state
-	f := filter.NewWithCategories(m.filterCategories)
-	f.SetCustomPattern(m.filterCustom)
-	return filter.RenderPanel(f, width)
+	return filter.RenderPanel(m.outputFilter, width)
 }
 
 // renderAddTask renders the add task input
