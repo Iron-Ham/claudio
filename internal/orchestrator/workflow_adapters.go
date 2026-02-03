@@ -248,6 +248,11 @@ func (a *adversarialOrchestratorAdapter) AddInstanceToWorktree(session adversari
 	return a.orch.AddInstanceToWorktree(s, task, worktreePath, branch)
 }
 
+func (a *adversarialOrchestratorAdapter) AddInstanceToWorktreeWithBackend(session adversarial.SessionInterface, task, worktreePath, branch, backendName string) (adversarial.InstanceInterface, error) {
+	s := session.(*adversarialSessionAdapter).session
+	return a.orch.AddInstanceToWorktreeWithBackend(s, task, worktreePath, branch, backendName)
+}
+
 func (a *adversarialOrchestratorAdapter) StartInstance(inst adversarial.InstanceInterface) error {
 	i := inst.(*Instance)
 	return a.orch.StartInstance(i)
@@ -389,11 +394,12 @@ func NewAdversarialSession(task string, config adversarial.Config) *adversarial.
 // NewAdversarialCoordinator creates a new adversarial coordinator
 func NewAdversarialCoordinator(orch *Orchestrator, session *Session, advSession *adversarial.Session, logger *logging.Logger) *adversarial.Coordinator {
 	cfg := adversarial.CoordinatorConfig{
-		Orchestrator: &adversarialOrchestratorAdapter{orch: orch},
-		BaseSession:  &adversarialSessionAdapter{session: session},
-		AdvSession:   advSession,
-		Logger:       logger,
-		SessionType:  string(SessionTypeAdversarial),
+		Orchestrator:    &adversarialOrchestratorAdapter{orch: orch},
+		BaseSession:     &adversarialSessionAdapter{session: session},
+		AdvSession:      advSession,
+		Logger:          logger,
+		SessionType:     string(SessionTypeAdversarial),
+		ReviewerBackend: advSession.Config.ReviewerBackend,
 	}
 	return adversarial.NewCoordinator(cfg)
 }

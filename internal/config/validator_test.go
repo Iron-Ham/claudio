@@ -836,6 +836,37 @@ func TestConfig_Validate_Adversarial(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("valid reviewer backend options", func(t *testing.T) {
+		for _, backend := range []string{"", "claude", "codex"} {
+			cfg := Default()
+			cfg.Adversarial.ReviewerBackend = backend
+			errs := cfg.Validate()
+
+			for _, err := range errs {
+				if err.Field == "adversarial.reviewer_backend" {
+					t.Errorf("reviewer_backend %q should be valid, got error: %v", backend, err)
+				}
+			}
+		}
+	})
+
+	t.Run("invalid reviewer backend", func(t *testing.T) {
+		cfg := Default()
+		cfg.Adversarial.ReviewerBackend = "invalid-backend"
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "adversarial.reviewer_backend" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for invalid reviewer_backend")
+		}
+	})
 }
 
 func TestConfig_Validate_Plan(t *testing.T) {

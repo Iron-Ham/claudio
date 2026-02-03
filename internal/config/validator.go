@@ -483,6 +483,15 @@ func (c *Config) validateAdversarial() []ValidationError {
 		})
 	}
 
+	// ReviewerBackend must be a valid backend if specified
+	if c.Adversarial.ReviewerBackend != "" && !slices.Contains(ValidAIBackends(), c.Adversarial.ReviewerBackend) {
+		errors = append(errors, ValidationError{
+			Field:   "adversarial.reviewer_backend",
+			Value:   c.Adversarial.ReviewerBackend,
+			Message: fmt.Sprintf("must be one of: %s", strings.Join(ValidAIBackends(), ", ")),
+		})
+	}
+
 	return errors
 }
 
