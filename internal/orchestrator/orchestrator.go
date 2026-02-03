@@ -1104,13 +1104,25 @@ func (o *Orchestrator) RemoveInstance(session *Session, instanceID string, force
 	// Remove worktree
 	if err := o.wt.Remove(inst.WorktreePath); err != nil {
 		// Log but don't fail - the directory might already be gone
-		fmt.Fprintf(os.Stderr, "Warning: failed to remove worktree: %v\n", err)
+		if o.logger != nil {
+			o.logger.Warn("failed to remove worktree",
+				"instance_id", inst.ID,
+				"worktree_path", inst.WorktreePath,
+				"error", err,
+			)
+		}
 	}
 
 	// Delete branch
 	if err := o.wt.DeleteBranch(inst.Branch); err != nil {
 		// Log but don't fail - the branch might already be gone
-		fmt.Fprintf(os.Stderr, "Warning: failed to delete branch: %v\n", err)
+		if o.logger != nil {
+			o.logger.Warn("failed to delete branch",
+				"instance_id", inst.ID,
+				"branch", inst.Branch,
+				"error", err,
+			)
+		}
 	}
 
 	// Remove from session
@@ -1121,7 +1133,9 @@ func (o *Orchestrator) RemoveInstance(session *Session, instanceID string, force
 
 	// Update context
 	if err := o.updateContext(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to update context: %v\n", err)
+		if o.logger != nil {
+			o.logger.Warn("failed to update context", "error", err)
+		}
 	}
 
 	// Save session

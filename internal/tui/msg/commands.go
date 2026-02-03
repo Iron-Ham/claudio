@@ -173,6 +173,30 @@ func RemoveInstanceAsync(o *orchestrator.Orchestrator, session *orchestrator.Ses
 	}
 }
 
+// DismissGroupAsync returns a command that removes all instances in a group asynchronously.
+// This prevents the UI from blocking while git removes multiple worktrees and branches.
+func DismissGroupAsync(o *orchestrator.Orchestrator, session *orchestrator.Session, groupID string, instanceIDs []string) tea.Cmd {
+	return func() tea.Msg {
+		if o == nil {
+			return GroupDismissedMsg{GroupID: groupID, Errors: []error{fmt.Errorf("orchestrator is nil")}}
+		}
+		if session == nil {
+			return GroupDismissedMsg{GroupID: groupID, Errors: []error{fmt.Errorf("session is nil")}}
+		}
+
+		var errors []error
+		removed := 0
+		for _, instID := range instanceIDs {
+			if err := o.RemoveInstance(session, instID, true); err != nil {
+				errors = append(errors, fmt.Errorf("instance %s: %w", instID, err))
+			} else {
+				removed++
+			}
+		}
+		return GroupDismissedMsg{GroupID: groupID, RemovedCount: removed, Errors: errors}
+	}
+}
+
 // LoadDiffAsync returns a command that loads a git diff asynchronously.
 // This prevents the UI from blocking while git computes the diff.
 func LoadDiffAsync(o *orchestrator.Orchestrator, worktreePath string, instanceID string) tea.Cmd {

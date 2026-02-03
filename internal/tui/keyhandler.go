@@ -479,30 +479,12 @@ func (m Model) handleGroupCommand(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case GroupActionForceStart:
 			m.infoMessage = "Force-starting next group"
 		case GroupActionDismissGroup:
-			// Remove all instances in the group
-			removed := 0
-			for _, instID := range result.InstanceIDs {
-				if err := m.orchestrator.RemoveInstance(m.session, instID, true); err != nil {
-					if m.logger != nil {
-						m.logger.Warn("failed to remove instance during group dismiss", "instance_id", instID, "error", err)
-					}
-				} else {
-					removed++
-				}
+			// Remove all instances in the group asynchronously to avoid blocking the TUI
+			if len(result.InstanceIDs) > 0 {
+				m.infoMessage = fmt.Sprintf("Dismissing %d instance(s)...", len(result.InstanceIDs))
+				return m, tuimsg.DismissGroupAsync(m.orchestrator, m.session, result.GroupID, result.InstanceIDs)
 			}
-			if removed > 0 {
-				m.infoMessage = fmt.Sprintf("Dismissed %d instance(s) from group", removed)
-				// Adjust active tab if needed
-				if m.activeTab >= len(m.session.Instances) && m.activeTab > 0 {
-					m.activeTab = len(m.session.Instances) - 1
-				}
-				if m.activeTab < 0 {
-					m.activeTab = 0
-				}
-				m.ensureActiveVisible()
-			} else {
-				m.infoMessage = "No instances to dismiss"
-			}
+			m.infoMessage = "No instances to dismiss"
 		}
 		return m, nil
 	}

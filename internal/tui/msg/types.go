@@ -80,6 +80,13 @@ type InstanceRemovedMsg struct {
 	Err        error
 }
 
+// GroupDismissedMsg is sent when async group dismissal completes.
+type GroupDismissedMsg struct {
+	GroupID      string
+	RemovedCount int
+	Errors       []error
+}
+
 // DiffLoadedMsg is sent when async diff loading completes.
 type DiffLoadedMsg struct {
 	InstanceID  string

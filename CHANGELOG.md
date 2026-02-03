@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Group Dismiss Freezing** - Fixed a bug where killing a group via `gq` would freeze the TUI and corrupt the display. The group dismiss operation now runs asynchronously to avoid blocking the main thread, and warning messages no longer write directly to stderr (which corrupts the Bubble Tea TUI). Users now see a "Dismissing N instance(s)..." message while the operation runs in the background.
+
 - **Tripleshot Adversarial UI Nesting** - Fixed a bug where tripleshot attempts in adversarial mode were not immediately nested under "Attempt N" sub-groups when using the async startup path. Previously, attempts were only nested when a new round started, causing a flat instance list during the initial "preparing" phase. Now attempts are properly nested immediately when created via `CreateAttemptStubs`.
 
 - **Tripleshot Adversarial Round Disambiguation** - Fixed a bug where completing a round in tripleshot adversarial mode could spawn multiple reviewers. When an implementer completed after a rejection (round 2+), `ProcessAttemptCompletion` was incorrectly resetting `ReviewRound` to 1 and spawning duplicate reviewers. Now the code: (1) skips processing if already under review, (2) preserves the current review round, and (3) validates review file round numbers to ignore stale files from prior rounds.
