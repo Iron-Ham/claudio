@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"regexp"
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/config"
@@ -11,6 +10,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/Iron-Ham/claudio/internal/tui/command"
+	"github.com/Iron-Ham/claudio/internal/tui/filter"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
 	"github.com/Iron-Ham/claudio/internal/tui/output"
 	"github.com/Iron-Ham/claudio/internal/tui/search"
@@ -365,11 +365,9 @@ type Model struct {
 	searchEngine *search.Engine // Search engine for output buffer searching
 
 	// Filter state
-	filterMode       bool            // Whether filter mode is active
-	filterCategories map[string]bool // Which categories are enabled
-	filterCustom     string          // Custom filter pattern
-	filterRegex      *regexp.Regexp  // Compiled custom filter regex
-	outputScroll     int             // Scroll position in output (for search navigation)
+	filterMode   bool // Whether filter mode is active
+	outputFilter *filter.Filter
+	outputScroll int // Scroll position in output (for search navigation)
 
 }
 
@@ -643,6 +641,10 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 		Logger:        tuiLogger,
 	})
 
+	outputFilter := filter.New()
+	outputManager := output.NewManager()
+	outputManager.SetFilterFunc(outputFilter.Apply)
+
 	return Model{
 		orchestrator:    orch,
 		session:         session,
@@ -650,16 +652,10 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 		startTime:       time.Now(),
 		commandHandler:  command.New(),
 		inputRouter:     input.NewRouter(),
-		outputManager:   output.NewManager(),
+		outputManager:   outputManager,
 		searchEngine:    search.NewEngine(),
 		terminalManager: termMgr,
-		filterCategories: map[string]bool{
-			"errors":   true,
-			"warnings": true,
-			"tools":    true,
-			"thinking": true,
-			"progress": true,
-		},
+		outputFilter:    outputFilter,
 	}
 }
 
@@ -1080,13 +1076,11 @@ func (m Model) isOutputAutoScroll(instanceID string) bool {
 
 // scrollOutputUp scrolls the output up by n lines and disables auto-scroll
 func (m *Model) scrollOutputUp(instanceID string, n int) {
-	m.outputManager.SetFilterFunc(m.filterOutput)
 	m.outputManager.Scroll(instanceID, -n, m.getOutputMaxLines())
 }
 
 // scrollOutputDown scrolls the output down by n lines
 func (m *Model) scrollOutputDown(instanceID string, n int) {
-	m.outputManager.SetFilterFunc(m.filterOutput)
 	m.outputManager.Scroll(instanceID, n, m.getOutputMaxLines())
 }
 
@@ -1097,13 +1091,11 @@ func (m *Model) scrollOutputToTop(instanceID string) {
 
 // scrollOutputToBottom scrolls to the bottom and re-enables auto-scroll
 func (m *Model) scrollOutputToBottom(instanceID string) {
-	m.outputManager.SetFilterFunc(m.filterOutput)
 	m.outputManager.ScrollToBottom(instanceID, m.getOutputMaxLines())
 }
 
 // updateOutputScroll updates scroll position based on new output (if auto-scroll is enabled)
 func (m *Model) updateOutputScroll(instanceID string) {
-	m.outputManager.SetFilterFunc(m.filterOutput)
 	m.outputManager.UpdateScroll(instanceID, m.getOutputMaxLines())
 }
 

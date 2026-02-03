@@ -33,9 +33,14 @@ func TestGolangciLintCompliance(t *testing.T) {
 		projectRoot = wd
 	}
 
+	// Use a per-test Go build cache directory to ensure the cache is writable in
+	// restricted environments (e.g., sandboxed runners).
+	goCacheDir := t.TempDir()
+
 	// Run golangci-lint from project root
-	cmd := exec.Command("golangci-lint", "run", "./...")
+	cmd := exec.Command("golangci-lint", "run", "--allow-parallel-runners", "./...")
 	cmd.Dir = projectRoot
+	cmd.Env = append(os.Environ(), "GOCACHE="+goCacheDir)
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {

@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Adversarial Round Disambiguation** - Ignore stale increment/review files from prior rounds so new rounds don't start early
 
+### Performance
+
+- **TUI Output Rendering Cache** - Cached filtered output line splits and “new output” state to avoid full-buffer processing on every render, improving typing responsiveness in command/search modes
+
 ## [0.15.0] - 2026-02-02
 
 ### Added

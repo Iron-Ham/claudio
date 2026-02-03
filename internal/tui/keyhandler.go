@@ -2,10 +2,10 @@ package tui
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/tui/filter"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
@@ -1053,55 +1053,49 @@ func (m Model) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleFilterInput handles keyboard input when in filter mode
 func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.outputFilter == nil {
+		m.outputFilter = filter.New()
+		m.outputManager.SetFilterFunc(m.outputFilter.Apply)
+	}
+
 	switch msg.String() {
 	case "esc", "F", "q":
 		m.filterMode = false
 		return m, nil
 
 	case "e", "1":
-		m.filterCategories["errors"] = !m.filterCategories["errors"]
+		m.outputFilter.ToggleCategory("errors")
 		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case "w", "2":
-		m.filterCategories["warnings"] = !m.filterCategories["warnings"]
+		m.outputFilter.ToggleCategory("warnings")
 		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case "t", "3":
-		m.filterCategories["tools"] = !m.filterCategories["tools"]
+		m.outputFilter.ToggleCategory("tools")
 		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case "h", "4":
-		m.filterCategories["thinking"] = !m.filterCategories["thinking"]
+		m.outputFilter.ToggleCategory("thinking")
 		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case "p", "5":
-		m.filterCategories["progress"] = !m.filterCategories["progress"]
+		m.outputFilter.ToggleCategory("progress")
 		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case "a":
-		// Toggle all categories
-		allEnabled := true
-		for _, v := range m.filterCategories {
-			if !v {
-				allEnabled = false
-				break
-			}
-		}
-		for k := range m.filterCategories {
-			m.filterCategories[k] = !allEnabled
-		}
+		m.outputFilter.ToggleAll()
 		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case "c":
 		// Clear custom filter
-		m.filterCustom = ""
-		m.filterRegex = nil
+		m.outputFilter.ClearCustomPattern()
 		m.outputManager.InvalidateFilterCache()
 		return m, nil
 	}
@@ -1109,46 +1103,26 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle custom filter input
 	switch msg.Type {
 	case tea.KeyBackspace:
-		if len(m.filterCustom) > 0 {
-			m.filterCustom = m.filterCustom[:len(m.filterCustom)-1]
-			m.compileFilterRegex()
-			m.outputManager.InvalidateFilterCache()
-		}
+		m.outputFilter.BackspacePattern()
+		m.outputManager.InvalidateFilterCache()
 		return m, nil
 
 	case tea.KeyRunes:
 		// Check if it's not a shortcut key
 		char := string(msg.Runes)
 		if char != "e" && char != "w" && char != "t" && char != "h" && char != "p" && char != "a" && char != "c" {
-			m.filterCustom += char
-			m.compileFilterRegex()
+			m.outputFilter.AppendToPattern(char)
 			m.outputManager.InvalidateFilterCache()
 		}
 		return m, nil
 
 	case tea.KeySpace:
-		m.filterCustom += " "
-		m.compileFilterRegex()
+		m.outputFilter.AppendToPattern(" ")
 		m.outputManager.InvalidateFilterCache()
 		return m, nil
 	}
 
 	return m, nil
-}
-
-// compileFilterRegex compiles the custom filter pattern
-func (m *Model) compileFilterRegex() {
-	if m.filterCustom == "" {
-		m.filterRegex = nil
-		return
-	}
-
-	re, err := regexp.Compile("(?i)" + m.filterCustom)
-	if err != nil {
-		m.filterRegex = nil
-		return
-	}
-	m.filterRegex = re
 }
 
 // -----------------------------------------------------------------------------
@@ -1435,28 +1409,4 @@ func (m Model) CurrentInputMode() input.Mode {
 // Filter Output
 // -----------------------------------------------------------------------------
 
-// filterOutput applies category and custom filters to output
-func (m *Model) filterOutput(output string) string {
-	// If all categories enabled and no custom filter, return as-is
-	allEnabled := true
-	for _, v := range m.filterCategories {
-		if !v {
-			allEnabled = false
-			break
-		}
-	}
-	if allEnabled && m.filterRegex == nil {
-		return output
-	}
-
-	lines := strings.Split(output, "\n")
-	var filtered []string
-
-	for _, line := range lines {
-		if m.shouldShowLine(line) {
-			filtered = append(filtered, line)
-		}
-	}
-
-	return strings.Join(filtered, "\n")
-}
+// Filtering is handled by output.Manager using m.outputFilter.

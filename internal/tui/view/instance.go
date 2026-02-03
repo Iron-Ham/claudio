@@ -37,6 +37,11 @@ func NewInstanceView(width, maxOutputLines int) *InstanceView {
 type RenderState struct {
 	// Output is the current output text for this instance
 	Output string
+	// HasOutput indicates the instance has output even if Output/OutputLines are empty due to filtering.
+	HasOutput bool
+	// OutputLines is an optional pre-split representation of Output (avoids strings.Split in render hot path).
+	// When provided, Output is ignored for output rendering.
+	OutputLines []string
 	// IsRunning indicates if the instance manager is currently running
 	IsRunning bool
 	// InputMode indicates if the TUI is in input mode for this instance
@@ -536,9 +541,19 @@ func (v *InstanceView) RenderStatusBanner(isRunning, inputMode bool) string {
 func (v *InstanceView) RenderOutput(instanceID string, state RenderState) string {
 	var b strings.Builder
 
-	output := state.Output
-	if output == "" {
-		output = "No output yet. Press [s] to start this instance."
+	var lines []string
+	if state.OutputLines != nil {
+		lines = state.OutputLines
+	} else if state.Output != "" {
+		lines = strings.Split(state.Output, "\n")
+	}
+
+	if len(lines) == 0 {
+		output := "No output yet. Press [s] to start this instance."
+		if state.HasOutput {
+			output = "No output matches current filters."
+		}
+
 		outputBox := styles.OutputArea.
 			Width(v.Width - 4).
 			Height(v.MaxOutputLines).
@@ -548,7 +563,6 @@ func (v *InstanceView) RenderOutput(instanceID string, state RenderState) string
 	}
 
 	// Split output into lines and apply scroll
-	lines := strings.Split(output, "\n")
 	totalLines := len(lines)
 	maxLines := v.MaxOutputLines
 
