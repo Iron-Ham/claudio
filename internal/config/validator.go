@@ -69,6 +69,9 @@ func (c *Config) Validate() []ValidationError {
 	// Validate Instance config
 	errors = append(errors, c.validateInstance()...)
 
+	// Validate AI backend config
+	errors = append(errors, c.validateAI()...)
+
 	// Validate Branch config
 	errors = append(errors, c.validateBranch()...)
 
@@ -254,6 +257,45 @@ func (c *Config) validateInstance() []ValidationError {
 			Field:   "instance.completion_timeout_minutes",
 			Value:   c.Instance.CompletionTimeoutMinutes,
 			Message: "must be non-negative (0 disables timeout)",
+		})
+	}
+
+	return errors
+}
+
+// validateAI validates the AI backend configuration.
+func (c *Config) validateAI() []ValidationError {
+	var errors []ValidationError
+
+	if c.AI.Backend != "" && !slices.Contains(ValidAIBackends(), c.AI.Backend) {
+		errors = append(errors, ValidationError{
+			Field:   "ai.backend",
+			Value:   c.AI.Backend,
+			Message: fmt.Sprintf("must be one of: %s", strings.Join(ValidAIBackends(), ", ")),
+		})
+	}
+
+	if c.AI.Claude.Command == "" {
+		errors = append(errors, ValidationError{
+			Field:   "ai.claude.command",
+			Value:   c.AI.Claude.Command,
+			Message: "must be non-empty",
+		})
+	}
+
+	if c.AI.Codex.Command == "" {
+		errors = append(errors, ValidationError{
+			Field:   "ai.codex.command",
+			Value:   c.AI.Codex.Command,
+			Message: "must be non-empty",
+		})
+	}
+
+	if c.AI.Codex.ApprovalMode != "" && !slices.Contains(ValidCodexApprovalModes(), c.AI.Codex.ApprovalMode) {
+		errors = append(errors, ValidationError{
+			Field:   "ai.codex.approval_mode",
+			Value:   c.AI.Codex.ApprovalMode,
+			Message: fmt.Sprintf("must be one of: %s", strings.Join(ValidCodexApprovalModes(), ", ")),
 		})
 	}
 

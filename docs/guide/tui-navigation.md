@@ -1,6 +1,6 @@
 # TUI Navigation
 
-Claudio's Terminal User Interface (TUI) provides a real-time dashboard for managing your parallel Claude instances.
+Claudio's Terminal User Interface (TUI) provides a real-time dashboard for managing your parallel backend instances.
 
 ## Layout Overview
 
@@ -11,7 +11,7 @@ Claudio's Terminal User Interface (TUI) provides a real-time dashboard for manag
 │                     │                                                   │
 │  Instance Sidebar   │              Output Panel                         │
 │                     │                                                   │
-│  ▶ 1. auth-api      │  Claude is working on implementing               │
+│  ▶ 1. auth-api      │  Backend is working on implementing              │
 │    [working]        │  the authentication endpoint...                   │
 │    $0.12 | 5.2k     │                                                   │
 │                     │  I'll start by creating the user model...         │
@@ -140,7 +140,7 @@ Search supports regular expressions:
 
 ## Input Mode
 
-When Claude needs input, press `Enter` to focus:
+When the backend needs input, press `Enter` to focus:
 
 1. Type your response
 2. Press `Enter` to send
@@ -199,7 +199,7 @@ Press `:` to enter command mode for advanced operations. Type a command and pres
 ```
 
 This starts the inline planning workflow:
-1. Claude analyzes the objective
+1. The backend analyzes the objective
 2. A structured plan is generated
 3. You review and edit tasks in the plan editor
 4. Confirm to spawn instances organized by groups

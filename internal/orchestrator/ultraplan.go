@@ -412,7 +412,7 @@ type UltraPlanSession struct {
 	GroupConsolidatedBranches []string `json:"group_consolidated_branches,omitempty"`
 
 	// Per-group consolidator instance IDs: index -> instance ID
-	// Each group has a dedicated Claude session that consolidates its task branches
+	// Each group has a dedicated backend session that consolidates its task branches
 	GroupConsolidatorIDs []string `json:"group_consolidator_ids,omitempty"`
 
 	// Per-group consolidation contexts: index -> completion file data
@@ -838,7 +838,7 @@ func countDependencies(deps map[string][]string) int {
 	return count
 }
 
-// ParsePlanFromOutputWithLogging parses a plan from Claude's output and logs any errors.
+// ParsePlanFromOutputWithLogging parses a plan from backend output and logs any errors.
 // On success, it logs DEBUG-level information about the parsed plan.
 // On failure, it logs ERROR-level information about the parsing failure.
 func (m *UltraPlanManager) ParsePlanFromOutputWithLogging(output string, objective string) (*PlanSpec, error) {
@@ -1037,7 +1037,7 @@ func (m *UltraPlanManager) AssignTaskToInstance(taskID, instanceID string) {
 	})
 }
 
-// ParsePlanFromOutput extracts a PlanSpec from Claude's output
+// ParsePlanFromOutput extracts a PlanSpec from backend output
 // It looks for JSON wrapped in <plan></plan> tags
 func ParsePlanFromOutput(output string, objective string) (*PlanSpec, error) {
 	// Look for <plan>...</plan> tags
@@ -1094,7 +1094,7 @@ func ParsePlanFromOutput(output string, objective string) (*PlanSpec, error) {
 //  1. Root-level format: {"summary": "...", "tasks": [...]}
 //  2. Nested format: {"plan": {"summary": "...", "tasks": [...]}}
 //
-// It also handles alternative field names that Claude may generate:
+// It also handles alternative field names that the backend may generate:
 //   - "depends" as alias for "depends_on"
 //   - "complexity" as alias for "est_complexity"
 func ParsePlanFromFile(filepath string, objective string) (*PlanSpec, error) {
@@ -1103,7 +1103,7 @@ func ParsePlanFromFile(filepath string, objective string) (*PlanSpec, error) {
 		return nil, fmt.Errorf("failed to read plan file: %w", err)
 	}
 
-	// flexibleTask handles alternative field names that Claude may generate
+	// flexibleTask handles alternative field names that the backend may generate
 	type flexibleTask struct {
 		ID            string   `json:"id"`
 		Title         string   `json:"title"`
@@ -1515,7 +1515,7 @@ Write a JSON file with this structure:
 - "tasks": Array of task objects, each with:
   - "id": Unique identifier like "task-1-setup" (string)
   - "title": Short title (string)
-  - "description": Detailed instructions for another Claude instance to execute independently (string)
+  - "description": Detailed instructions for another AI instance to execute independently (string)
   - "files": Files this task will modify (array of strings)
   - "depends_on": IDs of tasks that must complete first (array of strings, empty for independent tasks)
   - "priority": Lower = higher priority within dependency level (number)

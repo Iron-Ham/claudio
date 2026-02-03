@@ -1,5 +1,5 @@
 site_name: Claudio Documentation
-site_description: Documentation for Claudio - Multi-instance Claude Code orchestrator
+site_description: Documentation for Claudio - Multi-instance AI backend orchestrator
 site_url: https://iron-ham.github.io/claudio/
 repo_url: https://github.com/Iron-Ham/claudio
 repo_name: Iron-Ham/claudio

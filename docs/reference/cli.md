@@ -66,7 +66,7 @@ claudio start --new
 
 ### claudio add
 
-Add a new Claude instance with a task.
+Add a new backend instance with a task.
 
 ```bash
 claudio add [task description] [flags]
@@ -75,7 +75,7 @@ claudio add [task description] [flags]
 **Arguments:**
 | Argument | Description |
 |----------|-------------|
-| `task description` | Description of the task for Claude |
+| `task description` | Description of the task for the backend |
 
 **Flags:**
 | Flag | Short | Description |
@@ -568,7 +568,7 @@ claudio ultraplan --no-synthesis "Update deprecated APIs"
 ```
 
 **Phases:**
-1. **Planning** - Claude explores codebase and generates structured plan
+1. **Planning** - The backend explores the codebase and generates a structured plan
 2. **Context Refresh** - Review and approve the generated plan
 3. **Execution** - Child instances execute tasks in parallel (respecting dependencies)
 4. **Synthesis** - Coordinator reviews all outputs and identifies integration issues

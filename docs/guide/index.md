@@ -4,7 +4,7 @@ Welcome to the Claudio User Guide. This documentation covers everything you need
 
 ## What is Claudio?
 
-Claudio is a CLI/TUI tool that orchestrates multiple Claude Code instances simultaneously on a single project. It uses Git worktrees to isolate each instance's work, preventing conflicts while enabling truly parallel development.
+Claudio is a CLI/TUI tool that orchestrates multiple AI backend instances (Claude Code or Codex) simultaneously on a single project. It uses Git worktrees to isolate each instance's work, preventing conflicts while enabling truly parallel development.
 
 ## Guides
 
@@ -30,7 +30,7 @@ Define dependencies between tasks to control execution order. Build complex work
 Generate structured task plans from high-level objectives. Create execution plans that can be saved as JSON for Ultra-Plan or tracked as GitHub Issues.
 
 ### [Ultra-Plan Mode](ultra-plan.md)
-Orchestrate complex tasks with intelligent planning. Let Claude analyze your codebase, create an execution plan, and coordinate parallel task execution automatically.
+Orchestrate complex tasks with intelligent planning. Let the AI backend analyze your codebase, create an execution plan, and coordinate parallel task execution automatically.
 
 ### [TripleShot Mode](tripleshot.md)
 Run three parallel implementations and let a judge select the best. Ideal for tasks with multiple valid approaches or when optimal solution is unclear. Access via `:tripleshot` command in the TUI. Can be combined with adversarial review for higher quality results.
@@ -52,7 +52,7 @@ Start Plan and UltraPlan workflows directly from the standard TUI. Create plans,
 ## Core Concepts
 
 ### Instances
-An instance is a Claude Code process working on a specific task. Each instance runs independently and can be started, paused, resumed, or stopped.
+An instance is an AI backend process working on a specific task. Each instance runs independently and can be started, paused, resumed, or stopped.
 
 ### Worktrees
 Each instance works in its own [Git worktree](https://git-scm.com/docs/git-worktree) - a separate working directory linked to your repository. This provides complete file isolation between instances.

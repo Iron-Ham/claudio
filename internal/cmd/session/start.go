@@ -29,7 +29,7 @@ var startCmd = &cobra.Command{
 	Use:   "start [session-name]",
 	Short: "Start a new Claudio session",
 	Long: `Start a new Claudio session with an optional name.
-This launches the TUI dashboard where you can add and manage Claude instances.
+This launches the TUI dashboard where you can add and manage backend instances.
 
 If other sessions exist, you will be prompted to attach to one or create a new session.
 Multiple Claudio sessions can run simultaneously in different terminal windows.`,
@@ -207,12 +207,12 @@ func AttachToSession(cwd, sessionID string, cfg *config.Config) error {
 			}
 		} else if needsRecovery && inst.ClaudeSessionID != "" &&
 			(inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput) {
-			// Tmux session gone but we have Claude session ID - try to resume
+			// Tmux session gone but we have a backend session ID - try to resume
 			if err := orch.ResumeInstance(inst); err == nil {
 				resumed = append(resumed, inst.ID)
 				logger.Info("resumed interrupted instance",
 					"instance_id", inst.ID,
-					"claude_session_id", inst.ClaudeSessionID,
+					"backend_session_id", inst.ClaudeSessionID,
 				)
 			} else {
 				logger.Warn("failed to resume instance, marking as paused",

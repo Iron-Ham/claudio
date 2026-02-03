@@ -1,6 +1,6 @@
 # TripleShot Mode
 
-TripleShot runs three Claude instances in parallel on the same task, then uses a fourth "judge" instance to evaluate all solutions and determine the best approach. This mode is ideal when you want multiple perspectives on a problem or when the optimal solution isn't clear.
+TripleShot runs three backend instances in parallel on the same task, then uses a fourth "judge" instance to evaluate all solutions and determine the best approach. This mode is ideal when you want multiple perspectives on a problem or when the optimal solution isn't clear.
 
 ## Overview
 
@@ -281,7 +281,7 @@ After the judge evaluates:
 
 ### Resource Considerations
 
-TripleShot uses 4 Claude instances:
+TripleShot uses 4 backend instances:
 - 3 for implementation attempts
 - 1 for evaluation
 
@@ -293,7 +293,7 @@ Factor this into cost estimates for large tasks.
 
 If attempts don't finish:
 - Check for infinite loops in task description
-- Verify Claude Code is working correctly
+- Verify the backend CLI is working correctly
 - Look for errors in attempt output
 
 ### Judge Not Starting

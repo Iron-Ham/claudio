@@ -651,7 +651,7 @@ func (c *Coordinator) StartJudge() error {
 
 // CheckAttemptCompletion checks if an attempt has written its completion file.
 // It searches both the worktree root and immediate subdirectories to handle
-// cases where Claude instances write the file from a subdirectory.
+// cases where backend instances write the file from a subdirectory.
 func (c *Coordinator) CheckAttemptCompletion(attemptIndex int) (bool, error) {
 	session := c.Session()
 	if attemptIndex < 0 || attemptIndex >= 3 {

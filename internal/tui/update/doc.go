@@ -7,7 +7,7 @@
 //
 // The handlers in this package process Bubbletea messages such as:
 //   - TickMsg: periodic updates for UI refresh and polling
-//   - OutputMsg: output data from Claude instances
+//   - OutputMsg: output data from backend instances
 //   - ErrMsg: error notifications
 //   - PRCompleteMsg/PROpenedMsg: PR workflow events
 //   - TimeoutMsg: instance timeout notifications

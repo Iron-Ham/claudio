@@ -11,7 +11,7 @@ import (
 var stopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop all instances and cleanup",
-	Long: `Stop all running Claude instances and optionally cleanup worktrees.
+	Long: `Stop all running backend instances and optionally cleanup worktrees.
 You will be prompted for what to do with each instance's work.`,
 	RunE: runStop,
 }

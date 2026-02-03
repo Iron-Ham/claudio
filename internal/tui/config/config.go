@@ -187,6 +187,48 @@ func New() Model {
 			},
 		},
 		{
+			Name: "AI",
+			Items: []ConfigItem{
+				{
+					Key:         "ai.backend",
+					Label:       "AI Backend",
+					Description: "Select the AI backend used for instances and workflows",
+					Type:        "select",
+					Options:     config.ValidAIBackends(),
+					Category:    "ai",
+				},
+				{
+					Key:         "ai.claude.command",
+					Label:       "Claude Command",
+					Description: "Command or path for Claude CLI binary (default: claude)",
+					Type:        "string",
+					Category:    "ai",
+				},
+				{
+					Key:         "ai.claude.skip_permissions",
+					Label:       "Claude Skip Permissions",
+					Description: "Add --dangerously-skip-permissions when starting Claude",
+					Type:        "bool",
+					Category:    "ai",
+				},
+				{
+					Key:         "ai.codex.command",
+					Label:       "Codex Command",
+					Description: "Command or path for Codex CLI binary (default: codex)",
+					Type:        "string",
+					Category:    "ai",
+				},
+				{
+					Key:         "ai.codex.approval_mode",
+					Label:       "Codex Approval Mode",
+					Description: "Approval/sandbox mode for Codex (bypass, full-auto, default)",
+					Type:        "select",
+					Options:     config.ValidCodexApprovalModes(),
+					Category:    "ai",
+				},
+			},
+		},
+		{
 			Name: "Pull Request",
 			Items: []ConfigItem{
 				{
@@ -206,7 +248,7 @@ func New() Model {
 				{
 					Key:         "pr.use_ai",
 					Label:       "Use AI",
-					Description: "Use Claude AI to generate PR content",
+					Description: "Use the configured AI backend to generate PR content",
 					Type:        "bool",
 					Category:    "pr",
 				},
@@ -1183,6 +1225,12 @@ func (m *Model) resetCurrentToDefault() {
 		"instance.activity_timeout_minutes":   defaults.Instance.ActivityTimeoutMinutes,
 		"instance.completion_timeout_minutes": defaults.Instance.CompletionTimeoutMinutes,
 		"instance.stale_detection":            defaults.Instance.StaleDetection,
+		// AI
+		"ai.backend":                 defaults.AI.Backend,
+		"ai.claude.command":          defaults.AI.Claude.Command,
+		"ai.claude.skip_permissions": defaults.AI.Claude.SkipPermissions,
+		"ai.codex.command":           defaults.AI.Codex.Command,
+		"ai.codex.approval_mode":     defaults.AI.Codex.ApprovalMode,
 		// Pull Request
 		"pr.draft":             defaults.PR.Draft,
 		"pr.auto_rebase":       defaults.PR.AutoRebase,

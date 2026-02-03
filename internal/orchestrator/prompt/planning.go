@@ -236,7 +236,7 @@ Write a JSON file with this exact structure at the root level (do NOT wrap in a 
 - "tasks": Array of task objects, each with:
   - "id": Unique identifier like "task-1-setup" (string)
   - "title": Short title (string)
-  - "description": Detailed instructions for another Claude instance to execute independently (string)
+  - "description": Detailed instructions for another AI instance to execute independently (string)
   - "files": Files this task will modify (array of strings)
   - "depends_on": IDs of tasks that must complete first (array of strings, empty for independent tasks)
   - "priority": Lower = higher priority within dependency level (number)

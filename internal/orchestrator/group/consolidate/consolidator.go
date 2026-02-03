@@ -405,7 +405,7 @@ func (c *Consolidator) BuildPrompt(groupIndex int) string {
 	return sb.String()
 }
 
-// StartSession creates and starts a Claude session for consolidating a group.
+// StartSession creates and starts a backend session for consolidating a group.
 func (c *Consolidator) StartSession(groupIndex int) error {
 	session := c.coord.Session()
 	if session == nil || session.GetPlan() == nil {

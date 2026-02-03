@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/event"
 )
@@ -19,7 +20,7 @@ func TestNewManager(t *testing.T) {
 	}
 	eventBus := event.NewBus()
 
-	m := NewManager(cfg, "test-session", eventBus)
+	m := NewManager(cfg, "test-session", eventBus, ai.DefaultBackend())
 
 	if m == nil {
 		t.Fatal("NewManager returned nil")
@@ -75,7 +76,7 @@ func TestNewConfigFromConfig(t *testing.T) {
 }
 
 func TestSetDisplayDimensions(t *testing.T) {
-	m := NewManager(Config{TmuxWidth: 80, TmuxHeight: 24}, "", nil)
+	m := NewManager(Config{TmuxWidth: 80, TmuxHeight: 24}, "", nil, ai.DefaultBackend())
 
 	m.SetDisplayDimensions(200, 60)
 
@@ -93,7 +94,7 @@ func TestSetDisplayDimensions(t *testing.T) {
 }
 
 func TestSetCompleteCallback(t *testing.T) {
-	m := NewManager(Config{}, "", nil)
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend())
 
 	called := false
 	cb := func(instanceID string, success bool) {
@@ -118,7 +119,7 @@ func TestSetCompleteCallback(t *testing.T) {
 }
 
 func TestSetOpenedCallback(t *testing.T) {
-	m := NewManager(Config{}, "", nil)
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend())
 
 	called := false
 	cb := func(instanceID string) {
@@ -143,7 +144,7 @@ func TestSetOpenedCallback(t *testing.T) {
 }
 
 func TestGet_NoWorkflow(t *testing.T) {
-	m := NewManager(Config{}, "", nil)
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend())
 
 	workflow := m.Get("nonexistent")
 
@@ -153,7 +154,7 @@ func TestGet_NoWorkflow(t *testing.T) {
 }
 
 func TestRunning_NoWorkflow(t *testing.T) {
-	m := NewManager(Config{}, "", nil)
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend())
 
 	running := m.Running("nonexistent")
 
@@ -163,7 +164,7 @@ func TestRunning_NoWorkflow(t *testing.T) {
 }
 
 func TestCount_Empty(t *testing.T) {
-	m := NewManager(Config{}, "", nil)
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend())
 
 	count := m.Count()
 
@@ -173,7 +174,7 @@ func TestCount_Empty(t *testing.T) {
 }
 
 func TestIDs_Empty(t *testing.T) {
-	m := NewManager(Config{}, "", nil)
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend())
 
 	ids := m.IDs()
 
@@ -183,7 +184,7 @@ func TestIDs_Empty(t *testing.T) {
 }
 
 func TestStop_NoWorkflow(t *testing.T) {
-	m := NewManager(Config{}, "", nil)
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend())
 
 	err := m.Stop("nonexistent")
 
@@ -193,7 +194,7 @@ func TestStop_NoWorkflow(t *testing.T) {
 }
 
 func TestStopAll_Empty(t *testing.T) {
-	m := NewManager(Config{}, "", nil)
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend())
 
 	// Should not panic
 	m.StopAll()
@@ -206,7 +207,7 @@ func TestStopAll_Empty(t *testing.T) {
 
 func TestHandleComplete_WithCallback(t *testing.T) {
 	eventBus := event.NewBus()
-	m := NewManager(Config{}, "", eventBus)
+	m := NewManager(Config{}, "", eventBus, ai.DefaultBackend())
 
 	var capturedID string
 	var capturedSuccess bool
@@ -243,7 +244,7 @@ func TestHandleComplete_WithCallback(t *testing.T) {
 
 func TestHandleComplete_WithEventBus(t *testing.T) {
 	eventBus := event.NewBus()
-	m := NewManager(Config{}, "", eventBus)
+	m := NewManager(Config{}, "", eventBus, ai.DefaultBackend())
 
 	// Subscribe to events
 	var receivedEvent event.Event
@@ -285,14 +286,14 @@ func TestHandleComplete_WithEventBus(t *testing.T) {
 }
 
 func TestHandleComplete_NoCallbackOrEventBus(t *testing.T) {
-	m := NewManager(Config{}, "", nil) // nil eventBus
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend()) // nil eventBus
 
 	// Should not panic
 	m.HandleComplete("test-id", false, "")
 }
 
 func TestConcurrentAccess(t *testing.T) {
-	m := NewManager(Config{}, "session", nil)
+	m := NewManager(Config{}, "session", nil, ai.DefaultBackend())
 
 	// Test concurrent reads and writes
 	var wg sync.WaitGroup
@@ -323,7 +324,7 @@ func TestManagerWithNilEventBus(t *testing.T) {
 	m := NewManager(Config{
 		TmuxWidth:  120,
 		TmuxHeight: 40,
-	}, "", nil)
+	}, "", nil, ai.DefaultBackend())
 
 	// Ensure nil eventBus doesn't cause panic during HandleComplete
 	m.HandleComplete("test-id", true, "output")
@@ -335,7 +336,7 @@ func TestManagerWithNilEventBus(t *testing.T) {
 }
 
 func TestNewManager_EmptySessionID(t *testing.T) {
-	m := NewManager(Config{}, "", nil)
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend())
 
 	if m.sessionID != "" {
 		t.Errorf("sessionID = %q, want empty string", m.sessionID)
@@ -343,7 +344,7 @@ func TestNewManager_EmptySessionID(t *testing.T) {
 }
 
 func TestSetLogger(t *testing.T) {
-	m := NewManager(Config{}, "", nil)
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend())
 
 	// Just verify it doesn't panic with nil logger
 	m.SetLogger(nil)
@@ -656,7 +657,7 @@ func TestPrepareGroupPR(t *testing.T) {
 		"inst2": &mockInstanceInfo{id: "inst2", branch: "feature/features", task: "Task 2"},
 	}
 
-	m := NewManager(Config{}, "", nil)
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend())
 
 	t.Run("single mode", func(t *testing.T) {
 		opts := GroupPROptions{
@@ -730,7 +731,7 @@ func TestPrepareConsolidatedPR(t *testing.T) {
 		"inst3": &mockInstanceInfo{id: "inst3", branch: "feature/features"},
 	}
 
-	m := NewManager(Config{}, "", nil)
+	m := NewManager(Config{}, "", nil, ai.DefaultBackend())
 
 	opts := GroupPROptions{
 		Mode:      GroupPRModeConsolidated,

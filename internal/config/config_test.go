@@ -54,6 +54,23 @@ func TestDefault(t *testing.T) {
 		t.Errorf("Instance.TmuxHistoryLimit = %d, want 50000", cfg.Instance.TmuxHistoryLimit)
 	}
 
+	// Verify default AI config
+	if cfg.AI.Backend != "claude" {
+		t.Errorf("AI.Backend = %q, want %q", cfg.AI.Backend, "claude")
+	}
+	if cfg.AI.Claude.Command != "claude" {
+		t.Errorf("AI.Claude.Command = %q, want %q", cfg.AI.Claude.Command, "claude")
+	}
+	if !cfg.AI.Claude.SkipPermissions {
+		t.Error("AI.Claude.SkipPermissions should be true by default")
+	}
+	if cfg.AI.Codex.Command != "codex" {
+		t.Errorf("AI.Codex.Command = %q, want %q", cfg.AI.Codex.Command, "codex")
+	}
+	if cfg.AI.Codex.ApprovalMode != "full-auto" {
+		t.Errorf("AI.Codex.ApprovalMode = %q, want %q", cfg.AI.Codex.ApprovalMode, "full-auto")
+	}
+
 	// Verify default PR config
 	if cfg.PR.Draft {
 		t.Error("PR.Draft should be false by default")
@@ -122,6 +139,32 @@ func TestValidCompletionActions(t *testing.T) {
 	for i, action := range expected {
 		if actions[i] != action {
 			t.Errorf("ValidCompletionActions()[%d] = %q, want %q", i, actions[i], action)
+		}
+	}
+}
+
+func TestValidAIBackends(t *testing.T) {
+	backends := ValidAIBackends()
+	expected := []string{"claude", "codex"}
+	if len(backends) != len(expected) {
+		t.Fatalf("ValidAIBackends() length = %d, want %d", len(backends), len(expected))
+	}
+	for i, backend := range expected {
+		if backends[i] != backend {
+			t.Errorf("ValidAIBackends()[%d] = %q, want %q", i, backends[i], backend)
+		}
+	}
+}
+
+func TestValidCodexApprovalModes(t *testing.T) {
+	modes := ValidCodexApprovalModes()
+	expected := []string{"bypass", "full-auto", "default"}
+	if len(modes) != len(expected) {
+		t.Fatalf("ValidCodexApprovalModes() length = %d, want %d", len(modes), len(expected))
+	}
+	for i, mode := range expected {
+		if modes[i] != mode {
+			t.Errorf("ValidCodexApprovalModes()[%d] = %q, want %q", i, modes[i], mode)
 		}
 	}
 }
@@ -292,6 +335,29 @@ func TestConfig_SessionConfig_ViperLoading(t *testing.T) {
 	cfg = Get()
 	if !cfg.Session.AutoStartOnAdd {
 		t.Error("Session.AutoStartOnAdd should be true after viper.Set(true)")
+	}
+}
+
+func TestConfig_AIConfig_ViperLoading(t *testing.T) {
+	viper.Reset()
+	SetDefaults()
+
+	if viper.GetString("ai.backend") != "claude" {
+		t.Errorf("viper.GetString('ai.backend') = %q, want %q", viper.GetString("ai.backend"), "claude")
+	}
+	if viper.GetString("ai.codex.approval_mode") != "full-auto" {
+		t.Errorf("viper.GetString('ai.codex.approval_mode') = %q, want %q", viper.GetString("ai.codex.approval_mode"), "full-auto")
+	}
+
+	viper.Set("ai.backend", "codex")
+	viper.Set("ai.codex.approval_mode", "full-auto")
+
+	cfg := Get()
+	if cfg.AI.Backend != "codex" {
+		t.Errorf("AI.Backend = %q, want %q", cfg.AI.Backend, "codex")
+	}
+	if cfg.AI.Codex.ApprovalMode != "full-auto" {
+		t.Errorf("AI.Codex.ApprovalMode = %q, want %q", cfg.AI.Codex.ApprovalMode, "full-auto")
 	}
 }
 

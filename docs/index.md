@@ -1,13 +1,13 @@
 # Claudio
 
-**Multi-instance Claude Code orchestrator using Git worktrees**
+**Multi-instance AI backend orchestrator using Git worktrees**
 
-Claudio enables parallel AI-assisted development by running multiple Claude Code instances simultaneously, each working in isolated Git worktrees.
+Claudio enables parallel AI-assisted development by running multiple AI backend instances (Claude Code or Codex) simultaneously, each working in isolated Git worktrees.
 
 ## Features
 
 ### Core Orchestration
-- **Parallel Instances** - Run multiple Claude Code processes simultaneously
+- **Parallel Instances** - Run multiple AI backend processes simultaneously
 - **Worktree Isolation** - Each instance works in its own Git worktree and branch
 - **TUI Dashboard** - Real-time view of all instances with output streaming
 - **Shared Context** - Instances can see what others are working on
@@ -15,7 +15,7 @@ Claudio enables parallel AI-assisted development by running multiple Claude Code
 - **Task Chaining** - Define dependencies between tasks with `--depends-on`
 
 ### Planning Modes
-- **Plan Mode** - Claude analyzes your codebase and generates structured task plans
+- **Plan Mode** - The AI backend analyzes your codebase and generates structured task plans
 - **UltraPlan Mode** - 4-phase hierarchical planning with automatic parallel execution
 - **Multi-Pass Planning** - Three competing strategies evaluate and select the best approach
 - **TripleShot Mode** - Spawn 3 parallel attempts per task, judge selects the best
@@ -102,7 +102,7 @@ Frequently asked questions.
 - Go 1.21+
 - Git
 - tmux
-- [Claude Code CLI](https://claude.ai/claude-code) (authenticated)
+- Claude Code CLI or Codex CLI (authenticated)
 
 ## Architecture
 
@@ -125,7 +125,7 @@ Frequently asked questions.
 ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
 │   Instance 1    │ │   Instance 2    │ │   Instance 3    │
 │   (worktree)    │ │   (worktree)    │ │   (worktree)    │
-│  claude process │ │  claude process │ │  claude process │
+│ backend process │ │ backend process │ │ backend process │
 └─────────────────┘ └─────────────────┘ └─────────────────┘
 ```
 

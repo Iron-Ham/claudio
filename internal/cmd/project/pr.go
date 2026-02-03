@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/pr"
@@ -16,7 +17,7 @@ import (
 var prCmd = &cobra.Command{
 	Use:   "pr [instance-id]",
 	Short: "Create a pull request for a Claudio instance",
-	Long: `Create a GitHub pull request for a Claudio instance using Claude to generate
+	Long: `Create a GitHub pull request for a Claudio instance using the configured AI backend to generate
 a meaningful title and description based on the task, code changes, and commit history.
 
 If no instance ID is provided and there's only one instance, it will be used automatically.`,
@@ -197,8 +198,13 @@ func runPR(cmd *cobra.Command, args []string) error {
 			body += fmt.Sprintf("- %s\n", f)
 		}
 	} else {
-		// Use Claude to generate PR content
-		fmt.Println("Generating PR content with Claude...")
+		// Use the configured backend to generate PR content
+		fmt.Println("Generating PR content with the AI backend...")
+
+		backend, err := ai.NewFromConfig(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to load AI backend: %w", err)
+		}
 
 		diff, err := wt.GetDiffAgainstMain(inst.WorktreePath)
 		if err != nil {
@@ -212,7 +218,7 @@ func runPR(cmd *cobra.Command, args []string) error {
 			commitLog = ""
 		}
 
-		gen := pr.New()
+		gen := pr.NewWithBackend(backend)
 		content, err := gen.Generate(pr.Context{
 			Task:         inst.Task,
 			Branch:       inst.Branch,

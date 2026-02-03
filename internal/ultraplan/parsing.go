@@ -15,7 +15,7 @@ import (
 // PlanFileName is the default filename for plan files.
 const PlanFileName = ".claudio-plan.json"
 
-// ParsePlanFromOutput parses a plan from Claude's output.
+// ParsePlanFromOutput parses a plan from backend output.
 // It looks for JSON wrapped in <plan></plan> tags.
 func ParsePlanFromOutput(output string, objective string) (*PlanSpec, error) {
 	// Look for <plan>...</plan> tags
@@ -72,7 +72,7 @@ func ParsePlanFromOutput(output string, objective string) (*PlanSpec, error) {
 //  1. Root-level format: {"summary": "...", "tasks": [...]}
 //  2. Nested format: {"plan": {"summary": "...", "tasks": [...]}}
 //
-// It also handles alternative field names that Claude may generate:
+// It also handles alternative field names that the backend may generate:
 //   - "depends" as alias for "depends_on"
 //   - "complexity" as alias for "est_complexity"
 func ParsePlanFromFile(filePath string, objective string) (*PlanSpec, error) {
@@ -81,7 +81,7 @@ func ParsePlanFromFile(filePath string, objective string) (*PlanSpec, error) {
 		return nil, fmt.Errorf("failed to read plan file: %w", err)
 	}
 
-	// flexibleTask handles alternative field names that Claude may generate
+	// flexibleTask handles alternative field names that the backend may generate
 	type flexibleTask struct {
 		ID            string   `json:"id"`
 		Title         string   `json:"title"`

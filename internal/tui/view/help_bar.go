@@ -130,7 +130,7 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 	if state.InputMode {
 		badge := styles.ModeBadgeInput.Render("INPUT")
 		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
-			styles.Muted.Render("All keystrokes forwarded to Claude")
+			styles.Muted.Render("All keystrokes forwarded to AI backend")
 		return styles.HelpBar.Render(badge + "  " + help)
 	}
 
@@ -214,7 +214,7 @@ func (v *HelpBarView) RenderTripleShotHelp(state *HelpBarState) string {
 	if state != nil && state.InputMode {
 		badge := styles.ModeBadgeInput.Render("INPUT")
 		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
-			styles.Muted.Render("All keystrokes forwarded to Claude")
+			styles.Muted.Render("All keystrokes forwarded to AI backend")
 		return styles.HelpBar.Render(badge + "  " + help)
 	}
 

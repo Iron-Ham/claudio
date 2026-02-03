@@ -25,7 +25,7 @@ const (
 	SessionTypeAdversarial SessionType = "adversarial"
 
 	// SessionTypeRalph represents a Ralph Wiggum iterative development loop.
-	// Claude autonomously iterates on work until a completion promise is found.
+	// The backend autonomously iterates on work until a completion promise is found.
 	SessionTypeRalph SessionType = "ralph"
 )
 

@@ -1,4 +1,4 @@
-// Package capture provides output buffering functionality for Claude instances
+// Package capture provides output buffering functionality for backend instances
 // running in tmux sessions.
 //
 // # Main Types

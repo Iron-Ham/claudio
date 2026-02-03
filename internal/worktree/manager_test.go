@@ -830,6 +830,67 @@ func TestManagerCopyLocalClaudeFiles(t *testing.T) {
 	}
 }
 
+func TestManagerCopyLocalConfigFiles(t *testing.T) {
+	testutil.SkipIfNoGit(t)
+
+	tests := []struct {
+		name        string
+		setupSource func(t *testing.T, repoDir string)
+		files       []string
+		wantCopied  []string
+		wantErr     bool
+	}{
+		{
+			name: "copies codex config file when present",
+			setupSource: func(t *testing.T, repoDir string) {
+				content := []byte("# Local Codex Settings\nconfig")
+				if err := os.WriteFile(filepath.Join(repoDir, "CODEX.local.md"), content, 0644); err != nil {
+					t.Fatalf("failed to create source file: %v", err)
+				}
+			},
+			files:      []string{"CODEX.local.md"},
+			wantCopied: []string{"CODEX.local.md"},
+			wantErr:    false,
+		},
+		{
+			name:        "no error when files do not exist",
+			setupSource: func(t *testing.T, repoDir string) {},
+			files:       []string{"MISSING.local.md"},
+			wantErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoDir := testutil.SetupTestRepo(t)
+			mgr, err := New(repoDir)
+			if err != nil {
+				t.Fatalf("failed to create manager: %v", err)
+			}
+
+			tt.setupSource(t, repoDir)
+
+			worktreePath := filepath.Join(t.TempDir(), "test-worktree")
+			if err := mgr.Create(worktreePath, "test-branch"); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+
+			err = mgr.CopyLocalConfigFiles(worktreePath, tt.files, "Codex")
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CopyLocalConfigFiles() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			for _, filename := range tt.wantCopied {
+				dstPath := filepath.Join(worktreePath, filename)
+				if _, err := os.Stat(dstPath); os.IsNotExist(err) {
+					t.Errorf("expected file %s to be copied but it doesn't exist", filename)
+				}
+			}
+		})
+	}
+}
+
 // TestManagerCopyLocalClaudeFilesPreservesPermissions tests permission preservation
 func TestManagerCopyLocalClaudeFilesPreservesPermissions(t *testing.T) {
 	testutil.SkipIfNoGit(t)

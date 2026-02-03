@@ -969,8 +969,9 @@ func (e *ExecutionOrchestrator) monitorTaskInstance(taskID, instanceID string) {
 
 			// Note: StatusWaitingInput is intentionally NOT treated as completion.
 			// The sentinel file (.claudio-task-complete.json) is the primary completion signal.
-			// StatusWaitingInput can trigger too early from Claude Code's UI elements,
-			// causing tasks to be marked failed before they complete their work.
+			// StatusWaitingInput can trigger too early from some backends' UI elements
+			// (e.g., Claude Code), causing tasks to be marked failed before they complete
+			// their work.
 
 			case StatusError, StatusTimeout, StatusStuck:
 				e.completionChan <- TaskCompletion{
@@ -1120,7 +1121,7 @@ func (e *ExecutionOrchestrator) checkAndAdvanceGroup() {
 		"group_index", currentGroup,
 	)
 
-	// Start the group consolidator Claude session
+	// Start the group consolidator backend session
 	// This blocks until the consolidator completes (writes completion file)
 	if e.execCtx.Coordinator != nil {
 		if err := e.execCtx.Coordinator.StartGroupConsolidation(currentGroup); err != nil {

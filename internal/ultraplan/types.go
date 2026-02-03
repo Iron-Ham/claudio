@@ -49,7 +49,7 @@ const (
 	PhaseRefresh UltraPlanPhase = "context_refresh"
 
 	// PhaseExecuting indicates tasks are being executed in parallel.
-	// Each task runs in its own worktree with an independent Claude session.
+	// Each task runs in its own worktree with an independent backend session.
 	PhaseExecuting UltraPlanPhase = "executing"
 
 	// PhaseSynthesis indicates a review of all completed work is underway.
@@ -137,7 +137,7 @@ func (c TaskComplexity) IsValid() bool {
 
 // PlannedTask represents a single decomposed task from the planning phase.
 //
-// Each PlannedTask is designed to be executed independently by a Claude session
+// Each PlannedTask is designed to be executed independently by a backend session
 // in its own git worktree. Tasks should be granular enough to complete within
 // a single session without context exhaustion.
 //
@@ -152,7 +152,7 @@ type PlannedTask struct {
 	// Displayed in the UI and used in branch names and PR descriptions.
 	Title string `json:"title"`
 
-	// Description contains detailed instructions for the executing Claude session.
+	// Description contains detailed instructions for the executing backend session.
 	// Should be comprehensive enough for independent execution without additional context.
 	// Include specific file paths, function names, and acceptance criteria.
 	Description string `json:"description"`
@@ -650,7 +650,7 @@ type CoordinatorEvent struct {
 	// TaskID is the task this event relates to (if applicable).
 	TaskID string `json:"task_id,omitempty"`
 
-	// InstanceID is the Claude session instance ID (if applicable).
+	// InstanceID is the backend session instance ID (if applicable).
 	InstanceID string `json:"instance_id,omitempty"`
 
 	// Message provides human-readable context for the event.

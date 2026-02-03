@@ -1,6 +1,6 @@
 # Plan Mode
 
-Plan mode generates structured execution plans from high-level objectives. It uses Claude to analyze your codebase and decompose a task into smaller, parallelizable subtasks that can be executed by [Ultra-Plan](ultra-plan.md) or tracked as GitHub Issues.
+Plan mode generates structured execution plans from high-level objectives. It uses the configured AI backend to analyze your codebase and decompose a task into smaller, parallelizable subtasks that can be executed by [Ultra-Plan](ultra-plan.md) or tracked as GitHub Issues.
 
 ## Overview
 
@@ -14,7 +14,7 @@ Plan mode generates structured execution plans from high-level objectives. It us
 │                           ▼                                       │
 │  ┌────────────────────────────────────────────────────────────┐  │
 │  │                   CODEBASE ANALYSIS                         │  │
-│  │  • Claude explores existing architecture                    │  │
+│  │  • Backend explores existing architecture                   │  │
 │  │  • Identifies relevant files and patterns                   │  │
 │  │  • Understands dependencies and constraints                 │  │
 │  └────────────────────────────────────────────────────────────┘  │
@@ -331,7 +331,7 @@ Always review generated plans before execution:
 
 If plan generation fails:
 - Ensure the objective is specific enough
-- Check that Claude Code is authenticated
+- Check that the configured backend CLI is authenticated
 - Try simplifying the objective into smaller parts
 
 ### GitHub Issue Creation Fails

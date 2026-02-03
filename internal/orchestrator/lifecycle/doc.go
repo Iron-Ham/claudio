@@ -1,14 +1,14 @@
 // Package lifecycle provides instance lifecycle management for the orchestrator.
 //
 // This package encapsulates the creation, starting, stopping, and monitoring
-// of Claude Code instances within an orchestration session. It provides a
+// of AI backend instances within an orchestration session. It provides a
 // clean abstraction over instance state management with callback support
 // for status change notifications.
 //
 // # Main Types
 //
 //   - [Manager]: Manages instance lifecycle with callback support
-//   - [Instance]: Represents a managed Claude instance with full state
+//   - [Instance]: Represents a managed backend instance with full state
 //   - [InstanceStatus]: Enum for instance states (pending, working, completed, etc.)
 //   - [Config]: Configuration for timeout, dimensions, and naming
 //   - [Callbacks]: Event handlers for status changes, PR completion, timeouts, etc.

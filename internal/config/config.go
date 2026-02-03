@@ -15,6 +15,7 @@ type Config struct {
 	TUI          TUIConfig          `mapstructure:"tui"`
 	Session      SessionConfig      `mapstructure:"session"`
 	Instance     InstanceConfig     `mapstructure:"instance"`
+	AI           AIConfig           `mapstructure:"ai"`
 	Branch       BranchConfig       `mapstructure:"branch"`
 	PR           PRConfig           `mapstructure:"pr"`
 	Cleanup      CleanupConfig      `mapstructure:"cleanup"`
@@ -78,6 +79,35 @@ type InstanceConfig struct {
 	StaleDetection bool `mapstructure:"stale_detection"`
 }
 
+// AIConfig controls which AI backend Claudio uses.
+type AIConfig struct {
+	// Backend selects the AI backend to use for instances and AI workflows.
+	// Options: "claude", "codex"
+	Backend string `mapstructure:"backend"`
+	// Claude-specific settings
+	Claude ClaudeBackendConfig `mapstructure:"claude"`
+	// Codex-specific settings
+	Codex CodexBackendConfig `mapstructure:"codex"`
+}
+
+// ClaudeBackendConfig controls Claude-specific settings.
+type ClaudeBackendConfig struct {
+	// Command is the Claude CLI command name/path (default: "claude")
+	Command string `mapstructure:"command"`
+	// SkipPermissions adds --dangerously-skip-permissions when starting Claude (default: true)
+	SkipPermissions bool `mapstructure:"skip_permissions"`
+}
+
+// CodexBackendConfig controls Codex-specific settings.
+type CodexBackendConfig struct {
+	// Command is the Codex CLI command name/path (default: "codex")
+	Command string `mapstructure:"command"`
+	// ApprovalMode controls how Codex handles approvals/sandboxing.
+	// Options: "bypass" (use --dangerously-bypass-approvals-and-sandbox),
+	// "full-auto" (use --full-auto), or "default" (no extra flags).
+	ApprovalMode string `mapstructure:"approval_mode"`
+}
+
 // BranchConfig controls branch naming conventions
 type BranchConfig struct {
 	// Prefix is the branch name prefix (default: "claudio")
@@ -95,7 +125,7 @@ type PRConfig struct {
 	Draft bool `mapstructure:"draft"`
 	// AutoRebase rebases on main before creating PR (default: true)
 	AutoRebase bool `mapstructure:"auto_rebase"`
-	// UseAI uses Claude to generate PR title and description (default: true)
+	// UseAI uses the configured AI backend to generate PR title and description (default: true)
 	UseAI bool `mapstructure:"use_ai"`
 	// AutoPROnStop automatically creates a PR when an instance is stopped with 'x' (default: false)
 	AutoPROnStop bool `mapstructure:"auto_pr_on_stop"`
@@ -375,6 +405,17 @@ func Default() *Config {
 			CompletionTimeoutMinutes: 0,     // Disabled by default (no max runtime limit)
 			StaleDetection:           true,
 		},
+		AI: AIConfig{
+			Backend: "claude",
+			Claude: ClaudeBackendConfig{
+				Command:         "claude",
+				SkipPermissions: true,
+			},
+			Codex: CodexBackendConfig{
+				Command:      "codex",
+				ApprovalMode: "full-auto",
+			},
+		},
 		Branch: BranchConfig{
 			Prefix:    "claudio",
 			IncludeID: true,
@@ -497,6 +538,13 @@ func SetDefaults() {
 	viper.SetDefault("instance.completion_timeout_minutes", defaults.Instance.CompletionTimeoutMinutes)
 	viper.SetDefault("instance.stale_detection", defaults.Instance.StaleDetection)
 
+	// AI backend defaults
+	viper.SetDefault("ai.backend", defaults.AI.Backend)
+	viper.SetDefault("ai.claude.command", defaults.AI.Claude.Command)
+	viper.SetDefault("ai.claude.skip_permissions", defaults.AI.Claude.SkipPermissions)
+	viper.SetDefault("ai.codex.command", defaults.AI.Codex.Command)
+	viper.SetDefault("ai.codex.approval_mode", defaults.AI.Codex.ApprovalMode)
+
 	// Branch defaults
 	viper.SetDefault("branch.prefix", defaults.Branch.Prefix)
 	viper.SetDefault("branch.include_id", defaults.Branch.IncludeID)
@@ -617,6 +665,16 @@ func ConfigFile() string {
 // ValidCompletionActions returns the list of valid completion action values
 func ValidCompletionActions() []string {
 	return []string{"prompt", "keep_branch", "merge_staging", "merge_main", "auto_pr"}
+}
+
+// ValidAIBackends returns the list of supported AI backend identifiers.
+func ValidAIBackends() []string {
+	return []string{"claude", "codex"}
+}
+
+// ValidCodexApprovalModes returns the list of valid Codex approval modes.
+func ValidCodexApprovalModes() []string {
+	return []string{"bypass", "full-auto", "default"}
 }
 
 // IsValidCompletionAction checks if the given action is valid

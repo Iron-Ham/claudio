@@ -1,9 +1,12 @@
-// Package detect provides state detection for Claude instances by analyzing
+// Package detect provides state detection for backend instances by analyzing
 // their terminal output.
 //
-// This package uses pattern matching to determine whether a Claude instance
+// This package uses pattern matching to determine whether an instance
 // is actively working, waiting for user input, completed, or in an error state.
 // It enables the orchestrator to react appropriately to instance state changes.
+//
+// The default pattern set targets Claude Code output. Other backends can supply
+// their own PatternSet via NewDetectorWithPatterns.
 //
 // # Main Types
 //

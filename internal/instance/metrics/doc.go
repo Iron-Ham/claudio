@@ -4,6 +4,9 @@
 // including token counts, cache statistics, and estimated costs. It enables
 // budget tracking and resource management across multiple concurrent instances.
 //
+// The parser is tailored to Claude Code output; other backends may not emit
+// compatible metrics.
+//
 // # Main Types
 //
 //   - [MetricsParser]: Regex-based parser for extracting metrics from output

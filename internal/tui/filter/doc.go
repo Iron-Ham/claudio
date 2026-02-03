@@ -1,7 +1,7 @@
 // Package filter provides output filtering functionality for the Claudio TUI.
 //
 // This package encapsulates category-based and regex-based filtering of
-// Claude's output. It allows users to show/hide specific types of output
+// backend output. It allows users to show/hide specific types of output
 // such as errors, warnings, tool calls, thinking, and progress indicators.
 //
 // # Main Types

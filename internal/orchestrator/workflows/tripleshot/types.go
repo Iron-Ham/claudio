@@ -1,5 +1,5 @@
 // Package tripleshot provides the triple-shot workflow coordinator.
-// Triple-shot runs three Claude instances in parallel on the same task,
+// Triple-shot runs three backend instances in parallel on the same task,
 // then uses a fourth "judge" instance to evaluate all solutions.
 package tripleshot
 
@@ -174,7 +174,7 @@ func CompletionFilePath(worktreePath string) string {
 }
 
 // findSentinelFile searches for a sentinel file by name, first in the worktree root,
-// then in immediate subdirectories. This handles cases where Claude instances
+// then in immediate subdirectories. This handles cases where backend instances
 // write the file relative to their current working directory instead of the
 // worktree root.
 func findSentinelFile(worktreePath, fileName, fileDescription string) (string, error) {
@@ -219,7 +219,7 @@ func findSentinelFile(worktreePath, fileName, fileDescription string) (string, e
 }
 
 // FindCompletionFile searches for the completion file, first in the worktree root,
-// then in immediate subdirectories. This handles cases where Claude instances
+// then in immediate subdirectories. This handles cases where backend instances
 // write the file relative to their current working directory instead of the
 // worktree root.
 func FindCompletionFile(worktreePath string) (string, error) {
@@ -298,7 +298,7 @@ func ParseEvaluationFile(worktreePath string) (*Evaluation, error) {
 	return &evaluation, nil
 }
 
-// ParseEvaluationFromOutput extracts evaluation from Claude's output
+// ParseEvaluationFromOutput extracts evaluation from backend output
 // It looks for JSON wrapped in <evaluation></evaluation> tags
 func ParseEvaluationFromOutput(output string) (*Evaluation, error) {
 	re := regexp.MustCompile(`(?s)<evaluation>\s*(.*?)\s*</evaluation>`)
@@ -345,7 +345,7 @@ type Event struct {
 }
 
 // AttemptPromptTemplate is the prompt template for each attempt
-const AttemptPromptTemplate = `You are one of three Claude instances working on the same problem.
+const AttemptPromptTemplate = `You are one of three AI instances working on the same problem.
 Your goal is to solve the problem using your own approach - be creative and thorough.
 
 ## Task

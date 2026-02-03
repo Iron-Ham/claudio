@@ -1,13 +1,13 @@
 # Claudio
 
-A CLI/TUI tool for running multiple Claude Code instances simultaneously on a single project using git worktrees.
+A CLI/TUI tool for running multiple AI coding agents (Claude Code or Codex) simultaneously on a single project using git worktrees.
 
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://iron-ham.github.io/claudio/)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Iron-Ham/claudio)](https://goreportcard.com/report/github.com/Iron-Ham/claudio)
 
 ## Overview
 
-Claudio enables parallel AI-assisted development by orchestrating multiple Claude Code instances, each working in isolated git worktrees. A central orchestrator coordinates the work, tracks what each instance is doing, and helps prevent conflicts.
+Claudio enables parallel AI-assisted development by orchestrating multiple Claude Code or Codex instances, each working in isolated git worktrees. A central orchestrator coordinates the work, tracks what each instance is doing, and helps prevent conflicts.
 
 ## Documentation
 
@@ -22,7 +22,7 @@ Claudio enables parallel AI-assisted development by orchestrating multiple Claud
 ## Features
 
 ### Core Orchestration
-- **Parallel Instances** - Run multiple Claude Code processes simultaneously
+- **Parallel Instances** - Run multiple AI backend processes simultaneously
 - **Worktree Isolation** - Each instance works in its own git worktree/branch
 - **TUI Dashboard** - Real-time view of all instances with output streaming
 - **Shared Context** - Instances can see what others are working on via auto-generated context files
@@ -31,7 +31,7 @@ Claudio enables parallel AI-assisted development by orchestrating multiple Claud
 - **Task Chaining** - Define dependencies between tasks with `--depends-on`
 
 ### Planning Modes
-- **Plan Mode** - Have Claude analyze your codebase and generate a structured task plan
+- **Plan Mode** - Have the AI backend analyze your codebase and generate a structured task plan
 - **UltraPlan Mode** - Hierarchical 4-phase planning with automatic parallel execution
 - **Multi-Pass Planning** - Three competing strategies evaluate and select the best approach
 - **TripleShot Mode** - Spawn 3 parallel attempts per task, then judge selects the best
@@ -50,7 +50,7 @@ Claudio enables parallel AI-assisted development by orchestrating multiple Claud
 - Go 1.21+
 - Git
 - tmux
-- [Claude Code](https://claude.ai/claude-code) CLI installed and authenticated
+- [Claude Code](https://claude.ai/claude-code) **or** [Codex](https://openai.com/codex) CLI installed and authenticated
 - [GitHub CLI](https://cli.github.com/) (optional, for PR creation)
 
 ## Installation
@@ -106,7 +106,7 @@ claudio add "Update API documentation"
 |---------|-------------|
 | `claudio init` | Initialize Claudio in the current git repository |
 | `claudio start [name]` | Start a new session and launch the TUI |
-| `claudio add "task"` | Add a new Claude instance with the given task |
+| `claudio add "task"` | Add a new instance with the given task |
 | `claudio add "task" -d "dep1,dep2"` | Add instance with dependencies (task chaining) |
 | `claudio status` | Show current session status |
 | `claudio stop` | Stop all instances and end the session |
@@ -184,7 +184,7 @@ Press `:` to enter command mode for advanced operations:
 
 ### Worktrees
 
-Each Claude instance runs in its own [git worktree](https://git-scm.com/docs/git-worktree), providing:
+Each instance runs in its own [git worktree](https://git-scm.com/docs/git-worktree), providing:
 
 - **Isolation**: Instances can modify files without affecting each other
 - **Parallel branches**: Each instance works on its own branch
@@ -201,7 +201,7 @@ Claudio generates a `context.md` file that's injected into each worktree, contai
 - Files being modified
 - Coordination notes
 
-This helps Claude instances be aware of parallel work and avoid conflicts.
+This helps instances be aware of parallel work and avoid conflicts.
 
 ## Project Structure
 
@@ -501,13 +501,22 @@ Claudio requires a git repository. Initialize one with:
 git init
 ```
 
-### Claude process not starting
+### AI backend process not starting
 
-Ensure Claude Code CLI is installed and authenticated:
+Ensure your selected backend CLI is installed and authenticated.
+
+Claude:
 
 ```bash
 claude --version
 claude auth status
+```
+
+Codex:
+
+```bash
+codex --version
+# Authenticate via the Codex CLI per its documentation
 ```
 
 ### Worktree conflicts

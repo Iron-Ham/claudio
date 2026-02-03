@@ -9,7 +9,7 @@ Before installing Claudio, ensure you have:
 - **Go 1.21+** - [Download Go](https://golang.org/dl/)
 - **Git** - For version control and worktree management
 - **tmux** - For process management (usually pre-installed on macOS/Linux)
-- **Claude Code CLI** - [Install Claude Code](https://claude.ai/claude-code) and authenticate
+- **Claude Code CLI or Codex CLI** - Install and authenticate your preferred backend
 
 ### Verifying Prerequisites
 
@@ -23,9 +23,13 @@ git --version
 # Check tmux
 tmux -V
 
-# Check Claude Code
+# Check Claude Code (if using Claude)
 claude --version
 claude auth status  # Should show authenticated
+
+# Check Codex (if using Codex)
+codex --version
+# Authenticate via the Codex CLI per its documentation
 ```
 
 ## Installation
@@ -94,11 +98,11 @@ Implement user authentication endpoint
 Claudio will:
 1. Create a new git worktree for this task
 2. Create a dedicated branch
-3. Start a Claude Code instance with your task
+3. Start an AI backend instance with your task
 
 ### 5. Monitor Progress
 
-Watch the output panel as Claude works. You can:
+Watch the output panel as the backend works. You can:
 - Press `j`/`k` to scroll through output
 - Press `d` to see a diff of changes
 - Press `/` to search output
@@ -134,7 +138,7 @@ When you ran Claudio, it:
 1. **Created isolated worktrees** - Each instance got its own copy of your codebase at `.claudio/worktrees/<id>/`
 2. **Created branches** - Each worktree works on its own branch like `claudio/abc123-implement-auth`
 3. **Shared context** - A `context.md` file was generated so instances know what others are working on
-4. **Managed processes** - Each Claude instance ran in its own tmux session
+4. **Managed processes** - Each backend instance ran in its own tmux session
 
 ## Next Steps
 

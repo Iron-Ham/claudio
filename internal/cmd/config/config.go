@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -56,9 +57,14 @@ Valid keys:
   instance.capture_interval_ms - Output capture interval in milliseconds
   instance.tmux_width         - tmux pane width
   instance.tmux_height        - tmux pane height
+  ai.backend                  - AI backend to use (claude/codex)
+  ai.claude.command           - Claude CLI command name/path
+  ai.claude.skip_permissions  - Add --dangerously-skip-permissions (true/false)
+  ai.codex.command            - Codex CLI command name/path
+  ai.codex.approval_mode      - Codex approval mode: bypass, full-auto, default
   pr.draft                    - Create PRs as drafts by default (true/false)
   pr.auto_rebase              - Rebase on main before creating PR (true/false)
-  pr.use_ai                   - Use Claude AI to generate PR content (true/false)`,
+  pr.use_ai                   - Use AI backend to generate PR content (true/false)`,
 	Args: cobra.ExactArgs(2),
 	RunE: runConfigSet,
 }
@@ -152,6 +158,14 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  tmux_height: %d\n", cfg.Instance.TmuxHeight)
 	fmt.Printf("  tmux_history_limit: %d\n", cfg.Instance.TmuxHistoryLimit)
 
+	// AI backend settings
+	fmt.Println("ai:")
+	fmt.Printf("  backend: %s\n", cfg.AI.Backend)
+	fmt.Printf("  claude.command: %s\n", cfg.AI.Claude.Command)
+	fmt.Printf("  claude.skip_permissions: %v\n", cfg.AI.Claude.SkipPermissions)
+	fmt.Printf("  codex.command: %s\n", cfg.AI.Codex.Command)
+	fmt.Printf("  codex.approval_mode: %s\n", cfg.AI.Codex.ApprovalMode)
+
 	// PR settings
 	fmt.Println("pr:")
 	fmt.Printf("  draft: %v\n", cfg.PR.Draft)
@@ -175,6 +189,11 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		"instance.capture_interval_ms": "int",
 		"instance.tmux_width":          "int",
 		"instance.tmux_height":         "int",
+		"ai.backend":                   "backend",
+		"ai.claude.command":            "string",
+		"ai.claude.skip_permissions":   "bool",
+		"ai.codex.command":             "string",
+		"ai.codex.approval_mode":       "codex_approval",
 		"pr.draft":                     "bool",
 		"pr.auto_rebase":               "bool",
 		"pr.use_ai":                    "bool",
@@ -192,6 +211,18 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		if key == "completion.default_action" && !appconfig.IsValidCompletionAction(value) {
 			return fmt.Errorf("invalid value for %s: %s\nValid options: %s",
 				key, value, strings.Join(appconfig.ValidCompletionActions(), ", "))
+		}
+		typedValue = value
+	case "backend":
+		if !slices.Contains(appconfig.ValidAIBackends(), value) {
+			return fmt.Errorf("invalid value for %s: %s\nValid options: %s",
+				key, value, strings.Join(appconfig.ValidAIBackends(), ", "))
+		}
+		typedValue = value
+	case "codex_approval":
+		if !slices.Contains(appconfig.ValidCodexApprovalModes(), value) {
+			return fmt.Errorf("invalid value for %s: %s\nValid options: %s",
+				key, value, strings.Join(appconfig.ValidCodexApprovalModes(), ", "))
 		}
 		typedValue = value
 	case "theme":
@@ -279,13 +310,28 @@ instance:
   tmux_width: 200
   tmux_height: 50
 
+# AI backend settings
+ai:
+  # Backend to use: claude or codex
+  backend: claude
+  claude:
+    # Claude CLI command name/path
+    command: claude
+    # Add --dangerously-skip-permissions when starting Claude
+    skip_permissions: true
+  codex:
+    # Codex CLI command name/path
+    command: codex
+    # Approval mode: bypass, full-auto, or default
+    approval_mode: full-auto
+
 # Pull request settings
 pr:
   # Create PRs as drafts by default
   draft: false
   # Automatically rebase on main before creating PR
   auto_rebase: true
-  # Use Claude AI to generate PR title and description
+  # Use AI backend to generate PR title and description
   use_ai: true
 `
 
@@ -373,6 +419,11 @@ func runConfigReset(cmd *cobra.Command, args []string) error {
 		"instance.capture_interval_ms": defaults.Instance.CaptureIntervalMs,
 		"instance.tmux_width":          defaults.Instance.TmuxWidth,
 		"instance.tmux_height":         defaults.Instance.TmuxHeight,
+		"ai.backend":                   defaults.AI.Backend,
+		"ai.claude.command":            defaults.AI.Claude.Command,
+		"ai.claude.skip_permissions":   defaults.AI.Claude.SkipPermissions,
+		"ai.codex.command":             defaults.AI.Codex.Command,
+		"ai.codex.approval_mode":       defaults.AI.Codex.ApprovalMode,
 		"pr.draft":                     defaults.PR.Draft,
 		"pr.auto_rebase":               defaults.PR.AutoRebase,
 		"pr.use_ai":                    defaults.PR.UseAI,

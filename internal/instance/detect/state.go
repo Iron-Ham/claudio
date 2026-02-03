@@ -88,6 +88,8 @@ type StateDetector interface {
 	// It examines the last portion of output (most recent content) for patterns.
 	// Empty or nil output returns StateWorking.
 	Detect(output []byte) WaitingState
+	// HasWorkingIndicators returns true if output suggests active processing.
+	HasWorkingIndicators(output []byte) bool
 }
 
 // Pattern categories for state detection.
@@ -182,6 +184,30 @@ var (
 	}
 )
 
+// PatternSet groups regex patterns used by the detector.
+type PatternSet struct {
+	PermissionPatterns   []string
+	QuestionPatterns     []string
+	InputWaitingPatterns []string
+	CompletionPatterns   []string
+	ErrorPatterns        []string
+	WorkingPatterns      []string
+	PROpenedPatterns     []string
+}
+
+// DefaultPatternSet returns the default Claude-oriented pattern set.
+func DefaultPatternSet() PatternSet {
+	return PatternSet{
+		PermissionPatterns:   PermissionPatterns,
+		QuestionPatterns:     QuestionPatterns,
+		InputWaitingPatterns: InputWaitingPatterns,
+		CompletionPatterns:   CompletionPatterns,
+		ErrorPatterns:        ErrorPatterns,
+		WorkingPatterns:      WorkingPatterns,
+		PROpenedPatterns:     PROpenedPatterns,
+	}
+}
+
 // Detector implements StateDetector using regex pattern matching.
 // It maintains compiled regex patterns for efficiency and analyzes
 // the most recent portion of output to determine Claude's state.
@@ -197,14 +223,19 @@ type Detector struct {
 
 // NewDetector creates a new output state detector with pre-compiled regex patterns.
 func NewDetector() *Detector {
+	return NewDetectorWithPatterns(DefaultPatternSet())
+}
+
+// NewDetectorWithPatterns creates a detector using the provided pattern set.
+func NewDetectorWithPatterns(patterns PatternSet) *Detector {
 	return &Detector{
-		permissionPatterns:   compilePatterns(PermissionPatterns),
-		questionPatterns:     compilePatterns(QuestionPatterns),
-		inputWaitingPatterns: compilePatterns(InputWaitingPatterns),
-		completionPatterns:   compilePatterns(CompletionPatterns),
-		errorPatterns:        compilePatterns(ErrorPatterns),
-		workingPatterns:      compilePatterns(WorkingPatterns),
-		prOpenedPatterns:     compilePatterns(PROpenedPatterns),
+		permissionPatterns:   compilePatterns(patterns.PermissionPatterns),
+		questionPatterns:     compilePatterns(patterns.QuestionPatterns),
+		inputWaitingPatterns: compilePatterns(patterns.InputWaitingPatterns),
+		completionPatterns:   compilePatterns(patterns.CompletionPatterns),
+		errorPatterns:        compilePatterns(patterns.ErrorPatterns),
+		workingPatterns:      compilePatterns(patterns.WorkingPatterns),
+		prOpenedPatterns:     compilePatterns(patterns.PROpenedPatterns),
 	}
 }
 

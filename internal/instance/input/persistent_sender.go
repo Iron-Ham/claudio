@@ -1,4 +1,4 @@
-// Package input provides input handling for Claude Code instances.
+// Package input provides input handling for AI backend instances.
 package input
 
 import (

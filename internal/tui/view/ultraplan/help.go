@@ -24,7 +24,7 @@ func (h *HelpRenderer) Render() string {
 	if h.ctx.InputMode {
 		badge := styles.ModeBadgeInput.Render("INPUT")
 		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
-			styles.Muted.Render("All keystrokes forwarded to Claude")
+			styles.Muted.Render("All keystrokes forwarded to AI backend")
 		return styles.HelpBar.Width(h.ctx.Width).Render(badge + "  " + help)
 	}
 

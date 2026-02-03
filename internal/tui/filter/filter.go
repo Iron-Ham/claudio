@@ -348,7 +348,7 @@ func RenderPanel(f *Filter, width int) string {
 	b.WriteString("\n")
 	b.WriteString(styles.Muted.Render("  • Tool calls: File operations, bash commands"))
 	b.WriteString("\n")
-	b.WriteString(styles.Muted.Render("  • Thinking: Claude's reasoning phrases"))
+	b.WriteString(styles.Muted.Render("  • Thinking: AI reasoning phrases"))
 	b.WriteString("\n")
 	b.WriteString(styles.Muted.Render("  • Progress: Progress indicators, spinners"))
 	b.WriteString("\n\n")

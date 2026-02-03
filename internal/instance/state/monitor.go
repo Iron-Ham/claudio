@@ -1,4 +1,4 @@
-// Package state provides instance state monitoring for Claude Code sessions.
+// Package state provides instance state monitoring for AI backend sessions.
 // It tracks state changes, timeouts, and bell detection for managed instances.
 package state
 
@@ -80,7 +80,7 @@ type instanceState struct {
 type Monitor struct {
 	mu        sync.RWMutex
 	config    MonitorConfig
-	detector  *detect.Detector
+	detector  detect.StateDetector
 	instances map[string]*instanceState
 
 	// Callbacks
@@ -94,21 +94,29 @@ type Monitor struct {
 
 // NewMonitor creates a new state monitor with the given configuration.
 func NewMonitor(cfg MonitorConfig) *Monitor {
-	// Apply default stale threshold if not set
-	if cfg.StaleDetection && cfg.StaleThreshold <= 0 {
-		cfg.StaleThreshold = 3000
-	}
-
-	return &Monitor{
-		config:    cfg,
-		detector:  detect.NewDetector(),
-		instances: make(map[string]*instanceState),
-	}
+	return NewMonitorWithDetector(cfg, detect.NewDetector())
 }
 
 // NewMonitorWithDefaults creates a new state monitor with default configuration.
 func NewMonitorWithDefaults() *Monitor {
 	return NewMonitor(DefaultMonitorConfig())
+}
+
+// NewMonitorWithDetector creates a new state monitor with a custom detector.
+func NewMonitorWithDetector(cfg MonitorConfig, detector detect.StateDetector) *Monitor {
+	// Apply default stale threshold if not set
+	if cfg.StaleDetection && cfg.StaleThreshold <= 0 {
+		cfg.StaleThreshold = 3000
+	}
+	if detector == nil {
+		detector = detect.NewDetector()
+	}
+
+	return &Monitor{
+		config:    cfg,
+		detector:  detector,
+		instances: make(map[string]*instanceState),
+	}
 }
 
 // SetLogger sets the logger for the monitor.
@@ -308,9 +316,9 @@ func (m *Monitor) ProcessOutput(instanceID string, output []byte, outputHash str
 		inst.repeatedOutputCount = 0
 	} else if m.config.StaleDetection {
 		// Only increment stale counter if no working indicators are present.
-		// If Claude is showing spinners, "Reading...", etc., it's actively working
+		// If the backend is showing spinners, "Reading...", etc., it's actively working
 		// even if the output hash hasn't changed (e.g., spinner is static).
-		// This prevents false positives during Claude's thinking phase.
+		// This prevents false positives during the backend's thinking phase.
 		if !hasWorkingIndicators {
 			inst.repeatedOutputCount++
 		}
@@ -382,7 +390,7 @@ func (m *Monitor) CheckTimeouts(instanceID string) *TimeoutType {
 	// Check stale detection (repeated identical output)
 	// Note: The stale counter is only incremented in ProcessOutput when no
 	// working indicators are present, so this check is already filtered to
-	// cases where Claude is not actively showing working patterns.
+	// cases where the backend is not actively showing working patterns.
 	if triggeredTimeout == nil && m.config.StaleDetection && inst.repeatedOutputCount > m.config.StaleThreshold {
 		t := TimeoutStale
 		triggeredTimeout = &t

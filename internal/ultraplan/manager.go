@@ -257,7 +257,7 @@ func countDependencies(deps map[string][]string) int {
 	return count
 }
 
-// ParsePlanFromOutputWithLogging parses a plan from Claude's output and logs any errors.
+// ParsePlanFromOutputWithLogging parses a plan from backend output and logs any errors.
 // On success, it logs DEBUG-level information about the parsed plan.
 // On failure, it logs ERROR-level information about the parsing failure.
 func (m *Manager) ParsePlanFromOutputWithLogging(output string, objective string) (*PlanSpec, error) {

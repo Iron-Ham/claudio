@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/tmux"
 )
@@ -126,11 +127,12 @@ type InstanceConfig struct {
 // Returns true if the instance is ready, false otherwise.
 type ReadinessChecker func(inst Instance) bool
 
-// Manager handles the lifecycle of Claude Code instances.
+// Manager handles the lifecycle of AI backend instances.
 // It manages starting, stopping, and restarting instances in tmux sessions.
 type Manager struct {
-	logger *logging.Logger
-	mu     sync.Mutex
+	logger  *logging.Logger
+	mu      sync.Mutex
+	backend ai.Backend
 
 	// instanceStates tracks the lifecycle state of each instance by ID.
 	instanceStates map[string]State
@@ -147,9 +149,21 @@ type Manager struct {
 func NewManager(logger *logging.Logger) *Manager {
 	return &Manager{
 		logger:              logger,
+		backend:             ai.DefaultBackend(),
 		instanceStates:      make(map[string]State),
 		gracefulStopTimeout: 500 * time.Millisecond,
 	}
+}
+
+// SetBackend sets the AI backend for lifecycle operations.
+func (m *Manager) SetBackend(backend ai.Backend) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if backend == nil {
+		m.backend = ai.DefaultBackend()
+		return
+	}
+	m.backend = backend
 }
 
 // SetReadinessChecker sets a custom readiness check function.
@@ -177,8 +191,8 @@ func (m *Manager) GetState(inst Instance) State {
 	return m.instanceStates[inst.ID()]
 }
 
-// Start launches a Claude Code instance in a tmux session.
-// It creates a new tmux session, configures it, and starts the claude command.
+// Start launches an AI instance in a tmux session.
+// It creates a new tmux session, configures it, and starts the backend command.
 func (m *Manager) Start(inst Instance) error {
 	if inst == nil {
 		return ErrInvalidInstance
@@ -255,20 +269,29 @@ func (m *Manager) Start(inst Instance) error {
 	_ = tmux.CommandWithSocket(socketName, "set-option", "-t", sessionName, "-w", "monitor-bell", "on").Run()
 
 	// Write the task/prompt to a temporary file to avoid shell escaping issues
-	promptFile := filepath.Join(workDir, ".claude-prompt")
+	promptFile := filepath.Join(workDir, m.backend.PromptFileName())
 	if err := os.WriteFile(promptFile, []byte(task), 0600); err != nil {
 		_ = tmux.CommandWithSocket(socketName, "kill-session", "-t", sessionName).Run()
 		m.setStateStopped(inst)
 		return fmt.Errorf("failed to write prompt file: %w", err)
 	}
 
-	// Send the claude command to the tmux session, reading prompt from file
-	claudeCmd := fmt.Sprintf("claude --dangerously-skip-permissions \"$(cat %q)\" && rm %q", promptFile, promptFile)
+	// Send the backend command to the tmux session, reading prompt from file
+	backendCmd, err := m.backend.BuildStartCommand(ai.StartOptions{
+		PromptFile: promptFile,
+		Mode:       ai.StartModeInteractive,
+	})
+	if err != nil {
+		_ = tmux.CommandWithSocket(socketName, "kill-session", "-t", sessionName).Run()
+		_ = os.Remove(promptFile)
+		m.setStateStopped(inst)
+		return fmt.Errorf("failed to build backend command: %w", err)
+	}
 	sendCmd := tmux.CommandWithSocket(
 		socketName,
 		"send-keys",
 		"-t", sessionName,
-		claudeCmd,
+		backendCmd,
 		"Enter",
 	)
 	if err := sendCmd.Run(); err != nil {
@@ -276,11 +299,11 @@ func (m *Manager) Start(inst Instance) error {
 		_ = os.Remove(promptFile)
 		m.setStateStopped(inst)
 		if m.logger != nil {
-			m.logger.Error("failed to start claude in tmux session",
+			m.logger.Error("failed to start backend in tmux session",
 				"session_name", sessionName,
 				"error", err.Error())
 		}
-		return fmt.Errorf("failed to start claude in tmux session: %w", err)
+		return fmt.Errorf("failed to start backend in tmux session: %w", err)
 	}
 
 	// Update instance and state
@@ -324,7 +347,7 @@ func (m *Manager) Stop(inst Instance) error {
 	sessionName := inst.SessionName()
 	socketName := inst.SocketName()
 
-	// Send Ctrl+C to gracefully stop Claude first
+	// Send Ctrl+C to gracefully stop the backend session first
 	_ = tmux.CommandWithSocket(socketName, "send-keys", "-t", sessionName, "C-c").Run()
 	time.Sleep(gracefulTimeout)
 

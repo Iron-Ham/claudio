@@ -85,7 +85,7 @@ type ConsolidationOrchestrator struct {
 	// running indicates whether Execute() is currently running
 	running bool
 
-	// instanceID is the ID of the consolidation Claude instance
+	// instanceID is the ID of the consolidation backend instance
 	instanceID string
 
 	// completionFile holds the parsed completion data from the instance
@@ -282,7 +282,7 @@ var ErrCancelled = errors.New("consolidation phase cancelled")
 var ErrConsolidationFailed = errors.New("consolidation phase failed")
 
 // ConsolidationCompletionFile represents the completion data written by the consolidation instance.
-// This is parsed from the JSON file written by the Claude instance performing consolidation.
+// This is parsed from the JSON file written by the backend instance performing consolidation.
 type ConsolidationCompletionFile struct {
 	// Status is "complete", "partial", or "failed"
 	Status string `json:"status"`
@@ -1298,7 +1298,7 @@ func (o *ConsolidationOrchestrator) BuildGroupConsolidatorPrompt(
 	return sb.String()
 }
 
-// StartGroupConsolidatorSession creates and starts a Claude session for consolidating a group.
+// StartGroupConsolidatorSession creates and starts a backend session for consolidating a group.
 //
 // This method:
 //  1. Validates the group has tasks with verified commits
@@ -1532,7 +1532,7 @@ func (o *ConsolidationOrchestrator) MonitorGroupConsolidator(
 
 // ConsolidateGroupWithVerification consolidates a group and verifies commits exist.
 // This is a direct consolidation method that performs cherry-picks programmatically
-// rather than spawning a Claude instance.
+// rather than spawning a backend instance.
 //
 // This method:
 //  1. Validates the group index and finds tasks with verified commits

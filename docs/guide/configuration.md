@@ -150,7 +150,7 @@ pr:
   # Rebase on main before creating PR
   auto_rebase: true
 
-  # Use Claude to generate PR title and description
+  # Use the configured backend to generate PR title and description
   use_ai: true
 
   # Auto-create PR when stopping instance with 'x'
@@ -364,7 +364,7 @@ Enable experimental features (disabled by default).
 
 ```yaml
 experimental:
-  # Use Claude to generate descriptive instance names
+  # Use Claude (Anthropic API) to generate descriptive instance names
   intelligent_naming: false
 
   # Spawn 3 parallel attempts, judge selects best
@@ -384,7 +384,7 @@ experimental:
 
 | Feature | Description |
 |---------|-------------|
-| `intelligent_naming` | Claude generates short names for instances based on task and output |
+| `intelligent_naming` | Claude (Anthropic API) generates short names for instances based on task and output |
 | `triple_shot` | Three parallel attempts per task with judge selection |
 | `inline_plan` | Enables `:multiplan` command (`:plan` always available) |
 | `inline_ultraplan` | Enables `:ultraplan` command in standard TUI |

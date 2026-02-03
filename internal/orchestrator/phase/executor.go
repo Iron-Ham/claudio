@@ -126,7 +126,7 @@ type OrchestratorInterface interface {
 	// AddInstance adds a new instance to the session
 	AddInstance(session any, task string) (any, error)
 
-	// StartInstance starts a Claude process for an instance
+	// StartInstance starts a backend process for an instance
 	StartInstance(inst any) error
 
 	// SaveSession persists the session state to disk
@@ -161,7 +161,7 @@ type InstanceInterface interface {
 	GetFilesModified() []string
 }
 
-// InstanceStatus represents the status of a Claude instance.
+// InstanceStatus represents the status of a backend instance.
 // These values match the InstanceStatus constants in the orchestrator package.
 type InstanceStatus string
 

@@ -17,8 +17,8 @@
 // The package defines several categories of events:
 //
 // Instance Lifecycle:
-//   - [InstanceStartedEvent]: Emitted when a Claude instance begins execution
-//   - [InstanceStoppedEvent]: Emitted when a Claude instance stops
+//   - [InstanceStartedEvent]: Emitted when a backend instance begins execution
+//   - [InstanceStoppedEvent]: Emitted when a backend instance stops
 //
 // Pull Request Events:
 //   - [PRCompleteEvent]: Emitted when a PR operation completes

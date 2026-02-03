@@ -11,7 +11,7 @@ import (
 var removeCmd = &cobra.Command{
 	Use:   "remove <id>",
 	Short: "Remove a specific instance and its worktree",
-	Long: `Remove a specific Claude instance, stopping it if running and cleaning up
+	Long: `Remove a specific backend instance, stopping it if running and cleaning up
 its worktree and branch. Use --force to remove even if there are uncommitted changes.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runRemove,

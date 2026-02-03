@@ -244,7 +244,7 @@ func DefaultHelpSections() []HelpSection {
 		{
 			Title: "Input Mode",
 			Items: []HelpItem{
-				{Key: "i  Enter", Description: "Enter input mode (talk to Claude)"},
+				{Key: "i  Enter", Description: "Enter input mode (talk to AI backend)"},
 				{Key: "Ctrl+]", Description: "Exit input mode"},
 			},
 		},

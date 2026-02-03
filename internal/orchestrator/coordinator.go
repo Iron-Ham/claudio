@@ -627,7 +627,7 @@ func (c *Coordinator) TriggerConsolidation() error {
 }
 
 // StartConsolidation begins the consolidation phase
-// This creates a Claude instance that performs branch consolidation and PR creation
+// This creates a backend instance that performs branch consolidation and PR creation
 func (c *Coordinator) StartConsolidation() error {
 	session := c.Session()
 	c.notifyPhaseChange(PhaseConsolidating)

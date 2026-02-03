@@ -22,13 +22,13 @@ import (
 var ultraplanCmd = &cobra.Command{
 	Use:   "ultraplan [objective]",
 	Short: "Start an ultra-plan session with intelligent task orchestration",
-	Long: `Ultra-plan mode enables intelligent orchestration of parallel Claude sessions
+	Long: `Ultra-plan mode enables intelligent orchestration of parallel backend sessions
 through a hierarchical planning approach. A top-level "coordinator" session performs
 deep planning to decompose complex tasks into parallelizable chunks, spawns child
 sessions for execution, and manages the overall workflow.
 
 The ultra-plan process has four phases:
-1. PLANNING: Claude explores the codebase and creates an execution plan
+1. PLANNING: The backend explores the codebase and creates an execution plan
 2. REVIEW: (optional) Interactive plan editor to review and modify the plan
 3. EXECUTION: Child sessions execute tasks in parallel (respecting dependencies)
 4. SYNTHESIS: Results are reviewed and integrated
@@ -267,8 +267,8 @@ func applyUltraplanFlagOverrides(cmd *cobra.Command, cfg *orchestrator.UltraPlan
 func promptUltraplanObjective() (string, error) {
 	fmt.Println("\nUltra-Plan Mode")
 	fmt.Println("===============")
-	fmt.Println("Enter a high-level objective for Claude to plan and execute.")
-	fmt.Println("Claude will analyze the codebase and create an execution plan.")
+	fmt.Println("Enter a high-level objective for the backend to plan and execute.")
+	fmt.Println("The backend will analyze the codebase and create an execution plan.")
 	fmt.Println()
 	fmt.Print("Objective: ")
 
