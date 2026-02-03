@@ -193,10 +193,24 @@ func New() Model {
 					Category:    "ai",
 				},
 				{
+					Key:         "ai.claude.command",
+					Label:       "Claude Command",
+					Description: "Command or path for Claude CLI binary (default: claude)",
+					Type:        "string",
+					Category:    "ai",
+				},
+				{
 					Key:         "ai.claude.skip_permissions",
 					Label:       "Claude Skip Permissions",
 					Description: "Add --dangerously-skip-permissions when starting Claude",
 					Type:        "bool",
+					Category:    "ai",
+				},
+				{
+					Key:         "ai.codex.command",
+					Label:       "Codex Command",
+					Description: "Command or path for Codex CLI binary (default: codex)",
+					Type:        "string",
 					Category:    "ai",
 				},
 				{
@@ -1206,6 +1220,12 @@ func (m *Model) resetCurrentToDefault() {
 		"instance.activity_timeout_minutes":   defaults.Instance.ActivityTimeoutMinutes,
 		"instance.completion_timeout_minutes": defaults.Instance.CompletionTimeoutMinutes,
 		"instance.stale_detection":            defaults.Instance.StaleDetection,
+		// AI
+		"ai.backend":                 defaults.AI.Backend,
+		"ai.claude.command":          defaults.AI.Claude.Command,
+		"ai.claude.skip_permissions": defaults.AI.Claude.SkipPermissions,
+		"ai.codex.command":           defaults.AI.Codex.Command,
+		"ai.codex.approval_mode":     defaults.AI.Codex.ApprovalMode,
 		// Pull Request
 		"pr.draft":             defaults.PR.Draft,
 		"pr.auto_rebase":       defaults.PR.AutoRebase,

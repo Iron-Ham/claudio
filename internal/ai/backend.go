@@ -3,6 +3,7 @@ package ai
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
@@ -158,6 +159,7 @@ func (c *ClaudeBackend) LocalConfigFiles() []string {
 type CodexBackend struct {
 	command        string
 	approvalMode   string
+	detectorOnce   sync.Once
 	cachedDetector detect.StateDetector
 }
 
@@ -213,20 +215,19 @@ func (c *CodexBackend) SupportsResume() bool { return true }
 func (c *CodexBackend) SupportsExplicitSessionID() bool { return false }
 
 func (c *CodexBackend) Detector() detect.StateDetector {
-	if c.cachedDetector != nil {
-		return c.cachedDetector
-	}
-	patterns := detect.DefaultPatternSet()
-	patterns.InputWaitingPatterns = append([]string{}, patterns.InputWaitingPatterns...)
-	patterns.InputWaitingPatterns = append(patterns.InputWaitingPatterns,
-		`(?m)^>\s*$`,
-		`(?m)^›\s*$`,
-	)
-	patterns.ErrorPatterns = append([]string{}, patterns.ErrorPatterns...)
-	patterns.ErrorPatterns = append(patterns.ErrorPatterns,
-		`(?i)codex (?:exited|terminated|crashed|died)`,
-	)
-	c.cachedDetector = detect.NewDetectorWithPatterns(patterns)
+	c.detectorOnce.Do(func() {
+		patterns := detect.DefaultPatternSet()
+		patterns.InputWaitingPatterns = append([]string{}, patterns.InputWaitingPatterns...)
+		patterns.InputWaitingPatterns = append(patterns.InputWaitingPatterns,
+			`(?m)^>\s*$`,
+			`(?m)^›\s*$`,
+		)
+		patterns.ErrorPatterns = append([]string{}, patterns.ErrorPatterns...)
+		patterns.ErrorPatterns = append(patterns.ErrorPatterns,
+			`(?i)codex (?:exited|terminated|crashed|died)`,
+		)
+		c.cachedDetector = detect.NewDetectorWithPatterns(patterns)
+	})
 	return c.cachedDetector
 }
 

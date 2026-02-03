@@ -2,6 +2,7 @@ package ai
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/config"
@@ -132,5 +133,37 @@ func TestBackendCapabilities(t *testing.T) {
 	defaultBackend := DefaultBackend()
 	if defaultBackend.Name() != BackendClaude {
 		t.Errorf("DefaultBackend() = %q, want %q", defaultBackend.Name(), BackendClaude)
+	}
+}
+
+// TestCodexBackend_ConcurrentDetectorAccess verifies that the Detector() method
+// is thread-safe when called concurrently. This test would fail with -race if
+// sync.Once were not used for detector initialization.
+func TestCodexBackend_ConcurrentDetectorAccess(t *testing.T) {
+	backend := NewCodexBackend(config.CodexBackendConfig{
+		Command:      "codex",
+		ApprovalMode: "default",
+	})
+
+	const goroutines = 100
+	var wg sync.WaitGroup
+	detectors := make([]detect.StateDetector, goroutines)
+
+	// Concurrently access Detector() from multiple goroutines
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			detectors[idx] = backend.Detector()
+		}(i)
+	}
+	wg.Wait()
+
+	// Verify all goroutines got the same detector instance
+	first := detectors[0]
+	for i := 1; i < goroutines; i++ {
+		if detectors[i] != first {
+			t.Errorf("Detector() returned different instances: got %p and %p", detectors[i], first)
+		}
 	}
 }
