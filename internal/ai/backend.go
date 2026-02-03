@@ -38,17 +38,45 @@ type StartOptions struct {
 }
 
 // Backend provides backend-specific behavior for running AI sessions.
+// Implementations include ClaudeBackend for Claude Code CLI and CodexBackend for Codex CLI.
 type Backend interface {
+	// Name returns the unique identifier for this backend (e.g., "claude", "codex").
 	Name() BackendName
+
+	// DisplayName returns a human-readable name for UI display (e.g., "Claude", "Codex").
 	DisplayName() string
+
+	// PromptFileName returns the filename used for prompt files (e.g., ".claude-prompt").
 	PromptFileName() string
+
+	// BuildStartCommand constructs the shell command to start a new AI session.
+	// Returns an error if opts.PromptFile is empty.
 	BuildStartCommand(opts StartOptions) (string, error)
+
+	// BuildResumeCommand constructs the shell command to resume an existing session.
+	// Returns an error if sessionID is empty.
 	BuildResumeCommand(sessionID string) (string, error)
+
+	// SupportsResume indicates whether the backend can resume previous sessions.
 	SupportsResume() bool
+
+	// SupportsExplicitSessionID indicates whether the backend accepts user-specified session IDs.
+	// Claude supports this; Codex generates its own session IDs.
 	SupportsExplicitSessionID() bool
+
+	// Detector returns a state detector configured for this backend's output patterns.
+	// The detector identifies states like waiting for input, permission prompts, or completion.
 	Detector() detect.StateDetector
+
+	// MetricsParser returns a parser for extracting token usage metrics from backend output.
 	MetricsParser() *metrics.MetricsParser
+
+	// EstimateCost calculates the estimated cost for the given token usage.
+	// Returns (cost, true) if cost estimation is supported, or (0, false) otherwise.
 	EstimateCost(inputTokens, outputTokens, cacheRead, cacheWrite int64) (float64, bool)
+
+	// LocalConfigFiles returns the list of backend-specific local config files
+	// (e.g., "CLAUDE.local.md") that should be copied to worktrees.
 	LocalConfigFiles() []string
 }
 
