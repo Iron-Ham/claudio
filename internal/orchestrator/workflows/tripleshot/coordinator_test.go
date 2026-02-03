@@ -1654,6 +1654,200 @@ func TestCoordinator_ProcessAdversarialReviewCompletion_Rejected_MaxRoundsExhaus
 	}
 }
 
+func TestCoordinator_ProcessAttemptCompletion_Adversarial_SkipsWhenUnderReview(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create session with adversarial mode enabled
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	session := NewSession("test task", cfg)
+	// Attempt is already under review - should skip processing
+	session.Attempts[0] = Attempt{
+		InstanceID:   "inst-1",
+		WorktreePath: tmpDir,
+		Status:       AttemptStatusUnderReview,
+		ReviewerID:   "reviewer-1",
+		ReviewRound:  1,
+	}
+
+	orch := newMockOrchestrator()
+	baseSession := newMockBaseSession()
+	group := &mockGroup{}
+	baseSession.groups["tripleshot"] = group
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   baseSession,
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	var reviewerStartCalled bool
+	coord.SetCallbacks(&CoordinatorCallbacks{
+		OnReviewerStart: func(attemptIndex int, instanceID string) {
+			reviewerStartCalled = true
+		},
+		OnPhaseChange: func(phase Phase) {},
+	})
+
+	// Write completion file (simulating a race where file is detected twice)
+	completion := CompletionFile{
+		AttemptIndex: 0,
+		Status:       "complete",
+		Summary:      "Test summary",
+		Approach:     "Test approach",
+	}
+	data, _ := json.MarshalIndent(completion, "", "  ")
+	if err := os.WriteFile(CompletionFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	err := coord.ProcessAttemptCompletion(0)
+
+	if err != nil {
+		t.Fatalf("ProcessAttemptCompletion() error = %v", err)
+	}
+	// Should NOT have started another reviewer since already under review
+	if reviewerStartCalled {
+		t.Error("OnReviewerStart should NOT be called when already under review")
+	}
+	// No new instance should have been created
+	if orch.addInstanceToWorktreeCalls != 0 {
+		t.Errorf("AddInstanceToWorktree called %d times, want 0 (should skip when under review)", orch.addInstanceToWorktreeCalls)
+	}
+}
+
+func TestCoordinator_ProcessAttemptCompletion_Adversarial_PreservesReviewRound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create session with adversarial mode enabled
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	session := NewSession("test task", cfg)
+	// Attempt is in round 2 (after a rejection) and back to working
+	session.Attempts[0] = Attempt{
+		InstanceID:   "inst-2",
+		WorktreePath: tmpDir,
+		Status:       AttemptStatusWorking,
+		ReviewRound:  2, // Already incremented from RestartImplementerWithFeedback
+	}
+
+	orch := newMockOrchestrator()
+	baseSession := newMockBaseSession()
+	group := &mockGroup{}
+	baseSession.groups["tripleshot"] = group
+
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   baseSession,
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	coord.SetCallbacks(&CoordinatorCallbacks{
+		OnReviewerStart: func(attemptIndex int, instanceID string) {},
+		OnPhaseChange:   func(phase Phase) {},
+	})
+
+	// Write completion file (round 2 implementer completed)
+	completion := CompletionFile{
+		AttemptIndex: 0,
+		Status:       "complete",
+		Summary:      "Test summary round 2",
+		Approach:     "Test approach",
+	}
+	data, _ := json.MarshalIndent(completion, "", "  ")
+	if err := os.WriteFile(CompletionFilePath(tmpDir), data, 0644); err != nil {
+		t.Fatalf("failed to write completion file: %v", err)
+	}
+
+	err := coord.ProcessAttemptCompletion(0)
+
+	if err != nil {
+		t.Fatalf("ProcessAttemptCompletion() error = %v", err)
+	}
+	// ReviewRound should NOT be reset to 1 - it should stay at 2
+	if session.Attempts[0].ReviewRound != 2 {
+		t.Errorf("session.Attempts[0].ReviewRound = %d, want 2 (should preserve round)", session.Attempts[0].ReviewRound)
+	}
+	if session.Attempts[0].Status != AttemptStatusUnderReview {
+		t.Errorf("session.Attempts[0].Status = %v, want %v", session.Attempts[0].Status, AttemptStatusUnderReview)
+	}
+}
+
+func TestCoordinator_ProcessAdversarialReviewCompletion_RoundMismatch(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := DefaultConfig()
+	cfg.Adversarial = true
+	session := NewSession("test task", cfg)
+	session.Attempts[0] = Attempt{
+		InstanceID:   "inst-1",
+		WorktreePath: tmpDir,
+		Status:       AttemptStatusUnderReview,
+		ReviewerID:   "reviewer-1",
+		ReviewRound:  2, // We're on round 2
+	}
+
+	orch := newMockOrchestrator()
+	coord := NewCoordinator(CoordinatorConfig{
+		Orchestrator:  orch,
+		BaseSession:   newMockBaseSession(),
+		TripleSession: session,
+		SessionType:   "tripleshot",
+	})
+
+	var attemptCompleteCalled bool
+	var reviewApprovedCalled bool
+	coord.SetCallbacks(&CoordinatorCallbacks{
+		OnAttemptComplete: func(attemptIndex int) {
+			attemptCompleteCalled = true
+		},
+		OnReviewApproved: func(attemptIndex int, score int) {
+			reviewApprovedCalled = true
+		},
+	})
+
+	// Write a stale review file from round 1 (we're on round 2)
+	review := AdversarialReviewFile{
+		AttemptIndex: 0,
+		Round:        1, // Stale - we're on round 2
+		Approved:     true,
+		Score:        9,
+		Summary:      "Stale review",
+	}
+	data, _ := json.MarshalIndent(review, "", "  ")
+	reviewPath := AdversarialReviewFilePath(tmpDir)
+	if err := os.WriteFile(reviewPath, data, 0644); err != nil {
+		t.Fatalf("failed to write review file: %v", err)
+	}
+
+	err := coord.ProcessAdversarialReviewCompletion(0)
+
+	// Should return error due to round mismatch
+	if err == nil {
+		t.Error("ProcessAdversarialReviewCompletion() should return error for round mismatch")
+	}
+	if !strings.Contains(err.Error(), "round mismatch") {
+		t.Errorf("error should mention round mismatch, got: %v", err)
+	}
+	// Should NOT have processed the review
+	if attemptCompleteCalled {
+		t.Error("OnAttemptComplete should NOT be called for stale review")
+	}
+	if reviewApprovedCalled {
+		t.Error("OnReviewApproved should NOT be called for stale review")
+	}
+	// Stale file should have been removed
+	if _, err := os.Stat(reviewPath); !os.IsNotExist(err) {
+		t.Error("stale review file should have been removed")
+	}
+	// No instance should have been created
+	if orch.addInstanceToWorktreeCalls != 0 {
+		t.Errorf("AddInstanceToWorktree called %d times, want 0", orch.addInstanceToWorktreeCalls)
+	}
+}
+
 func TestCoordinator_RestartImplementerWithFeedback(t *testing.T) {
 	tmpDir := t.TempDir()
 

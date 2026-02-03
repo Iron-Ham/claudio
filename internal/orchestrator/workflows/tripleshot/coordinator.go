@@ -707,6 +707,16 @@ func (c *Coordinator) ProcessAttemptCompletion(attemptIndex int) error {
 
 	// If adversarial mode is enabled, spawn a reviewer instead of marking complete
 	if session.Config.Adversarial {
+		// If already under review, skip - we already have a reviewer running
+		// This guards against race conditions where completion file is processed twice
+		if attempt.Status == AttemptStatusUnderReview {
+			c.logger.Debug("attempt already under review, skipping duplicate processing",
+				"attempt_index", attemptIndex,
+				"review_round", attempt.ReviewRound,
+			)
+			return nil
+		}
+
 		c.logger.Info("adversarial mode enabled, spawning reviewer",
 			"attempt_index", attemptIndex,
 			"worktree_path", attempt.WorktreePath,
@@ -714,7 +724,11 @@ func (c *Coordinator) ProcessAttemptCompletion(attemptIndex int) error {
 
 		// Mark attempt as under review
 		attempt.Status = AttemptStatusUnderReview
-		attempt.ReviewRound = 1
+		// Only set ReviewRound to 1 if this is the first round (round 0 means not started)
+		// Subsequent rounds are incremented by RestartImplementerWithFeedback
+		if attempt.ReviewRound == 0 {
+			attempt.ReviewRound = 1
+		}
 
 		// Transition to adversarial review phase if this is the first attempt under review
 		if session.Phase == PhaseWorking {
@@ -868,6 +882,23 @@ func (c *Coordinator) ProcessAdversarialReviewCompletion(attemptIndex int) error
 		)
 		c.notifyAttemptFailed(attemptIndex, fmt.Sprintf("failed to parse review file: %v", err))
 		return err
+	}
+
+	// Validate round number to prevent processing stale review files from prior rounds
+	if review.Round != attempt.ReviewRound {
+		c.logger.Warn("review round mismatch, ignoring stale review file",
+			"expected", attempt.ReviewRound,
+			"got", review.Round,
+			"attempt_index", attemptIndex,
+		)
+		// Remove the stale file to prevent repeated processing
+		if err := removeFile(AdversarialReviewFilePath(attempt.WorktreePath)); err != nil {
+			c.logger.Warn("failed to remove stale review file",
+				"attempt_index", attemptIndex,
+				"error", err,
+			)
+		}
+		return fmt.Errorf("review round mismatch: expected %d got %d", attempt.ReviewRound, review.Round)
 	}
 
 	// Clean up review file when done (regardless of outcome)
@@ -1109,16 +1140,28 @@ func (c *Coordinator) CreateAttemptStubs() ([3]string, error) {
 
 		instanceIDs[i] = inst.GetID()
 
-		// Add instance to the triple-shot group for sidebar display
-		if tripleGroup != nil {
-			tripleGroup.AddInstance(inst.GetID())
-		}
-
-		// Record attempt info with preparing status
+		// Record attempt info with preparing status first so sub-group methods can update it
 		session.Attempts[i] = Attempt{
 			InstanceID: inst.GetID(),
 			Status:     AttemptStatusPreparing,
 			StartedAt:  &now,
+		}
+
+		// Determine which group to add the instance to
+		var targetGroup GroupInterface
+		if session.Config.Adversarial && tripleGroup != nil {
+			// In adversarial mode, use attempt sub-groups for better organization
+			targetGroup = c.getOrCreateAttemptSubGroup(tripleGroup, i)
+			// Record round 1 history
+			c.recordCurrentRoundHistory(i, 1, inst.GetID(), "")
+		} else if tripleGroup != nil {
+			// Non-adversarial mode: add directly to main group
+			targetGroup = tripleGroup
+		}
+
+		// Add instance to the target group for sidebar display
+		if targetGroup != nil {
+			targetGroup.AddInstance(inst.GetID())
 		}
 
 		c.mu.Lock()
