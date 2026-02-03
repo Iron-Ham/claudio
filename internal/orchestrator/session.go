@@ -85,8 +85,8 @@ type Instance struct {
 	// ClaudeSessionID holds the backend session ID for resume capability.
 	// BACKWARDS COMPAT: Field name retained for compatibility with existing session.json files.
 	ClaudeSessionID string     `json:"claude_session_id,omitempty"`
-	LastActiveAt    *time.Time `json:"last_active_at,omitempty"`    // Last time output was detected
-	InterruptedAt   *time.Time `json:"interrupted_at,omitempty"`    // When session was interrupted (if applicable)
+	LastActiveAt    *time.Time `json:"last_active_at,omitempty"` // Last time output was detected
+	InterruptedAt   *time.Time `json:"interrupted_at,omitempty"` // When session was interrupted (if applicable)
 }
 
 // GetID returns the instance ID (satisfies prworkflow.InstanceInfo).
