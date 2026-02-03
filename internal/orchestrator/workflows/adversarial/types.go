@@ -50,6 +50,10 @@ type Config struct {
 	MaxIterations int `json:"max_iterations"`
 	// MinPassingScore is the minimum score required for approval (1-10, default: 8)
 	MinPassingScore int `json:"min_passing_score"`
+	// ReviewerBackend specifies which AI backend to use for the reviewer role.
+	// If empty, uses the global ai.backend setting (same as implementer).
+	// Options: "claude", "codex"
+	ReviewerBackend string `json:"reviewer_backend,omitempty"`
 }
 
 // DefaultConfig returns the default configuration
@@ -57,6 +61,7 @@ func DefaultConfig() Config {
 	return Config{
 		MaxIterations:   10, // Reasonable default to prevent infinite loops
 		MinPassingScore: 8,  // Score >= 8 required for approval
+		ReviewerBackend: "", // Empty means use global ai.backend
 	}
 }
 

@@ -760,6 +760,13 @@ func (o *Orchestrator) resolveByNumber(session *Session, ref string) (*Instance,
 // AddInstanceToWorktree adds a new instance that uses an existing worktree
 // This is used for revision tasks that need to work in the same worktree as the original task
 func (o *Orchestrator) AddInstanceToWorktree(session *Session, task string, worktreePath string, branch string) (*Instance, error) {
+	return o.AddInstanceToWorktreeWithBackend(session, task, worktreePath, branch, "")
+}
+
+// AddInstanceToWorktreeWithBackend adds a new instance that uses an existing worktree with a specific backend.
+// If backendName is empty, uses the default orchestrator backend.
+// This enables mixed-backend workflows like adversarial sessions with Claude implementer and Codex reviewer.
+func (o *Orchestrator) AddInstanceToWorktreeWithBackend(session *Session, task string, worktreePath string, branch string, backendName string) (*Instance, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
@@ -773,7 +780,13 @@ func (o *Orchestrator) AddInstanceToWorktree(session *Session, task string, work
 	session.Instances = append(session.Instances, inst)
 
 	// Create instance manager with config (including backend session ID)
-	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, task, inst.ClaudeSessionID)
+	// Use a specific backend if requested, otherwise use the default
+	var mgr *instance.Manager
+	if backendName != "" {
+		mgr = o.newInstanceManagerWithBackend(inst.ID, inst.WorktreePath, task, inst.ClaudeSessionID, backendName)
+	} else {
+		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, task, inst.ClaudeSessionID)
+	}
 	o.instances[inst.ID] = mgr
 
 	// Save session
@@ -1378,6 +1391,80 @@ func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessi
 	o.displayMgr.AddObserver(mgr)
 
 	return mgr
+}
+
+// newInstanceManagerWithBackend creates an instance manager with a specific backend.
+// This is used for mixed-backend workflows like adversarial sessions where the reviewer
+// may use a different backend (e.g., Codex) than the implementer (e.g., Claude).
+func (o *Orchestrator) newInstanceManagerWithBackend(instanceID, workdir, task, claudeSessionID, backendName string) *instance.Manager {
+	cfg := o.instanceManagerConfig()
+
+	// Resolve the requested backend
+	requestedBackend, err := o.resolveBackend(backendName)
+	if err != nil {
+		// Fall back to default backend if requested backend can't be resolved
+		if o.logger != nil {
+			o.logger.Warn("failed to resolve requested backend, using default",
+				"requested_backend", backendName,
+				"error", err,
+			)
+		}
+		requestedBackend = o.backend
+	}
+
+	// Build callbacks that route to orchestrator handlers
+	callbacks := instance.ManagerCallbacks{
+		OnStateChange: func(id string, state detect.WaitingState) {
+			switch state {
+			case detect.StateCompleted:
+				o.handleInstanceExit(id)
+			case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
+				o.handleInstanceWaitingInput(id)
+			case detect.StatePROpened:
+				o.handleInstancePROpened(id)
+			}
+		},
+		OnMetrics: func(id string, m *instmetrics.ParsedMetrics) {
+			o.handleInstanceMetrics(id, m)
+		},
+		OnTimeout: func(id string, timeoutType instance.TimeoutType) {
+			o.handleInstanceTimeout(id, timeoutType)
+		},
+		OnBell: func(id string) {
+			o.handleInstanceBell(id)
+		},
+	}
+
+	mgr := instance.NewManagerWithDeps(instance.ManagerOptions{
+		ID:              instanceID,
+		SessionID:       o.sessionID,
+		WorkDir:         workdir,
+		Task:            task,
+		Config:          cfg,
+		Callbacks:       callbacks,
+		StateMonitor:    o.stateMonitor,
+		ClaudeSessionID: claudeSessionID,
+		Backend:         requestedBackend,
+		// LifecycleManager not set - instances use internal Start/Stop/Reconnect
+	})
+
+	// Register the manager as a resize observer so it receives dimension updates
+	o.displayMgr.AddObserver(mgr)
+
+	return mgr
+}
+
+// resolveBackend creates a backend from the given name using the current configuration.
+// Returns the default backend if name is empty.
+func (o *Orchestrator) resolveBackend(name string) (ai.Backend, error) {
+	if name == "" {
+		return o.backend, nil
+	}
+
+	// Create a temporary config with the requested backend to use ai.NewFromConfig
+	tempCfg := *o.config
+	tempCfg.AI.Backend = name
+	return ai.NewFromConfig(&tempCfg)
 }
 
 // registerInstance performs common registration steps after an instance is created.

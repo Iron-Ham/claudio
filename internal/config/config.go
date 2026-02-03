@@ -238,6 +238,11 @@ type AdversarialConfig struct {
 	// MinPassingScore is the minimum score required for approval (1-10, default: 8)
 	// The reviewer must give a score >= this value for the implementation to be approved
 	MinPassingScore int `mapstructure:"min_passing_score"`
+	// ReviewerBackend specifies which AI backend to use for the reviewer role.
+	// If empty (default), uses the global ai.backend setting.
+	// Options: "claude", "codex"
+	// This allows configurations like Claude as implementer with Codex as reviewer.
+	ReviewerBackend string `mapstructure:"reviewer_backend"`
 }
 
 // LoggingConfig controls debug logging behavior
@@ -470,6 +475,7 @@ func Default() *Config {
 		Adversarial: AdversarialConfig{
 			MaxIterations:   10, // Reasonable default to prevent infinite loops
 			MinPassingScore: 8,  // Score >= 8 required for approval
+			ReviewerBackend: "", // Empty means use global ai.backend
 		},
 		Logging: LoggingConfig{
 			Enabled:    true,
@@ -596,6 +602,7 @@ func SetDefaults() {
 	// Adversarial defaults
 	viper.SetDefault("adversarial.max_iterations", defaults.Adversarial.MaxIterations)
 	viper.SetDefault("adversarial.min_passing_score", defaults.Adversarial.MinPassingScore)
+	viper.SetDefault("adversarial.reviewer_backend", defaults.Adversarial.ReviewerBackend)
 
 	// Logging defaults
 	viper.SetDefault("logging.enabled", defaults.Logging.Enabled)

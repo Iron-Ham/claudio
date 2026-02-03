@@ -506,6 +506,14 @@ func New() Model {
 					Type:        "int",
 					Category:    "adversarial",
 				},
+				{
+					Key:         "adversarial.reviewer_backend",
+					Label:       "Reviewer Backend",
+					Description: "AI backend for reviewer (empty = use global ai.backend)",
+					Type:        "select",
+					Options:     []string{"", "claude", "codex"},
+					Category:    "adversarial",
+				},
 			},
 		},
 		{
@@ -1273,6 +1281,7 @@ func (m *Model) resetCurrentToDefault() {
 		// Adversarial
 		"adversarial.max_iterations":    defaults.Adversarial.MaxIterations,
 		"adversarial.min_passing_score": defaults.Adversarial.MinPassingScore,
+		"adversarial.reviewer_backend":  defaults.Adversarial.ReviewerBackend,
 		// Paths
 		"paths.worktree_dir":                   defaults.Paths.WorktreeDir,
 		"paths.sparse_checkout.enabled":        defaults.Paths.SparseCheckout.Enabled,

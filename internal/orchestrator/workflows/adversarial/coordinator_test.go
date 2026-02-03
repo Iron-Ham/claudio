@@ -12,10 +12,11 @@ import (
 // Mock implementations for testing
 
 type mockOrchestrator struct {
-	addInstanceFunc           func(session SessionInterface, task string) (InstanceInterface, error)
-	addInstanceToWorktreeFunc func(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error)
-	startInstanceFunc         func(inst InstanceInterface) error
-	saveSessionFunc           func() error
+	addInstanceFunc                  func(session SessionInterface, task string) (InstanceInterface, error)
+	addInstanceToWorktreeFunc        func(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error)
+	addInstanceToWorktreeWithBackend func(session SessionInterface, task, worktreePath, branch, backendName string) (InstanceInterface, error)
+	startInstanceFunc                func(inst InstanceInterface) error
+	saveSessionFunc                  func() error
 }
 
 func (m *mockOrchestrator) AddInstance(session SessionInterface, task string) (InstanceInterface, error) {
@@ -30,6 +31,14 @@ func (m *mockOrchestrator) AddInstanceToWorktree(session SessionInterface, task,
 		return m.addInstanceToWorktreeFunc(session, task, worktreePath, branch)
 	}
 	return &mockInstance{id: "test-inst", worktreePath: worktreePath, branch: "test-branch"}, nil
+}
+
+func (m *mockOrchestrator) AddInstanceToWorktreeWithBackend(session SessionInterface, task, worktreePath, branch, backendName string) (InstanceInterface, error) {
+	if m.addInstanceToWorktreeWithBackend != nil {
+		return m.addInstanceToWorktreeWithBackend(session, task, worktreePath, branch, backendName)
+	}
+	// Default: delegate to AddInstanceToWorktree
+	return m.AddInstanceToWorktree(session, task, worktreePath, branch)
 }
 
 func (m *mockOrchestrator) StartInstance(inst InstanceInterface) error {
@@ -3041,4 +3050,184 @@ func TestCoordinator_CheckReviewReady_CachesLocation(t *testing.T) {
 	if !ready {
 		t.Fatal("expected review file to be found on second check (from cache)")
 	}
+}
+
+func TestCoordinator_ReviewerBackend(t *testing.T) {
+	t.Run("uses default backend when reviewer_backend not set", func(t *testing.T) {
+		advSession := NewSession("test-id", "test task", DefaultConfig())
+		cfg := CoordinatorConfig{
+			Orchestrator:    &mockOrchestrator{},
+			BaseSession:     newMockSession(),
+			AdvSession:      advSession,
+			SessionType:     "adversarial",
+			ReviewerBackend: "", // Not set - use default
+		}
+		coord := NewCoordinator(cfg)
+		if coord.reviewerBackend != "" {
+			t.Errorf("expected empty reviewerBackend, got %q", coord.reviewerBackend)
+		}
+	})
+
+	t.Run("uses specified reviewer backend", func(t *testing.T) {
+		advSession := NewSession("test-id", "test task", DefaultConfig())
+		cfg := CoordinatorConfig{
+			Orchestrator:    &mockOrchestrator{},
+			BaseSession:     newMockSession(),
+			AdvSession:      advSession,
+			SessionType:     "adversarial",
+			ReviewerBackend: "codex", // Use Codex for reviewer
+		}
+		coord := NewCoordinator(cfg)
+		if coord.reviewerBackend != "codex" {
+			t.Errorf("expected reviewerBackend = 'codex', got %q", coord.reviewerBackend)
+		}
+	})
+
+	t.Run("StartReviewer calls AddInstanceToWorktreeWithBackend when backend set", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "adversarial-coord-test-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+		advSession := NewSession("test-id", "test task", DefaultConfig())
+
+		// Track which method was called
+		var usedBackendMethod bool
+		var passedBackendName string
+
+		mockOrch := &mockOrchestrator{
+			addInstanceToWorktreeWithBackend: func(session SessionInterface, task, worktreePath, branch, backendName string) (InstanceInterface, error) {
+				usedBackendMethod = true
+				passedBackendName = backendName
+				return &mockInstance{id: "reviewer-inst", worktreePath: tmpDir, branch: ""}, nil
+			},
+		}
+
+		cfg := CoordinatorConfig{
+			Orchestrator:    mockOrch,
+			BaseSession:     newMockSession(),
+			AdvSession:      advSession,
+			SessionType:     "adversarial",
+			ReviewerBackend: "codex",
+		}
+		coord := NewCoordinator(cfg)
+		coord.SetWorktrees(tmpDir)
+
+		// Start the first round to initialize the session
+		advSession.CurrentRound = 1
+		advSession.History = []Round{{Round: 1, StartedAt: time.Now()}}
+
+		// Create an increment file for the reviewer to review
+		increment := &IncrementFile{
+			Round:         1,
+			Status:        "ready_for_review",
+			Summary:       "Test implementation",
+			FilesModified: []string{"test.go"},
+			Approach:      "Test approach",
+		}
+
+		err = coord.StartReviewer(increment)
+		if err != nil {
+			t.Fatalf("StartReviewer failed: %v", err)
+		}
+
+		if !usedBackendMethod {
+			t.Error("expected AddInstanceToWorktreeWithBackend to be called")
+		}
+		if passedBackendName != "codex" {
+			t.Errorf("expected backend name 'codex', got %q", passedBackendName)
+		}
+	})
+
+	t.Run("StartReviewer calls AddInstanceToWorktree when backend not set", func(t *testing.T) {
+		tmpDir, err := os.MkdirTemp("", "adversarial-coord-test-*")
+		if err != nil {
+			t.Fatalf("failed to create temp dir: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+
+		advSession := NewSession("test-id", "test task", DefaultConfig())
+
+		// Track which method was called
+		var usedNonBackendMethod bool
+		var usedBackendMethod bool
+
+		mockOrch := &mockOrchestrator{
+			addInstanceToWorktreeFunc: func(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error) {
+				usedNonBackendMethod = true
+				return &mockInstance{id: "reviewer-inst", worktreePath: tmpDir, branch: ""}, nil
+			},
+			addInstanceToWorktreeWithBackend: func(session SessionInterface, task, worktreePath, branch, backendName string) (InstanceInterface, error) {
+				usedBackendMethod = true
+				return &mockInstance{id: "reviewer-inst", worktreePath: tmpDir, branch: ""}, nil
+			},
+		}
+
+		cfg := CoordinatorConfig{
+			Orchestrator:    mockOrch,
+			BaseSession:     newMockSession(),
+			AdvSession:      advSession,
+			SessionType:     "adversarial",
+			ReviewerBackend: "", // Not set
+		}
+		coord := NewCoordinator(cfg)
+		coord.SetWorktrees(tmpDir)
+
+		// Start the first round to initialize the session
+		advSession.CurrentRound = 1
+		advSession.History = []Round{{Round: 1, StartedAt: time.Now()}}
+
+		// Create an increment file for the reviewer to review
+		increment := &IncrementFile{
+			Round:         1,
+			Status:        "ready_for_review",
+			Summary:       "Test implementation",
+			FilesModified: []string{"test.go"},
+			Approach:      "Test approach",
+		}
+
+		err = coord.StartReviewer(increment)
+		if err != nil {
+			t.Fatalf("StartReviewer failed: %v", err)
+		}
+
+		if usedBackendMethod {
+			t.Error("did not expect AddInstanceToWorktreeWithBackend to be called")
+		}
+		if !usedNonBackendMethod {
+			t.Error("expected AddInstanceToWorktree to be called")
+		}
+	})
+}
+
+func TestConfig_ReviewerBackend(t *testing.T) {
+	t.Run("default config has empty reviewer backend", func(t *testing.T) {
+		cfg := DefaultConfig()
+		if cfg.ReviewerBackend != "" {
+			t.Errorf("expected empty ReviewerBackend, got %q", cfg.ReviewerBackend)
+		}
+	})
+
+	t.Run("config with reviewer backend is persisted", func(t *testing.T) {
+		cfg := Config{
+			MaxIterations:   5,
+			MinPassingScore: 7,
+			ReviewerBackend: "codex",
+		}
+		// Marshal and unmarshal to verify JSON persistence
+		data, err := json.Marshal(cfg)
+		if err != nil {
+			t.Fatalf("failed to marshal config: %v", err)
+		}
+
+		var loaded Config
+		if err := json.Unmarshal(data, &loaded); err != nil {
+			t.Fatalf("failed to unmarshal config: %v", err)
+		}
+
+		if loaded.ReviewerBackend != "codex" {
+			t.Errorf("expected ReviewerBackend = 'codex', got %q", loaded.ReviewerBackend)
+		}
+	})
 }

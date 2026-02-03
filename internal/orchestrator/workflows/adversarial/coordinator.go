@@ -16,6 +16,10 @@ import (
 type OrchestratorInterface interface {
 	AddInstance(session SessionInterface, task string) (InstanceInterface, error)
 	AddInstanceToWorktree(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error)
+	// AddInstanceToWorktreeWithBackend creates an instance with a specific backend.
+	// If backendName is empty, uses the default backend.
+	// This enables mixed-backend adversarial sessions (e.g., Claude implementer + Codex reviewer).
+	AddInstanceToWorktreeWithBackend(session SessionInterface, task, worktreePath, branch, backendName string) (InstanceInterface, error)
 	StartInstance(inst InstanceInterface) error
 	SaveSession() error
 }
@@ -101,6 +105,11 @@ type Coordinator struct {
 	// Session type constant for this workflow
 	sessionType string
 
+	// Backend configuration
+	// reviewerBackend is the backend name for the reviewer role (e.g., "codex").
+	// If empty, uses the default orchestrator backend (same as implementer).
+	reviewerBackend string
+
 	// Running state
 	ctx        context.Context
 	cancelFunc context.CancelFunc
@@ -134,6 +143,9 @@ type CoordinatorConfig struct {
 	AdvSession   *Session
 	Logger       *logging.Logger
 	SessionType  string
+	// ReviewerBackend specifies the backend name to use for the reviewer.
+	// If empty, uses the same backend as the implementer (default orchestrator backend).
+	ReviewerBackend string
 }
 
 // NewCoordinator creates a new coordinator for an adversarial session
@@ -149,13 +161,14 @@ func NewCoordinator(cfg CoordinatorConfig) *Coordinator {
 	sessionLogger := logger.WithSession(cfg.AdvSession.ID).WithPhase("adversarial-coordinator")
 
 	return &Coordinator{
-		manager:     manager,
-		orch:        cfg.Orchestrator,
-		baseSession: cfg.BaseSession,
-		logger:      sessionLogger,
-		sessionType: cfg.SessionType,
-		ctx:         ctx,
-		cancelFunc:  cancel,
+		manager:         manager,
+		orch:            cfg.Orchestrator,
+		baseSession:     cfg.BaseSession,
+		logger:          sessionLogger,
+		sessionType:     cfg.SessionType,
+		reviewerBackend: cfg.ReviewerBackend,
+		ctx:             ctx,
+		cancelFunc:      cancel,
 	}
 }
 
@@ -560,7 +573,18 @@ func (c *Coordinator) StartReviewer(increment *IncrementFile) error {
 	}
 
 	// Create reviewer instance in the same worktree
-	inst, err := c.orch.AddInstanceToWorktree(c.baseSession, prompt, c.reviewerWorktree, "")
+	// Use the reviewer-specific backend if configured, otherwise use the default
+	var inst InstanceInterface
+	var err error
+	if c.reviewerBackend != "" {
+		c.logger.Info("using custom backend for reviewer",
+			"backend", c.reviewerBackend,
+			"round", round,
+		)
+		inst, err = c.orch.AddInstanceToWorktreeWithBackend(c.baseSession, prompt, c.reviewerWorktree, "", c.reviewerBackend)
+	} else {
+		inst, err = c.orch.AddInstanceToWorktree(c.baseSession, prompt, c.reviewerWorktree, "")
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create reviewer instance: %w", err)
 	}

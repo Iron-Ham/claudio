@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Codex Backend Support** - Added configurable Codex CLI support alongside Claude, including backend selection, backend-aware state detection, and AI-assisted workflows using the selected backend.
+- **Adversarial Mixed-Backend Configuration** - Added `adversarial.reviewer_backend` configuration option to specify a different AI backend for the reviewer role in adversarial sessions. This enables workflows like "Claude as implementer + Codex as reviewer" for cross-model code review. When not set, both roles use the global `ai.backend` setting.
 
 ### Changed
 
