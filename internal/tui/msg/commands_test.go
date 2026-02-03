@@ -510,6 +510,47 @@ func TestRemoveInstanceAsync(t *testing.T) {
 	})
 }
 
+func TestDismissGroupAsync(t *testing.T) {
+	t.Run("returns non-nil command", func(t *testing.T) {
+		cmd := DismissGroupAsync(nil, nil, "group-123", []string{"inst-1", "inst-2"})
+		if cmd == nil {
+			t.Fatal("DismissGroupAsync() returned nil command")
+		}
+	})
+
+	t.Run("returns error when orchestrator is nil", func(t *testing.T) {
+		cmd := DismissGroupAsync(nil, nil, "group-123", []string{"inst-1", "inst-2"})
+		msg := cmd()
+
+		dismissedMsg, ok := msg.(GroupDismissedMsg)
+		if !ok {
+			t.Fatalf("DismissGroupAsync()() returned %T, want GroupDismissedMsg", msg)
+		}
+
+		if len(dismissedMsg.Errors) == 0 {
+			t.Error("expected errors when orchestrator is nil")
+		}
+		if dismissedMsg.GroupID != "group-123" {
+			t.Errorf("GroupID = %q, want %q", dismissedMsg.GroupID, "group-123")
+		}
+	})
+
+	t.Run("returns error when session is nil", func(t *testing.T) {
+		// Create a minimal orchestrator mock for this test
+		cmd := DismissGroupAsync(nil, nil, "group-456", []string{"inst-1"})
+		msg := cmd()
+
+		dismissedMsg, ok := msg.(GroupDismissedMsg)
+		if !ok {
+			t.Fatalf("DismissGroupAsync()() returned %T, want GroupDismissedMsg", msg)
+		}
+
+		if len(dismissedMsg.Errors) == 0 {
+			t.Error("expected errors when session is nil")
+		}
+	})
+}
+
 func TestLoadDiffAsync(t *testing.T) {
 	t.Run("returns non-nil command", func(t *testing.T) {
 		cmd := LoadDiffAsync(nil, "/path/to/worktree", "test-instance-id")

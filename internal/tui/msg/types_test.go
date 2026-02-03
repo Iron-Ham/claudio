@@ -792,6 +792,60 @@ func TestInstanceRemovedMsg(t *testing.T) {
 	}
 }
 
+func TestGroupDismissedMsg(t *testing.T) {
+	tests := []struct {
+		name         string
+		groupID      string
+		removedCount int
+		errors       []error
+	}{
+		{
+			name:         "successful removal of all instances",
+			groupID:      "group-123",
+			removedCount: 3,
+			errors:       nil,
+		},
+		{
+			name:         "partial removal with errors",
+			groupID:      "group-456",
+			removedCount: 2,
+			errors:       []error{errors.New("instance inst-1: worktree still in use")},
+		},
+		{
+			name:         "complete failure",
+			groupID:      "group-789",
+			removedCount: 0,
+			errors:       []error{errors.New("instance inst-1: failed"), errors.New("instance inst-2: failed")},
+		},
+		{
+			name:         "empty group",
+			groupID:      "group-empty",
+			removedCount: 0,
+			errors:       nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := GroupDismissedMsg{
+				GroupID:      tt.groupID,
+				RemovedCount: tt.removedCount,
+				Errors:       tt.errors,
+			}
+
+			if msg.GroupID != tt.groupID {
+				t.Errorf("GroupDismissedMsg.GroupID = %q, want %q", msg.GroupID, tt.groupID)
+			}
+			if msg.RemovedCount != tt.removedCount {
+				t.Errorf("GroupDismissedMsg.RemovedCount = %d, want %d", msg.RemovedCount, tt.removedCount)
+			}
+			if len(msg.Errors) != len(tt.errors) {
+				t.Errorf("GroupDismissedMsg.Errors length = %d, want %d", len(msg.Errors), len(tt.errors))
+			}
+		})
+	}
+}
+
 func TestDiffLoadedMsg(t *testing.T) {
 	tests := []struct {
 		name        string

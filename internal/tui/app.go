@@ -744,6 +744,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuimsg.InstanceRemovedMsg:
 		return m.handleInstanceRemoved(msg)
 
+	case tuimsg.GroupDismissedMsg:
+		return m.handleGroupDismissed(msg)
+
 	case tuimsg.DiffLoadedMsg:
 		return m.handleDiffLoaded(msg)
 	}
@@ -1801,6 +1804,57 @@ func (m Model) handleInstanceRemoved(msg tuimsg.InstanceRemovedMsg) (tea.Model, 
 		m.activeTab = m.instanceCount() - 1
 		if m.activeTab < 0 {
 			m.activeTab = 0
+		}
+	}
+
+	m.resumeActiveInstance()
+	m.ensureActiveVisible()
+
+	return m, nil
+}
+
+// handleGroupDismissed processes the result of async group dismissal.
+func (m Model) handleGroupDismissed(msg tuimsg.GroupDismissedMsg) (tea.Model, tea.Cmd) {
+	// Clear "Dismissing..." message since operation completed
+	m.infoMessage = ""
+
+	if len(msg.Errors) > 0 {
+		if m.logger != nil {
+			for _, err := range msg.Errors {
+				m.logger.Error("failed to remove instance during group dismiss", "error", err)
+			}
+		}
+		if msg.RemovedCount > 0 {
+			m.errorMessage = fmt.Sprintf("Dismissed %d instance(s), but %d failed", msg.RemovedCount, len(msg.Errors))
+		} else {
+			m.errorMessage = fmt.Sprintf("Failed to dismiss group: %v", msg.Errors[0])
+		}
+	} else if msg.RemovedCount > 0 {
+		m.infoMessage = fmt.Sprintf("Dismissed %d instance(s) from group", msg.RemovedCount)
+	} else {
+		m.infoMessage = "No instances to dismiss"
+	}
+
+	// Adjust active tab if needed (instance count decreased)
+	if m.activeTab >= m.instanceCount() {
+		m.activeTab = m.instanceCount() - 1
+		if m.activeTab < 0 {
+			m.activeTab = 0
+		}
+	}
+
+	// Clear group selection if the group no longer exists
+	if m.groupViewState.SelectedGroupID == msg.GroupID {
+		// Check if the group still exists
+		groupExists := false
+		for _, g := range m.session.Groups {
+			if g.ID == msg.GroupID && !g.IsEmpty() {
+				groupExists = true
+				break
+			}
+		}
+		if !groupExists {
+			m.groupViewState.SelectedGroupID = ""
 		}
 	}
 
