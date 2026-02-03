@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
-	"github.com/Iron-Ham/claudio/internal/tui/filter"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
@@ -1051,13 +1050,9 @@ func (m Model) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // Filter Input Handler
 // -----------------------------------------------------------------------------
 
-// handleFilterInput handles keyboard input when in filter mode
+// handleFilterInput handles keyboard input when in filter mode.
+// Note: outputFilter is always initialized in NewModel(), so no nil check is needed here.
 func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.outputFilter == nil {
-		m.outputFilter = filter.New()
-		m.outputManager.SetFilterFunc(m.outputFilter.Apply)
-	}
-
 	switch msg.String() {
 	case "esc", "F", "q":
 		m.filterMode = false

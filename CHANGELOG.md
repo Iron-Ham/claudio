@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
-- **TUI Output Rendering Cache** - Cached filtered output line splits and “new output” state to avoid full-buffer processing on every render, improving typing responsiveness in command/search modes
+- **TUI Output Rendering Cache** - Cached filtered output line splits and "new output" state to avoid full-buffer processing on every render, improving typing responsiveness in command/search modes. Includes benchmarks demonstrating cache hit performance (~20ns, 0 allocations).
 
 ## [0.15.0] - 2026-02-02
 

@@ -1372,12 +1372,8 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 
 // renderFilterPanel renders the filter configuration panel.
 // Delegates to filter.RenderPanel for rendering using the filter package.
+// Note: outputFilter is always initialized in NewModel(), so no nil check is needed here.
 func (m Model) renderFilterPanel(width int) string {
-	if m.outputFilter == nil {
-		m.outputFilter = filter.New()
-		m.outputManager.SetFilterFunc(m.outputFilter.Apply)
-	}
-
 	return filter.RenderPanel(m.outputFilter, width)
 }
 

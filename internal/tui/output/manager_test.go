@@ -823,3 +823,194 @@ func TestEmptyOutputHandling(t *testing.T) {
 		t.Errorf("GetMaxScroll(empty) = %d, want 0", got)
 	}
 }
+
+func TestCountLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected int
+	}{
+		{"empty string", "", 0},
+		{"single char", "a", 1},
+		{"single line no newline", "hello world", 1},
+		{"single line with newline", "hello\n", 2},
+		{"two lines", "a\nb", 2},
+		{"three lines", "a\nb\nc", 3},
+		{"trailing newline", "a\nb\nc\n", 4},
+		{"only newlines", "\n\n\n", 4},
+		{"unicode", "こんにちは\n世界", 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := countLines(tt.input)
+			if got != tt.expected {
+				t.Errorf("countLines(%q) = %d, want %d", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSplitLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+	}{
+		{"empty string", "", nil},
+		{"single line", "hello", []string{"hello"}},
+		{"two lines", "a\nb", []string{"a", "b"}},
+		{"trailing newline", "a\nb\n", []string{"a", "b", ""}},
+		{"only newline", "\n", []string{"", ""}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := splitLines(tt.input)
+			if tt.expected == nil {
+				if got != nil {
+					t.Errorf("splitLines(%q) = %v, want nil", tt.input, got)
+				}
+				return
+			}
+			if len(got) != len(tt.expected) {
+				t.Errorf("splitLines(%q) returned %d lines, want %d", tt.input, len(got), len(tt.expected))
+				return
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Errorf("splitLines(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestGetFilteredLines(t *testing.T) {
+	m := NewManager()
+
+	// Empty output returns nil
+	if got := m.GetFilteredLines("nonexistent"); got != nil {
+		t.Errorf("GetFilteredLines(nonexistent) = %v, want nil", got)
+	}
+
+	// Set output and get lines
+	m.SetOutput("test", "line1\nline2\nline3")
+	got := m.GetFilteredLines("test")
+	expected := []string{"line1", "line2", "line3"}
+
+	if len(got) != len(expected) {
+		t.Fatalf("GetFilteredLines() returned %d lines, want %d", len(got), len(expected))
+	}
+	for i := range expected {
+		if got[i] != expected[i] {
+			t.Errorf("GetFilteredLines()[%d] = %q, want %q", i, got[i], expected[i])
+		}
+	}
+}
+
+func TestGetFilteredLinesWithFilter(t *testing.T) {
+	m := NewManager()
+	m.SetOutput("test", "keep1\nremove\nkeep2\nremove\nkeep3")
+	m.SetFilterFunc(func(output string) string {
+		lines := strings.Split(output, "\n")
+		var filtered []string
+		for _, line := range lines {
+			if !strings.Contains(line, "remove") {
+				filtered = append(filtered, line)
+			}
+		}
+		return strings.Join(filtered, "\n")
+	})
+
+	got := m.GetFilteredLines("test")
+	expected := []string{"keep1", "keep2", "keep3"}
+
+	if len(got) != len(expected) {
+		t.Fatalf("GetFilteredLines() with filter returned %d lines, want %d", len(got), len(expected))
+	}
+	for i := range expected {
+		if got[i] != expected[i] {
+			t.Errorf("GetFilteredLines()[%d] = %q, want %q", i, got[i], expected[i])
+		}
+	}
+}
+
+func TestGetFilteredLinesCaching(t *testing.T) {
+	m := NewManager()
+	m.SetOutput("test", "line1\nline2\nline3")
+
+	// First call
+	lines1 := m.GetFilteredLines("test")
+	// Second call should return cached slice
+	lines2 := m.GetFilteredLines("test")
+
+	// Should be the same underlying slice (pointer equality)
+	if &lines1[0] != &lines2[0] {
+		t.Error("GetFilteredLines() should return cached slice on second call")
+	}
+
+	// After changing output, should return new slice
+	m.SetOutput("test", "new1\nnew2")
+	lines3 := m.GetFilteredLines("test")
+
+	if len(lines3) != 2 || lines3[0] != "new1" {
+		t.Errorf("GetFilteredLines() after SetOutput = %v, want [new1 new2]", lines3)
+	}
+}
+
+// Benchmarks for performance testing
+
+func BenchmarkGetFilteredLines(b *testing.B) {
+	m := NewManager()
+	m.SetOutput("test", strings.Repeat("line\n", 10000))
+	m.SetFilterFunc(func(s string) string { return s })
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.GetFilteredLines("test")
+	}
+}
+
+func BenchmarkGetFilteredLinesCached(b *testing.B) {
+	m := NewManager()
+	m.SetOutput("test", strings.Repeat("line\n", 10000))
+	m.SetFilterFunc(func(s string) string { return s })
+
+	// Prime the cache
+	_ = m.GetFilteredLines("test")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.GetFilteredLines("test")
+	}
+}
+
+func BenchmarkGetFilteredOutput(b *testing.B) {
+	m := NewManager()
+	m.SetOutput("test", strings.Repeat("line\n", 10000))
+	m.SetFilterFunc(func(s string) string { return s })
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = m.GetFilteredOutput("test")
+	}
+}
+
+func BenchmarkCountLines(b *testing.B) {
+	input := strings.Repeat("line\n", 10000)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = countLines(input)
+	}
+}
+
+func BenchmarkSplitLines(b *testing.B) {
+	input := strings.Repeat("line\n", 10000)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = splitLines(input)
+	}
+}

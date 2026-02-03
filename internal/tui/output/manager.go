@@ -242,7 +242,12 @@ func (m *Manager) UpdateScroll(instanceID string, maxVisibleLines int) {
 	}
 }
 
-// HasNewOutput returns true if there's new output since the last UpdateScroll call.
+// HasNewOutput returns true if new output arrived while auto-scroll was disabled.
+// This is used to show a "new output" indicator when the user is scrolled up.
+//
+// Note: This tracks output arrival while scrolled up, not simply whether output grew.
+// The flag is set when AddOutput/SetOutput is called while auto-scroll is disabled,
+// and cleared when the user scrolls to bottom or UpdateScroll is called with auto-scroll enabled.
 func (m *Manager) HasNewOutput(instanceID string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
