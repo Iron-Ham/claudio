@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-02-05
+
 ### Fixed
 
 - **Process Cleanup on Exit** - Closing Claudio now reliably kills all Claude backend processes across all code paths, including PR workflows. Previously, `tmux kill-session` could leave orphaned Claude CLI processes if they ignored SIGHUP. The shutdown now captures the full process tree before stopping, polls for graceful exit, kills the per-instance tmux server (not just the session), and force-kills any surviving processes via SIGKILL. The shutdown sequence is consolidated into a shared `tmux.GracefulShutdown()` helper used by all stop paths.
@@ -940,6 +942,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.16.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.16.1
 [0.16.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.16.0
 [0.15.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.15.0
 [0.14.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.14.1
