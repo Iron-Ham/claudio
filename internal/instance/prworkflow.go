@@ -490,7 +490,10 @@ func extractPRURL(output string) string {
 	return ""
 }
 
-// Stop terminates the PR workflow tmux session
+// Stop terminates the PR workflow tmux session and ensures all backend
+// processes are killed. Uses the same defense-in-depth approach as
+// instance.Manager.Stop(): capture process tree → Ctrl+C → poll for exit →
+// kill session → kill server → force-kill survivors.
 func (p *PRWorkflow) Stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -511,8 +514,8 @@ func (p *PRWorkflow) Stop() error {
 		p.captureTick.Stop()
 	}
 
-	// Kill the tmux session
-	_ = tmux.CommandWithSocket(p.socketName, "kill-session", "-t", p.sessionName).Run()
+	// Graceful shutdown: Ctrl+C → poll → kill session → kill server → force-kill survivors
+	tmux.GracefulShutdown(p.socketName, p.sessionName, tmux.DefaultGracefulStopTimeout)
 
 	p.running = false
 	return nil
