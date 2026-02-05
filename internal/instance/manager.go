@@ -1121,7 +1121,7 @@ func (m *Manager) parseAndNotifyMetrics(output []byte) {
 	}
 }
 
-// Stop terminates the tmux session
+// Stop terminates the tmux session and ensures all backend processes are killed.
 func (m *Manager) Stop() error {
 	// Delegate to lifecycle manager if available
 	if m.lifecycleManager != nil {
@@ -1156,23 +1156,8 @@ func (m *Manager) Stop() error {
 		_ = m.inputHandler.Close()
 	}
 
-	// Send Ctrl+C to gracefully stop the backend first
-	_ = m.tmuxCmd("send-keys", "-t", m.sessionName, "C-c").Run()
-	time.Sleep(500 * time.Millisecond)
-
-	// Kill the tmux session
-	if err := m.tmuxCmd("kill-session", "-t", m.sessionName).Run(); err != nil {
-		if m.logger != nil {
-			m.logger.Error("failed to kill tmux session",
-				"session_name", m.sessionName,
-				"error", err.Error())
-		}
-	} else {
-		if m.logger != nil {
-			m.logger.Info("tmux session stopped",
-				"session_name", m.sessionName)
-		}
-	}
+	// Graceful shutdown: Ctrl+C → poll → kill session → kill server → force-kill survivors
+	tmux.GracefulShutdown(m.socketName, m.sessionName, tmux.DefaultGracefulStopTimeout)
 
 	// Unregister from state monitor
 	m.stateMonitor.Stop(m.id)

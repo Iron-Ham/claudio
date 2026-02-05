@@ -151,7 +151,7 @@ func NewManager(logger *logging.Logger) *Manager {
 		logger:              logger,
 		backend:             ai.DefaultBackend(),
 		instanceStates:      make(map[string]State),
-		gracefulStopTimeout: 500 * time.Millisecond,
+		gracefulStopTimeout: tmux.DefaultGracefulStopTimeout,
 	}
 }
 
@@ -328,7 +328,8 @@ func (m *Manager) Start(inst Instance) error {
 }
 
 // Stop terminates a running instance.
-// It sends Ctrl+C for graceful shutdown, then kills the tmux session.
+// It captures the process tree, sends Ctrl+C for graceful shutdown, kills the
+// tmux session and server, then force-kills any surviving processes.
 func (m *Manager) Stop(inst Instance) error {
 	if inst == nil {
 		return ErrInvalidInstance
@@ -347,19 +348,8 @@ func (m *Manager) Stop(inst Instance) error {
 	sessionName := inst.SessionName()
 	socketName := inst.SocketName()
 
-	// Send Ctrl+C to gracefully stop the backend session first
-	_ = tmux.CommandWithSocket(socketName, "send-keys", "-t", sessionName, "C-c").Run()
-	time.Sleep(gracefulTimeout)
-
-	// Kill the tmux session
-	if err := tmux.CommandWithSocket(socketName, "kill-session", "-t", sessionName).Run(); err != nil {
-		// Log but don't fail - session may have already exited
-		if m.logger != nil {
-			m.logger.Debug("tmux kill-session error (may be expected)",
-				"session_name", sessionName,
-				"error", err.Error())
-		}
-	}
+	// Graceful shutdown: Ctrl+C → poll → kill session → kill server → force-kill survivors
+	tmux.GracefulShutdown(socketName, sessionName, gracefulTimeout)
 
 	// Update instance state
 	inst.SetRunning(false)

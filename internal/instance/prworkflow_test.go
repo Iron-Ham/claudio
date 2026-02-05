@@ -66,3 +66,35 @@ func TestPRWorkflow_Running_Initial(t *testing.T) {
 		t.Error("New PR workflow should not be running")
 	}
 }
+
+func TestPRWorkflow_Stop_NotRunning(t *testing.T) {
+	cfg := PRWorkflowConfig{
+		TmuxWidth:  100,
+		TmuxHeight: 50,
+	}
+	workflow := NewPRWorkflow("test-stop", "/tmp", "main", "task", cfg)
+
+	// Stop on a non-running workflow should be a no-op
+	if err := workflow.Stop(); err != nil {
+		t.Errorf("Stop() on non-running workflow returned error: %v", err)
+	}
+
+	if workflow.Running() {
+		t.Error("workflow should not be running after Stop()")
+	}
+}
+
+func TestPRWorkflow_Stop_Idempotent(t *testing.T) {
+	cfg := PRWorkflowConfig{
+		TmuxWidth:  100,
+		TmuxHeight: 50,
+	}
+	workflow := NewPRWorkflow("test-idem", "/tmp", "main", "task", cfg)
+
+	// Multiple stops should not panic
+	for i := 0; i < 3; i++ {
+		if err := workflow.Stop(); err != nil {
+			t.Errorf("Stop() call %d returned error: %v", i+1, err)
+		}
+	}
+}

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Process Cleanup on Exit** - Closing Claudio now reliably kills all Claude backend processes across all code paths, including PR workflows. Previously, `tmux kill-session` could leave orphaned Claude CLI processes if they ignored SIGHUP. The shutdown now captures the full process tree before stopping, polls for graceful exit, kills the per-instance tmux server (not just the session), and force-kills any surviving processes via SIGKILL. The shutdown sequence is consolidated into a shared `tmux.GracefulShutdown()` helper used by all stop paths.
+
 - **Group Dismiss Freezing** - Fixed a bug where killing a group via `gq` would freeze the TUI and corrupt the display. The group dismiss operation now runs asynchronously to avoid blocking the main thread, and warning messages no longer write directly to stderr (which corrupts the Bubble Tea TUI). Users now see a "Dismissing N instance(s)..." message while the operation runs in the background.
 
 - **Tripleshot Adversarial UI Nesting** - Fixed a bug where tripleshot attempts in adversarial mode were not immediately nested under "Attempt N" sub-groups when using the async startup path. Previously, attempts were only nested when a new round started, causing a flat instance list during the initial "preparing" phase. Now attempts are properly nested immediately when created via `CreateAttemptStubs`.
