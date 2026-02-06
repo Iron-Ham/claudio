@@ -241,6 +241,23 @@ func (q *TaskQueue) GetTask(taskID string) *QueuedTask {
 	return &cp
 }
 
+// SetMaxRetries sets the maximum number of retries for the given task.
+// The task must exist and be in a non-terminal state.
+func (q *TaskQueue) SetMaxRetries(taskID string, maxRetries int) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	task, ok := q.tasks[taskID]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrTaskNotFound, taskID)
+	}
+	if task.Status.IsTerminal() {
+		return fmt.Errorf("%w: cannot set max retries on %s task %s", ErrInvalidTransition, task.Status, taskID)
+	}
+	task.MaxRetries = maxRetries
+	return nil
+}
+
 // ReleaseStaleClaimed releases tasks that have been claimed but not marked
 // running before the given cutoff time. Returns the IDs of released tasks.
 // This is used for recovering from instances that died while holding a claim.

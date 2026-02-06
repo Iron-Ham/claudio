@@ -785,6 +785,54 @@ func NewPipelineCompletedEvent(pipelineID string, success bool, phasesRun int) P
 }
 
 // -----------------------------------------------------------------------------
+// Bridge Events (Pipeline → Instance Execution)
+// -----------------------------------------------------------------------------
+
+// BridgeTaskStartedEvent is emitted when a bridge starts executing a task
+// by spawning a Claude Code instance.
+type BridgeTaskStartedEvent struct {
+	baseEvent
+	TeamID     string // Team the task belongs to
+	TaskID     string // Task being executed
+	InstanceID string // Instance created for the task
+}
+
+// NewBridgeTaskStartedEvent creates a BridgeTaskStartedEvent.
+func NewBridgeTaskStartedEvent(teamID, taskID, instanceID string) BridgeTaskStartedEvent {
+	return BridgeTaskStartedEvent{
+		baseEvent:  newBaseEvent("bridge.task_started"),
+		TeamID:     teamID,
+		TaskID:     taskID,
+		InstanceID: instanceID,
+	}
+}
+
+// BridgeTaskCompletedEvent is emitted when a bridge-managed task finishes
+// (either successfully or with failure).
+type BridgeTaskCompletedEvent struct {
+	baseEvent
+	TeamID      string // Team the task belongs to
+	TaskID      string // Task that completed
+	InstanceID  string // Instance that executed the task
+	Success     bool   // Whether the task completed successfully
+	CommitCount int    // Number of commits produced (0 if failed)
+	Error       string // Error description (empty on success)
+}
+
+// NewBridgeTaskCompletedEvent creates a BridgeTaskCompletedEvent.
+func NewBridgeTaskCompletedEvent(teamID, taskID, instanceID string, success bool, commitCount int, errMsg string) BridgeTaskCompletedEvent {
+	return BridgeTaskCompletedEvent{
+		baseEvent:   newBaseEvent("bridge.task_completed"),
+		TeamID:      teamID,
+		TaskID:      taskID,
+		InstanceID:  instanceID,
+		Success:     success,
+		CommitCount: commitCount,
+		Error:       errMsg,
+	}
+}
+
+// -----------------------------------------------------------------------------
 // Inter-Team Communication Events
 // -----------------------------------------------------------------------------
 

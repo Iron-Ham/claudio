@@ -10,6 +10,7 @@ See `doc.go` for package overview and API usage.
 - **Wrapper type mutex access** — `EventQueue` wraps `TaskQueue` to publish events. Never access `TaskQueue`'s internal mutex from `EventQueue`. If `EventQueue` needs new synchronized behavior, add a public method on `TaskQueue` and call it from the wrapper.
 - **Copy-on-return semantics** — `ClaimNext()` and `GetTask()` return value copies of internal structs, not pointers. This prevents callers from mutating queue state through the returned value. Maintain this pattern when adding new accessor methods.
 - **Persistence locking** — State persistence uses temp file + `os.Rename` with `flock` for crash safety. The flock is process-level; multiple goroutines within the same process coordinate via the `TaskQueue` mutex, not the flock.
+- **Default retry count** — `NewFromPlan` sets `MaxRetries=2` on every task. `Fail()` returns tasks to `TaskPending` until retries are exhausted, which means a single `Fail()` call does NOT make a task permanently failed. Use `SetMaxRetries(taskID, 0)` in tests that need immediate permanent failure.
 
 ## EventQueue Decorator
 

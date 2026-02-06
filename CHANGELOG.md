@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bridge Execution Layer** - Bridge package (`internal/bridge/`) and adapter wiring (`internal/orchestrator/bridgewire/`) that connect team Hubs to real Claude Code instances. Each Bridge claims tasks from a team's queue, spawns worktree + tmux instances, monitors for completion via sentinel files, and reports outcomes back to the queue. PipelineExecutor subscribes to pipeline phase transitions and attaches Bridges to execution-phase teams automatically. (#647)
+
 - **Pipeline Orchestration** - Plan decomposer and multi-phase pipeline (`internal/pipeline/`) for team-based execution. Groups tasks by file affinity using union-find, then orchestrates sequential phases (planning → execution → review → consolidation). Each phase runs its own Manager with scoped teams. Adds pipeline lifecycle events and dynamic team addition to the team Manager. (Phase 3 of Orchestrator of Orchestrators, #637)
 
 - **Multi-Team Execution** - Multi-team orchestration layer (`internal/team/`) that runs multiple teams in parallel, each with its own Coordination Hub. Supports inter-team dependency ordering, per-team budget tracking with exhaustion detection, and inter-team message routing via existing mailbox infrastructure. Adds team lifecycle events (created, phase changed, completed, budget exhausted) and inter-team message events to the event bus. (#637)

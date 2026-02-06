@@ -307,6 +307,8 @@ This is not exhaustive — update it when you add or discover undocumented packa
 - `internal/scaling/` — Queue-depth-based elastic scaling policies *(has `AGENTS.md`)*
 - `internal/taskqueue/` — Dependency-aware task queue with persistence *(has `AGENTS.md`)*
 - `internal/team/` — Multi-team orchestration with dependency ordering, budget tracking, and inter-team routing *(has `AGENTS.md`)*
+- `internal/bridge/` — Connects team Hubs to real Claude Code instances (worktree + tmux) *(has `AGENTS.md`)*
+- `internal/orchestrator/bridgewire/` — Adapter types that wire orchestrator infrastructure to bridge interfaces *(has `AGENTS.md`)*
 - `internal/pipeline/` — Plan decomposer and multi-phase team pipeline *(has `AGENTS.md`)*
 - `internal/tui/` — Bubble Tea terminal UI components *(has `AGENTS.md`)*
 - `internal/worktree/` — Git worktree creation and management
@@ -319,6 +321,7 @@ This is not exhaustive — update it when you add or discover undocumented packa
 - **Copy-on-return** — Accessor methods on shared types (e.g., `ClaimNext()`, `GetTask()`) return value copies, not pointers, to prevent data races. Maintain this pattern across packages.
 - **Atomic persistence** — File-backed state uses crash-safe write patterns. See `internal/taskqueue/AGENTS.md` and `internal/mailbox/AGENTS.md` for package-specific details.
 - **Functional options** — New coordination packages (`internal/adaptive/`, `internal/scaling/`, `internal/filelock/`) use the `WithXxx()` functional options pattern for configurable constructors. Follow this when adding new packages.
+- **Bridge pattern** — `internal/bridge/` connects abstract team queues to concrete instance infrastructure via narrow interfaces (`InstanceFactory`, `CompletionChecker`, `SessionRecorder`). Adapters in `internal/orchestrator/bridgewire/` implement these. The bridge must not import `orchestrator` (cycle); keep its API using simple types.
 
 ---
 
@@ -330,6 +333,8 @@ These are real issues agents have encountered in this codebase. Package-specific
 - **Mutex scope during marshaling** — `json.MarshalIndent` on a map must hold the mutex through the entire marshal, not just while copying the map. The marshal reads the map's values lazily.
 - **Synchronous event bus and lock re-entrancy** — `event.Bus.Publish` runs handlers inline in the caller's goroutine. If a handler acquires a lock that the publisher already holds, deadlock results. The `team.Manager` uses a two-phase pattern (register under lock, start outside lock) specifically to avoid this. See `internal/team/AGENTS.md` for details.
 - **Store state before publishing events** — When an event handler may look up the state you're about to set, store it first. Example: `pipeline.runPhase` stores the Manager in `p.managers[phase]` before publishing `PipelinePhaseChangedEvent`, so handlers calling `p.Manager(phase)` don't get nil.
+- **Dispatch from event handlers to goroutines** — When subscribing to events, if the handler acquires a lock or does blocking work, dispatch to a goroutine (`go pe.attachBridges()`) instead of calling inline. `event.Bus.Publish` runs handlers synchronously, so inline handlers that block or acquire locks risk deadlock with the publisher. See `internal/orchestrator/bridgewire/executor.go` for an example.
+- **Release locks before blocking on Stop()** — When stopping a component that holds a mutex, copy shared state (e.g., a slice of bridges) under the lock, release the lock, then perform blocking cleanup. Holding a lock while calling `bridge.Stop()` (which calls `wg.Wait()`) blocks goroutines that need the same lock. See `PipelineExecutor.Stop()` in `bridgewire/executor.go`.
 
 ---
 
