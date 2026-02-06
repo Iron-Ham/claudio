@@ -200,6 +200,8 @@ func (q *TaskQueue) Status() QueueStatus {
 			s.Pending++
 		case TaskClaimed:
 			s.Claimed++
+		case TaskAwaitingApproval:
+			s.AwaitingApproval++
 		case TaskRunning:
 			s.Running++
 		case TaskCompleted:

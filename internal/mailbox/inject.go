@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // FormatForPrompt formats a slice of messages into a human-readable block
@@ -46,6 +47,52 @@ func FormatForPrompt(messages []Message) string {
 
 	b.WriteString("</mailbox-messages>")
 	return b.String()
+}
+
+// FilterOptions controls which messages are included by FormatFiltered.
+type FilterOptions struct {
+	Types       []MessageType // Only include these types (empty = all)
+	Since       time.Time     // Only messages after this time (zero = all)
+	From        string        // Only messages from this sender (empty = all)
+	MaxMessages int           // Maximum messages to include (0 = unlimited)
+}
+
+// FormatFiltered applies filters to messages and formats the result using
+// FormatForPrompt. Filters are applied in order: type, since, from, then
+// max messages (keeping the most recent).
+func FormatFiltered(messages []Message, opts FilterOptions) string {
+	filtered := filterMessages(messages, opts)
+	return FormatForPrompt(filtered)
+}
+
+// filterMessages applies FilterOptions to a slice of messages and returns
+// the matching subset.
+func filterMessages(messages []Message, opts FilterOptions) []Message {
+	var result []Message
+
+	typeSet := make(map[MessageType]bool, len(opts.Types))
+	for _, t := range opts.Types {
+		typeSet[t] = true
+	}
+
+	for _, msg := range messages {
+		if len(typeSet) > 0 && !typeSet[msg.Type] {
+			continue
+		}
+		if !opts.Since.IsZero() && !msg.Timestamp.After(opts.Since) {
+			continue
+		}
+		if opts.From != "" && msg.From != opts.From {
+			continue
+		}
+		result = append(result, msg)
+	}
+
+	if opts.MaxMessages > 0 && len(result) > opts.MaxMessages {
+		result = result[len(result)-opts.MaxMessages:]
+	}
+
+	return result
 }
 
 // formatMetadata formats a metadata map as a compact key=value string.

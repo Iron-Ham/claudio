@@ -181,6 +181,11 @@ type PlannedTask struct {
 	// When set, the issue will be auto-closed upon task completion.
 	IssueURL string `json:"issue_url,omitempty"`
 
+	// RequiresApproval indicates this task must be approved by a human before
+	// it transitions from claimed to running. When true, the task will pause
+	// in an "awaiting_approval" state after being claimed.
+	RequiresApproval bool `json:"requires_approval,omitempty"`
+
 	// NoCode indicates this task does not require code changes.
 	// When true, the task will be considered successful even if it produces no commits.
 	// Use this for verification, testing, or documentation-only tasks.

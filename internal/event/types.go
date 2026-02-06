@@ -446,3 +446,187 @@ func NewQueueDepthChangedEvent(pending, claimed, running, completed, failed, tot
 		Total:     total,
 	}
 }
+
+// TaskAwaitingApprovalEvent is emitted when a task enters the awaiting_approval state.
+// This occurs when a task with RequiresApproval=true is claimed and the gate
+// intercepts the transition to running.
+type TaskAwaitingApprovalEvent struct {
+	baseEvent
+	TaskID     string // Task that is awaiting approval
+	InstanceID string // Instance that claimed the task
+}
+
+// NewTaskAwaitingApprovalEvent creates a TaskAwaitingApprovalEvent.
+func NewTaskAwaitingApprovalEvent(taskID, instanceID string) TaskAwaitingApprovalEvent {
+	return TaskAwaitingApprovalEvent{
+		baseEvent:  newBaseEvent("queue.task_awaiting_approval"),
+		TaskID:     taskID,
+		InstanceID: instanceID,
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Scaling Events
+// -----------------------------------------------------------------------------
+
+// ScalingDecisionEvent is emitted when the scaling monitor makes a scaling decision.
+type ScalingDecisionEvent struct {
+	baseEvent
+	Action           string // "scale_up", "scale_down", or "none"
+	Delta            int    // Number of instances to add (positive) or remove (negative)
+	Reason           string // Human-readable explanation of the decision
+	CurrentInstances int    // Number of instances before the scaling action
+}
+
+// NewScalingDecisionEvent creates a ScalingDecisionEvent.
+func NewScalingDecisionEvent(action string, delta int, reason string, currentInstances int) ScalingDecisionEvent {
+	return ScalingDecisionEvent{
+		baseEvent:        newBaseEvent("scaling.decision"),
+		Action:           action,
+		Delta:            delta,
+		Reason:           reason,
+		CurrentInstances: currentInstances,
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Debate Events (Peer Debate Protocol)
+// -----------------------------------------------------------------------------
+
+// DebateStartedEvent is emitted when a structured debate begins between two instances.
+type DebateStartedEvent struct {
+	baseEvent
+	DebateID  string // Unique identifier for the debate session
+	InstanceA string // First participant
+	InstanceB string // Second participant
+	Topic     string // Subject of the debate
+}
+
+// NewDebateStartedEvent creates a DebateStartedEvent.
+func NewDebateStartedEvent(debateID, instanceA, instanceB, topic string) DebateStartedEvent {
+	return DebateStartedEvent{
+		baseEvent: newBaseEvent("debate.started"),
+		DebateID:  debateID,
+		InstanceA: instanceA,
+		InstanceB: instanceB,
+		Topic:     topic,
+	}
+}
+
+// DebateResolvedEvent is emitted when a debate reaches consensus.
+type DebateResolvedEvent struct {
+	baseEvent
+	DebateID   string // Unique identifier for the debate session
+	Resolution string // The consensus resolution
+	Rounds     int    // Number of challenge-defense rounds
+}
+
+// NewDebateResolvedEvent creates a DebateResolvedEvent.
+func NewDebateResolvedEvent(debateID, resolution string, rounds int) DebateResolvedEvent {
+	return DebateResolvedEvent{
+		baseEvent:  newBaseEvent("debate.resolved"),
+		DebateID:   debateID,
+		Resolution: resolution,
+		Rounds:     rounds,
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Context Propagation Events
+// -----------------------------------------------------------------------------
+
+// ContextPropagatedEvent is emitted when context is shared across instances.
+type ContextPropagatedEvent struct {
+	baseEvent
+	From          string // Instance that shared the context
+	InstanceCount int    // Number of instances that received the context
+	MessageType   string // Type of message propagated (discovery, warning, etc.)
+}
+
+// NewContextPropagatedEvent creates a ContextPropagatedEvent.
+func NewContextPropagatedEvent(from string, instanceCount int, messageType string) ContextPropagatedEvent {
+	return ContextPropagatedEvent{
+		baseEvent:     newBaseEvent("context.propagated"),
+		From:          from,
+		InstanceCount: instanceCount,
+		MessageType:   messageType,
+	}
+}
+
+// -----------------------------------------------------------------------------
+// File Lock Events (File Conflict Prevention)
+// -----------------------------------------------------------------------------
+
+// FileClaimEvent is emitted when an instance claims ownership of a file.
+type FileClaimEvent struct {
+	baseEvent
+	InstanceID string // Instance claiming the file
+	FilePath   string // Path to the claimed file
+}
+
+// NewFileClaimEvent creates a FileClaimEvent.
+func NewFileClaimEvent(instanceID, filePath string) FileClaimEvent {
+	return FileClaimEvent{
+		baseEvent:  newBaseEvent("filelock.claimed"),
+		InstanceID: instanceID,
+		FilePath:   filePath,
+	}
+}
+
+// FileReleaseEvent is emitted when an instance releases ownership of a file.
+type FileReleaseEvent struct {
+	baseEvent
+	InstanceID string // Instance releasing the file
+	FilePath   string // Path to the released file
+}
+
+// NewFileReleaseEvent creates a FileReleaseEvent.
+func NewFileReleaseEvent(instanceID, filePath string) FileReleaseEvent {
+	return FileReleaseEvent{
+		baseEvent:  newBaseEvent("filelock.released"),
+		InstanceID: instanceID,
+		FilePath:   filePath,
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Adaptive Lead Events (Dynamic Coordination)
+// -----------------------------------------------------------------------------
+
+// ScalingSignalEvent is emitted when the adaptive lead detects a scaling need.
+type ScalingSignalEvent struct {
+	baseEvent
+	Pending        int    // Number of pending tasks
+	Running        int    // Number of running tasks
+	Recommendation string // Human-readable recommendation
+}
+
+// NewScalingSignalEvent creates a ScalingSignalEvent.
+func NewScalingSignalEvent(pending, running int, recommendation string) ScalingSignalEvent {
+	return ScalingSignalEvent{
+		baseEvent:      newBaseEvent("adaptive.scaling_signal"),
+		Pending:        pending,
+		Running:        running,
+		Recommendation: recommendation,
+	}
+}
+
+// TaskReassignedEvent is emitted when the adaptive lead reassigns a task.
+type TaskReassignedEvent struct {
+	baseEvent
+	TaskID       string // Task that was reassigned
+	FromInstance string // Instance the task was taken from
+	ToInstance   string // Instance the task was given to
+	Reason       string // Why the reassignment happened
+}
+
+// NewTaskReassignedEvent creates a TaskReassignedEvent.
+func NewTaskReassignedEvent(taskID, fromInstance, toInstance, reason string) TaskReassignedEvent {
+	return TaskReassignedEvent{
+		baseEvent:    newBaseEvent("adaptive.task_reassigned"),
+		TaskID:       taskID,
+		FromInstance: fromInstance,
+		ToInstance:   toInstance,
+		Reason:       reason,
+	}
+}

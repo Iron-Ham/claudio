@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Inter-Instance Mailbox** - File-based messaging system (`internal/mailbox/`) enabling cross-instance communication during orchestration. Supports broadcast and targeted messages with types including discovery, claim, release, warning, question, answer, and status. Includes prompt injection formatting and event bus integration. (#629)
 - **Dynamic Task Queue** - Dependency-aware task queue (`internal/taskqueue/`) with self-claiming and work-stealing, replacing static execution batch ordering. Instances claim tasks as dependencies are satisfied, eliminating idle time between execution groups. Includes failed task redistribution with retry, stale claim cleanup, state persistence, and event bus integration. (#630)
+- **Per-Task Approval Gates** - Approval gate system (`internal/approval/`) that intercepts task transitions to require human approval before execution. Tasks with `RequiresApproval` flag pause in `TaskAwaitingApproval` state until explicitly approved or rejected. Uses decorator pattern wrapping EventQueue. (#631)
+- **Context Propagation** - Context propagation manager (`internal/contextprop/`) for sharing discoveries and warnings between instances. Adds filtered message formatting (`FormatFiltered`) to mailbox with type, time, sender, and count filters. (#632)
+- **Peer Debate Protocol** - Structured debate system (`internal/debate/`) enabling instances to challenge, defend, and resolve disagreements. Adds challenge, defense, and consensus message types to mailbox. Tracks debate rounds and publishes lifecycle events. (#633)
+- **Adaptive Lead** - Event-driven dynamic task coordinator (`internal/adaptive/`) that monitors queue events to track workload distribution across instances, generate scaling recommendations, and support task reassignment. (#634)
+- **File Conflict Prevention** - Advisory file locking registry (`internal/filelock/`) using mailbox claim/release messages to coordinate file ownership between instances. Supports scoped claims and concurrent conflict detection. (#635)
+- **Elastic Scaling** - Queue-depth-based scaling policy engine (`internal/scaling/`) with configurable thresholds, cooldown periods, and instance limits. Includes an event-driven monitor that watches queue depth changes and emits scaling decisions. (#636)
 
 ## [0.16.1] - 2026-02-05
 

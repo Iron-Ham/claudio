@@ -26,6 +26,15 @@ const (
 
 	// MessageStatus provides a progress update.
 	MessageStatus MessageType = "status"
+
+	// MessageChallenge disagrees with an approach and presents an alternative.
+	MessageChallenge MessageType = "challenge"
+
+	// MessageDefense provides evidence supporting an approach.
+	MessageDefense MessageType = "defense"
+
+	// MessageConsensus agrees with a resolution.
+	MessageConsensus MessageType = "consensus"
 )
 
 // BroadcastRecipient is the special "to" value for messages intended for all instances.
@@ -56,6 +65,9 @@ var validMessageTypes = map[MessageType]bool{
 	MessageQuestion:  true,
 	MessageAnswer:    true,
 	MessageStatus:    true,
+	MessageChallenge: true,
+	MessageDefense:   true,
+	MessageConsensus: true,
 }
 
 // ValidateMessageType returns true if the given type is a known message type.
