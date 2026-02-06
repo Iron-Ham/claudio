@@ -58,13 +58,11 @@ func (m *Mailbox) Watch(instanceID string, handler func(Message)) (cancel func()
 	var stopped atomic.Bool
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	// Take the initial snapshot synchronously so that any Send() after
+	// Watch() returns is guaranteed to be seen by the poller.
+	seen := m.countMessages(instanceID)
 
-		// Take an initial snapshot count to avoid delivering old messages.
-		seen := m.countMessages(instanceID)
-
+	wg.Go(func() {
 		for !stopped.Load() {
 			time.Sleep(m.pollInterval)
 			if stopped.Load() {
@@ -83,7 +81,7 @@ func (m *Mailbox) Watch(instanceID string, handler func(Message)) (cancel func()
 				seen = len(messages)
 			}
 		}
-	}()
+	})
 
 	return func() {
 		stopped.Store(true)

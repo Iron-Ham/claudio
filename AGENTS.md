@@ -299,6 +299,7 @@ This is not exhaustive — update it when you add or discover undocumented packa
 - `internal/contextprop/` — Context propagation between instances *(has `AGENTS.md`)*
 - `internal/debate/` — Structured peer debate protocol *(has `AGENTS.md`)*
 - `internal/event/` — Event bus and all event type definitions
+- `internal/coordination/` — Hub that wires all Orchestration 2.0 components for a session *(has `AGENTS.md`)*
 - `internal/filelock/` — Advisory file lock registry for conflict prevention *(has `AGENTS.md`)*
 - `internal/instance/` — Claude Code instance lifecycle management
 - `internal/mailbox/` — JSONL file-based inter-instance messaging *(has `AGENTS.md`)*
