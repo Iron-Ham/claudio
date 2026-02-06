@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Self-Improving AGENTS.md** - Restructured AGENTS.md into a living document with a self-improvement protocol that instructs agents to update guidelines based on their learnings. Added agent-curated sections (Architecture Map, Known Pitfalls, Codebase Patterns, Testing Notes, Build & Toolchain) seeded with knowledge from codebase review. Created directory-level AGENTS.md files for `internal/mailbox/`, `internal/taskqueue/`, and `internal/tui/` with package-specific pitfalls and patterns.
+
 ### Added
 
 - **Inter-Instance Mailbox** - File-based messaging system (`internal/mailbox/`) enabling cross-instance communication during orchestration. Supports broadcast and targeted messages with types including discovery, claim, release, warning, question, answer, and status. Includes prompt injection formatting and event bus integration. (#629)
