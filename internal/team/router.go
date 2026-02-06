@@ -103,7 +103,8 @@ func (r *Router) deliverToTeam(t *Team, msg InterTeamMessage) {
 		Body: fmt.Sprintf("[%s] %s", msg.Priority, msg.Content),
 	}
 
-	// Best-effort delivery — log errors but don't fail the route.
+	// Best-effort delivery — errors are ignored so that a single failed
+	// mailbox send does not prevent delivery to other teams in a broadcast.
 	_ = mb.Send(mbMsg)
 
 	r.bus.Publish(event.NewInterTeamMessageEvent(

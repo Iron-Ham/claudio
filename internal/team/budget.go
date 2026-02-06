@@ -7,7 +7,7 @@ import (
 )
 
 // BudgetTracker monitors resource consumption for a team.
-// It subscribes to MetricsUpdateEvent on the event bus and accumulates usage.
+// The manager accumulates usage by calling Record after mapping instances to teams.
 type BudgetTracker struct {
 	mu     sync.RWMutex
 	teamID string
@@ -26,10 +26,11 @@ func newBudgetTracker(teamID string, budget TokenBudget, bus *event.Bus) *Budget
 	}
 }
 
-// Start subscribes to MetricsUpdateEvent on the event bus.
-// Filtering by instance membership is left to the caller — the tracker
-// exposes Record for manual accumulation, and the manager's event handler
-// calls it after matching instance → team.
+// Start marks the tracker as active. Resource accumulation happens through
+// the Record method, which the manager calls after mapping instance → team.
+//
+// The manager is responsible for routing MetricsUpdateEvent to the correct
+// team's tracker externally; the tracker itself does not subscribe to the bus.
 func (bt *BudgetTracker) Start() {
 	bt.mu.Lock()
 	defer bt.mu.Unlock()
@@ -38,23 +39,16 @@ func (bt *BudgetTracker) Start() {
 		return // already started
 	}
 
-	bt.subID = bt.bus.Subscribe("metrics.updated", func(e event.Event) {
-		// The manager is responsible for routing MetricsUpdateEvent to the
-		// correct team's tracker via Record(). This subscription exists so
-		// the tracker can self-subscribe for direct use without a manager.
-		// In practice, the manager does the instance→team mapping externally.
-	})
+	// Mark as started with a sentinel value. No bus subscription is needed
+	// because the manager handles instance→team routing externally.
+	bt.subID = "active"
 }
 
-// Stop unsubscribes from the event bus.
+// Stop marks the tracker as inactive. It is idempotent.
 func (bt *BudgetTracker) Stop() {
 	bt.mu.Lock()
 	defer bt.mu.Unlock()
-
-	if bt.subID != "" {
-		bt.bus.Unsubscribe(bt.subID)
-		bt.subID = ""
-	}
+	bt.subID = ""
 }
 
 // Usage returns the current resource consumption.

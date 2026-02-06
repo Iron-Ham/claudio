@@ -131,21 +131,20 @@ func TestBudgetTracker_StartStop(t *testing.T) {
 	bus := event.NewBus()
 	bt := newBudgetTracker("team-1", TokenBudget{MaxInputTokens: 100}, bus)
 
-	initial := bus.SubscriptionCount()
-
+	// Start marks the tracker as active (no bus subscription needed — the
+	// manager routes events via Record externally).
 	bt.Start()
-	if bus.SubscriptionCount() <= initial {
-		t.Error("Start should add a subscription")
+
+	// Idempotent start should not panic.
+	bt.Start()
+
+	// Record should work while started.
+	bt.Record(10, 0, 0)
+	if bt.Usage().InputTokens != 10 {
+		t.Errorf("InputTokens = %d, want 10", bt.Usage().InputTokens)
 	}
 
-	// Idempotent start.
-	bt.Start()
-
+	// Stop and idempotent stop.
 	bt.Stop()
-	if bus.SubscriptionCount() != initial {
-		t.Error("Stop should remove the subscription")
-	}
-
-	// Idempotent stop.
 	bt.Stop()
 }

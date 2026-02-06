@@ -722,6 +722,69 @@ func NewTeamBudgetExhaustedEvent(teamID string, maxIn, maxOut, usedIn, usedOut i
 }
 
 // -----------------------------------------------------------------------------
+// Team Dynamic Management Events
+// -----------------------------------------------------------------------------
+
+// TeamDynamicAddedEvent is emitted when a team is dynamically added to a
+// running manager (after Start).
+type TeamDynamicAddedEvent struct {
+	baseEvent
+	TeamID   string // Unique identifier for the team
+	TeamName string // Human-readable team name
+	Phase    string // Team's initial phase (working or blocked)
+}
+
+// NewTeamDynamicAddedEvent creates a TeamDynamicAddedEvent.
+func NewTeamDynamicAddedEvent(teamID, teamName, phase string) TeamDynamicAddedEvent {
+	return TeamDynamicAddedEvent{
+		baseEvent: newBaseEvent("team.dynamic_added"),
+		TeamID:    teamID,
+		TeamName:  teamName,
+		Phase:     phase,
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Pipeline Lifecycle Events
+// -----------------------------------------------------------------------------
+
+// PipelinePhaseChangedEvent is emitted when the pipeline transitions between phases.
+type PipelinePhaseChangedEvent struct {
+	baseEvent
+	PipelineID    string // Unique identifier for the pipeline
+	PreviousPhase string // Previous phase (e.g., "planning", "execution")
+	CurrentPhase  string // New phase (e.g., "execution", "review")
+}
+
+// NewPipelinePhaseChangedEvent creates a PipelinePhaseChangedEvent.
+func NewPipelinePhaseChangedEvent(pipelineID, previousPhase, currentPhase string) PipelinePhaseChangedEvent {
+	return PipelinePhaseChangedEvent{
+		baseEvent:     newBaseEvent("pipeline.phase_changed"),
+		PipelineID:    pipelineID,
+		PreviousPhase: previousPhase,
+		CurrentPhase:  currentPhase,
+	}
+}
+
+// PipelineCompletedEvent is emitted when a pipeline finishes.
+type PipelineCompletedEvent struct {
+	baseEvent
+	PipelineID string // Unique identifier for the pipeline
+	Success    bool   // True if the pipeline completed without failures
+	PhasesRun  int    // Number of phases that were executed
+}
+
+// NewPipelineCompletedEvent creates a PipelineCompletedEvent.
+func NewPipelineCompletedEvent(pipelineID string, success bool, phasesRun int) PipelineCompletedEvent {
+	return PipelineCompletedEvent{
+		baseEvent:  newBaseEvent("pipeline.completed"),
+		PipelineID: pipelineID,
+		Success:    success,
+		PhasesRun:  phasesRun,
+	}
+}
+
+// -----------------------------------------------------------------------------
 // Inter-Team Communication Events
 // -----------------------------------------------------------------------------
 
