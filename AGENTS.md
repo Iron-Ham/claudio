@@ -306,6 +306,7 @@ This is not exhaustive — update it when you add or discover undocumented packa
 - `internal/orchestrator/` — Session coordination, instance orchestration
 - `internal/scaling/` — Queue-depth-based elastic scaling policies *(has `AGENTS.md`)*
 - `internal/taskqueue/` — Dependency-aware task queue with persistence *(has `AGENTS.md`)*
+- `internal/team/` — Multi-team orchestration with dependency ordering, budget tracking, and inter-team routing *(has `AGENTS.md`)*
 - `internal/tui/` — Bubble Tea terminal UI components *(has `AGENTS.md`)*
 - `internal/worktree/` — Git worktree creation and management
 
