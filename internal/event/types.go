@@ -857,3 +857,43 @@ func NewInterTeamMessageEvent(fromTeam, toTeam, messageType, content, priority s
 		Priority:    priority,
 	}
 }
+
+// -----------------------------------------------------------------------------
+// TripleShot Team Events
+// -----------------------------------------------------------------------------
+
+// TripleShotAttemptCompletedEvent is emitted when a tripleshot attempt finishes
+// (either successfully or with failure) in the team-based coordinator.
+type TripleShotAttemptCompletedEvent struct {
+	baseEvent
+	AttemptIndex int    // 0, 1, or 2
+	TeamID       string // Team that ran this attempt
+	Success      bool   // Whether the attempt completed successfully
+}
+
+// NewTripleShotAttemptCompletedEvent creates a TripleShotAttemptCompletedEvent.
+func NewTripleShotAttemptCompletedEvent(attemptIndex int, teamID string, success bool) TripleShotAttemptCompletedEvent {
+	return TripleShotAttemptCompletedEvent{
+		baseEvent:    newBaseEvent("tripleshot.attempt_completed"),
+		AttemptIndex: attemptIndex,
+		TeamID:       teamID,
+		Success:      success,
+	}
+}
+
+// TripleShotJudgeCompletedEvent is emitted when the tripleshot judge finishes
+// its evaluation in the team-based coordinator.
+type TripleShotJudgeCompletedEvent struct {
+	baseEvent
+	TeamID  string // Team that ran the judge
+	Success bool   // Whether the evaluation completed successfully
+}
+
+// NewTripleShotJudgeCompletedEvent creates a TripleShotJudgeCompletedEvent.
+func NewTripleShotJudgeCompletedEvent(teamID string, success bool) TripleShotJudgeCompletedEvent {
+	return TripleShotJudgeCompletedEvent{
+		baseEvent: newBaseEvent("tripleshot.judge_completed"),
+		TeamID:    teamID,
+		Success:   success,
+	}
+}
