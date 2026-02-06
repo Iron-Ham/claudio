@@ -1,0 +1,791 @@
+// Package teamwire connects the tripleshot workflow to the Orchestration 2.0
+// team infrastructure. It exists as a separate subpackage to break the import
+// cycle: tripleshot lives inside orchestrator/workflows/, and bridge → team →
+// coordination → ... → ultraplan → orchestrator → tripleshot would form a cycle
+// if tripleshot imported bridge directly.
+//
+// TeamCoordinator orchestrates 3 parallel attempt teams + 1 dynamically-added
+// judge team using team.Manager, with Bridge instances connecting each team to
+// real Claude Code instances.
+package teamwire
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/Iron-Ham/claudio/internal/bridge"
+	"github.com/Iron-Ham/claudio/internal/coordination"
+	"github.com/Iron-Ham/claudio/internal/event"
+	"github.com/Iron-Ham/claudio/internal/logging"
+	ts "github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
+	"github.com/Iron-Ham/claudio/internal/team"
+	"github.com/Iron-Ham/claudio/internal/ultraplan"
+)
+
+// TeamCoordinatorConfig holds required dependencies for creating a TeamCoordinator.
+type TeamCoordinatorConfig struct {
+	Orchestrator ts.OrchestratorInterface
+	BaseSession  ts.SessionInterface
+	Task         string
+	Config       ts.Config
+	Bus          *event.Bus
+	BaseDir      string
+	Logger       *logging.Logger
+
+	// HubOptions are applied to every team's Hub. Callers typically pass
+	// coordination.WithRebalanceInterval(-1) in tests.
+	HubOptions []coordination.Option
+
+	// BridgeOptions are applied to every Bridge instance.
+	BridgeOptions []bridge.Option
+}
+
+// TeamCoordinator orchestrates a team-based triple-shot session using team.Manager.
+// Three "attempt" teams run in parallel, each with one task. When all complete,
+// a "judge" team is dynamically added to evaluate the results.
+type TeamCoordinator struct {
+	mu        sync.Mutex
+	orch      ts.OrchestratorInterface
+	session   ts.SessionInterface // immutable after construction
+	bus       *event.Bus
+	logger    *logging.Logger
+	baseDir   string
+	callbacks *ts.CoordinatorCallbacks
+
+	tsManager *ts.Manager   // tripleshot session manager
+	tmManager *team.Manager // team orchestration manager
+	bridges   []*bridge.Bridge
+
+	hubOpts    []coordination.Option
+	bridgeOpts []bridge.Option
+
+	// Judge lifecycle guards
+	judgeStarted bool
+	wg           sync.WaitGroup
+
+	// Attempt tracking
+	completedAttempts int
+	attemptTeamIDs    [3]string // maps attempt index → team ID
+
+	// Event subscriptions for cleanup
+	teamCompletedSubID   string
+	bridgeStartedSubID   string
+	bridgeCompletedSubID string
+
+	started bool
+	ctx     context.Context //nolint:containedctx // stored for dynamic judge addition
+	cancel  context.CancelFunc
+}
+
+// NewTeamCoordinator creates a new team-based triple-shot coordinator.
+func NewTeamCoordinator(cfg TeamCoordinatorConfig) (*TeamCoordinator, error) {
+	if cfg.Orchestrator == nil {
+		return nil, fmt.Errorf("teamcoordinator: Orchestrator is required")
+	}
+	if cfg.BaseSession == nil {
+		return nil, fmt.Errorf("teamcoordinator: BaseSession is required")
+	}
+	if cfg.Bus == nil {
+		return nil, fmt.Errorf("teamcoordinator: Bus is required")
+	}
+	if cfg.BaseDir == "" {
+		return nil, fmt.Errorf("teamcoordinator: BaseDir is required")
+	}
+	if cfg.Task == "" {
+		return nil, fmt.Errorf("teamcoordinator: Task is required")
+	}
+
+	logger := cfg.Logger
+	if logger == nil {
+		logger = logging.NopLogger()
+	}
+
+	tsSession := ts.NewSession(cfg.Task, cfg.Config)
+	tsManager := ts.NewManager(tsSession, logger)
+
+	return &TeamCoordinator{
+		orch:       cfg.Orchestrator,
+		session:    cfg.BaseSession,
+		bus:        cfg.Bus,
+		baseDir:    cfg.BaseDir,
+		logger:     logger.WithPhase("tripleshot-team"),
+		tsManager:  tsManager,
+		hubOpts:    cfg.HubOptions,
+		bridgeOpts: cfg.BridgeOptions,
+	}, nil
+}
+
+// Session returns the triple-shot session.
+func (tc *TeamCoordinator) Session() *ts.Session {
+	return tc.tsManager.Session()
+}
+
+// SetCallbacks sets the coordinator callbacks.
+func (tc *TeamCoordinator) SetCallbacks(cb *ts.CoordinatorCallbacks) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	tc.callbacks = cb
+}
+
+// Start begins the team-based triple-shot execution. It creates a team.Manager
+// with 3 attempt teams, starts it, and creates a Bridge per attempt team.
+//
+// Uses a two-phase approach: register everything under the lock, then release
+// the lock before starting bridges. Bridge.Start triggers a claim loop that
+// publishes BridgeTaskStartedEvent, which fires onBridgeTaskStarted inline
+// (synchronous event bus). If Start held tc.mu through that chain,
+// onBridgeTaskStarted would deadlock trying to acquire it.
+func (tc *TeamCoordinator) Start(ctx context.Context) error {
+	// Phase 1: Register all state under the lock.
+	mgr, err := tc.registerStart(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Phase 2: Start bridges outside the lock. Bridge.Start triggers the
+	// claim loop, which publishes events that our handlers process. Those
+	// handlers acquire tc.mu, so we must not hold it here.
+	factory := newAttemptFactory(tc.orch, tc.session)
+	checker := newAttemptCompletionChecker()
+
+	for i := range 3 {
+		teamID := tc.attemptTeamIDs[i]
+		t := mgr.Team(teamID)
+		if t == nil { // Coverage: defensive — Team() returns nil if concurrent Stop() clears state.
+			tc.mu.Lock()
+			tc.unsubscribeEvents()
+			tc.cancel()
+			tc.started = false
+			tc.mu.Unlock()
+			return fmt.Errorf("teamcoordinator: team %q not found after AddTeam", teamID)
+		}
+
+		recorder := tc.buildAttemptRecorder(i)
+		b := bridge.New(t, factory, checker, recorder, tc.bus, tc.bridgeOpts...)
+		if err := b.Start(tc.ctx); err != nil { // Coverage: Bridge.Start only fails if already started.
+			tc.mu.Lock()
+			tc.unsubscribeEvents()
+			tc.cancel()
+			tc.started = false
+			tc.mu.Unlock()
+			return fmt.Errorf("teamcoordinator: start bridge for %q: %w", teamID, err)
+		}
+
+		tc.mu.Lock()
+		tc.bridges = append(tc.bridges, b)
+		tc.mu.Unlock()
+	}
+
+	tc.tsManager.SetPhase(ts.PhaseWorking)
+	tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+		if cb.OnPhaseChange != nil {
+			cb.OnPhaseChange(ts.PhaseWorking)
+		}
+	})
+
+	tc.logger.Info("team coordinator started",
+		"session_id", tc.tsManager.Session().ID,
+		"attempt_teams", 3,
+	)
+
+	return nil
+}
+
+// registerStart handles Phase 1 of Start: validates, creates the manager and
+// teams, subscribes to events, starts the manager, and marks started. Returns
+// the manager for Phase 2 (bridge creation). Holds and releases tc.mu internally.
+func (tc *TeamCoordinator) registerStart(ctx context.Context) (*team.Manager, error) {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	if tc.started {
+		return nil, fmt.Errorf("teamcoordinator: already started")
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	tc.ctx = ctx
+	tc.cancel = cancel
+
+	session := tc.tsManager.Session()
+	now := time.Now()
+	session.StartedAt = &now
+
+	mgr, err := team.NewManager(team.ManagerConfig{
+		Bus:     tc.bus,
+		BaseDir: tc.baseDir,
+	}, team.WithHubOptions(tc.hubOpts...))
+	if err != nil { // Coverage: NewManager only fails if Bus is nil, which we validate in NewTeamCoordinator.
+		cancel()
+		return nil, fmt.Errorf("teamcoordinator: create manager: %w", err)
+	}
+	tc.tmManager = mgr
+
+	for i := range 3 {
+		teamID := fmt.Sprintf("attempt-%d", i)
+		tc.attemptTeamIDs[i] = teamID
+
+		prompt := fmt.Sprintf(ts.AttemptPromptTemplate, session.Task, i)
+
+		spec := team.Spec{
+			ID:       teamID,
+			Name:     fmt.Sprintf("Attempt %d", i+1),
+			Role:     team.RoleExecution,
+			TeamSize: 1,
+			Tasks: []ultraplan.PlannedTask{
+				{
+					ID:          fmt.Sprintf("attempt-%d-task", i),
+					Title:       fmt.Sprintf("Attempt %d", i+1),
+					Description: prompt,
+				},
+			},
+		}
+		if err := mgr.AddTeam(spec); err != nil { // Coverage: AddTeam fails on duplicate IDs or after Start; neither applies here.
+			cancel()
+			return nil, fmt.Errorf("teamcoordinator: add attempt team %d: %w", i, err)
+		}
+	}
+
+	tc.subscribeEvents()
+
+	if err := mgr.Start(ctx); err != nil {
+		tc.unsubscribeEvents()
+		cancel()
+		return nil, fmt.Errorf("teamcoordinator: start manager: %w", err)
+	}
+
+	tc.started = true
+	return mgr, nil
+}
+
+// Stop stops all bridges and the team manager. Safe to call multiple times.
+func (tc *TeamCoordinator) Stop() {
+	tc.mu.Lock()
+	if !tc.started {
+		tc.mu.Unlock()
+		return
+	}
+
+	tc.unsubscribeEvents()
+
+	// Copy bridges under lock, then release. This follows the "release locks
+	// before blocking" pattern documented in CLAUDE.md — holding the lock
+	// through bridge.Stop() (which calls wg.Wait()) would deadlock goroutines
+	// that need tc.mu.
+	bridges := make([]*bridge.Bridge, len(tc.bridges))
+	copy(bridges, tc.bridges)
+
+	tc.cancel()
+	tc.started = false
+	tc.mu.Unlock()
+
+	// Stop bridges outside the lock.
+	for _, b := range bridges {
+		b.Stop()
+	}
+
+	// Wait for judge goroutine if in flight.
+	tc.wg.Wait()
+
+	// startJudge may have created a bridge after our initial snapshot.
+	// Re-stop all bridges to ensure nothing is orphaned.
+	// Bridge.Stop is idempotent — re-stopping is a no-op.
+	tc.mu.Lock()
+	allBridges := make([]*bridge.Bridge, len(tc.bridges))
+	copy(allBridges, tc.bridges)
+	tc.mu.Unlock()
+	for _, b := range allBridges {
+		b.Stop()
+	}
+
+	// Stop the team manager.
+	if tc.tmManager != nil {
+		_ = tc.tmManager.Stop()
+	}
+}
+
+// subscribeEvents sets up event bus subscriptions. Must be called with tc.mu held.
+func (tc *TeamCoordinator) subscribeEvents() {
+	tc.teamCompletedSubID = tc.bus.Subscribe("team.completed", func(e event.Event) {
+		tce, ok := e.(event.TeamCompletedEvent)
+		if !ok { // Coverage: Bus dispatches typed events; assertion can't fail in practice.
+			return
+		}
+		tc.onTeamCompleted(tce)
+	})
+
+	tc.bridgeStartedSubID = tc.bus.Subscribe("bridge.task_started", func(e event.Event) {
+		bse, ok := e.(event.BridgeTaskStartedEvent)
+		if !ok { // Coverage: Bus dispatches typed events; assertion can't fail in practice.
+			return
+		}
+		tc.onBridgeTaskStarted(bse)
+	})
+
+	tc.bridgeCompletedSubID = tc.bus.Subscribe("bridge.task_completed", func(e event.Event) {
+		bce, ok := e.(event.BridgeTaskCompletedEvent)
+		if !ok { // Coverage: Bus dispatches typed events; assertion can't fail in practice.
+			return
+		}
+		tc.onBridgeTaskCompleted(bce)
+	})
+}
+
+// unsubscribeEvents removes event bus subscriptions. Must be called with tc.mu held.
+func (tc *TeamCoordinator) unsubscribeEvents() {
+	if tc.teamCompletedSubID != "" {
+		tc.bus.Unsubscribe(tc.teamCompletedSubID)
+		tc.teamCompletedSubID = ""
+	}
+	if tc.bridgeStartedSubID != "" {
+		tc.bus.Unsubscribe(tc.bridgeStartedSubID)
+		tc.bridgeStartedSubID = ""
+	}
+	if tc.bridgeCompletedSubID != "" {
+		tc.bus.Unsubscribe(tc.bridgeCompletedSubID)
+		tc.bridgeCompletedSubID = ""
+	}
+}
+
+// onTeamCompleted handles team.completed events. When all 3 attempt teams
+// are done, it dispatches the judge startup to a goroutine to avoid deadlock
+// with the synchronous event bus.
+func (tc *TeamCoordinator) onTeamCompleted(tce event.TeamCompletedEvent) {
+	tc.mu.Lock()
+	if !tc.started {
+		tc.mu.Unlock()
+		return
+	}
+
+	// Only count attempt teams (not the judge team).
+	attemptIndex := -1
+	for i, id := range tc.attemptTeamIDs {
+		if tce.TeamID == id {
+			attemptIndex = i
+			break
+		}
+	}
+	if attemptIndex < 0 {
+		tc.mu.Unlock()
+		return
+	}
+
+	tc.completedAttempts++
+	if tc.completedAttempts > 3 {
+		// Duplicate event — all attempts already counted.
+		tc.mu.Unlock()
+		return
+	}
+	completed := tc.completedAttempts
+
+	tc.logger.Info("attempt team completed",
+		"team_id", tce.TeamID,
+		"attempt_index", attemptIndex,
+		"success", tce.Success,
+		"completed_count", completed,
+	)
+
+	// Publish tripleshot-specific event outside the lock.
+	tc.mu.Unlock()
+	tc.bus.Publish(event.NewTripleShotAttemptCompletedEvent(attemptIndex, tce.TeamID, tce.Success))
+
+	if completed == 3 {
+		tc.mu.Lock()
+		if tc.judgeStarted || !tc.started {
+			tc.mu.Unlock()
+			return
+		}
+		tc.judgeStarted = true
+		tc.wg.Add(1)
+		tc.mu.Unlock()
+
+		// Dispatch to goroutine to avoid deadlock with synchronous event bus.
+		go func() {
+			defer tc.wg.Done()
+			tc.startJudge()
+		}()
+	}
+}
+
+// onBridgeTaskStarted fires OnAttemptStart or OnJudgeStart callbacks.
+func (tc *TeamCoordinator) onBridgeTaskStarted(bse event.BridgeTaskStartedEvent) {
+	tc.mu.Lock()
+	if !tc.started {
+		tc.mu.Unlock()
+		return
+	}
+
+	for i, id := range tc.attemptTeamIDs {
+		if bse.TeamID == id {
+			session := tc.tsManager.Session()
+			session.Attempts[i].InstanceID = bse.InstanceID
+			session.Attempts[i].Status = ts.AttemptStatusWorking
+			now := time.Now()
+			session.Attempts[i].StartedAt = &now
+			tc.mu.Unlock()
+
+			tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+				if cb.OnAttemptStart != nil {
+					cb.OnAttemptStart(i, bse.InstanceID)
+				}
+			})
+			return
+		}
+	}
+
+	// Must be the judge team.
+	tc.mu.Unlock()
+	tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+		if cb.OnJudgeStart != nil {
+			cb.OnJudgeStart(bse.InstanceID)
+		}
+	})
+}
+
+// onBridgeTaskCompleted fires attempt/judge completion callbacks.
+func (tc *TeamCoordinator) onBridgeTaskCompleted(bce event.BridgeTaskCompletedEvent) {
+	tc.mu.Lock()
+	if !tc.started {
+		tc.mu.Unlock()
+		return
+	}
+
+	for i, id := range tc.attemptTeamIDs {
+		if bce.TeamID == id {
+			session := tc.tsManager.Session()
+			now := time.Now()
+			session.Attempts[i].CompletedAt = &now
+
+			if bce.Success {
+				session.Attempts[i].Status = ts.AttemptStatusCompleted
+				tc.mu.Unlock()
+				tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+					if cb.OnAttemptComplete != nil {
+						cb.OnAttemptComplete(i)
+					}
+				})
+			} else {
+				session.Attempts[i].Status = ts.AttemptStatusFailed
+				tc.mu.Unlock()
+				tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+					if cb.OnAttemptFailed != nil {
+						cb.OnAttemptFailed(i, bce.Error)
+					}
+				})
+			}
+			return
+		}
+	}
+
+	// Judge team completion.
+	tc.mu.Unlock()
+	tc.onJudgeCompleted(bce)
+}
+
+// startJudge collects attempt completion data, constructs the judge prompt,
+// dynamically adds the judge team, and creates its bridge.
+func (tc *TeamCoordinator) startJudge() {
+	tc.mu.Lock()
+	if !tc.started {
+		tc.mu.Unlock()
+		return
+	}
+	tc.mu.Unlock()
+
+	session := tc.tsManager.Session()
+
+	successCount := session.SuccessfulAttemptCount()
+	if successCount < 2 {
+		tc.logger.Warn("fewer than 2 attempts succeeded, failing",
+			"success_count", successCount,
+		)
+		tc.mu.Lock()
+		session.Error = "fewer than 2 attempts succeeded"
+		tc.tsManager.SetPhase(ts.PhaseFailed)
+		tc.mu.Unlock()
+		tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+			if cb.OnPhaseChange != nil {
+				cb.OnPhaseChange(ts.PhaseFailed)
+			}
+			if cb.OnComplete != nil {
+				cb.OnComplete(false, "fewer than 2 attempts succeeded")
+			}
+		})
+		return
+	}
+
+	tc.tsManager.EmitAllAttemptsReady()
+
+	// Build completion summaries for the judge prompt.
+	var summaries [3]string
+	for i, attempt := range session.Attempts {
+		if attempt.Status != ts.AttemptStatusCompleted {
+			summaries[i] = fmt.Sprintf("(Attempt %d failed)", i+1)
+			continue
+		}
+
+		inst := tc.session.GetInstance(attempt.InstanceID)
+		if inst == nil {
+			summaries[i] = fmt.Sprintf("(Unable to find instance %s)", attempt.InstanceID)
+			continue
+		}
+
+		completion, err := ts.ParseCompletionFile(inst.GetWorktreePath())
+		if err != nil {
+			tc.logger.Warn("failed to read completion file",
+				"attempt_index", i,
+				"error", err,
+			)
+			summaries[i] = fmt.Sprintf("(Unable to read completion file: %v)", err)
+		} else {
+			summaries[i] = fmt.Sprintf("Status: %s\nSummary: %s\nApproach: %s\nFiles Modified: %v",
+				completion.Status, completion.Summary, completion.Approach, completion.FilesModified)
+			session.Attempts[i].WorktreePath = inst.GetWorktreePath()
+			session.Attempts[i].Branch = inst.GetBranch()
+		}
+	}
+
+	judgePrompt := fmt.Sprintf(ts.JudgePromptTemplate,
+		session.Task,
+		session.Attempts[0].InstanceID, session.Attempts[0].Branch, session.Attempts[0].WorktreePath, summaries[0],
+		session.Attempts[1].InstanceID, session.Attempts[1].Branch, session.Attempts[1].WorktreePath, summaries[1],
+		session.Attempts[2].InstanceID, session.Attempts[2].Branch, session.Attempts[2].WorktreePath, summaries[2],
+	)
+
+	tc.tsManager.SetPhase(ts.PhaseEvaluating)
+	tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+		if cb.OnPhaseChange != nil {
+			cb.OnPhaseChange(ts.PhaseEvaluating)
+		}
+	})
+
+	// Add judge team dynamically.
+	judgeSpec := team.Spec{
+		ID:       "judge",
+		Name:     "Judge",
+		Role:     team.RoleReview,
+		TeamSize: 1,
+		DependsOn: []string{
+			tc.attemptTeamIDs[0],
+			tc.attemptTeamIDs[1],
+			tc.attemptTeamIDs[2],
+		},
+		Tasks: []ultraplan.PlannedTask{
+			{
+				ID:          "judge-task",
+				Title:       "Evaluate Solutions",
+				Description: judgePrompt,
+			},
+		},
+	}
+
+	// Coverage: AddTeamDynamic fails if manager is stopped or context is cancelled;
+	// both require tight timing that's impractical to test deterministically.
+	if err := tc.tmManager.AddTeamDynamic(tc.ctx, judgeSpec); err != nil {
+		tc.logger.Error("failed to add judge team", "error", err)
+		tc.mu.Lock()
+		session.Error = fmt.Sprintf("failed to add judge team: %v", err)
+		tc.tsManager.SetPhase(ts.PhaseFailed)
+		tc.mu.Unlock()
+		tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+			if cb.OnPhaseChange != nil {
+				cb.OnPhaseChange(ts.PhaseFailed)
+			}
+			if cb.OnComplete != nil {
+				cb.OnComplete(false, session.Error)
+			}
+		})
+		return
+	}
+
+	// Create and start bridge for judge team.
+	judgeTeam := tc.tmManager.Team("judge")
+	if judgeTeam == nil { // Coverage: defensive — Team() can't return nil for IDs we just AddTeamDynamic'd.
+		tc.logger.Error("judge team not found after AddTeamDynamic")
+		tc.mu.Lock()
+		session.Error = "judge team not found after AddTeamDynamic"
+		tc.tsManager.SetPhase(ts.PhaseFailed)
+		tc.mu.Unlock()
+		tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+			if cb.OnPhaseChange != nil {
+				cb.OnPhaseChange(ts.PhaseFailed)
+			}
+			if cb.OnComplete != nil {
+				cb.OnComplete(false, session.Error)
+			}
+		})
+		return
+	}
+
+	factory := newAttemptFactory(tc.orch, tc.session)
+	checker := newJudgeCompletionChecker()
+	recorder := tc.buildJudgeRecorder()
+
+	b := bridge.New(judgeTeam, factory, checker, recorder, tc.bus, tc.bridgeOpts...)
+	if err := b.Start(tc.ctx); err != nil { // Coverage: Bridge.Start only fails if already started.
+		tc.logger.Error("failed to start judge bridge", "error", err)
+		tc.mu.Lock()
+		session.Error = fmt.Sprintf("failed to start judge bridge: %v", err)
+		tc.tsManager.SetPhase(ts.PhaseFailed)
+		tc.mu.Unlock()
+		tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+			if cb.OnPhaseChange != nil {
+				cb.OnPhaseChange(ts.PhaseFailed)
+			}
+			if cb.OnComplete != nil {
+				cb.OnComplete(false, session.Error)
+			}
+		})
+		return
+	}
+
+	tc.mu.Lock()
+	tc.bridges = append(tc.bridges, b)
+	tc.mu.Unlock()
+
+	tc.logger.Info("judge team added and bridge started")
+}
+
+// onJudgeCompleted handles the judge task completion.
+func (tc *TeamCoordinator) onJudgeCompleted(bce event.BridgeTaskCompletedEvent) {
+	session := tc.tsManager.Session()
+
+	if !bce.Success {
+		tc.failJudge(session, bce.TeamID, fmt.Sprintf("judge failed: %s", bce.Error))
+		return
+	}
+
+	judgeInst := tc.session.GetInstance(bce.InstanceID)
+	if judgeInst == nil {
+		tc.logger.Error("judge instance not found", "instance_id", bce.InstanceID)
+		tc.failJudge(session, bce.TeamID, "judge instance not found")
+		return
+	}
+
+	evaluation, err := ts.ParseEvaluationFile(judgeInst.GetWorktreePath())
+	if err != nil {
+		tc.failJudge(session, bce.TeamID, fmt.Sprintf("failed to parse evaluation: %v", err))
+		return
+	}
+
+	// Hold tc.mu for session mutations to synchronize with GetWinningBranch.
+	tc.mu.Lock()
+	session.JudgeID = bce.InstanceID
+	now := time.Now()
+	session.CompletedAt = &now
+	tc.tsManager.SetEvaluation(evaluation)
+	tc.tsManager.SetPhase(ts.PhaseComplete)
+	tc.mu.Unlock()
+
+	summary := fmt.Sprintf("Strategy: %s. Reasoning: %s", evaluation.MergeStrategy, evaluation.Reasoning)
+	if evaluation.MergeStrategy == ts.MergeStrategySelect &&
+		evaluation.WinnerIndex >= 0 && evaluation.WinnerIndex < 3 {
+		winner := session.Attempts[evaluation.WinnerIndex]
+		summary = fmt.Sprintf("Selected attempt %d (branch: %s). Reasoning: %s",
+			evaluation.WinnerIndex+1, winner.Branch, evaluation.Reasoning)
+	}
+
+	tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+		if cb.OnEvaluationReady != nil {
+			cb.OnEvaluationReady(evaluation)
+		}
+		if cb.OnPhaseChange != nil {
+			cb.OnPhaseChange(ts.PhaseComplete)
+		}
+		if cb.OnComplete != nil {
+			cb.OnComplete(true, summary)
+		}
+	})
+
+	tc.bus.Publish(event.NewTripleShotJudgeCompletedEvent(bce.TeamID, true))
+}
+
+// failJudge sets the session error, transitions to PhaseFailed, fires callbacks,
+// and publishes TripleShotJudgeCompletedEvent. Used by onJudgeCompleted for all
+// failure paths to ensure consistent behavior.
+func (tc *TeamCoordinator) failJudge(session *ts.Session, teamID, reason string) {
+	tc.mu.Lock()
+	session.Error = reason
+	tc.tsManager.SetPhase(ts.PhaseFailed)
+	tc.mu.Unlock()
+	tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+		if cb.OnPhaseChange != nil {
+			cb.OnPhaseChange(ts.PhaseFailed)
+		}
+		if cb.OnComplete != nil {
+			cb.OnComplete(false, reason)
+		}
+	})
+	tc.bus.Publish(event.NewTripleShotJudgeCompletedEvent(teamID, false))
+}
+
+// buildAttemptRecorder creates a SessionRecorder for an attempt team.
+func (tc *TeamCoordinator) buildAttemptRecorder(attemptIndex int) bridge.SessionRecorder {
+	return newSessionRecorder(sessionRecorderDeps{
+		OnAssign: func(_, instanceID string) {
+			tc.logger.Debug("attempt task assigned",
+				"attempt_index", attemptIndex,
+				"instance_id", instanceID,
+			)
+		},
+		OnComplete: func(taskID string, _ int) {
+			tc.logger.Info("attempt task completed",
+				"attempt_index", attemptIndex,
+				"task_id", taskID,
+			)
+		},
+		OnFailure: func(taskID, reason string) {
+			tc.logger.Warn("attempt task failed",
+				"attempt_index", attemptIndex,
+				"task_id", taskID,
+				"reason", reason,
+			)
+		},
+	})
+}
+
+// buildJudgeRecorder creates a SessionRecorder for the judge team.
+func (tc *TeamCoordinator) buildJudgeRecorder() bridge.SessionRecorder {
+	return newSessionRecorder(sessionRecorderDeps{
+		OnAssign: func(_, instanceID string) {
+			tc.logger.Debug("judge task assigned", "instance_id", instanceID)
+		},
+		OnComplete: func(taskID string, _ int) {
+			tc.logger.Info("judge task completed", "task_id", taskID)
+		},
+		OnFailure: func(taskID, reason string) {
+			tc.logger.Warn("judge task failed", "task_id", taskID, "reason", reason)
+		},
+	})
+}
+
+// notifyCallbacks invokes the callback function with the current callbacks.
+func (tc *TeamCoordinator) notifyCallbacks(fn func(*ts.CoordinatorCallbacks)) {
+	tc.mu.Lock()
+	cb := tc.callbacks
+	tc.mu.Unlock()
+	if cb != nil {
+		fn(cb)
+	}
+}
+
+// GetWinningBranch returns the branch name of the winning solution.
+// Returns empty string if evaluation is not complete or strategy is not select.
+// Holds tc.mu to synchronize with session mutations in onJudgeCompleted/failJudge.
+func (tc *TeamCoordinator) GetWinningBranch() string {
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	session := tc.tsManager.Session()
+	if session.Evaluation == nil {
+		return ""
+	}
+	if session.Evaluation.MergeStrategy != ts.MergeStrategySelect {
+		return ""
+	}
+	if session.Evaluation.WinnerIndex < 0 || session.Evaluation.WinnerIndex >= 3 {
+		return ""
+	}
+	return session.Attempts[session.Evaluation.WinnerIndex].Branch
+}
