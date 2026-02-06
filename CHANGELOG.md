@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Manager.Stop() Deadlock** - Fixed deadlock in `team.Manager.Stop()` where holding the mutex through `wg.Wait()` blocked `monitorTeamCompletion` from publishing `TeamCompletedEvent` (which triggered `onTeamCompleted` inline, requiring the same mutex). Stop now releases the lock before waiting for goroutines, with a `started=false` guard to ensure racing handlers bail out. (#651)
 - **Mailbox Watch Race** - Fixed goroutine scheduling race in `mailbox.Watch()` where the initial message snapshot was taken inside the goroutine, allowing messages sent immediately after `Watch()` returns to be missed. Snapshot is now taken synchronously before the goroutine launches.
 
 ### Added

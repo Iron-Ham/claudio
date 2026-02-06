@@ -777,20 +777,6 @@ func TestBridge_MaxCheckErrorsFailsTask(t *testing.T) {
 		t.Fatalf("SetMaxRetries: %v", err)
 	}
 
-	// Subscribe to team completion early. When the task permanently fails,
-	// monitorTeamCompletion publishes TeamCompletedEvent inline (which calls
-	// onTeamCompleted, acquiring Manager.mu). We must wait for that to finish
-	// before Manager.Stop runs during cleanup, since Stop holds Manager.mu
-	// through wg.Wait — creating a deadlock if the monitor hasn't exited yet.
-	teamDone := make(chan struct{}, 1)
-	teamDoneSub := bus.Subscribe("team.completed", func(_ event.Event) {
-		select {
-		case teamDone <- struct{}{}:
-		default:
-		}
-	})
-	defer bus.Unsubscribe(teamDoneSub)
-
 	factory := newMockFactory()
 
 	// Use a signaling recorder so we can wait for RecordFailure before stopping.
@@ -823,13 +809,6 @@ func TestBridge_MaxCheckErrorsFailsTask(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for recorder failure")
-	}
-
-	// Wait for team completion so monitorTeamCompletion finishes before cleanup.
-	select {
-	case <-teamDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for team completion")
 	}
 
 	// Running map should be empty.

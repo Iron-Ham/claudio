@@ -51,5 +51,4 @@ These interfaces are implemented by adapters in `internal/orchestrator/bridgewir
 - Event assertions use `waitForEvent` with channel + timeout, not `time.Sleep`.
 - For error-path tests where the task becomes terminal (e.g., `CreateInstanceError`), use `stopWithTimeout` — the claim loop exits via `IsComplete()` once the task fails, so `Stop()` returns without needing a separate event.
 - For tests that need to observe side effects before stopping (e.g., recorder signals), use a `signalingRecorder` that sends on a channel. Don't call `Stop()` before the signal — `Stop()` cancels the context, which races with the monitor.
-- **Wait for team completion before cleanup** — When a task reaches terminal state, the team Manager's `monitorTeamCompletion` goroutine publishes `TeamCompletedEvent` inline (which calls `onTeamCompleted`, acquiring `Manager.mu`). If `Manager.Stop()` runs during test cleanup before this finishes, it deadlocks (Stop holds `m.mu` through `wg.Wait()`). Subscribe to `team.completed` early and wait on it before the test ends. See `TestBridge_MaxCheckErrorsFailsTask` for the pattern.
 - Always run with `-race` — the bridge has concurrent goroutines.

@@ -251,19 +251,22 @@ func (m *Manager) Start(ctx context.Context) error {
 // Stop stops all teams and the manager. It is idempotent.
 func (m *Manager) Stop() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if !m.started {
+		m.mu.Unlock()
 		return nil
 	}
 
-	// Unsubscribe from completion events.
+	// Unsubscribe from completion events so new publishes won't trigger
+	// onTeamCompleted. (A publish already in-flight may still call the
+	// handler from its copied snapshot — setting started=false below
+	// ensures the handler bails out.)
 	if m.completionSubID != "" {
 		m.bus.Unsubscribe(m.completionSubID)
 		m.completionSubID = ""
 	}
 
-	// Cancel context to signal all teams.
+	// Cancel context to signal all monitor goroutines.
 	m.cancel()
 
 	// Stop all hubs and budget trackers.
@@ -273,8 +276,16 @@ func (m *Manager) Stop() error {
 		t.budget.Stop()
 	}
 
-	m.wg.Wait()
+	// Mark stopped before releasing the lock so any racing onTeamCompleted
+	// handler sees started=false and returns immediately.
 	m.started = false
+	m.mu.Unlock()
+
+	// Wait for monitor goroutines outside the lock. The old code held m.mu
+	// through wg.Wait(), which deadlocked when monitorTeamCompletion
+	// published TeamCompletedEvent (triggering onTeamCompleted inline,
+	// which tried to acquire m.mu).
+	m.wg.Wait()
 	return nil
 }
 
