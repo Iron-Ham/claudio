@@ -630,3 +630,182 @@ func NewTaskReassignedEvent(taskID, fromInstance, toInstance, reason string) Tas
 		Reason:       reason,
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Team Lifecycle Events (Multi-Team Orchestration)
+// -----------------------------------------------------------------------------
+
+// TeamCreatedEvent is emitted when a new team is added to the manager.
+type TeamCreatedEvent struct {
+	baseEvent
+	TeamID   string // Unique identifier for the team
+	TeamName string // Human-readable team name
+	TeamRole string // Team's role (execution, planning, review, consolidation)
+}
+
+// NewTeamCreatedEvent creates a TeamCreatedEvent.
+func NewTeamCreatedEvent(teamID, teamName, teamRole string) TeamCreatedEvent {
+	return TeamCreatedEvent{
+		baseEvent: newBaseEvent("team.created"),
+		TeamID:    teamID,
+		TeamName:  teamName,
+		TeamRole:  teamRole,
+	}
+}
+
+// TeamPhaseChangedEvent is emitted when a team transitions between phases.
+type TeamPhaseChangedEvent struct {
+	baseEvent
+	TeamID        string // Unique identifier for the team
+	TeamName      string // Human-readable team name
+	PreviousPhase string // Previous phase (e.g., "forming", "blocked")
+	CurrentPhase  string // New phase (e.g., "working", "done")
+}
+
+// NewTeamPhaseChangedEvent creates a TeamPhaseChangedEvent.
+func NewTeamPhaseChangedEvent(teamID, teamName, previousPhase, currentPhase string) TeamPhaseChangedEvent {
+	return TeamPhaseChangedEvent{
+		baseEvent:     newBaseEvent("team.phase_changed"),
+		TeamID:        teamID,
+		TeamName:      teamName,
+		PreviousPhase: previousPhase,
+		CurrentPhase:  currentPhase,
+	}
+}
+
+// TeamCompletedEvent is emitted when a team finishes all its work.
+type TeamCompletedEvent struct {
+	baseEvent
+	TeamID      string // Unique identifier for the team
+	TeamName    string // Human-readable team name
+	Success     bool   // True if the team completed without failures
+	TasksDone   int    // Number of tasks completed successfully
+	TasksFailed int    // Number of tasks that failed
+}
+
+// NewTeamCompletedEvent creates a TeamCompletedEvent.
+func NewTeamCompletedEvent(teamID, teamName string, success bool, tasksDone, tasksFailed int) TeamCompletedEvent {
+	return TeamCompletedEvent{
+		baseEvent:   newBaseEvent("team.completed"),
+		TeamID:      teamID,
+		TeamName:    teamName,
+		Success:     success,
+		TasksDone:   tasksDone,
+		TasksFailed: tasksFailed,
+	}
+}
+
+// TeamBudgetExhaustedEvent is emitted when a team exhausts its token budget.
+type TeamBudgetExhaustedEvent struct {
+	baseEvent
+	TeamID          string  // Unique identifier for the team
+	MaxInputTokens  int64   // Configured input token limit
+	MaxOutputTokens int64   // Configured output token limit
+	MaxTotalCost    float64 // Configured cost limit (USD)
+	UsedInput       int64   // Actual input tokens consumed
+	UsedOutput      int64   // Actual output tokens consumed
+	UsedCost        float64 // Actual cost consumed (USD)
+}
+
+// NewTeamBudgetExhaustedEvent creates a TeamBudgetExhaustedEvent.
+func NewTeamBudgetExhaustedEvent(teamID string, maxIn, maxOut, usedIn, usedOut int64, maxCost, usedCost float64) TeamBudgetExhaustedEvent {
+	return TeamBudgetExhaustedEvent{
+		baseEvent:       newBaseEvent("team.budget_exhausted"),
+		TeamID:          teamID,
+		MaxInputTokens:  maxIn,
+		MaxOutputTokens: maxOut,
+		MaxTotalCost:    maxCost,
+		UsedInput:       usedIn,
+		UsedOutput:      usedOut,
+		UsedCost:        usedCost,
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Team Dynamic Management Events
+// -----------------------------------------------------------------------------
+
+// TeamDynamicAddedEvent is emitted when a team is dynamically added to a
+// running manager (after Start).
+type TeamDynamicAddedEvent struct {
+	baseEvent
+	TeamID   string // Unique identifier for the team
+	TeamName string // Human-readable team name
+	Phase    string // Team's initial phase (working or blocked)
+}
+
+// NewTeamDynamicAddedEvent creates a TeamDynamicAddedEvent.
+func NewTeamDynamicAddedEvent(teamID, teamName, phase string) TeamDynamicAddedEvent {
+	return TeamDynamicAddedEvent{
+		baseEvent: newBaseEvent("team.dynamic_added"),
+		TeamID:    teamID,
+		TeamName:  teamName,
+		Phase:     phase,
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Pipeline Lifecycle Events
+// -----------------------------------------------------------------------------
+
+// PipelinePhaseChangedEvent is emitted when the pipeline transitions between phases.
+type PipelinePhaseChangedEvent struct {
+	baseEvent
+	PipelineID    string // Unique identifier for the pipeline
+	PreviousPhase string // Previous phase (e.g., "planning", "execution")
+	CurrentPhase  string // New phase (e.g., "execution", "review")
+}
+
+// NewPipelinePhaseChangedEvent creates a PipelinePhaseChangedEvent.
+func NewPipelinePhaseChangedEvent(pipelineID, previousPhase, currentPhase string) PipelinePhaseChangedEvent {
+	return PipelinePhaseChangedEvent{
+		baseEvent:     newBaseEvent("pipeline.phase_changed"),
+		PipelineID:    pipelineID,
+		PreviousPhase: previousPhase,
+		CurrentPhase:  currentPhase,
+	}
+}
+
+// PipelineCompletedEvent is emitted when a pipeline finishes.
+type PipelineCompletedEvent struct {
+	baseEvent
+	PipelineID string // Unique identifier for the pipeline
+	Success    bool   // True if the pipeline completed without failures
+	PhasesRun  int    // Number of phases that were executed
+}
+
+// NewPipelineCompletedEvent creates a PipelineCompletedEvent.
+func NewPipelineCompletedEvent(pipelineID string, success bool, phasesRun int) PipelineCompletedEvent {
+	return PipelineCompletedEvent{
+		baseEvent:  newBaseEvent("pipeline.completed"),
+		PipelineID: pipelineID,
+		Success:    success,
+		PhasesRun:  phasesRun,
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Inter-Team Communication Events
+// -----------------------------------------------------------------------------
+
+// InterTeamMessageEvent is emitted when a message is routed between teams.
+type InterTeamMessageEvent struct {
+	baseEvent
+	FromTeam    string // Source team ID
+	ToTeam      string // Destination team ID or "broadcast"
+	MessageType string // Message category (discovery, dependency, warning, request)
+	Content     string // Message content
+	Priority    string // Message priority (info, important, urgent)
+}
+
+// NewInterTeamMessageEvent creates an InterTeamMessageEvent.
+func NewInterTeamMessageEvent(fromTeam, toTeam, messageType, content, priority string) InterTeamMessageEvent {
+	return InterTeamMessageEvent{
+		baseEvent:   newBaseEvent("team.message"),
+		FromTeam:    fromTeam,
+		ToTeam:      toTeam,
+		MessageType: messageType,
+		Content:     content,
+		Priority:    priority,
+	}
+}

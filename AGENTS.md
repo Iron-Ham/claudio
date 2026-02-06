@@ -299,12 +299,15 @@ This is not exhaustive — update it when you add or discover undocumented packa
 - `internal/contextprop/` — Context propagation between instances *(has `AGENTS.md`)*
 - `internal/debate/` — Structured peer debate protocol *(has `AGENTS.md`)*
 - `internal/event/` — Event bus and all event type definitions
+- `internal/coordination/` — Hub that wires all Orchestration 2.0 components for a session *(has `AGENTS.md`)*
 - `internal/filelock/` — Advisory file lock registry for conflict prevention *(has `AGENTS.md`)*
 - `internal/instance/` — Claude Code instance lifecycle management
 - `internal/mailbox/` — JSONL file-based inter-instance messaging *(has `AGENTS.md`)*
 - `internal/orchestrator/` — Session coordination, instance orchestration
 - `internal/scaling/` — Queue-depth-based elastic scaling policies *(has `AGENTS.md`)*
 - `internal/taskqueue/` — Dependency-aware task queue with persistence *(has `AGENTS.md`)*
+- `internal/team/` — Multi-team orchestration with dependency ordering, budget tracking, and inter-team routing *(has `AGENTS.md`)*
+- `internal/pipeline/` — Plan decomposer and multi-phase team pipeline *(has `AGENTS.md`)*
 - `internal/tui/` — Bubble Tea terminal UI components *(has `AGENTS.md`)*
 - `internal/worktree/` — Git worktree creation and management
 
@@ -325,6 +328,8 @@ These are real issues agents have encountered in this codebase. Package-specific
 
 - **Map iteration ordering** — Go map iteration is non-deterministic. When output must be stable (tests, serialization, UI), sort the keys first.
 - **Mutex scope during marshaling** — `json.MarshalIndent` on a map must hold the mutex through the entire marshal, not just while copying the map. The marshal reads the map's values lazily.
+- **Synchronous event bus and lock re-entrancy** — `event.Bus.Publish` runs handlers inline in the caller's goroutine. If a handler acquires a lock that the publisher already holds, deadlock results. The `team.Manager` uses a two-phase pattern (register under lock, start outside lock) specifically to avoid this. See `internal/team/AGENTS.md` for details.
+- **Store state before publishing events** — When an event handler may look up the state you're about to set, store it first. Example: `pipeline.runPhase` stores the Manager in `p.managers[phase]` before publishing `PipelinePhaseChangedEvent`, so handlers calling `p.Manager(phase)` don't get nil.
 
 ---
 
@@ -335,6 +340,8 @@ Patterns and conventions observed in this codebase that aren't covered by the ge
 - **Error wrapping** — Use `fmt.Errorf("context: %w", err)` consistently. The context should describe what operation failed, not repeat the inner error.
 - **Constructor naming** — `NewXxx` functions return `(*Xxx, error)` when initialization can fail, or `*Xxx` when it cannot. Don't return an interface from a constructor.
 - **File organization** — Each package keeps types, logic, and tests in separate files when the package is non-trivial (e.g., `types.go`, `queue.go`, `queue_test.go`).
+- **Decorator chain** — Orchestration 2.0 builds behavior via stacked decorators: `TaskQueue → EventQueue → Gate`. Higher-level packages (`team`, `pipeline`) compose these decorators through `coordination.Hub`. When adding new orchestration behavior, consider whether it fits as a new decorator layer rather than modifying existing ones.
+- **One-Manager-per-phase** — The `pipeline` package creates a fresh `team.Manager` per pipeline phase (planning, execution, review, consolidation). This keeps event subscriptions, completion monitors, and budget tracking scoped to each phase and avoids cross-phase interference.
 
 ---
 
@@ -344,6 +351,8 @@ Testing patterns specific to this codebase, beyond the general testing guideline
 
 - **Race detector** — Always run `go test -race ./...` before committing concurrent code. The CI enforces this.
 - **Temp directories for persistence tests** — Use `t.TempDir()` for tests that exercise file-based persistence (taskqueue, mailbox). This auto-cleans on test completion.
+- **Channel-based event assertions** — For async event-driven tests, subscribe to the bus with a buffered channel and use `select` with a timeout. Never use `time.Sleep` for event synchronization. See `internal/team/manager_test.go` and `internal/pipeline/pipeline_test.go` for examples.
+- **Disable rebalance loop in team/pipeline tests** — Use `coordination.WithRebalanceInterval(-1)` when constructing Managers in tests to prevent the adaptive lead's periodic rebalance from interfering with deterministic test behavior.
 
 ---
 
