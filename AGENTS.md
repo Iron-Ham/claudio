@@ -1,5 +1,63 @@
 # Claudio Development Guidelines
 
+> **This is a living document.** Agents working on this codebase are expected to improve it.
+> See [Self-Improvement Protocol](#self-improvement-protocol) for details.
+
+## Self-Improvement Protocol
+
+### Mandate
+
+When you complete a task on this codebase, review this file (and any relevant directory-level `AGENTS.md`) and make meaningful updates based on what you learned. This is not optional — it is part of completing your work. Updates should be included in your commit alongside the code changes.
+
+### What Constitutes a Meaningful Update
+
+**DO update when you discover:**
+- A codebase pattern or convention not already documented here (add to [Codebase Patterns](#codebase-patterns))
+- A pitfall, gotcha, or subtle bug you hit or nearly hit (add to [Known Pitfalls](#known-pitfalls))
+- A new package, significant type, or architectural component (update [Architecture Map](#architecture-map))
+- A testing trick or technique specific to this codebase (add to [Testing Notes](#testing-notes))
+- A correction to something already written here that turned out to be wrong (fix it directly)
+- A dependency quirk or build/toolchain issue (add to [Build & Toolchain](#build--toolchain))
+
+**DO NOT update for:**
+- Generic Go knowledge that any Go developer would know
+- Restating what's already documented in this file
+- Trivial observations that won't help future agents
+- Speculative advice not grounded in actual experience on this codebase
+
+### How to Update
+
+1. Add entries to the appropriate section below
+2. Keep entries concise — one to two sentences, with a code reference where relevant
+3. If a section grows beyond ~15 entries, reorganize or split it
+4. If you discover something here is wrong, fix or remove it — don't leave stale knowledge
+5. Preserve the structure and heading hierarchy of this document
+
+### Directory-Scoped Guidelines
+
+When your knowledge is specific to a single package or directory, put it in that directory's `AGENTS.md` instead of here. If one already exists, update it. If not, create it. These are living documents just like this root file — the self-improvement mandate applies to all of them.
+
+**When creating a new directory-level `AGENTS.md`:**
+1. Create `AGENTS.md` in the target directory with package-specific guidance
+2. Create a `CLAUDE.md` symlink pointing to it: `ln -s AGENTS.md CLAUDE.md`
+3. Do not duplicate root-level guidelines — directory files extend, not replace, the root
+4. Follow the same quality bar and entry format as this file
+
+**When updating an existing directory-level `AGENTS.md`:**
+- Apply the same standards as updating this root file — fix stale info, add new pitfalls, update patterns
+- If you worked inside a package and learned something, check its `AGENTS.md` before you commit
+
+**When to use a directory file vs. adding here:**
+- Knowledge that only matters when working *inside* that package → directory-level `AGENTS.md`
+- Knowledge that affects how other packages *interact with* that package → root `AGENTS.md`
+- Architectural patterns that span multiple packages → root `AGENTS.md`
+
+### Quality Bar
+
+Every entry should pass this test: *"Would this save a future agent at least 5 minutes of confusion or debugging?"* If not, it's not worth adding.
+
+---
+
 ## Go Best Practices
 
 ### Code Formatting
@@ -226,12 +284,62 @@ Before committing, ensure:
 5. New code has tests with reasonable coverage
 6. **CHANGELOG.md has been updated (MANDATORY - NO EXCEPTIONS)**
 
-## Project Structure
+---
 
-- `cmd/claudio/` - Main application entry point
-- `internal/` - Private application packages
-  - `config/` - Configuration handling
-  - `instance/` - Claude instance management
-  - `orchestrator/` - Session and instance coordination
-  - `tui/` - Terminal UI components
-  - `worktree/` - Git worktree management
+## Architecture Map
+
+### Package Overview
+
+This is not exhaustive — update it when you add or discover undocumented packages. Packages with their own `AGENTS.md` are marked; check for one before working in any package.
+
+- `cmd/claudio/` — Main entry point
+- `internal/config/` — Configuration loading and validation
+- `internal/event/` — Event bus and all event type definitions
+- `internal/instance/` — Claude Code instance lifecycle management
+- `internal/mailbox/` — JSONL file-based inter-instance messaging *(has `AGENTS.md`)*
+- `internal/orchestrator/` — Session coordination, instance orchestration
+- `internal/taskqueue/` — Dependency-aware task queue with persistence *(has `AGENTS.md`)*
+- `internal/tui/` — Bubble Tea terminal UI components *(has `AGENTS.md`)*
+- `internal/worktree/` — Git worktree creation and management
+
+### Key Architectural Patterns
+
+- **Event bus** (`internal/event/`) — Decoupled communication between components. All event types live in `types.go` and embed `baseEvent`. If you add a new event type, put it there.
+- **EventQueue decorator** — `internal/taskqueue/` wraps `TaskQueue` with `EventQueue` to publish events without coupling core logic to the event bus. See `internal/taskqueue/AGENTS.md` for implementation details.
+- **Copy-on-return** — Accessor methods on shared types (e.g., `ClaimNext()`, `GetTask()`) return value copies, not pointers, to prevent data races. Maintain this pattern across packages.
+- **Atomic persistence** — File-backed state uses crash-safe write patterns. See `internal/taskqueue/AGENTS.md` and `internal/mailbox/AGENTS.md` for package-specific details.
+
+---
+
+## Known Pitfalls
+
+These are real issues agents have encountered in this codebase. Package-specific pitfalls live in directory-level `AGENTS.md` files (see `internal/mailbox/`, `internal/taskqueue/`, `internal/tui/`).
+
+- **Map iteration ordering** — Go map iteration is non-deterministic. When output must be stable (tests, serialization, UI), sort the keys first.
+- **Mutex scope during marshaling** — `json.MarshalIndent` on a map must hold the mutex through the entire marshal, not just while copying the map. The marshal reads the map's values lazily.
+
+---
+
+## Codebase Patterns
+
+Patterns and conventions observed in this codebase that aren't covered by the general guidelines above:
+
+- **Error wrapping** — Use `fmt.Errorf("context: %w", err)` consistently. The context should describe what operation failed, not repeat the inner error.
+- **Constructor naming** — `NewXxx` functions return `(*Xxx, error)` when initialization can fail, or `*Xxx` when it cannot. Don't return an interface from a constructor.
+- **File organization** — Each package keeps types, logic, and tests in separate files when the package is non-trivial (e.g., `types.go`, `queue.go`, `queue_test.go`).
+
+---
+
+## Testing Notes
+
+Testing patterns specific to this codebase, beyond the general testing guidelines above:
+
+- **Race detector** — Always run `go test -race ./...` before committing concurrent code. The CI enforces this.
+- **Temp directories for persistence tests** — Use `t.TempDir()` for tests that exercise file-based persistence (taskqueue, mailbox). This auto-cleans on test completion.
+
+---
+
+## Build & Toolchain
+
+- **Go version** — Check `go.mod` for the required Go version. Don't assume latest.
+- **golangci-lint** — Must pass with zero issues. If a linter rule seems wrong for a specific case, use a `//nolint:rulename` directive with a comment explaining why, not a blanket suppression.
