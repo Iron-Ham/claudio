@@ -684,6 +684,61 @@ func TestManager_AddTeamDynamic_InvalidSpec(t *testing.T) {
 	}
 }
 
+func TestManager_Stop_NoDeadlockWithCompletionRace(t *testing.T) {
+	m, _ := newTestManager(t,
+		WithHubOptions(coordination.WithRebalanceInterval(-1)),
+	)
+	_ = m.AddTeam(testSpec("alpha", "Alpha"))
+
+	ctx := context.Background()
+	if err := m.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Fail the task with retries disabled so it becomes terminal immediately.
+	// This triggers monitorTeamCompletion to publish TeamCompletedEvent.
+	alphaTeam := m.Team("alpha")
+	eq := alphaTeam.Hub().EventQueue()
+	tq := alphaTeam.Hub().TaskQueue()
+	task, err := eq.ClaimNext("inst-1")
+	if err != nil {
+		t.Fatalf("ClaimNext: %v", err)
+	}
+	if task == nil {
+		t.Fatal("no task to claim")
+	}
+	if err := tq.SetMaxRetries(task.ID, 0); err != nil {
+		t.Fatalf("SetMaxRetries: %v", err)
+	}
+	if err := eq.MarkRunning(task.ID); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+	if err := eq.Fail(task.ID, "trigger completion"); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+
+	// Call Stop immediately without waiting for the team.completed event.
+	// Before the fix, this could deadlock: Stop held m.mu through wg.Wait()
+	// while monitorTeamCompletion tried to acquire m.mu via onTeamCompleted.
+	done := make(chan error, 1)
+	go func() {
+		done <- m.Stop()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop deadlocked — did not return within 5 seconds")
+	}
+
+	if m.Running() {
+		t.Error("Running() = true after Stop")
+	}
+}
+
 func TestManager_AddTeamDynamic_DepsSatisfied(t *testing.T) {
 	m, bus := newTestManager(t,
 		WithHubOptions(coordination.WithRebalanceInterval(-1)),
