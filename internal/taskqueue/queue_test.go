@@ -762,6 +762,46 @@ func TestFullWorkflow(t *testing.T) {
 	}
 }
 
+func TestSetMaxRetries(t *testing.T) {
+	q := NewFromPlan(makePlan())
+
+	// Set max retries to 0 (disabling retries).
+	if err := q.SetMaxRetries("task-1", 0); err != nil {
+		t.Fatalf("SetMaxRetries: %v", err)
+	}
+	if q.tasks["task-1"].MaxRetries != 0 {
+		t.Errorf("MaxRetries = %d, want 0", q.tasks["task-1"].MaxRetries)
+	}
+
+	// Claim, run, and fail — should go directly to permanently failed.
+	task, _ := q.ClaimNext("inst-1")
+	_ = q.MarkRunning(task.ID)
+	if err := q.Fail(task.ID, "error"); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+	if q.tasks["task-1"].Status != TaskFailed {
+		t.Errorf("status = %s, want failed", q.tasks["task-1"].Status)
+	}
+}
+
+func TestSetMaxRetries_NotFound(t *testing.T) {
+	q := NewFromPlan(makePlan())
+	if err := q.SetMaxRetries("nonexistent", 0); err == nil {
+		t.Error("SetMaxRetries on nonexistent task should fail")
+	}
+}
+
+func TestSetMaxRetries_TerminalTask(t *testing.T) {
+	q := NewFromPlan(makePlan())
+	task, _ := q.ClaimNext("inst-1")
+	_ = q.MarkRunning(task.ID)
+	_, _ = q.Complete(task.ID)
+
+	if err := q.SetMaxRetries(task.ID, 5); err == nil {
+		t.Error("SetMaxRetries on completed task should fail")
+	}
+}
+
 func TestClaimNext_TimestampIsSet(t *testing.T) {
 	q := NewFromPlan(makePlan())
 	before := time.Now()
