@@ -30,6 +30,7 @@ type Manager struct {
 	order   []string // insertion order for deterministic iteration
 	router  *Router
 	started bool
+	ctx     context.Context //nolint:containedctx // stored for dynamic team addition
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	hubOpts []coordination.Option
@@ -91,10 +92,15 @@ func (m *Manager) AddTeam(spec Spec) error {
 		return fmt.Errorf("team: duplicate team ID %q", spec.ID)
 	}
 
-	// Validate dependencies reference known teams or will be added later.
-	// We defer full validation to Start.
+	// Dependency validation is deferred to Start.
+	_, err := m.buildAndRegisterTeamLocked(spec)
+	return err
+}
 
-	// Build a PlanSpec from the team's tasks.
+// buildAndRegisterTeamLocked creates a Hub, BudgetTracker, and Team from the
+// spec, registers them in the maps, and publishes a TeamCreatedEvent. Must be
+// called with m.mu held.
+func (m *Manager) buildAndRegisterTeamLocked(spec Spec) (*Team, error) {
 	plan := &ultraplan.PlanSpec{
 		ID:        fmt.Sprintf("team-%s-plan", spec.ID),
 		Objective: fmt.Sprintf("Team %s: %s", spec.Name, spec.Role),
@@ -109,18 +115,85 @@ func (m *Manager) AddTeam(spec Spec) error {
 		Plan:       plan,
 	}, m.hubOpts...)
 	if err != nil {
-		return fmt.Errorf("team: creating hub for %q: %w", spec.ID, err)
+		return nil, fmt.Errorf("team: creating hub for %q: %w", spec.ID, err)
 	}
 
 	bt := newBudgetTracker(spec.ID, spec.Budget, m.bus)
-	team := newTeam(spec, hub, bt)
+	t := newTeam(spec, hub, bt)
 
-	m.teams[spec.ID] = team
+	m.teams[spec.ID] = t
 	m.order = append(m.order, spec.ID)
 
 	m.bus.Publish(event.NewTeamCreatedEvent(spec.ID, spec.Name, string(spec.Role)))
 
+	return t, nil
+}
+
+// AddTeamDynamic adds a team to a running manager. Unlike AddTeam, this can
+// be called after Start. The new team starts immediately if all its
+// dependencies are satisfied, or enters Blocked phase otherwise.
+//
+// The context parameter is ignored — the manager uses its own context
+// (from Start) so that Stop can cancel all teams. The parameter is kept
+// for API consistency and future use.
+func (m *Manager) AddTeamDynamic(_ context.Context, spec Spec) error {
+	// Phase 1: Register the team under the write lock.
+	t, shouldStart, mctx, err := m.registerDynamicTeamLocked(spec)
+	if err != nil {
+		return err
+	}
+
+	// Phase 2: Start or block the team outside the lock. This prevents
+	// deadlock when startTeamLocked spawns monitorTeamCompletion, which
+	// publishes team.completed → onTeamCompleted tries to acquire m.mu.
+	if shouldStart {
+		m.mu.Lock()
+		m.startTeamLocked(mctx, t)
+		m.mu.Unlock()
+		m.bus.Publish(event.NewTeamDynamicAddedEvent(spec.ID, spec.Name, string(PhaseWorking)))
+	} else {
+		prev := t.setPhase(PhaseBlocked)
+		m.bus.Publish(event.NewTeamPhaseChangedEvent(
+			spec.ID, spec.Name, string(prev), string(PhaseBlocked),
+		))
+		m.bus.Publish(event.NewTeamDynamicAddedEvent(spec.ID, spec.Name, string(PhaseBlocked)))
+	}
+
 	return nil
+}
+
+// registerDynamicTeamLocked validates and registers a team, returning the team,
+// whether it should start immediately, and the manager's context. Holds and
+// releases m.mu internally.
+func (m *Manager) registerDynamicTeamLocked(spec Spec) (*Team, bool, context.Context, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.started {
+		return nil, false, nil, errors.New("team: AddTeamDynamic requires a started manager")
+	}
+
+	if err := spec.Validate(); err != nil {
+		return nil, false, nil, err
+	}
+
+	if _, exists := m.teams[spec.ID]; exists {
+		return nil, false, nil, fmt.Errorf("team: duplicate team ID %q", spec.ID)
+	}
+
+	for _, dep := range spec.DependsOn {
+		if _, exists := m.teams[dep]; !exists {
+			return nil, false, nil, fmt.Errorf("team %q depends on unknown team %q", spec.ID, dep)
+		}
+	}
+
+	t, err := m.buildAndRegisterTeamLocked(spec)
+	if err != nil {
+		return nil, false, nil, err
+	}
+
+	shouldStart := m.allDepsSatisfiedLocked(t)
+	return t, shouldStart, m.ctx, nil
 }
 
 // Start begins multi-team execution. Teams with no dependencies start
@@ -148,6 +221,7 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
+	m.ctx = ctx
 	m.cancel = cancel
 	m.started = true
 
@@ -158,22 +232,16 @@ func (m *Manager) Start(ctx context.Context) error {
 		}
 	})
 
-	// Determine and start teams with no dependencies.
+	// Start teams whose dependencies are satisfied (including those with none).
 	for _, id := range m.order {
 		t := m.teams[id]
-		if len(t.spec.DependsOn) == 0 {
+		if m.allDepsSatisfiedLocked(t) {
 			m.startTeamLocked(ctx, t)
 		} else {
-			// Check if all dependencies happen to be already satisfied (shouldn't
-			// normally happen on first start, but handles edge cases).
-			if m.allDepsSatisfiedLocked(t) {
-				m.startTeamLocked(ctx, t)
-			} else {
-				prev := t.setPhase(PhaseBlocked)
-				m.bus.Publish(event.NewTeamPhaseChangedEvent(
-					t.spec.ID, t.spec.Name, string(prev), string(PhaseBlocked),
-				))
-			}
+			prev := t.setPhase(PhaseBlocked)
+			m.bus.Publish(event.NewTeamPhaseChangedEvent(
+				t.spec.ID, t.spec.Name, string(prev), string(PhaseBlocked),
+			))
 		}
 	}
 
@@ -260,6 +328,7 @@ func (m *Manager) startTeamLocked(ctx context.Context, t *Team) {
 	t.budget.Start()
 
 	if err := t.hub.Start(ctx); err != nil {
+		t.budget.Stop()
 		t.setPhase(PhaseFailed)
 		m.bus.Publish(event.NewTeamPhaseChangedEvent(
 			t.spec.ID, t.spec.Name, string(PhaseWorking), string(PhaseFailed),
@@ -322,7 +391,8 @@ func (m *Manager) monitorTeamCompletion(ctx context.Context, t *Team) {
 }
 
 // onTeamCompleted handles the completion of a team by checking if dependent
-// teams can now start.
+// teams can now start. The completed team's ID is unused because we scan all
+// blocked teams rather than maintaining a reverse dependency index.
 func (m *Manager) onTeamCompleted(ctx context.Context, _ string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -342,15 +412,16 @@ func (m *Manager) onTeamCompleted(ctx context.Context, _ string) {
 	}
 }
 
-// allDepsSatisfiedLocked returns true if all of the team's dependencies are
-// in a terminal phase. Must be called with m.mu held.
+// allDepsSatisfiedLocked returns true if all of the team's dependencies
+// completed successfully. A failed dependency does NOT satisfy the condition —
+// dependent teams remain blocked. Must be called with m.mu held.
 func (m *Manager) allDepsSatisfiedLocked(t *Team) bool {
 	for _, dep := range t.spec.DependsOn {
 		dt, exists := m.teams[dep]
 		if !exists {
 			return false
 		}
-		if !dt.Phase().IsTerminal() {
+		if dt.Phase() != PhaseDone {
 			return false
 		}
 	}

@@ -2,6 +2,7 @@ package team
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,7 +50,7 @@ func TestNewManager_Validation(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			if !contains(err.Error(), tt.wantErr) {
+			if !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("error = %q, want containing %q", err.Error(), tt.wantErr)
 			}
 		})
@@ -105,7 +106,7 @@ func TestManager_AddTeam_DuplicateID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for duplicate ID")
 	}
-	if !contains(err.Error(), "duplicate") {
+	if !strings.Contains(err.Error(), "duplicate") {
 		t.Errorf("error = %q, want containing 'duplicate'", err.Error())
 	}
 }
@@ -228,7 +229,7 @@ func TestManager_Start_UnknownDependency(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown dependency")
 	}
-	if !contains(err.Error(), "unknown team") {
+	if !strings.Contains(err.Error(), "unknown team") {
 		t.Errorf("error = %q, want containing 'unknown team'", err.Error())
 	}
 }
@@ -469,4 +470,271 @@ func TestManager_DependencyCascade(t *testing.T) {
 
 	// Gamma should now unblock and start working.
 	waitForTeamPhase("gamma", PhaseWorking)
+}
+
+func TestManager_FailedDependencyBlocksDependent(t *testing.T) {
+	m, bus := newTestManager(t,
+		WithHubOptions(coordination.WithRebalanceInterval(-1)),
+	)
+
+	// Beta depends on Alpha.
+	_ = m.AddTeam(testSpec("alpha", "Alpha"))
+	_ = m.AddTeam(testSpec("beta", "Beta", "alpha"))
+
+	phaseChanges := make(chan event.Event, 30)
+	bus.Subscribe("team.phase_changed", func(e event.Event) {
+		phaseChanges <- e
+	})
+
+	ctx := context.Background()
+	if err := m.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = m.Stop() }()
+
+	waitForTeamPhase := func(teamID string, want Phase) {
+		t.Helper()
+		timeout := time.After(2 * time.Second)
+		for {
+			select {
+			case e := <-phaseChanges:
+				pce := e.(event.TeamPhaseChangedEvent)
+				if pce.TeamID == teamID && pce.CurrentPhase == string(want) {
+					return
+				}
+			case <-timeout:
+				s, _ := m.TeamStatus(teamID)
+				t.Fatalf("timed out: team %q phase = %v, want %v", teamID, s.Phase, want)
+			}
+		}
+	}
+
+	waitForTeamPhase("alpha", PhaseWorking)
+	waitForTeamPhase("beta", PhaseBlocked)
+
+	// Fail alpha's task instead of completing it.
+	alphaTeam := m.Team("alpha")
+	eq := alphaTeam.Hub().EventQueue()
+	task, err := eq.ClaimNext("inst-1")
+	if err != nil {
+		t.Fatalf("ClaimNext: %v", err)
+	}
+	if task == nil {
+		t.Fatal("no task to claim")
+	}
+	if err := eq.MarkRunning(task.ID); err != nil {
+		t.Fatalf("MarkRunning: %v", err)
+	}
+	if err := eq.Fail(task.ID, "intentional failure"); err != nil {
+		t.Fatalf("Fail: %v", err)
+	}
+
+	// Wait for alpha's completion event to propagate.
+	time.Sleep(100 * time.Millisecond)
+
+	// Beta should STILL be blocked — a failed dependency should not unblock.
+	status, ok := m.TeamStatus("beta")
+	if !ok {
+		t.Fatal("TeamStatus(beta) not found")
+	}
+	if status.Phase != PhaseBlocked {
+		t.Errorf("beta phase = %v, want %v (failed dep should not satisfy)", status.Phase, PhaseBlocked)
+	}
+}
+
+func TestManager_AddTeamDynamic_NoDeps(t *testing.T) {
+	m, bus := newTestManager(t,
+		WithHubOptions(coordination.WithRebalanceInterval(-1)),
+	)
+	_ = m.AddTeam(testSpec("alpha", "Alpha"))
+	ctx := context.Background()
+	_ = m.Start(ctx)
+	defer func() { _ = m.Stop() }()
+
+	dynamicAdded := make(chan event.Event, 5)
+	bus.Subscribe("team.dynamic_added", func(e event.Event) {
+		dynamicAdded <- e
+	})
+
+	// Dynamically add a team with no dependencies — should start immediately.
+	err := m.AddTeamDynamic(ctx, testSpec("beta", "Beta"))
+	if err != nil {
+		t.Fatalf("AddTeamDynamic: %v", err)
+	}
+
+	select {
+	case e := <-dynamicAdded:
+		dae := e.(event.TeamDynamicAddedEvent)
+		if dae.TeamID != "beta" {
+			t.Errorf("TeamID = %q, want %q", dae.TeamID, "beta")
+		}
+		if dae.Phase != string(PhaseWorking) {
+			t.Errorf("Phase = %q, want %q", dae.Phase, PhaseWorking)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for dynamic added event")
+	}
+
+	// Team should be working.
+	status, ok := m.TeamStatus("beta")
+	if !ok {
+		t.Fatal("TeamStatus(beta) not found")
+	}
+	if status.Phase != PhaseWorking {
+		t.Errorf("phase = %v, want %v", status.Phase, PhaseWorking)
+	}
+}
+
+func TestManager_AddTeamDynamic_WithDeps(t *testing.T) {
+	m, bus := newTestManager(t,
+		WithHubOptions(coordination.WithRebalanceInterval(-1)),
+	)
+	_ = m.AddTeam(testSpec("alpha", "Alpha"))
+	ctx := context.Background()
+	_ = m.Start(ctx)
+	defer func() { _ = m.Stop() }()
+
+	dynamicAdded := make(chan event.Event, 5)
+	bus.Subscribe("team.dynamic_added", func(e event.Event) {
+		dynamicAdded <- e
+	})
+
+	// Add a team that depends on alpha (not yet complete) — should be blocked.
+	err := m.AddTeamDynamic(ctx, testSpec("beta", "Beta", "alpha"))
+	if err != nil {
+		t.Fatalf("AddTeamDynamic: %v", err)
+	}
+
+	select {
+	case e := <-dynamicAdded:
+		dae := e.(event.TeamDynamicAddedEvent)
+		if dae.Phase != string(PhaseBlocked) {
+			t.Errorf("Phase = %q, want %q", dae.Phase, PhaseBlocked)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for dynamic added event")
+	}
+
+	status, ok := m.TeamStatus("beta")
+	if !ok {
+		t.Fatal("TeamStatus(beta) not found")
+	}
+	if status.Phase != PhaseBlocked {
+		t.Errorf("phase = %v, want %v", status.Phase, PhaseBlocked)
+	}
+}
+
+func TestManager_AddTeamDynamic_UnknownDep(t *testing.T) {
+	m, _ := newTestManager(t,
+		WithHubOptions(coordination.WithRebalanceInterval(-1)),
+	)
+	_ = m.AddTeam(testSpec("alpha", "Alpha"))
+	_ = m.Start(context.Background())
+	defer func() { _ = m.Stop() }()
+
+	err := m.AddTeamDynamic(context.Background(), testSpec("beta", "Beta", "nonexistent"))
+	if err == nil {
+		t.Fatal("expected error for unknown dependency")
+	}
+	if !strings.Contains(err.Error(), "unknown team") {
+		t.Errorf("error = %q, want containing 'unknown team'", err.Error())
+	}
+}
+
+func TestManager_AddTeamDynamic_DuplicateID(t *testing.T) {
+	m, _ := newTestManager(t,
+		WithHubOptions(coordination.WithRebalanceInterval(-1)),
+	)
+	_ = m.AddTeam(testSpec("alpha", "Alpha"))
+	_ = m.Start(context.Background())
+	defer func() { _ = m.Stop() }()
+
+	err := m.AddTeamDynamic(context.Background(), testSpec("alpha", "Alpha Copy"))
+	if err == nil {
+		t.Fatal("expected error for duplicate ID")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("error = %q, want containing 'duplicate'", err.Error())
+	}
+}
+
+func TestManager_AddTeamDynamic_NotStarted(t *testing.T) {
+	m, _ := newTestManager(t)
+
+	err := m.AddTeamDynamic(context.Background(), testSpec("alpha", "Alpha"))
+	if err == nil {
+		t.Fatal("expected error for not started")
+	}
+	if !strings.Contains(err.Error(), "requires a started manager") {
+		t.Errorf("error = %q, want containing 'requires a started manager'", err.Error())
+	}
+}
+
+func TestManager_AddTeamDynamic_InvalidSpec(t *testing.T) {
+	m, _ := newTestManager(t,
+		WithHubOptions(coordination.WithRebalanceInterval(-1)),
+	)
+	_ = m.AddTeam(testSpec("alpha", "Alpha"))
+	_ = m.Start(context.Background())
+	defer func() { _ = m.Stop() }()
+
+	err := m.AddTeamDynamic(context.Background(), Spec{}) // empty spec
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+}
+
+func TestManager_AddTeamDynamic_DepsSatisfied(t *testing.T) {
+	m, bus := newTestManager(t,
+		WithHubOptions(coordination.WithRebalanceInterval(-1)),
+	)
+	_ = m.AddTeam(testSpec("alpha", "Alpha"))
+	ctx := context.Background()
+	_ = m.Start(ctx)
+	defer func() { _ = m.Stop() }()
+
+	// Complete alpha so it's in a terminal phase.
+	alphaTeam := m.Team("alpha")
+	eq := alphaTeam.Hub().EventQueue()
+	task, _ := eq.ClaimNext("inst-1")
+	if task != nil {
+		_ = eq.MarkRunning(task.ID)
+		_, _ = eq.Complete(task.ID)
+	}
+
+	// Wait for alpha to be done.
+	deadline := time.After(2 * time.Second)
+	for {
+		s, _ := m.TeamStatus("alpha")
+		if s.Phase.IsTerminal() {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for alpha to complete")
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	dynamicAdded := make(chan event.Event, 5)
+	bus.Subscribe("team.dynamic_added", func(e event.Event) {
+		dynamicAdded <- e
+	})
+
+	// Add a team with a satisfied dependency — should start immediately.
+	err := m.AddTeamDynamic(ctx, testSpec("beta", "Beta", "alpha"))
+	if err != nil {
+		t.Fatalf("AddTeamDynamic: %v", err)
+	}
+
+	select {
+	case e := <-dynamicAdded:
+		dae := e.(event.TeamDynamicAddedEvent)
+		if dae.Phase != string(PhaseWorking) {
+			t.Errorf("Phase = %q, want %q", dae.Phase, PhaseWorking)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for dynamic added event")
+	}
 }
