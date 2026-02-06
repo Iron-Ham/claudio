@@ -361,3 +361,88 @@ func NewGroupCompletionEvent(groupID, groupName string, success bool, failedCoun
 		SuccessCount: successCount,
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Mailbox Events (Inter-Instance Communication)
+// -----------------------------------------------------------------------------
+
+// MailboxMessageEvent is emitted when an inter-instance mailbox message is sent.
+type MailboxMessageEvent struct {
+	baseEvent
+	From        string // Sender instance ID or "coordinator"
+	To          string // Recipient instance ID or "broadcast"
+	MessageType string // Message type (discovery, claim, warning, etc.)
+	Body        string // Message content
+}
+
+// NewMailboxMessageEvent creates a MailboxMessageEvent.
+func NewMailboxMessageEvent(from, to, messageType, body string) MailboxMessageEvent {
+	return MailboxMessageEvent{
+		baseEvent:   newBaseEvent("mailbox.message"),
+		From:        from,
+		To:          to,
+		MessageType: messageType,
+		Body:        body,
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Task Queue Events (Dynamic Task Claiming)
+// -----------------------------------------------------------------------------
+
+// TaskClaimedEvent is emitted when an instance claims a task from the queue.
+type TaskClaimedEvent struct {
+	baseEvent
+	TaskID     string // Task that was claimed
+	InstanceID string // Instance that claimed it
+}
+
+// NewTaskClaimedEvent creates a TaskClaimedEvent.
+func NewTaskClaimedEvent(taskID, instanceID string) TaskClaimedEvent {
+	return TaskClaimedEvent{
+		baseEvent:  newBaseEvent("queue.task_claimed"),
+		TaskID:     taskID,
+		InstanceID: instanceID,
+	}
+}
+
+// TaskReleasedEvent is emitted when a task is returned to the queue.
+type TaskReleasedEvent struct {
+	baseEvent
+	TaskID string // Task that was released
+	Reason string // Why it was released (e.g., "stale_claim", "instance_died")
+}
+
+// NewTaskReleasedEvent creates a TaskReleasedEvent.
+func NewTaskReleasedEvent(taskID, reason string) TaskReleasedEvent {
+	return TaskReleasedEvent{
+		baseEvent: newBaseEvent("queue.task_released"),
+		TaskID:    taskID,
+		Reason:    reason,
+	}
+}
+
+// QueueDepthChangedEvent is emitted when the queue depth changes.
+// Used by the TUI to display queue progress.
+type QueueDepthChangedEvent struct {
+	baseEvent
+	Pending   int // Number of pending tasks
+	Claimed   int // Number of claimed tasks
+	Running   int // Number of running tasks
+	Completed int // Number of completed tasks
+	Failed    int // Number of permanently failed tasks
+	Total     int // Total number of tasks
+}
+
+// NewQueueDepthChangedEvent creates a QueueDepthChangedEvent.
+func NewQueueDepthChangedEvent(pending, claimed, running, completed, failed, total int) QueueDepthChangedEvent {
+	return QueueDepthChangedEvent{
+		baseEvent: newBaseEvent("queue.depth_changed"),
+		Pending:   pending,
+		Claimed:   claimed,
+		Running:   running,
+		Completed: completed,
+		Failed:    failed,
+		Total:     total,
+	}
+}

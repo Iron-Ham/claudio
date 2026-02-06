@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Inter-Instance Mailbox** - File-based messaging system (`internal/mailbox/`) enabling cross-instance communication during orchestration. Supports broadcast and targeted messages with types including discovery, claim, release, warning, question, answer, and status. Includes prompt injection formatting and event bus integration. (#629)
+- **Dynamic Task Queue** - Dependency-aware task queue (`internal/taskqueue/`) with self-claiming and work-stealing, replacing static execution batch ordering. Instances claim tasks as dependencies are satisfied, eliminating idle time between execution groups. Includes failed task redistribution with retry, stale claim cleanup, state persistence, and event bus integration. (#630)
+
 ## [0.16.1] - 2026-02-05
 
 ### Fixed
