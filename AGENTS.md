@@ -293,11 +293,17 @@ Before committing, ensure:
 This is not exhaustive — update it when you add or discover undocumented packages. Packages with their own `AGENTS.md` are marked; check for one before working in any package.
 
 - `cmd/claudio/` — Main entry point
+- `internal/adaptive/` — Event-driven adaptive lead for dynamic task coordination *(has `AGENTS.md`)*
+- `internal/approval/` — Per-task approval gates using decorator pattern *(has `AGENTS.md`)*
 - `internal/config/` — Configuration loading and validation
+- `internal/contextprop/` — Context propagation between instances *(has `AGENTS.md`)*
+- `internal/debate/` — Structured peer debate protocol *(has `AGENTS.md`)*
 - `internal/event/` — Event bus and all event type definitions
+- `internal/filelock/` — Advisory file lock registry for conflict prevention *(has `AGENTS.md`)*
 - `internal/instance/` — Claude Code instance lifecycle management
 - `internal/mailbox/` — JSONL file-based inter-instance messaging *(has `AGENTS.md`)*
 - `internal/orchestrator/` — Session coordination, instance orchestration
+- `internal/scaling/` — Queue-depth-based elastic scaling policies *(has `AGENTS.md`)*
 - `internal/taskqueue/` — Dependency-aware task queue with persistence *(has `AGENTS.md`)*
 - `internal/tui/` — Bubble Tea terminal UI components *(has `AGENTS.md`)*
 - `internal/worktree/` — Git worktree creation and management
@@ -306,8 +312,10 @@ This is not exhaustive — update it when you add or discover undocumented packa
 
 - **Event bus** (`internal/event/`) — Decoupled communication between components. All event types live in `types.go` and embed `baseEvent`. If you add a new event type, put it there.
 - **EventQueue decorator** — `internal/taskqueue/` wraps `TaskQueue` with `EventQueue` to publish events without coupling core logic to the event bus. See `internal/taskqueue/AGENTS.md` for implementation details.
+- **Approval Gate decorator** — `internal/approval/` wraps `EventQueue` to add approval checkpoints. This creates a decorator chain: `TaskQueue → EventQueue → Gate`. Each layer adds behavior without modifying the layer below.
 - **Copy-on-return** — Accessor methods on shared types (e.g., `ClaimNext()`, `GetTask()`) return value copies, not pointers, to prevent data races. Maintain this pattern across packages.
 - **Atomic persistence** — File-backed state uses crash-safe write patterns. See `internal/taskqueue/AGENTS.md` and `internal/mailbox/AGENTS.md` for package-specific details.
+- **Functional options** — New coordination packages (`internal/adaptive/`, `internal/scaling/`, `internal/filelock/`) use the `WithXxx()` functional options pattern for configurable constructors. Follow this when adding new packages.
 
 ---
 

@@ -17,6 +17,10 @@ const (
 	// but has not yet started running.
 	TaskClaimed TaskStatus = "claimed"
 
+	// TaskAwaitingApproval indicates the task has been claimed and is
+	// waiting for human approval before it can start running.
+	TaskAwaitingApproval TaskStatus = "awaiting_approval"
+
 	// TaskRunning indicates the task is actively being executed.
 	TaskRunning TaskStatus = "running"
 
@@ -69,10 +73,11 @@ type QueuedTask struct {
 
 // QueueStatus is a snapshot of the queue's current state counts.
 type QueueStatus struct {
-	Total     int `json:"total"`
-	Pending   int `json:"pending"`
-	Claimed   int `json:"claimed"`
-	Running   int `json:"running"`
-	Completed int `json:"completed"`
-	Failed    int `json:"failed"`
+	Total            int `json:"total"`
+	Pending          int `json:"pending"`
+	Claimed          int `json:"claimed"`
+	AwaitingApproval int `json:"awaiting_approval"`
+	Running          int `json:"running"`
+	Completed        int `json:"completed"`
+	Failed           int `json:"failed"`
 }
