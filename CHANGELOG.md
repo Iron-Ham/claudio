@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Pipeline Executor DI & E2E Tests** - Refactored `PipelineExecutor` to accept `bridge.InstanceFactory` and `bridge.CompletionChecker` via dependency injection instead of constructing them internally from concrete orchestrator types. Added `NewPipelineExecutorFromOrch` convenience constructor for production callers. Added 5 E2E integration tests covering the full pipeline → bridge → completion lifecycle (single-team, multi-team, failure propagation, all phases, stop cleanup). Fixed `attachBridges` race where the phase event fires before teams are started. (#649)
+
 - **Self-Improving AGENTS.md** - Restructured AGENTS.md into a living document with a self-improvement protocol that instructs agents to update guidelines based on their learnings. Added agent-curated sections (Architecture Map, Known Pitfalls, Codebase Patterns, Testing Notes, Build & Toolchain) seeded with knowledge from codebase review. Created directory-level AGENTS.md files for `internal/mailbox/`, `internal/taskqueue/`, and `internal/tui/` with package-specific pitfalls and patterns.
 
 ### Fixed
