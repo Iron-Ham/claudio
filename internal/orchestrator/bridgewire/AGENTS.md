@@ -38,8 +38,12 @@ Pipeline fires PipelinePhaseChangedEvent
 ## Testing
 
 - Adapter tests (`adapters_test.go`) verify interface satisfaction and basic wiring with mock orchestrator types.
-- `PipelineExecutor` tests (`executor_test.go`) cover Start/Stop lifecycle, config validation, and 5 E2E integration tests.
+- `PipelineExecutor` tests (`executor_test.go`) cover Start/Stop lifecycle, config validation, and 10 E2E integration tests.
 - **E2E tests use `autoCompleteFactory`** — The factory triggers `checker.MarkComplete()` inside `StartInstance`, simulating instant-completion Claude Code instances. This lets Bridge's claim loop → monitor → completion → gate.Complete flow run without real infrastructure.
+- **`selectiveFactory` for per-task failure** — Delegates to auto-complete for most tasks but returns an error for prompts matching any key in `failFor`. Used in the partial failure test. The match is by `strings.Contains` on the prompt (which includes the task title via `BuildTaskPrompt`).
+- **`newE2EPipeline` returns `*DecomposeResult`** — The 4th return value lets tests modify team specs (e.g., `DependsOn`, `Budget`) before `Start()`. Existing callers use `_` to ignore it.
+- **Budget test uses `slowCompleteFactory`** — `autoCompleteFactory` completes tasks too fast for budget assertions. `slowCompleteFactory` keeps the task in-flight so `BudgetTracker().Record()` can be called while the team is still `PhaseWorking`.
+- **Bridge does NOT call `recorder.RecordFailure` on `CreateInstance` errors** — The recorder is only called after instance creation succeeds and the monitor detects failure. When `CreateInstance` fails, the bridge calls `gate.Fail()` directly. Tests asserting on failure should check pipeline/team status, not recorder.
 - Use `bridge.WithPollInterval(10*time.Millisecond)` via `BridgeOpts` for fast E2E tests.
 - Use `coordination.WithRebalanceInterval(-1)` on the pipeline's hub options to disable rebalance interference.
 - Always run with `-race` — the executor has concurrent event handlers and bridge goroutines.

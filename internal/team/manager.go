@@ -402,16 +402,61 @@ func (m *Manager) monitorTeamCompletion(ctx context.Context, t *Team) {
 }
 
 // onTeamCompleted handles the completion of a team by checking if dependent
-// teams can now start. The completed team's ID is unused because we scan all
-// blocked teams rather than maintaining a reverse dependency index.
+// teams can now start, and failing teams whose dependencies will never be
+// satisfied. The completed team's ID is unused because we scan all blocked
+// teams rather than maintaining a reverse dependency index.
+//
+// Failed-dependency cascading: when a dependency fails, its blocked dependents
+// are transitioned to PhaseFailed. Because publishing TeamCompletedEvent from
+// within this handler would re-enter onTeamCompleted (Bus.Publish is
+// synchronous), we use a two-phase approach: collect state changes under the
+// lock, then publish events outside it. The outer loop repeats until no new
+// transitions occur, ensuring multi-hop cascades (A fails → B fails → C
+// fails) complete in a single handler invocation.
 func (m *Manager) onTeamCompleted(ctx context.Context, _ string) {
+	for {
+		started, toFail := m.checkBlockedTeamsLocked(ctx)
+		if !started {
+			return
+		}
+		if len(toFail) == 0 {
+			return
+		}
+
+		// Publish events outside the lock to avoid re-entrancy deadlock.
+		for _, info := range toFail {
+			m.bus.Publish(event.NewTeamPhaseChangedEvent(
+				info.id, info.name, string(PhaseBlocked), string(PhaseFailed),
+			))
+			m.bus.Publish(event.NewTeamCompletedEvent(
+				info.id, info.name, false, 0, 0,
+			))
+		}
+
+		// Loop again: the newly failed teams may unblock further cascades.
+	}
+}
+
+// failedTeamInfo holds data needed to publish events for a failed team,
+// captured under the lock and used outside it.
+type failedTeamInfo struct {
+	id   string
+	name string
+}
+
+// checkBlockedTeamsLocked scans blocked teams under the lock. Teams whose
+// dependencies are all satisfied are started. Teams with any failed dependency
+// are transitioned to PhaseFailed (phase set under lock, events deferred).
+// Returns whether the manager is still started and a list of newly failed teams.
+func (m *Manager) checkBlockedTeamsLocked(ctx context.Context) (bool, []failedTeamInfo) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if !m.started {
-		return
+		return false, nil
 	}
 
+	var toFail []failedTeamInfo
 	for _, id := range m.order {
 		t := m.teams[id]
 		if t.Phase() != PhaseBlocked {
@@ -419,8 +464,28 @@ func (m *Manager) onTeamCompleted(ctx context.Context, _ string) {
 		}
 		if m.allDepsSatisfiedLocked(t) {
 			m.startTeamLocked(ctx, t)
+		} else if m.hasFailedDepLocked(t) {
+			t.setPhase(PhaseFailed)
+			toFail = append(toFail, failedTeamInfo{id: t.spec.ID, name: t.spec.Name})
 		}
 	}
+	return true, toFail
+}
+
+// hasFailedDepLocked returns true if any of the team's dependencies have
+// failed, meaning this team can never be unblocked. Must be called with
+// m.mu held.
+func (m *Manager) hasFailedDepLocked(t *Team) bool {
+	for _, dep := range t.spec.DependsOn {
+		dt, exists := m.teams[dep]
+		if !exists {
+			continue
+		}
+		if dt.Phase() == PhaseFailed {
+			return true
+		}
+	}
+	return false
 }
 
 // allDepsSatisfiedLocked returns true if all of the team's dependencies

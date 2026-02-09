@@ -68,6 +68,7 @@ type TeamCoordinator struct {
 	// Attempt tracking
 	completedAttempts int
 	attemptTeamIDs    [3]string // maps attempt index → team ID
+	attemptSuccess    [3]bool   // per-attempt success from TeamCompletedEvent
 
 	// Event subscriptions for cleanup
 	teamCompletedSubID   string
@@ -377,6 +378,7 @@ func (tc *TeamCoordinator) onTeamCompleted(tce event.TeamCompletedEvent) {
 		tc.mu.Unlock()
 		return
 	}
+	tc.attemptSuccess[attemptIndex] = tce.Success
 	completed := tc.completedAttempts
 
 	tc.logger.Info("attempt team completed",
@@ -493,7 +495,21 @@ func (tc *TeamCoordinator) startJudge() {
 	}
 
 	session := tc.tsManager.Session()
-	successCount := session.SuccessfulAttemptCount()
+
+	// Count successes from attemptSuccess (set by onTeamCompleted from
+	// TeamCompletedEvent.Success) instead of session.Attempts[i].Status.
+	// The session status is set by onBridgeTaskCompleted, which fires AFTER
+	// gate.Complete(). But TeamCompletedEvent fires AS A RESULT of
+	// gate.Complete() (via queue.depth_changed → monitorTeamCompletion).
+	// On loaded machines, startJudge can run before onBridgeTaskCompleted
+	// has updated the session, causing a spurious "fewer than 2 attempts
+	// succeeded" failure.
+	successCount := 0
+	for _, ok := range tc.attemptSuccess {
+		if ok {
+			successCount++
+		}
+	}
 
 	if successCount < 2 {
 		tc.logger.Warn("fewer than 2 attempts succeeded, failing",
@@ -513,16 +529,21 @@ func (tc *TeamCoordinator) startJudge() {
 		return
 	}
 
-	// Snapshot attempt data under the lock to avoid racing with
-	// onBridgeTaskCompleted, which writes Attempts[i].Status concurrently.
+	// Snapshot attempt data under the lock. Use attemptSuccess for the
+	// status determination (see race note above) and session for InstanceID
+	// (set by onBridgeTaskStarted, which fires before completion).
 	type attemptSnap struct {
 		status     ts.AttemptStatus
 		instanceID string
 	}
 	var snaps [3]attemptSnap
 	for i := range session.Attempts {
+		status := ts.AttemptStatusFailed
+		if tc.attemptSuccess[i] {
+			status = ts.AttemptStatusCompleted
+		}
 		snaps[i] = attemptSnap{
-			status:     session.Attempts[i].Status,
+			status:     status,
 			instanceID: session.Attempts[i].InstanceID,
 		}
 	}

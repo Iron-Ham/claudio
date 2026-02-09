@@ -30,6 +30,9 @@ func (t *Team) Hub() *coordination.Hub {
 	return t.hub
 }
 
+// BudgetTracker returns the team's budget tracker.
+func (t *Team) BudgetTracker() *BudgetTracker { return t.budget }
+
 // Spec returns the team's configuration.
 func (t *Team) Spec() Spec {
 	t.mu.RLock()
