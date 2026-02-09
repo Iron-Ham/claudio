@@ -541,6 +541,13 @@ func TestBridge_MultipleTasks(t *testing.T) {
 		bridge.WithPollInterval(10*time.Millisecond),
 	)
 
+	// Subscribe before Start so we don't miss fast events.
+	started := make(chan event.Event, 2)
+	subID := bus.Subscribe("bridge.task_started", func(e event.Event) {
+		started <- e
+	})
+	defer bus.Unsubscribe(subID)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -548,13 +555,6 @@ func TestBridge_MultipleTasks(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	defer b.Stop()
-
-	// Collect two started events.
-	started := make(chan event.Event, 2)
-	subID := bus.Subscribe("bridge.task_started", func(e event.Event) {
-		started <- e
-	})
-	defer bus.Unsubscribe(subID)
 
 	// Wait for both tasks to be claimed and started.
 	deadline := time.After(3 * time.Second)

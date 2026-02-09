@@ -57,12 +57,20 @@ func Decompose(plan *ultraplan.PlanSpec, cfg DecomposeConfig) (*DecomposeResult,
 			}
 		}
 
+		// Teams shouldn't have more concurrent workers than tasks.
+		teamSize := cfg.DefaultTeamSize
+		if teamSize > len(tasks) {
+			teamSize = len(tasks)
+		}
+
 		execTeams = append(execTeams, team.Spec{
-			ID:       fmt.Sprintf("exec-%d", i),
-			Name:     fmt.Sprintf("Execution Team %d", i),
-			Role:     team.RoleExecution,
-			Tasks:    tasks,
-			TeamSize: 1,
+			ID:           fmt.Sprintf("exec-%d", i),
+			Name:         fmt.Sprintf("Execution Team %d", i),
+			Role:         team.RoleExecution,
+			Tasks:        tasks,
+			TeamSize:     teamSize,
+			MinInstances: cfg.MinTeamInstances,
+			MaxInstances: cfg.MaxTeamInstances,
 		})
 	}
 

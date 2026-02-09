@@ -95,14 +95,16 @@ type BudgetUsage struct {
 
 // Spec configures a team before creation.
 type Spec struct {
-	ID         string                  // Unique identifier for the team
-	Name       string                  // Human-readable team name
-	Role       Role                    // What kind of work this team performs
-	Tasks      []ultraplan.PlannedTask // Tasks for this team's plan
-	LeadPrompt string                  // System prompt for the team's lead
-	TeamSize   int                     // Number of instances for this team
-	Budget     TokenBudget             // Resource limits
-	DependsOn  []string                // Team IDs this team waits for
+	ID           string                  // Unique identifier for the team
+	Name         string                  // Human-readable team name
+	Role         Role                    // What kind of work this team performs
+	Tasks        []ultraplan.PlannedTask // Tasks for this team's plan
+	LeadPrompt   string                  // System prompt for the team's lead
+	TeamSize     int                     // Number of instances for this team
+	MinInstances int                     // Floor for scale-down (0 = defaults to TeamSize)
+	MaxInstances int                     // Ceiling for scale-up (0 = unlimited)
+	Budget       TokenBudget             // Resource limits
+	DependsOn    []string                // Team IDs this team waits for
 }
 
 // Validate checks that the spec has all required fields.
@@ -121,6 +123,15 @@ func (s Spec) Validate() error {
 	}
 	if s.TeamSize < 1 {
 		return errors.New("team spec: TeamSize must be >= 1")
+	}
+	if s.MinInstances < 0 {
+		return errors.New("team spec: MinInstances must be >= 0")
+	}
+	if s.MaxInstances < 0 {
+		return errors.New("team spec: MaxInstances must be >= 0")
+	}
+	if s.MinInstances > 0 && s.MaxInstances > 0 && s.MinInstances > s.MaxInstances {
+		return fmt.Errorf("team spec: MinInstances (%d) must be <= MaxInstances (%d)", s.MinInstances, s.MaxInstances)
 	}
 	return nil
 }

@@ -80,10 +80,17 @@ func NewHub(cfg Config, opts ...Option) (*Hub, error) {
 		lookup = func(string) (bool, bool) { return false, true }
 	}
 
-	// Scaling policy defaults.
+	// Scaling policy defaults — apply per-hub min/max overrides.
 	policy := hc.scalingPolicy
 	if policy == nil {
-		policy = scaling.NewPolicy()
+		var policyOpts []scaling.Option
+		if hc.minInstances > 0 {
+			policyOpts = append(policyOpts, scaling.WithMinInstances(hc.minInstances))
+		}
+		if hc.maxInstances > 0 {
+			policyOpts = append(policyOpts, scaling.WithMaxInstances(hc.maxInstances))
+		}
+		policy = scaling.NewPolicy(policyOpts...)
 	}
 
 	mb := mailbox.NewMailbox(cfg.SessionDir)

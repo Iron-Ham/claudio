@@ -9,12 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dynamic Team Sizing** - Connected the scaling feedback loop so bridges adjust concurrency based on workload and budget. Added `dynamicSemaphore` to the bridge for context-aware, resizable concurrency limiting. Added `SetMaxConcurrency`/`MaxConcurrency`/`ActiveInstances` to Bridge. Added `TeamScaledEvent` for TUI observability. Added `MinInstances`/`MaxInstances` to team Spec and `WithMinInstances`/`WithMaxInstances` coordination options. Decompose now populates scaling bounds from `DecomposeConfig`. `PipelineExecutor.wireScalingFeedback` connects scaling monitor decisions to bridge concurrency with budget-aware veto. (#646)
+
 - **Remaining E2E Test Scenarios** - Added 5 new E2E integration tests for the pipeline executor: dependency ordering (linear chain), dependency failure cascade, partial failure (mixed success/failure), budget exhaustion event, and context cancellation. Added `selectiveFactory` mock for per-task failure control and `waitForTeamPhase` helper. (#649)
 
 ### Fixed
 
 - **Failed-Dependency Cascade** - Teams blocked on a failed dependency now transition to `PhaseFailed` instead of staying blocked forever. The `Manager.onTeamCompleted` handler detects permanently blocked teams and cascades failure through multi-hop dependency chains (A fails → B fails → C fails). Uses a two-phase approach (collect state under lock, publish events outside) to avoid re-entrancy deadlock with the synchronous event bus. (#649)
-- **TripleShot startJudge Race** - Fixed flaky `TestTeamCoordinator_FullLifecycle` where `startJudge` relied on `session.Attempts[i].Status` (set by `bridge.task_completed` handler) which could race with `TeamCompletedEvent` (fired from `queue.depth_changed` → monitor). Now tracks per-attempt success from the `TeamCompletedEvent.Success` field, which is always available before `startJudge` runs.
 
 ### Changed
 

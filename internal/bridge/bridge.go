@@ -26,6 +26,7 @@ type Bridge struct {
 	logger   *logging.Logger
 
 	pollInterval time.Duration
+	sem          *dynamicSemaphore
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -79,6 +80,7 @@ func New(t *team.Team, factory InstanceFactory, checker CompletionChecker, recor
 		bus:          bus,
 		logger:       cfg.logger,
 		pollInterval: cfg.pollInterval,
+		sem:          newDynamicSemaphore(cfg.maxConcurrency),
 		running:      make(map[string]string),
 	}
 }
@@ -155,6 +157,13 @@ func (b *Bridge) claimLoop() {
 			return
 		}
 
+		// Acquire a concurrency slot before claiming. In unlimited mode
+		// (limit=0) this returns immediately. When limited, this blocks
+		// until a slot is freed or the context is cancelled.
+		if err := b.sem.Acquire(b.ctx); err != nil {
+			return // context cancelled
+		}
+
 		gate := b.team.Hub().Gate()
 
 		// Use the team ID as a claim identifier for traceability.
@@ -163,12 +172,14 @@ func (b *Bridge) claimLoop() {
 
 		task, err := gate.ClaimNext(claimID)
 		if err != nil {
+			b.sem.Release()
 			b.logger.Error("bridge claim failed", "team", b.team.Spec().ID, "error", err)
 			b.waitForWake(wake)
 			continue
 		}
 
 		if task == nil {
+			b.sem.Release()
 			if gate.IsComplete() {
 				return
 			}
@@ -180,6 +191,7 @@ func (b *Bridge) claimLoop() {
 		prompt := BuildTaskPrompt(task.Title, task.Description, task.Files)
 		inst, err := b.factory.CreateInstance(prompt)
 		if err != nil {
+			b.sem.Release()
 			b.logger.Error("bridge: failed to create instance",
 				"team", b.team.Spec().ID, "task", task.ID, "error", err)
 			if failErr := gate.Fail(task.ID, fmt.Sprintf("create instance: %v", err)); failErr != nil {
@@ -190,6 +202,7 @@ func (b *Bridge) claimLoop() {
 		}
 
 		if err := b.factory.StartInstance(inst); err != nil {
+			b.sem.Release()
 			b.logger.Error("bridge: failed to start instance",
 				"team", b.team.Spec().ID, "task", task.ID, "error", err)
 			if failErr := gate.Fail(task.ID, fmt.Sprintf("start instance: %v", err)); failErr != nil {
@@ -201,6 +214,7 @@ func (b *Bridge) claimLoop() {
 
 		// Transition the task to running.
 		if err := gate.MarkRunning(task.ID); err != nil {
+			b.sem.Release()
 			b.logger.Error("bridge: failed to mark running",
 				"team", b.team.Spec().ID, "task", task.ID, "error", err)
 			if failErr := gate.Fail(task.ID, fmt.Sprintf("mark running: %v", err)); failErr != nil {
@@ -221,7 +235,8 @@ func (b *Bridge) claimLoop() {
 			b.team.Spec().ID, task.ID, inst.ID(),
 		))
 
-		// Spawn a monitor goroutine for this task.
+		// Spawn a monitor goroutine for this task. The semaphore slot
+		// is released by monitorInstance when the task completes or fails.
 		b.wg.Add(1)
 		go func(taskID string, inst Instance) {
 			defer b.wg.Done()
@@ -245,6 +260,8 @@ const maxCheckErrors = 10
 
 // monitorInstance polls for instance completion and reports the result.
 func (b *Bridge) monitorInstance(taskID string, inst Instance) {
+	defer b.sem.Release()
+
 	ticker := time.NewTicker(b.pollInterval)
 	defer ticker.Stop()
 
@@ -333,6 +350,24 @@ func (b *Bridge) monitorInstance(taskID string, inst Instance) {
 
 		return
 	}
+}
+
+// SetMaxConcurrency dynamically adjusts the maximum number of concurrent
+// instances. A value of 0 means unlimited. Blocked goroutines are woken so
+// they can re-evaluate against the new limit.
+func (b *Bridge) SetMaxConcurrency(n int) {
+	b.sem.SetLimit(n)
+}
+
+// MaxConcurrency returns the current concurrency limit (0 = unlimited).
+func (b *Bridge) MaxConcurrency() int {
+	return b.sem.Limit()
+}
+
+// ActiveInstances returns the number of instances currently running
+// (semaphore slots acquired).
+func (b *Bridge) ActiveInstances() int {
+	return b.sem.Acquired()
 }
 
 // BuildTaskPrompt formats task fields into a prompt string for a Claude Code instance.

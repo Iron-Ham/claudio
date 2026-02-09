@@ -413,6 +413,93 @@ func TestDecompose_AllOptionalTeams(t *testing.T) {
 	}
 }
 
+func TestDecompose_DefaultTeamSizeApplied(t *testing.T) {
+	plan := &ultraplan.PlanSpec{
+		ID: "p1",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Files: []string{"a.go"}},
+			{ID: "t2", Title: "Task 2", Files: []string{"a.go"}},
+			{ID: "t3", Title: "Task 3", Files: []string{"a.go"}},
+		},
+	}
+
+	result, err := Decompose(plan, DecomposeConfig{DefaultTeamSize: 4})
+	if err != nil {
+		t.Fatalf("Decompose: %v", err)
+	}
+
+	// All 3 tasks share a.go → one team with 3 tasks.
+	// DefaultTeamSize=4 but only 3 tasks, so TeamSize = min(3, 4) = 3.
+	spec := result.ExecutionTeams[0]
+	if spec.TeamSize != 3 {
+		t.Errorf("TeamSize = %d, want 3 (clamped to task count)", spec.TeamSize)
+	}
+}
+
+func TestDecompose_DefaultTeamSizeClamped(t *testing.T) {
+	plan := &ultraplan.PlanSpec{
+		ID: "p1",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Files: []string{"a.go"}},
+		},
+	}
+
+	result, err := Decompose(plan, DecomposeConfig{DefaultTeamSize: 5})
+	if err != nil {
+		t.Fatalf("Decompose: %v", err)
+	}
+
+	// Only 1 task, so TeamSize clamped to 1.
+	if result.ExecutionTeams[0].TeamSize != 1 {
+		t.Errorf("TeamSize = %d, want 1", result.ExecutionTeams[0].TeamSize)
+	}
+}
+
+func TestDecompose_ScalingBoundsPopulated(t *testing.T) {
+	plan := &ultraplan.PlanSpec{
+		ID: "p1",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Files: []string{"a.go"}},
+			{ID: "t2", Title: "Task 2", Files: []string{"b.go"}},
+		},
+	}
+
+	result, err := Decompose(plan, DecomposeConfig{
+		MinTeamInstances: 2,
+		MaxTeamInstances: 8,
+	})
+	if err != nil {
+		t.Fatalf("Decompose: %v", err)
+	}
+
+	for _, spec := range result.ExecutionTeams {
+		if spec.MinInstances != 2 {
+			t.Errorf("team %s: MinInstances = %d, want 2", spec.ID, spec.MinInstances)
+		}
+		if spec.MaxInstances != 8 {
+			t.Errorf("team %s: MaxInstances = %d, want 8", spec.ID, spec.MaxInstances)
+		}
+	}
+}
+
+func TestDecompose_DefaultTeamSizeZeroDefaultsToOne(t *testing.T) {
+	plan := &ultraplan.PlanSpec{
+		ID: "p1",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Files: []string{"a.go"}},
+		},
+	}
+
+	result, err := Decompose(plan, DecomposeConfig{})
+	if err != nil {
+		t.Fatalf("Decompose: %v", err)
+	}
+
+	if result.ExecutionTeams[0].TeamSize != 1 {
+		t.Errorf("TeamSize = %d, want 1 (default)", result.ExecutionTeams[0].TeamSize)
+	}
+}
+
 // -- Union-Find unit tests ---------------------------------------------------
 
 func TestUnionFind_BasicOperations(t *testing.T) {

@@ -13,8 +13,9 @@ const defaultPollInterval = time.Second
 type Option func(*config)
 
 type config struct {
-	pollInterval time.Duration
-	logger       *logging.Logger
+	pollInterval   time.Duration
+	logger         *logging.Logger
+	maxConcurrency int
 }
 
 // WithPollInterval sets the polling interval for completion checking.
@@ -29,5 +30,13 @@ func WithPollInterval(d time.Duration) Option {
 func WithLogger(logger *logging.Logger) Option {
 	return func(c *config) {
 		c.logger = logger
+	}
+}
+
+// WithMaxConcurrency sets the maximum number of concurrent instances the
+// bridge will create. A value of 0 (default) means unlimited.
+func WithMaxConcurrency(n int) Option {
+	return func(c *config) {
+		c.maxConcurrency = n
 	}
 }

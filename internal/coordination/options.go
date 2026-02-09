@@ -13,6 +13,8 @@ type hubConfig struct {
 	staleClaimTimeout   time.Duration
 	rebalanceInterval   time.Duration
 	initialInstances    int
+	minInstances        int
+	maxInstances        int
 }
 
 // Option configures a Hub.
@@ -42,4 +44,16 @@ func WithRebalanceInterval(d time.Duration) Option {
 // WithInitialInstances sets the initial instance count for the scaling monitor.
 func WithInitialInstances(n int) Option {
 	return func(c *hubConfig) { c.initialInstances = n }
+}
+
+// WithMinInstances sets the minimum instance count for the scaling policy.
+// A value of 0 uses the policy default.
+func WithMinInstances(n int) Option {
+	return func(c *hubConfig) { c.minInstances = n }
+}
+
+// WithMaxInstances sets the maximum instance count for the scaling policy.
+// A value of 0 uses the policy default.
+func WithMaxInstances(n int) Option {
+	return func(c *hubConfig) { c.maxInstances = n }
 }

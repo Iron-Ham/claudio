@@ -897,3 +897,28 @@ func NewTripleShotJudgeCompletedEvent(teamID string, success bool) TripleShotJud
 		Success:   success,
 	}
 }
+
+// -----------------------------------------------------------------------------
+// Team Scaling Events
+// -----------------------------------------------------------------------------
+
+// TeamScaledEvent is emitted when a team's instance count changes due to
+// a scaling decision from the scaling monitor.
+type TeamScaledEvent struct {
+	baseEvent
+	TeamID        string // Team whose concurrency changed
+	PrevInstances int    // Instance count before scaling
+	NewInstances  int    // Instance count after scaling
+	Reason        string // Human-readable reason for the scaling decision
+}
+
+// NewTeamScaledEvent creates a TeamScaledEvent.
+func NewTeamScaledEvent(teamID string, prev, next int, reason string) TeamScaledEvent {
+	return TeamScaledEvent{
+		baseEvent:     newBaseEvent("team.scaled"),
+		TeamID:        teamID,
+		PrevInstances: prev,
+		NewInstances:  next,
+		Reason:        reason,
+	}
+}
