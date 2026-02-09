@@ -410,6 +410,7 @@ const (
 	IconPlanMulti     = "◈" // Filled diamond for multi-pass plan
 	IconUltraPlan     = "⚡" // Lightning for :ultraplan orchestration
 	IconTripleShot    = "△" // Triangle for :tripleshot (three competing)
+	IconPipeline      = "⧫" // Filled diamond for pipeline orchestration
 	IconGroupExpand   = "▾" // Down-pointing triangle (expanded)
 	IconGroupCollapse = "▸" // Right-pointing triangle (collapsed)
 )

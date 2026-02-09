@@ -134,7 +134,7 @@ func TestWorkflowStatusState_GetIndicators(t *testing.T) {
 }
 
 func TestWorkflowStatusState_IndicatorOrder(t *testing.T) {
-	// Verify indicators are returned in priority order: UltraPlan, TripleShot, Adversarial
+	// Verify indicators are returned in priority order: Pipeline, UltraPlan, TripleShot, Adversarial
 	// This test verifies TripleShot and Adversarial order; see TestGetUltraPlanIndicator for UltraPlan tests
 	state := &WorkflowStatusState{
 		TripleShot:  createMockTripleShotState(1),
@@ -162,6 +162,83 @@ func TestWorkflowStatusState_IndicatorOrder(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Second indicator should be Adversarial icon, got %s", indicators[1].Icon)
+	}
+}
+
+func TestWorkflowStatusState_HasActiveWorkflows_WithPipeline(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    *WorkflowStatusState
+		expected bool
+	}{
+		{
+			name: "active pipeline returns true",
+			state: &WorkflowStatusState{
+				Pipeline: &PipelineState{Phase: "execution"},
+			},
+			expected: true,
+		},
+		{
+			name: "completed pipeline returns false",
+			state: &WorkflowStatusState{
+				Pipeline: &PipelineState{Phase: "done"},
+			},
+			expected: false,
+		},
+		{
+			name: "pipeline with no phase returns false",
+			state: &WorkflowStatusState{
+				Pipeline: &PipelineState{},
+			},
+			expected: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.state.HasActiveWorkflows(); got != tt.expected {
+				t.Errorf("HasActiveWorkflows() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestWorkflowStatusState_PipelineIndicatorFirst(t *testing.T) {
+	state := &WorkflowStatusState{
+		Pipeline:   &PipelineState{Phase: "execution"},
+		TripleShot: createMockTripleShotState(1),
+	}
+
+	indicators := state.GetIndicators()
+	if len(indicators) != 2 {
+		t.Fatalf("Expected 2 indicators, got %d", len(indicators))
+	}
+
+	// Pipeline should be first
+	if indicators[0].Icon != styles.IconPipeline {
+		t.Errorf("First indicator should be Pipeline (%s), got %s", styles.IconPipeline, indicators[0].Icon)
+	}
+
+	// TripleShot should be second
+	if indicators[1].Icon != "△" {
+		t.Errorf("Second indicator should be TripleShot (△), got %s", indicators[1].Icon)
+	}
+}
+
+func TestRenderWorkflowStatus_WithPipeline(t *testing.T) {
+	state := &WorkflowStatusState{
+		Pipeline:   &PipelineState{Phase: "planning"},
+		TripleShot: createMockTripleShotState(1),
+	}
+
+	result := RenderWorkflowStatus(state)
+	if !strings.Contains(result, styles.IconPipeline) {
+		t.Error("Expected Pipeline icon in result")
+	}
+	if !strings.Contains(result, "△") {
+		t.Error("Expected TripleShot icon in result")
+	}
+	if !strings.Contains(result, "│") {
+		t.Error("Expected separator between Pipeline and TripleShot")
 	}
 }
 
@@ -532,7 +609,7 @@ func TestGetUltraPlanObjective(t *testing.T) {
 }
 
 func TestUltraPlanIndicatorInGetIndicators(t *testing.T) {
-	// Verify that ultraplan indicator appears first in GetIndicators when active
+	// Verify that ultraplan indicator appears after pipeline but before tripleshot/adversarial
 	state := &WorkflowStatusState{
 		UltraPlan:   createMockUltraPlanState(orchestrator.PhaseExecuting, "Test objective"),
 		TripleShot:  createMockTripleShotState(1),
@@ -544,7 +621,7 @@ func TestUltraPlanIndicatorInGetIndicators(t *testing.T) {
 		t.Fatalf("Expected 3 indicators, got %d", len(indicators))
 	}
 
-	// First should be UltraPlan (🎯 icon)
+	// First should be UltraPlan (no pipeline active)
 	if indicators[0].Icon != styles.IconUltraPlan {
 		t.Errorf("First indicator should be UltraPlan (%s), got %s", styles.IconUltraPlan, indicators[0].Icon)
 	}
@@ -565,6 +642,31 @@ func TestUltraPlanIndicatorInGetIndicators(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Third indicator should be Adversarial icon, got %s", indicators[2].Icon)
+	}
+}
+
+func TestAllFourWorkflowsInGetIndicators(t *testing.T) {
+	// Verify order: Pipeline, UltraPlan, TripleShot, Adversarial
+	state := &WorkflowStatusState{
+		Pipeline:    &PipelineState{Phase: "execution"},
+		UltraPlan:   createMockUltraPlanState(orchestrator.PhaseExecuting, "Test"),
+		TripleShot:  createMockTripleShotState(1),
+		Adversarial: createMockAdversarialState(1),
+	}
+
+	indicators := state.GetIndicators()
+	if len(indicators) != 4 {
+		t.Fatalf("Expected 4 indicators, got %d", len(indicators))
+	}
+
+	if indicators[0].Icon != styles.IconPipeline {
+		t.Errorf("First indicator should be Pipeline (%s), got %s", styles.IconPipeline, indicators[0].Icon)
+	}
+	if indicators[1].Icon != styles.IconUltraPlan {
+		t.Errorf("Second indicator should be UltraPlan (%s), got %s", styles.IconUltraPlan, indicators[1].Icon)
+	}
+	if indicators[2].Icon != "△" {
+		t.Errorf("Third indicator should be TripleShot (△), got %s", indicators[2].Icon)
 	}
 }
 

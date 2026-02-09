@@ -309,3 +309,43 @@ type RalphCompletionProcessedMsg struct {
 	ContinueLoop bool // True if another iteration should be started
 	Err          error
 }
+
+// PipelinePhaseChangedMsg signals that the pipeline has transitioned to a new phase.
+type PipelinePhaseChangedMsg struct {
+	PipelineID    string
+	PreviousPhase string
+	CurrentPhase  string
+}
+
+// PipelineCompletedMsg signals that the pipeline has finished.
+type PipelineCompletedMsg struct {
+	PipelineID string
+	Success    bool
+	PhasesRun  int
+}
+
+// TeamStatusChangedMsg signals that a team has transitioned to a new phase.
+type TeamStatusChangedMsg struct {
+	TeamID        string
+	TeamName      string
+	PreviousPhase string
+	CurrentPhase  string
+}
+
+// TeamCompletedMsg signals that a team has finished all its work.
+type TeamCompletedMsg struct {
+	TeamID      string
+	TeamName    string
+	Success     bool
+	TasksDone   int
+	TasksFailed int
+}
+
+// BridgeTaskActivityMsg signals bridge task activity (start or completion).
+type BridgeTaskActivityMsg struct {
+	TeamID     string
+	TaskID     string
+	InstanceID string
+	Started    bool // true = task started, false = task completed
+	Success    bool // only meaningful when Started is false
+}

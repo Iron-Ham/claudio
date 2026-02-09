@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/Iron-Ham/claudio/internal/bridge"
 	"github.com/Iron-Ham/claudio/internal/event"
@@ -17,44 +18,41 @@ import (
 // instances via Bridges. It subscribes to pipeline phase change events and
 // creates a Bridge for each team when the execution phase starts.
 type PipelineExecutor struct {
-	orch     *orchestrator.Orchestrator
-	session  *orchestrator.Session
-	verifier orchestrator.Verifier
+	factory  bridge.InstanceFactory
+	checker  bridge.CompletionChecker
 	bus      *event.Bus
 	logger   *logging.Logger
 	recorder bridge.SessionRecorder
 
-	pipe    *pipeline.Pipeline
-	ctx     context.Context
-	cancel  context.CancelFunc
-	mu      sync.Mutex
-	bridges []*bridge.Bridge
-	started bool
-	subID   string
+	pipe       *pipeline.Pipeline
+	bridgeOpts []bridge.Option
+	ctx        context.Context
+	cancel     context.CancelFunc
+	mu         sync.Mutex
+	bridges    []*bridge.Bridge
+	started    bool
+	subID      string
 }
 
 // PipelineExecutorConfig holds required dependencies.
 type PipelineExecutorConfig struct {
-	Orchestrator *orchestrator.Orchestrator
-	Session      *orchestrator.Session
-	Verifier     orchestrator.Verifier
-	Bus          *event.Bus
-	Pipeline     *pipeline.Pipeline
-	Recorder     bridge.SessionRecorder
-	Logger       *logging.Logger
+	Factory    bridge.InstanceFactory
+	Checker    bridge.CompletionChecker
+	Bus        *event.Bus
+	Pipeline   *pipeline.Pipeline
+	Recorder   bridge.SessionRecorder
+	Logger     *logging.Logger
+	BridgeOpts []bridge.Option
 }
 
 // NewPipelineExecutor creates a PipelineExecutor that will attach bridges
 // to execution-phase teams when they start.
 func NewPipelineExecutor(cfg PipelineExecutorConfig) (*PipelineExecutor, error) {
-	if cfg.Orchestrator == nil {
-		return nil, fmt.Errorf("bridgewire: Orchestrator is required")
+	if cfg.Factory == nil {
+		return nil, fmt.Errorf("bridgewire: Factory is required")
 	}
-	if cfg.Session == nil {
-		return nil, fmt.Errorf("bridgewire: Session is required")
-	}
-	if cfg.Verifier == nil {
-		return nil, fmt.Errorf("bridgewire: Verifier is required")
+	if cfg.Checker == nil {
+		return nil, fmt.Errorf("bridgewire: Checker is required")
 	}
 	if cfg.Bus == nil {
 		return nil, fmt.Errorf("bridgewire: Bus is required")
@@ -70,14 +68,36 @@ func NewPipelineExecutor(cfg PipelineExecutorConfig) (*PipelineExecutor, error) 
 	}
 
 	return &PipelineExecutor{
-		orch:     cfg.Orchestrator,
-		session:  cfg.Session,
-		verifier: cfg.Verifier,
-		bus:      cfg.Bus,
-		pipe:     cfg.Pipeline,
-		recorder: cfg.Recorder,
-		logger:   cfg.Logger,
+		factory:    cfg.Factory,
+		checker:    cfg.Checker,
+		bus:        cfg.Bus,
+		pipe:       cfg.Pipeline,
+		recorder:   cfg.Recorder,
+		logger:     cfg.Logger,
+		bridgeOpts: cfg.BridgeOpts,
 	}, nil
+}
+
+// NewPipelineExecutorFromOrch creates a PipelineExecutor using orchestrator
+// adapters. This is the production constructor — tests should use
+// NewPipelineExecutor directly with mock factory/checker.
+func NewPipelineExecutorFromOrch(
+	orch *orchestrator.Orchestrator,
+	session *orchestrator.Session,
+	verifier orchestrator.Verifier,
+	bus *event.Bus,
+	pipe *pipeline.Pipeline,
+	recorder bridge.SessionRecorder,
+	logger *logging.Logger,
+) (*PipelineExecutor, error) {
+	return NewPipelineExecutor(PipelineExecutorConfig{
+		Factory:  NewInstanceFactory(orch, session),
+		Checker:  NewCompletionChecker(verifier),
+		Bus:      bus,
+		Pipeline: pipe,
+		Recorder: recorder,
+		Logger:   logger,
+	})
 }
 
 // Start subscribes to pipeline phase change events and begins attaching
@@ -134,9 +154,49 @@ func (pe *PipelineExecutor) Stop() {
 	}
 }
 
-// Coverage: attachBridges requires a real Pipeline with active teams; tested via integration.
+// attachBridgesTimeout is the maximum time attachBridges waits for execution
+// teams to reach PhaseWorking. The pipeline publishes the phase_changed event
+// before teams are added and the Manager is started, so teams may not be
+// immediately available or ready.
+const attachBridgesTimeout = 5 * time.Second
+
 // attachBridges creates a Bridge for each team in the current execution phase.
+// It polls for teams to reach PhaseWorking because the pipeline.phase_changed
+// event fires before teams are added to the Manager and started.
 func (pe *PipelineExecutor) attachBridges() {
+	// Wait for at least one execution team in PhaseWorking without holding the
+	// lock. The pipeline publishes pipeline.phase_changed → then AddTeam → then
+	// Start, so we must wait for Start to complete before teams are functional.
+	deadline := time.Now().Add(attachBridgesTimeout)
+	foundWorking := false
+	for time.Now().Before(deadline) {
+		pe.mu.Lock()
+		started := pe.started
+		pe.mu.Unlock()
+		if !started {
+			return
+		}
+
+		mgr := pe.pipe.Manager(pipeline.PhaseExecution)
+		if mgr != nil {
+			for _, s := range mgr.AllStatuses() {
+				if s.Role == team.RoleExecution && s.Phase == team.PhaseWorking {
+					foundWorking = true
+					break
+				}
+			}
+			if foundWorking {
+				break
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if !foundWorking {
+		pe.logger.Warn("bridgewire: timed out waiting for execution teams to reach PhaseWorking",
+			"timeout", attachBridgesTimeout)
+	}
+
 	pe.mu.Lock()
 	defer pe.mu.Unlock()
 
@@ -150,10 +210,9 @@ func (pe *PipelineExecutor) attachBridges() {
 		return
 	}
 
-	factory := NewInstanceFactory(pe.orch, pe.session)
-	checker := NewCompletionChecker(pe.verifier)
-
 	statuses := mgr.AllStatuses()
+	opts := append([]bridge.Option{bridge.WithLogger(pe.logger)}, pe.bridgeOpts...)
+
 	for _, status := range statuses {
 		if status.Role != team.RoleExecution {
 			continue
@@ -165,9 +224,7 @@ func (pe *PipelineExecutor) attachBridges() {
 			continue
 		}
 
-		b := bridge.New(t, factory, checker, pe.recorder, pe.bus,
-			bridge.WithLogger(pe.logger),
-		)
+		b := bridge.New(t, pe.factory, pe.checker, pe.recorder, pe.bus, opts...)
 		if err := b.Start(pe.ctx); err != nil {
 			pe.logger.Error("bridgewire: failed to start bridge",
 				"team", status.ID, "error", err)
