@@ -271,6 +271,9 @@ type Model struct {
 	// Triple-shot mode (nil if not in triple-shot mode)
 	tripleShot *TripleShotState
 
+	// Pipeline orchestration state (nil until first pipeline event)
+	pipeline *view.PipelineState
+
 	// Adversarial review mode (nil if not in adversarial mode)
 	adversarial *view.AdversarialState
 
