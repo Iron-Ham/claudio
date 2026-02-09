@@ -132,6 +132,12 @@ func TestSpec_Validate(t *testing.T) {
 		{"invalid Role", func(s *Spec) { s.Role = "bad" }, "invalid role"},
 		{"no tasks", func(s *Spec) { s.Tasks = nil }, "at least one task"},
 		{"zero team size", func(s *Spec) { s.TeamSize = 0 }, "TeamSize must be >= 1"},
+		{"negative MinInstances", func(s *Spec) { s.MinInstances = -1 }, "MinInstances must be >= 0"},
+		{"negative MaxInstances", func(s *Spec) { s.MaxInstances = -1 }, "MaxInstances must be >= 0"},
+		{"min > max", func(s *Spec) { s.MinInstances = 5; s.MaxInstances = 2 }, "MinInstances (5) must be <= MaxInstances (2)"},
+		{"valid min/max", func(s *Spec) { s.MinInstances = 1; s.MaxInstances = 5 }, ""},
+		{"min with unlimited max", func(s *Spec) { s.MinInstances = 3; s.MaxInstances = 0 }, ""},
+		{"max with zero min", func(s *Spec) { s.MinInstances = 0; s.MaxInstances = 5 }, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

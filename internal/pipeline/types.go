@@ -54,12 +54,22 @@ type DecomposeConfig struct {
 	PlanningTeam      bool // Create a planning team phase
 	ReviewTeam        bool // Create a review team phase
 	ConsolidationTeam bool // Create a consolidation team phase
+
+	DefaultTeamSize  int // Initial concurrent instances per team (default: 1)
+	MinTeamInstances int // Min instances for scaling (default: 1)
+	MaxTeamInstances int // Max instances for scaling (0 = unlimited)
 }
 
 // defaults returns a copy of the config with defaults applied.
 func (c DecomposeConfig) defaults() DecomposeConfig {
 	if c.MinTeamSize < 1 {
 		c.MinTeamSize = 1
+	}
+	if c.DefaultTeamSize < 1 {
+		c.DefaultTeamSize = 1
+	}
+	if c.MinTeamInstances < 1 {
+		c.MinTeamInstances = 1
 	}
 	return c
 }

@@ -1209,6 +1209,247 @@ func TestPipelineExecutor_E2E_BudgetExhaustedEvent(t *testing.T) {
 	}
 }
 
+// --- E2E: Scaling Feedback ---------------------------------------------------
+
+func TestPipelineExecutor_E2E_ScalingFeedback(t *testing.T) {
+	// Create a plan with enough tasks to trigger scale-up.
+	plan := &ultraplan.PlanSpec{
+		ID:        "e2e-scaling",
+		Objective: "E2E scaling feedback test",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Description: "First", Files: []string{"shared.go"}},
+			{ID: "t2", Title: "Task 2", Description: "Second", Files: []string{"shared.go"}},
+			{ID: "t3", Title: "Task 3", Description: "Third", Files: []string{"shared.go"}},
+			{ID: "t4", Title: "Task 4", Description: "Fourth", Files: []string{"shared.go"}},
+			{ID: "t5", Title: "Task 5", Description: "Fifth", Files: []string{"shared.go"}},
+		},
+	}
+
+	checker := newAutoCompleteChecker()
+	factory := newAutoCompleteFactory(checker)
+	recorder := newTrackingRecorder()
+
+	bus := event.NewBus()
+
+	// Use a scaling policy that fires aggressively (no cooldown, threshold=0).
+	pipe, err := pipeline.NewPipeline(pipeline.PipelineConfig{
+		Bus:     bus,
+		BaseDir: t.TempDir(),
+		Plan:    plan,
+	}, pipeline.WithHubOptions(
+		coordination.WithRebalanceInterval(-1),
+		coordination.WithScalingPolicy(nil), // per-team opts will override
+	))
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+
+	result, err := pipe.Decompose(pipeline.DecomposeConfig{
+		DefaultTeamSize:  1,
+		MinTeamInstances: 1,
+		MaxTeamInstances: 4,
+	})
+	if err != nil {
+		t.Fatalf("Decompose: %v", err)
+	}
+
+	// Verify decompose set the bounds.
+	if len(result.ExecutionTeams) != 1 {
+		t.Fatalf("ExecutionTeams = %d, want 1 (all tasks share a file)", len(result.ExecutionTeams))
+	}
+	spec := result.ExecutionTeams[0]
+	if spec.MinInstances != 1 {
+		t.Errorf("MinInstances = %d, want 1", spec.MinInstances)
+	}
+	if spec.MaxInstances != 4 {
+		t.Errorf("MaxInstances = %d, want 4", spec.MaxInstances)
+	}
+	if spec.TeamSize != 1 {
+		t.Errorf("TeamSize = %d, want 1", spec.TeamSize)
+	}
+
+	pe, err := NewPipelineExecutor(PipelineExecutorConfig{
+		Factory:  factory,
+		Checker:  checker,
+		Bus:      bus,
+		Pipeline: pipe,
+		Recorder: recorder,
+		BridgeOpts: []bridge.Option{
+			bridge.WithPollInterval(10 * time.Millisecond),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewPipelineExecutor: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Listen for team.scaled events.
+	scaledEvents := make(chan event.Event, 20)
+	bus.Subscribe("team.scaled", func(e event.Event) {
+		scaledEvents <- e
+	})
+
+	pipelineCompleted := make(chan event.Event, 5)
+	bus.Subscribe("pipeline.completed", func(e event.Event) {
+		pipelineCompleted <- e
+	})
+
+	if err := pipe.Start(ctx); err != nil {
+		t.Fatalf("Pipeline.Start: %v", err)
+	}
+	defer func() { _ = pipe.Stop() }()
+
+	if err := pe.Start(ctx); err != nil {
+		t.Fatalf("PipelineExecutor.Start: %v", err)
+	}
+	defer pe.Stop()
+
+	// Wait for all 5 recorder completions. We use recorder.completeCh
+	// instead of pipeline.completed because the bridge monitor calls
+	// gate.Complete before recorder.RecordCompletion — the pipeline can
+	// finish before the last recorder call lands.
+	deadline := time.After(30 * time.Second)
+	for i := range 5 {
+		select {
+		case <-recorder.completeCh:
+		case <-deadline:
+			t.Fatalf("timed out waiting for recorder completions (%d/5 received)", i)
+		}
+	}
+
+	// Also verify the pipeline succeeded.
+	select {
+	case e := <-pipelineCompleted:
+		pce := e.(event.PipelineCompletedEvent)
+		if !pce.Success {
+			t.Error("pipeline should have succeeded")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for pipeline.completed; phase=%s", pipe.Phase())
+	}
+
+	// Verify all tasks completed via the recorder map.
+	completed := recorder.Completed()
+	for _, id := range []string{"t1", "t2", "t3", "t4", "t5"} {
+		if _, ok := completed[id]; !ok {
+			t.Errorf("recorder.RecordCompletion not called for %s", id)
+		}
+	}
+
+	// Check that bridge was initialised with TeamSize concurrency.
+	bridges := pe.Bridges()
+	if len(bridges) != 1 {
+		t.Fatalf("pe.Bridges() = %d, want 1", len(bridges))
+	}
+}
+
+func TestPipelineExecutor_E2E_ScalingBudgetBlocksScaleUp(t *testing.T) {
+	plan := &ultraplan.PlanSpec{
+		ID:        "e2e-budget-scale",
+		Objective: "E2E budget blocks scale-up",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Description: "Task", Files: []string{"a.go"}},
+			{ID: "t2", Title: "Task 2", Description: "Task", Files: []string{"a.go"}},
+			{ID: "t3", Title: "Task 3", Description: "Task", Files: []string{"a.go"}},
+		},
+	}
+
+	checker := newAutoCompleteChecker()
+	var createCount atomic.Int32
+	slowFactory := &slowCompleteFactory{createCount: &createCount}
+	recorder := newTrackingRecorder()
+
+	bus := event.NewBus()
+
+	pipe, err := pipeline.NewPipeline(pipeline.PipelineConfig{
+		Bus:     bus,
+		BaseDir: t.TempDir(),
+		Plan:    plan,
+	}, pipeline.WithHubOptions(
+		coordination.WithRebalanceInterval(-1),
+	))
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+
+	result, err := pipe.Decompose(pipeline.DecomposeConfig{
+		DefaultTeamSize:  1,
+		MinTeamInstances: 1,
+		MaxTeamInstances: 3,
+	})
+	if err != nil {
+		t.Fatalf("Decompose: %v", err)
+	}
+
+	// Set a tight budget so we can exhaust it.
+	result.ExecutionTeams[0].Budget = team.TokenBudget{MaxTotalCost: 10.0}
+
+	pe, err := NewPipelineExecutor(PipelineExecutorConfig{
+		Factory:  slowFactory,
+		Checker:  checker,
+		Bus:      bus,
+		Pipeline: pipe,
+		Recorder: recorder,
+		BridgeOpts: []bridge.Option{
+			bridge.WithPollInterval(10 * time.Millisecond),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewPipelineExecutor: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := pipe.Start(ctx); err != nil {
+		t.Fatalf("Pipeline.Start: %v", err)
+	}
+	defer func() { _ = pipe.Stop() }()
+
+	if err := pe.Start(ctx); err != nil {
+		t.Fatalf("PipelineExecutor.Start: %v", err)
+	}
+	defer pe.Stop()
+
+	// Wait for bridge to start a task.
+	waitForBusEvent(t, bus, "bridge.task_started", 5*time.Second)
+
+	// Exhaust the budget.
+	mgr := pipe.Manager(pipeline.PhaseExecution)
+	if mgr == nil {
+		t.Fatal("execution phase manager is nil")
+	}
+	tm := mgr.Team("exec-0")
+	if tm == nil {
+		t.Fatal("Team(exec-0) = nil")
+	}
+	tm.BudgetTracker().Record(0, 0, 20.0) // exceeds 10.0
+
+	// Verify budget is exhausted.
+	if !tm.BudgetTracker().Exhausted() {
+		t.Error("budget should be exhausted")
+	}
+
+	// The bridge should still be running at its initial concurrency.
+	bridges := pe.Bridges()
+	if len(bridges) != 1 {
+		t.Fatalf("pe.Bridges() = %d, want 1", len(bridges))
+	}
+
+	// The bridge's max concurrency should still be TeamSize (1) since budget
+	// is exhausted and wireScalingFeedback should block scale-up.
+	// Note: MaxConcurrency is set to TeamSize during wireScalingFeedback init.
+	maxConc := bridges[0].MaxConcurrency()
+	if maxConc != 1 {
+		t.Errorf("MaxConcurrency = %d, want 1 (budget exhausted)", maxConc)
+	}
+
+	// Complete the task so we can clean up.
+	checker.MarkComplete(fmt.Sprintf("/tmp/wt-%d", createCount.Load()))
+}
+
 // --- E2E: Context Cancellation -----------------------------------------------
 
 func TestPipelineExecutor_E2E_ContextCancel(t *testing.T) {

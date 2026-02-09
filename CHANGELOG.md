@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dynamic Team Sizing** - Connected the scaling feedback loop so bridges adjust concurrency based on workload and budget. Added `dynamicSemaphore` to the bridge for context-aware, resizable concurrency limiting. Added `SetMaxConcurrency`/`MaxConcurrency`/`ActiveInstances` to Bridge. Added `TeamScaledEvent` for TUI observability. Added `MinInstances`/`MaxInstances` to team Spec and `WithMinInstances`/`WithMaxInstances` coordination options. Decompose now populates scaling bounds from `DecomposeConfig`. `PipelineExecutor.wireScalingFeedback` connects scaling monitor decisions to bridge concurrency with budget-aware veto. (#646)
+
 - **Remaining E2E Test Scenarios** - Added 5 new E2E integration tests for the pipeline executor: dependency ordering (linear chain), dependency failure cascade, partial failure (mixed success/failure), budget exhaustion event, and context cancellation. Added `selectiveFactory` mock for per-task failure control and `waitForTeamPhase` helper. (#649)
 
 ### Fixed

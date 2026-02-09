@@ -11,6 +11,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/pipeline"
+	"github.com/Iron-Ham/claudio/internal/scaling"
 	"github.com/Iron-Ham/claudio/internal/team"
 )
 
@@ -231,9 +232,65 @@ func (pe *PipelineExecutor) attachBridges() {
 			continue
 		}
 
+		pe.wireScalingFeedback(t, b)
 		pe.bridges = append(pe.bridges, b)
 		pe.logger.Info("bridgewire: attached bridge to team", "team", status.ID)
 	}
+}
+
+// wireScalingFeedback connects the scaling monitor's decisions to the bridge's
+// concurrency control. It initialises the bridge and monitor to the team's
+// TeamSize, then registers an OnDecision callback that clamps the target to
+// [MinInstances, MaxInstances], respects budget exhaustion, and publishes a
+// TeamScaledEvent for the TUI.
+func (pe *PipelineExecutor) wireScalingFeedback(t *team.Team, b *bridge.Bridge) {
+	spec := t.Spec()
+	monitor := t.Hub().ScalingMonitor()
+
+	// Initialise bridge and monitor to the team's starting concurrency.
+	b.SetMaxConcurrency(spec.TeamSize)
+	monitor.SetCurrentInstances(spec.TeamSize)
+
+	minInst := spec.MinInstances
+	if minInst <= 0 {
+		minInst = spec.TeamSize
+	}
+	maxInst := spec.MaxInstances // 0 = unlimited
+
+	monitor.OnDecision(func(d scaling.Decision) {
+		current := b.MaxConcurrency()
+		target := current + d.Delta
+
+		// Clamp to floor.
+		if target < minInst {
+			target = minInst
+		}
+		// Clamp to ceiling (0 = no ceiling).
+		if maxInst > 0 && target > maxInst {
+			target = maxInst
+		}
+
+		// Block scale-up when budget is exhausted.
+		if target > current && t.BudgetTracker().Exhausted() {
+			pe.logger.Info("bridgewire: skipping scale-up due to budget exhaustion",
+				"team", spec.ID, "target", target, "current", current)
+			return
+		}
+
+		if target == current {
+			return
+		}
+
+		b.SetMaxConcurrency(target)
+		monitor.SetCurrentInstances(target)
+
+		pe.bus.Publish(event.NewTeamScaledEvent(
+			spec.ID, current, target, d.Reason,
+		))
+
+		pe.logger.Info("bridgewire: scaled team",
+			"team", spec.ID, "from", current, "to", target, "reason", d.Reason)
+	})
 }
 
 // Bridges returns the current bridges for testing/inspection.

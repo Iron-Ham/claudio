@@ -109,11 +109,22 @@ func (m *Manager) buildAndRegisterTeamLocked(spec Spec) (*Team, error) {
 
 	sessionDir := filepath.Join(m.baseDir, spec.ID)
 
+	// Start with shared hub options, then append per-team overrides.
+	opts := make([]coordination.Option, len(m.hubOpts))
+	copy(opts, m.hubOpts)
+	opts = append(opts, coordination.WithInitialInstances(spec.TeamSize))
+	if spec.MinInstances > 0 {
+		opts = append(opts, coordination.WithMinInstances(spec.MinInstances))
+	}
+	if spec.MaxInstances > 0 {
+		opts = append(opts, coordination.WithMaxInstances(spec.MaxInstances))
+	}
+
 	hub, err := coordination.NewHub(coordination.Config{
 		Bus:        m.bus,
 		SessionDir: sessionDir,
 		Plan:       plan,
-	}, m.hubOpts...)
+	}, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("team: creating hub for %q: %w", spec.ID, err)
 	}

@@ -29,6 +29,7 @@ These interfaces are implemented by adapters in `internal/orchestrator/bridgewir
 - One monitor goroutine per active task
 - All goroutines tracked via `sync.WaitGroup` for clean shutdown
 - Running map (`taskID → instanceID`) protected by `sync.RWMutex`
+- `dynamicSemaphore` gates concurrency — claim loop acquires a slot before `ClaimNext`, monitor releases it on completion/failure. `SetMaxConcurrency(0)` = unlimited (default, backward compatible).
 
 ## Pitfalls
 
