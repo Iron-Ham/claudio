@@ -14,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Failed-Dependency Cascade** - Teams blocked on a failed dependency now transition to `PhaseFailed` instead of staying blocked forever. The `Manager.onTeamCompleted` handler detects permanently blocked teams and cascades failure through multi-hop dependency chains (A fails → B fails → C fails). Uses a two-phase approach (collect state under lock, publish events outside) to avoid re-entrancy deadlock with the synchronous event bus. (#649)
-- **TripleShot startJudge Race** - Fixed flaky `TestTeamCoordinator_FullLifecycle` where `startJudge` relied on `session.Attempts[i].Status` (set by `bridge.task_completed` handler) which could race with `TeamCompletedEvent` (fired from `queue.depth_changed` → monitor). Now tracks per-attempt success from the `TeamCompletedEvent.Success` field, which is always available before `startJudge` runs.
 
 ### Changed
 
