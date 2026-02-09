@@ -349,6 +349,7 @@ Patterns and conventions observed in this codebase that aren't covered by the ge
 - **File organization** — Each package keeps types, logic, and tests in separate files when the package is non-trivial (e.g., `types.go`, `queue.go`, `queue_test.go`).
 - **Decorator chain** — Orchestration 2.0 builds behavior via stacked decorators: `TaskQueue → EventQueue → Gate`. Higher-level packages (`team`, `pipeline`) compose these decorators through `coordination.Hub`. When adding new orchestration behavior, consider whether it fits as a new decorator layer rather than modifying existing ones.
 - **One-Manager-per-phase** — The `pipeline` package creates a fresh `team.Manager` per pipeline phase (planning, execution, review, consolidation). This keeps event subscriptions, completion monitors, and budget tracking scoped to each phase and avoids cross-phase interference.
+- **TUI-local state from events** — `view/pipeline_status.go` defines `PipelineState` and `TeamSnapshot` types built entirely from event data (no backend imports). This avoids import cycles and keeps TUI types decoupled from the orchestration stack. The `m.pipeline` field is lazy-initialized on first pipeline event, so non-pipeline sessions are unaffected.
 
 ---
 

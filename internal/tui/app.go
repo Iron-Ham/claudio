@@ -317,6 +317,93 @@ func (a *App) Run() error {
 	})
 	subscriptionIDs = append(subscriptionIDs, subID)
 
+	// Subscribe to pipeline lifecycle events
+	subID = eventBus.Subscribe("pipeline.phase_changed", func(e event.Event) {
+		pe, ok := e.(event.PipelinePhaseChangedEvent)
+		if !ok {
+			return
+		}
+		a.program.Send(tuimsg.PipelinePhaseChangedMsg{
+			PipelineID:    pe.PipelineID,
+			PreviousPhase: pe.PreviousPhase,
+			CurrentPhase:  pe.CurrentPhase,
+		})
+	})
+	subscriptionIDs = append(subscriptionIDs, subID)
+
+	subID = eventBus.Subscribe("pipeline.completed", func(e event.Event) {
+		pe, ok := e.(event.PipelineCompletedEvent)
+		if !ok {
+			return
+		}
+		a.program.Send(tuimsg.PipelineCompletedMsg{
+			PipelineID: pe.PipelineID,
+			Success:    pe.Success,
+			PhasesRun:  pe.PhasesRun,
+		})
+	})
+	subscriptionIDs = append(subscriptionIDs, subID)
+
+	// Subscribe to team lifecycle events
+	subID = eventBus.Subscribe("team.phase_changed", func(e event.Event) {
+		te, ok := e.(event.TeamPhaseChangedEvent)
+		if !ok {
+			return
+		}
+		a.program.Send(tuimsg.TeamStatusChangedMsg{
+			TeamID:        te.TeamID,
+			TeamName:      te.TeamName,
+			PreviousPhase: te.PreviousPhase,
+			CurrentPhase:  te.CurrentPhase,
+		})
+	})
+	subscriptionIDs = append(subscriptionIDs, subID)
+
+	subID = eventBus.Subscribe("team.completed", func(e event.Event) {
+		te, ok := e.(event.TeamCompletedEvent)
+		if !ok {
+			return
+		}
+		a.program.Send(tuimsg.TeamCompletedMsg{
+			TeamID:      te.TeamID,
+			TeamName:    te.TeamName,
+			Success:     te.Success,
+			TasksDone:   te.TasksDone,
+			TasksFailed: te.TasksFailed,
+		})
+	})
+	subscriptionIDs = append(subscriptionIDs, subID)
+
+	// Subscribe to bridge task events
+	subID = eventBus.Subscribe("bridge.task_started", func(e event.Event) {
+		be, ok := e.(event.BridgeTaskStartedEvent)
+		if !ok {
+			return
+		}
+		a.program.Send(tuimsg.BridgeTaskActivityMsg{
+			TeamID:     be.TeamID,
+			TaskID:     be.TaskID,
+			InstanceID: be.InstanceID,
+			Started:    true,
+		})
+	})
+	subscriptionIDs = append(subscriptionIDs, subID)
+
+	subID = eventBus.Subscribe("bridge.task_completed", func(e event.Event) {
+		be, ok := e.(event.BridgeTaskCompletedEvent)
+		if !ok {
+			return
+		}
+		a.program.Send(tuimsg.BridgeTaskActivityMsg{
+			TeamID:     be.TeamID,
+			TaskID:     be.TaskID,
+			InstanceID: be.InstanceID,
+			Started:    false,
+			Success:    be.Success,
+		})
+	})
+	subscriptionIDs = append(subscriptionIDs, subID)
+
 	_, err := a.program.Run()
 
 	// Clean up signal handler
@@ -749,6 +836,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tuimsg.DiffLoadedMsg:
 		return m.handleDiffLoaded(msg)
+
+	// Pipeline and team orchestration messages
+	case tuimsg.PipelinePhaseChangedMsg:
+		m.ensurePipeline().UpdatePhase(msg.PipelineID, msg.CurrentPhase)
+		return m, nil
+
+	case tuimsg.PipelineCompletedMsg:
+		m.ensurePipeline().MarkCompleted(msg.Success)
+		return m, nil
+
+	case tuimsg.TeamStatusChangedMsg:
+		m.ensurePipeline().UpdateTeamPhase(msg.TeamID, msg.TeamName, msg.CurrentPhase)
+		return m, nil
+
+	case tuimsg.TeamCompletedMsg:
+		m.ensurePipeline().UpdateTeamCompleted(msg.TeamID, msg.TeamName, msg.Success, msg.TasksDone, msg.TasksFailed)
+		return m, nil
+
+	case tuimsg.BridgeTaskActivityMsg:
+		// Bridge events without pipeline context are intentionally dropped —
+		// they aren't meaningful without pipeline phase tracking.
+		if m.pipeline != nil {
+			m.pipeline.UpdateBridgeTaskActivity(msg.TeamID, msg.Started, msg.Success)
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -1265,9 +1377,18 @@ func (m Model) renderUnifiedHeader() string {
 		Render(content)
 }
 
+// ensurePipeline lazily initializes and returns the pipeline state.
+func (m *Model) ensurePipeline() *view.PipelineState {
+	if m.pipeline == nil {
+		m.pipeline = &view.PipelineState{}
+	}
+	return m.pipeline
+}
+
 // buildWorkflowStatusState builds the workflow status state from the model.
 func (m Model) buildWorkflowStatusState() *view.WorkflowStatusState {
 	return &view.WorkflowStatusState{
+		Pipeline:    m.pipeline,
 		UltraPlan:   m.ultraPlan,
 		TripleShot:  m.tripleShot,
 		Adversarial: m.adversarial,

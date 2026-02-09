@@ -15,6 +15,7 @@ import (
 // WorkflowStatusState aggregates status from all active workflow types.
 // This enables the header to show multiple concurrent workflows at once.
 type WorkflowStatusState struct {
+	Pipeline    *PipelineState
 	UltraPlan   *UltraPlanState
 	TripleShot  *TripleShotState
 	Adversarial *AdversarialState
@@ -34,7 +35,12 @@ func (s *WorkflowStatusState) HasActiveWorkflows() bool {
 	if s == nil {
 		return false
 	}
-	return s.hasUltraPlan() || s.hasTripleShot() || s.hasAdversarial()
+	return s.hasPipeline() || s.hasUltraPlan() || s.hasTripleShot() || s.hasAdversarial()
+}
+
+// hasPipeline checks if a pipeline is active.
+func (s *WorkflowStatusState) hasPipeline() bool {
+	return s.Pipeline != nil && s.Pipeline.IsActive()
 }
 
 // hasUltraPlan checks if ultraplan is active.
@@ -66,7 +72,7 @@ func (s *WorkflowStatusState) GetUltraPlanObjective() string {
 }
 
 // GetIndicators returns a slice of workflow indicators for all active workflows.
-// The indicators are ordered by priority: UltraPlan, TripleShot, Adversarial.
+// The indicators are ordered by priority: Pipeline, UltraPlan, TripleShot, Adversarial.
 func (s *WorkflowStatusState) GetIndicators() []WorkflowIndicator {
 	if s == nil {
 		return nil
@@ -74,6 +80,9 @@ func (s *WorkflowStatusState) GetIndicators() []WorkflowIndicator {
 
 	var indicators []WorkflowIndicator
 
+	if ind := s.getPipelineIndicator(); ind != nil {
+		indicators = append(indicators, *ind)
+	}
 	if ind := s.getUltraPlanIndicator(); ind != nil {
 		indicators = append(indicators, *ind)
 	}
@@ -85,6 +94,14 @@ func (s *WorkflowStatusState) GetIndicators() []WorkflowIndicator {
 	}
 
 	return indicators
+}
+
+// getPipelineIndicator returns the indicator for pipeline mode.
+func (s *WorkflowStatusState) getPipelineIndicator() *WorkflowIndicator {
+	if s.Pipeline == nil {
+		return nil
+	}
+	return s.Pipeline.GetIndicator()
 }
 
 // getUltraPlanIndicator returns the indicator for ultraplan mode.

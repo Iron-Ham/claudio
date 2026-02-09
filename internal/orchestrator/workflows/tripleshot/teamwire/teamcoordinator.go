@@ -491,16 +491,14 @@ func (tc *TeamCoordinator) startJudge() {
 		tc.mu.Unlock()
 		return
 	}
-	tc.mu.Unlock()
 
 	session := tc.tsManager.Session()
-
 	successCount := session.SuccessfulAttemptCount()
+
 	if successCount < 2 {
 		tc.logger.Warn("fewer than 2 attempts succeeded, failing",
 			"success_count", successCount,
 		)
-		tc.mu.Lock()
 		session.Error = "fewer than 2 attempts succeeded"
 		tc.tsManager.SetPhase(ts.PhaseFailed)
 		tc.mu.Unlock()
@@ -515,19 +513,41 @@ func (tc *TeamCoordinator) startJudge() {
 		return
 	}
 
+	// Snapshot attempt data under the lock to avoid racing with
+	// onBridgeTaskCompleted, which writes Attempts[i].Status concurrently.
+	type attemptSnap struct {
+		status     ts.AttemptStatus
+		instanceID string
+	}
+	var snaps [3]attemptSnap
+	for i := range session.Attempts {
+		snaps[i] = attemptSnap{
+			status:     session.Attempts[i].Status,
+			instanceID: session.Attempts[i].InstanceID,
+		}
+	}
+	tc.mu.Unlock()
+
 	tc.tsManager.EmitAllAttemptsReady()
 
-	// Build completion summaries for the judge prompt.
-	var summaries [3]string
-	for i, attempt := range session.Attempts {
-		if attempt.Status != ts.AttemptStatusCompleted {
+	// Build completion summaries outside the lock (involves I/O).
+	type attemptResult struct {
+		worktreePath string
+		branch       string
+	}
+	var (
+		summaries [3]string
+		results   [3]attemptResult
+	)
+	for i, snap := range snaps {
+		if snap.status != ts.AttemptStatusCompleted {
 			summaries[i] = fmt.Sprintf("(Attempt %d failed)", i+1)
 			continue
 		}
 
-		inst := tc.session.GetInstance(attempt.InstanceID)
+		inst := tc.session.GetInstance(snap.instanceID)
 		if inst == nil {
-			summaries[i] = fmt.Sprintf("(Unable to find instance %s)", attempt.InstanceID)
+			summaries[i] = fmt.Sprintf("(Unable to find instance %s)", snap.instanceID)
 			continue
 		}
 
@@ -541,19 +561,30 @@ func (tc *TeamCoordinator) startJudge() {
 		} else {
 			summaries[i] = fmt.Sprintf("Status: %s\nSummary: %s\nApproach: %s\nFiles Modified: %v",
 				completion.Status, completion.Summary, completion.Approach, completion.FilesModified)
-			session.Attempts[i].WorktreePath = inst.GetWorktreePath()
-			session.Attempts[i].Branch = inst.GetBranch()
+			results[i] = attemptResult{
+				worktreePath: inst.GetWorktreePath(),
+				branch:       inst.GetBranch(),
+			}
 		}
 	}
 
+	// Write results back and build the judge prompt under the lock.
+	tc.mu.Lock()
+	for i := range results {
+		if results[i].worktreePath != "" {
+			session.Attempts[i].WorktreePath = results[i].worktreePath
+			session.Attempts[i].Branch = results[i].branch
+		}
+	}
 	judgePrompt := fmt.Sprintf(ts.JudgePromptTemplate,
 		session.Task,
 		session.Attempts[0].InstanceID, session.Attempts[0].Branch, session.Attempts[0].WorktreePath, summaries[0],
 		session.Attempts[1].InstanceID, session.Attempts[1].Branch, session.Attempts[1].WorktreePath, summaries[1],
 		session.Attempts[2].InstanceID, session.Attempts[2].Branch, session.Attempts[2].WorktreePath, summaries[2],
 	)
-
 	tc.tsManager.SetPhase(ts.PhaseEvaluating)
+	tc.mu.Unlock()
+
 	tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
 		if cb.OnPhaseChange != nil {
 			cb.OnPhaseChange(ts.PhaseEvaluating)
