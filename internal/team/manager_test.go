@@ -472,18 +472,25 @@ func TestManager_DependencyCascade(t *testing.T) {
 	waitForTeamPhase("gamma", PhaseWorking)
 }
 
-func TestManager_FailedDependencyBlocksDependent(t *testing.T) {
+func TestManager_FailedDependencyCascade(t *testing.T) {
 	m, bus := newTestManager(t,
 		WithHubOptions(coordination.WithRebalanceInterval(-1)),
 	)
 
-	// Beta depends on Alpha.
+	// Chain: alpha → beta → gamma. When alpha fails, both beta and gamma
+	// should cascade to PhaseFailed.
 	_ = m.AddTeam(testSpec("alpha", "Alpha"))
 	_ = m.AddTeam(testSpec("beta", "Beta", "alpha"))
+	_ = m.AddTeam(testSpec("gamma", "Gamma", "beta"))
 
 	phaseChanges := make(chan event.Event, 30)
 	bus.Subscribe("team.phase_changed", func(e event.Event) {
 		phaseChanges <- e
+	})
+
+	teamCompleted := make(chan event.Event, 10)
+	bus.Subscribe("team.completed", func(e event.Event) {
+		teamCompleted <- e
 	})
 
 	ctx := context.Background()
@@ -511,16 +518,21 @@ func TestManager_FailedDependencyBlocksDependent(t *testing.T) {
 
 	waitForTeamPhase("alpha", PhaseWorking)
 	waitForTeamPhase("beta", PhaseBlocked)
+	waitForTeamPhase("gamma", PhaseBlocked)
 
-	// Fail alpha's task instead of completing it.
+	// Fail alpha's task with retries disabled so it becomes terminal immediately.
 	alphaTeam := m.Team("alpha")
 	eq := alphaTeam.Hub().EventQueue()
+	tq := alphaTeam.Hub().TaskQueue()
 	task, err := eq.ClaimNext("inst-1")
 	if err != nil {
 		t.Fatalf("ClaimNext: %v", err)
 	}
 	if task == nil {
 		t.Fatal("no task to claim")
+	}
+	if err := tq.SetMaxRetries(task.ID, 0); err != nil {
+		t.Fatalf("SetMaxRetries: %v", err)
 	}
 	if err := eq.MarkRunning(task.ID); err != nil {
 		t.Fatalf("MarkRunning: %v", err)
@@ -529,16 +541,32 @@ func TestManager_FailedDependencyBlocksDependent(t *testing.T) {
 		t.Fatalf("Fail: %v", err)
 	}
 
-	// Wait for alpha's completion event to propagate.
-	time.Sleep(100 * time.Millisecond)
-
-	// Beta should STILL be blocked — a failed dependency should not unblock.
-	status, ok := m.TeamStatus("beta")
-	if !ok {
-		t.Fatal("TeamStatus(beta) not found")
+	// Wait for all three completion events (alpha fails via monitor, beta and
+	// gamma cascade via onTeamCompleted).
+	completedTeams := make(map[string]bool)
+	timeout := time.After(5 * time.Second)
+	for len(completedTeams) < 3 {
+		select {
+		case e := <-teamCompleted:
+			tce := e.(event.TeamCompletedEvent)
+			completedTeams[tce.TeamID] = true
+			if tce.Success {
+				t.Errorf("team %q should have failed, got success=true", tce.TeamID)
+			}
+		case <-timeout:
+			t.Fatalf("timed out waiting for completion events: got %v", completedTeams)
+		}
 	}
-	if status.Phase != PhaseBlocked {
-		t.Errorf("beta phase = %v, want %v (failed dep should not satisfy)", status.Phase, PhaseBlocked)
+
+	// Verify all three teams are in PhaseFailed.
+	for _, id := range []string{"alpha", "beta", "gamma"} {
+		status, ok := m.TeamStatus(id)
+		if !ok {
+			t.Fatalf("TeamStatus(%q) not found", id)
+		}
+		if status.Phase != PhaseFailed {
+			t.Errorf("team %q phase = %v, want %v", id, status.Phase, PhaseFailed)
+		}
 	}
 }
 

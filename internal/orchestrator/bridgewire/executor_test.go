@@ -13,6 +13,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/coordination"
 	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/pipeline"
+	"github.com/Iron-Ham/claudio/internal/team"
 	"github.com/Iron-Ham/claudio/internal/ultraplan"
 )
 
@@ -350,7 +351,9 @@ func TestPipelineExecutor_BridgesEmpty(t *testing.T) {
 // --- E2E integration tests ---------------------------------------------------
 
 // newE2EPipeline creates a Pipeline + PipelineExecutor wired with auto-complete
-// mocks and fast polling. Returns everything needed for an E2E test.
+// mocks and fast polling. Returns everything needed for an E2E test, including
+// the DecomposeResult so callers can modify team specs (e.g., DependsOn)
+// before Start.
 func newE2EPipeline(
 	t *testing.T,
 	plan *ultraplan.PlanSpec,
@@ -358,7 +361,7 @@ func newE2EPipeline(
 	factory bridge.InstanceFactory,
 	checker bridge.CompletionChecker,
 	recorder bridge.SessionRecorder,
-) (*pipeline.Pipeline, *PipelineExecutor, *event.Bus) {
+) (*pipeline.Pipeline, *PipelineExecutor, *event.Bus, *pipeline.DecomposeResult) {
 	t.Helper()
 
 	bus := event.NewBus()
@@ -371,7 +374,8 @@ func newE2EPipeline(
 		t.Fatalf("NewPipeline: %v", err)
 	}
 
-	if _, err := pipe.Decompose(dcfg); err != nil {
+	result, err := pipe.Decompose(dcfg)
+	if err != nil {
 		t.Fatalf("Decompose: %v", err)
 	}
 
@@ -389,7 +393,7 @@ func newE2EPipeline(
 		t.Fatalf("NewPipelineExecutor: %v", err)
 	}
 
-	return pipe, pe, bus
+	return pipe, pe, bus, result
 }
 
 func TestPipelineExecutor_E2E_SingleTeam(t *testing.T) {
@@ -405,7 +409,7 @@ func TestPipelineExecutor_E2E_SingleTeam(t *testing.T) {
 	factory := newAutoCompleteFactory(checker)
 	recorder := newTrackingRecorder()
 
-	pipe, pe, bus := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, factory, checker, recorder)
+	pipe, pe, bus, _ := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, factory, checker, recorder)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -505,7 +509,7 @@ func TestPipelineExecutor_E2E_MultiTeam(t *testing.T) {
 	factory := newAutoCompleteFactory(checker)
 	recorder := newTrackingRecorder()
 
-	pipe, pe, bus := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, factory, checker, recorder)
+	pipe, pe, bus, _ := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, factory, checker, recorder)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -576,7 +580,7 @@ func TestPipelineExecutor_E2E_FailurePropagation(t *testing.T) {
 	factory := &failingFactory{err: fmt.Errorf("out of resources")}
 	recorder := newTrackingRecorder()
 
-	pipe, pe, bus := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, factory, checker, recorder)
+	pipe, pe, bus, _ := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, factory, checker, recorder)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -626,7 +630,7 @@ func TestPipelineExecutor_E2E_AllPhases(t *testing.T) {
 	factory := newAutoCompleteFactory(checker)
 	recorder := newTrackingRecorder()
 
-	pipe, pe, bus := newE2EPipeline(t, plan, pipeline.DecomposeConfig{
+	pipe, pe, bus, _ := newE2EPipeline(t, plan, pipeline.DecomposeConfig{
 		PlanningTeam:      true,
 		ReviewTeam:        true,
 		ConsolidationTeam: true,
@@ -708,7 +712,7 @@ func TestPipelineExecutor_E2E_StopCleanup(t *testing.T) {
 	}
 	recorder := newTrackingRecorder()
 
-	pipe, pe, bus := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, slowFactory, checker, recorder)
+	pipe, pe, bus, _ := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, slowFactory, checker, recorder)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -791,6 +795,40 @@ func waitForPhaseEvent(t *testing.T, ch <-chan event.Event, phase string, timeou
 	}
 }
 
+// selectiveFactory delegates to autoCompleteFactory for most instances, but
+// returns an error for tasks matching any key in failFor.
+type selectiveFactory struct {
+	mu      sync.Mutex
+	checker *autoCompleteChecker
+	counter int
+	failFor map[string]bool // prompt substrings that trigger failure
+	failErr error
+}
+
+func (f *selectiveFactory) CreateInstance(prompt string) (bridge.Instance, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for substr := range f.failFor {
+		if strings.Contains(prompt, substr) {
+			return nil, f.failErr
+		}
+	}
+
+	f.counter++
+	id := fmt.Sprintf("inst-%d", f.counter)
+	return &mockInst{
+		id:           id,
+		worktreePath: fmt.Sprintf("/tmp/wt-%d", f.counter),
+		branch:       fmt.Sprintf("branch-%d", f.counter),
+	}, nil
+}
+
+func (f *selectiveFactory) StartInstance(inst bridge.Instance) error {
+	f.checker.MarkComplete(inst.WorktreePath())
+	return nil
+}
+
 // completeAllTeamTasks completes all tasks in all teams for the given phase.
 // Adapted from pipeline_test.go.
 func completeAllTeamTasks(t *testing.T, p *pipeline.Pipeline, phase pipeline.PipelinePhase) {
@@ -847,4 +885,382 @@ func completeAllTeamTasks(t *testing.T, p *pipeline.Pipeline, phase pipeline.Pip
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+}
+
+// --- E2E: Dependency Ordering ------------------------------------------------
+
+func TestPipelineExecutor_E2E_DependencyOrdering(t *testing.T) {
+	plan := &ultraplan.PlanSpec{
+		ID:        "e2e-deps",
+		Objective: "E2E dependency ordering test",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Description: "First", Files: []string{"a.go"}},
+			{ID: "t2", Title: "Task 2", Description: "Second", Files: []string{"b.go"}},
+			{ID: "t3", Title: "Task 3", Description: "Third", Files: []string{"c.go"}},
+		},
+	}
+
+	checker := newAutoCompleteChecker()
+	factory := newAutoCompleteFactory(checker)
+	recorder := newTrackingRecorder()
+
+	pipe, pe, bus, result := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, factory, checker, recorder)
+
+	// Set up a linear dependency chain: exec-0 → exec-1 → exec-2
+	result.ExecutionTeams[1].DependsOn = []string{"exec-0"}
+	result.ExecutionTeams[2].DependsOn = []string{"exec-1"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Collect the order in which teams start working.
+	var workingMu sync.Mutex
+	var workingOrder []string
+	bus.Subscribe("team.phase_changed", func(e event.Event) {
+		pce := e.(event.TeamPhaseChangedEvent)
+		if pce.CurrentPhase == string(team.PhaseWorking) {
+			workingMu.Lock()
+			workingOrder = append(workingOrder, pce.TeamID)
+			workingMu.Unlock()
+		}
+	})
+
+	pipelineCompleted := make(chan event.Event, 5)
+	bus.Subscribe("pipeline.completed", func(e event.Event) {
+		pipelineCompleted <- e
+	})
+
+	if err := pipe.Start(ctx); err != nil {
+		t.Fatalf("Pipeline.Start: %v", err)
+	}
+	defer func() { _ = pipe.Stop() }()
+
+	if err := pe.Start(ctx); err != nil {
+		t.Fatalf("PipelineExecutor.Start: %v", err)
+	}
+	defer pe.Stop()
+
+	// Pipeline should complete — auto-complete triggers cascade.
+	select {
+	case e := <-pipelineCompleted:
+		pce := e.(event.PipelineCompletedEvent)
+		if !pce.Success {
+			t.Error("pipeline should have succeeded")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("timed out waiting for pipeline.completed; phase=%s", pipe.Phase())
+	}
+
+	// Verify ordering: exec-0 must start before exec-1, exec-1 before exec-2.
+	workingMu.Lock()
+	order := make([]string, len(workingOrder))
+	copy(order, workingOrder)
+	workingMu.Unlock()
+
+	indexOf := func(id string) int {
+		for i, v := range order {
+			if v == id {
+				return i
+			}
+		}
+		return -1
+	}
+
+	i0 := indexOf("exec-0")
+	i1 := indexOf("exec-1")
+	i2 := indexOf("exec-2")
+
+	if i0 < 0 || i1 < 0 || i2 < 0 {
+		t.Fatalf("not all teams reached working: order = %v", order)
+	}
+	if i0 >= i1 {
+		t.Errorf("exec-0 (index %d) should start before exec-1 (index %d)", i0, i1)
+	}
+	if i1 >= i2 {
+		t.Errorf("exec-1 (index %d) should start before exec-2 (index %d)", i1, i2)
+	}
+
+	// Verify all tasks completed.
+	completed := recorder.Completed()
+	for _, id := range []string{"t1", "t2", "t3"} {
+		if _, ok := completed[id]; !ok {
+			t.Errorf("recorder.RecordCompletion not called for %s", id)
+		}
+	}
+}
+
+// --- E2E: Dependency Failure Cascade -----------------------------------------
+
+func TestPipelineExecutor_E2E_DependencyFailureCascade(t *testing.T) {
+	plan := &ultraplan.PlanSpec{
+		ID:        "e2e-depcascade",
+		Objective: "E2E dependency failure cascade test",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Description: "Will fail", Files: []string{"a.go"}},
+			{ID: "t2", Title: "Task 2", Description: "Depends on t1", Files: []string{"b.go"}},
+		},
+	}
+
+	checker := newAutoCompleteChecker()
+	factory := &failingFactory{err: fmt.Errorf("instance creation failed")}
+	recorder := newTrackingRecorder()
+
+	pipe, pe, bus, result := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, factory, checker, recorder)
+
+	// exec-1 depends on exec-0; exec-0 will fail because all instance creation fails.
+	result.ExecutionTeams[1].DependsOn = []string{"exec-0"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pipelineCompleted := make(chan event.Event, 5)
+	bus.Subscribe("pipeline.completed", func(e event.Event) {
+		pipelineCompleted <- e
+	})
+
+	if err := pipe.Start(ctx); err != nil {
+		t.Fatalf("Pipeline.Start: %v", err)
+	}
+	defer func() { _ = pipe.Stop() }()
+
+	if err := pe.Start(ctx); err != nil {
+		t.Fatalf("PipelineExecutor.Start: %v", err)
+	}
+	defer pe.Stop()
+
+	// Pipeline should fail: exec-0 fails → exec-1 cascades to PhaseFailed.
+	select {
+	case e := <-pipelineCompleted:
+		pce := e.(event.PipelineCompletedEvent)
+		if pce.Success {
+			t.Error("pipeline should have failed")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("timed out waiting for pipeline.completed; phase=%s", pipe.Phase())
+	}
+
+	if pipe.Phase() != pipeline.PhaseFailed {
+		t.Errorf("Phase = %v, want %v", pipe.Phase(), pipeline.PhaseFailed)
+	}
+}
+
+// --- E2E: Partial Failure (some teams fail, others succeed) ------------------
+
+func TestPipelineExecutor_E2E_PartialFailure(t *testing.T) {
+	plan := &ultraplan.PlanSpec{
+		ID:        "e2e-partial",
+		Objective: "E2E partial failure test",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Description: "Will succeed", Files: []string{"a.go"}},
+			{ID: "t2", Title: "Task 2", Description: "Will fail", Files: []string{"b.go"}},
+			{ID: "t3", Title: "Task 3", Description: "Will succeed", Files: []string{"c.go"}},
+		},
+	}
+
+	checker := newAutoCompleteChecker()
+	factory := &selectiveFactory{
+		checker: checker,
+		failFor: map[string]bool{"Task 2": true},
+		failErr: fmt.Errorf("selective failure"),
+	}
+	recorder := newTrackingRecorder()
+
+	pipe, pe, bus, _ := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, factory, checker, recorder)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pipelineCompleted := make(chan event.Event, 5)
+	bus.Subscribe("pipeline.completed", func(e event.Event) {
+		pipelineCompleted <- e
+	})
+
+	if err := pipe.Start(ctx); err != nil {
+		t.Fatalf("Pipeline.Start: %v", err)
+	}
+	defer func() { _ = pipe.Stop() }()
+
+	if err := pe.Start(ctx); err != nil {
+		t.Fatalf("PipelineExecutor.Start: %v", err)
+	}
+	defer pe.Stop()
+
+	// Pipeline should fail because one team (t2) fails.
+	select {
+	case e := <-pipelineCompleted:
+		pce := e.(event.PipelineCompletedEvent)
+		if pce.Success {
+			t.Error("pipeline should have failed due to partial failure")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("timed out waiting for pipeline.completed; phase=%s", pipe.Phase())
+	}
+
+	if pipe.Phase() != pipeline.PhaseFailed {
+		t.Errorf("Phase = %v, want %v", pipe.Phase(), pipeline.PhaseFailed)
+	}
+
+	// Verify t1 and t3 succeeded (completed via recorder).
+	// Note: t2 fails at CreateInstance, so recorder.RecordFailure is NOT called
+	// (the bridge only records via the recorder after instance creation succeeds).
+	// The failure is instead reflected through gate.Fail() → task queue → team fails.
+	completed := recorder.Completed()
+	if _, ok := completed["t1"]; !ok {
+		t.Error("recorder.RecordCompletion not called for t1")
+	}
+	if _, ok := completed["t3"]; !ok {
+		t.Error("recorder.RecordCompletion not called for t3")
+	}
+}
+
+// --- E2E: Budget Exhaustion Event -------------------------------------------
+
+func TestPipelineExecutor_E2E_BudgetExhaustedEvent(t *testing.T) {
+	plan := &ultraplan.PlanSpec{
+		ID:        "e2e-budget",
+		Objective: "E2E budget exhaustion test",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Description: "Budget test", Files: []string{"a.go"}},
+		},
+	}
+
+	// Use slowCompleteFactory so the task stays in-flight while we record
+	// budget usage. The auto-complete factory would finish the task before
+	// we can call BudgetTracker.Record().
+	checker := newAutoCompleteChecker()
+	var createCount atomic.Int32
+	slowFactory := &slowCompleteFactory{createCount: &createCount}
+	recorder := newTrackingRecorder()
+
+	pipe, pe, bus, result := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, slowFactory, checker, recorder)
+
+	// Set a budget limit on the execution team.
+	result.ExecutionTeams[0].Budget = team.TokenBudget{MaxTotalCost: 100.0}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	budgetExhausted := make(chan event.Event, 5)
+	bus.Subscribe("team.budget_exhausted", func(e event.Event) {
+		budgetExhausted <- e
+	})
+
+	if err := pipe.Start(ctx); err != nil {
+		t.Fatalf("Pipeline.Start: %v", err)
+	}
+	defer func() { _ = pipe.Stop() }()
+
+	if err := pe.Start(ctx); err != nil {
+		t.Fatalf("PipelineExecutor.Start: %v", err)
+	}
+	defer pe.Stop()
+
+	// Wait for the bridge to start a task — this means the team is working
+	// and the budget tracker is active.
+	waitForBusEvent(t, bus, "bridge.task_started", 5*time.Second)
+
+	// Get the execution phase manager.
+	mgr := pipe.Manager(pipeline.PhaseExecution)
+	if mgr == nil {
+		t.Fatal("execution phase manager is nil after bridge started")
+	}
+
+	// Record usage that exceeds the budget.
+	tm := mgr.Team("exec-0")
+	if tm == nil {
+		t.Fatal("Team(exec-0) = nil")
+	}
+	tm.BudgetTracker().Record(0, 0, 150.0)
+
+	// Verify budget exhaustion event fires.
+	select {
+	case e := <-budgetExhausted:
+		be := e.(event.TeamBudgetExhaustedEvent)
+		if be.TeamID != "exec-0" {
+			t.Errorf("TeamID = %q, want %q", be.TeamID, "exec-0")
+		}
+		if be.MaxTotalCost != 100.0 {
+			t.Errorf("MaxTotalCost = %f, want 100.0", be.MaxTotalCost)
+		}
+		if be.UsedCost != 150.0 {
+			t.Errorf("UsedCost = %f, want 150.0", be.UsedCost)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for team.budget_exhausted event")
+	}
+
+	// Mark the instance as complete so the pipeline can finish.
+	checker.MarkComplete(fmt.Sprintf("/tmp/wt-%d", createCount.Load()))
+
+	// Pipeline should still complete successfully (budget exhaustion is advisory).
+	pipelineCompleted := make(chan event.Event, 5)
+	bus.Subscribe("pipeline.completed", func(e event.Event) {
+		pipelineCompleted <- e
+	})
+
+	select {
+	case e := <-pipelineCompleted:
+		pce := e.(event.PipelineCompletedEvent)
+		if !pce.Success {
+			t.Error("pipeline should succeed even with budget exhaustion")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for pipeline.completed")
+	}
+}
+
+// --- E2E: Context Cancellation -----------------------------------------------
+
+func TestPipelineExecutor_E2E_ContextCancel(t *testing.T) {
+	plan := &ultraplan.PlanSpec{
+		ID:        "e2e-cancel",
+		Objective: "E2E context cancellation test",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Description: "Task", Files: []string{"a.go"}},
+		},
+	}
+
+	// Use a checker that never completes so the bridge stays running.
+	checker := newAutoCompleteChecker()
+	var createCount atomic.Int32
+	slowFactory := &slowCompleteFactory{
+		createCount: &createCount,
+	}
+	recorder := newTrackingRecorder()
+
+	pipe, pe, bus, _ := newE2EPipeline(t, plan, pipeline.DecomposeConfig{}, slowFactory, checker, recorder)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	if err := pipe.Start(ctx); err != nil {
+		t.Fatalf("Pipeline.Start: %v", err)
+	}
+	defer func() { _ = pipe.Stop() }()
+
+	if err := pe.Start(ctx); err != nil {
+		t.Fatalf("PipelineExecutor.Start: %v", err)
+	}
+
+	// Wait for bridge to start a task (instance created, monitor running).
+	waitForBusEvent(t, bus, "bridge.task_started", 5*time.Second)
+
+	// Cancel the context to trigger shutdown.
+	cancel()
+
+	// Stop should be safe and idempotent after cancel.
+	done := make(chan struct{})
+	go func() {
+		pe.Stop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// good — stop returned cleanly after context cancel
+	case <-time.After(5 * time.Second):
+		t.Fatal("PipelineExecutor.Stop() did not return within timeout after context cancel")
+	}
+
+	// Calling Stop again should be idempotent.
+	pe.Stop()
 }

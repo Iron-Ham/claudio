@@ -31,7 +31,8 @@ Manager.Start(ctx)
 - **AddTeam vs AddTeamDynamic** — `AddTeam` is for pre-Start registration. `AddTeamDynamic` can add teams after `Start` but uses a two-phase approach: register under lock, then start outside lock to prevent deadlock with the monitor goroutine's event chain.
 - **AddTeamDynamic uses Manager's context** — The `ctx` parameter on `AddTeamDynamic` is ignored; it uses the Manager's stored context (from `Start`) so `Stop` can cancel the new team's monitor goroutine. Passing a different context would cause `wg.Wait()` to hang on Stop.
 - **Manager holds write lock during startTeamLocked** — The `onTeamCompleted` handler acquires `m.mu` write lock. Since it's called from an event handler (which runs synchronously on the bus), avoid publishing events that would re-enter `onTeamCompleted` from within the lock.
-- **Failed dependencies do NOT unblock dependents** — `allDepsSatisfiedLocked` requires `PhaseDone`, not just any terminal phase. A failed dependency keeps dependent teams blocked forever. This is intentional — partial results from a failed team should not feed into dependent teams.
+- **Failed dependencies cascade to blocked dependents** — `allDepsSatisfiedLocked` requires `PhaseDone`, not just any terminal phase. When a dependency fails, `hasFailedDepLocked` detects it and `onTeamCompleted` transitions the blocked team to `PhaseFailed`. This cascades through multi-hop chains (A fails → B fails → C fails) via a loop in `onTeamCompleted`. The two-phase pattern (collect state under lock, publish events outside lock) prevents re-entrancy deadlock with the synchronous event bus.
+- **onTeamCompleted two-phase cascade** — `onTeamCompleted` uses `checkBlockedTeamsLocked` to scan blocked teams under the lock. Failed teams' phase is set under the lock, but `TeamPhaseChangedEvent` and `TeamCompletedEvent` are published *outside* the lock. The outer loop repeats until no new transitions occur, handling multi-hop dependency chains in a single handler invocation without re-entrancy.
 - **Budget cleanup on Hub start failure** — `startTeamLocked` calls `t.budget.Stop()` if `t.hub.Start(ctx)` fails. Without this, the budget tracker leaks its "active" sentinel and appears started despite the team being in `PhaseFailed`.
 - **Stop() releases lock before wg.Wait()** — `Stop()` sets `m.started = false` and releases `m.mu` before calling `m.wg.Wait()`. This prevents deadlock with `monitorTeamCompletion` publishing `TeamCompletedEvent` (which triggers `onTeamCompleted` inline, acquiring `m.mu`). The `started = false` guard ensures any racing handler bails out immediately. Same principle as `Pipeline.Stop()` and `PipelineExecutor.Stop()`.
 
@@ -39,6 +40,7 @@ Manager.Start(ctx)
 
 - Use `coordination.WithRebalanceInterval(-1)` on the manager's hub options to disable the adaptive lead's rebalance loop.
 - Use `t.TempDir()` for the manager's `BaseDir` — per-team subdirectories are created automatically.
-- The dependency cascade test uses `EventQueue` (not `TaskQueue`) to simulate task completion, ensuring events propagate correctly.
+- The dependency cascade test uses `EventQueue` (not `TaskQueue`) to simulate task completion, ensuring events propagate correctly. Use `tq.SetMaxRetries(taskID, 0)` before `eq.Fail()` to bypass retry logic when testing failure paths.
+- The failed-dependency cascade test (`TestManager_FailedDependencyCascade`) uses `team.completed` events (not `team.phase_changed`) to verify cascading because a single `phaseChanges` channel can consume events out of order when multiple teams transition simultaneously.
 - Event assertions use channel-based waiting with timeouts, not `time.Sleep`.
 - Always run with `-race` — the manager uses goroutines for monitoring.
