@@ -223,19 +223,19 @@ func TestTripleShotState_HasActiveCoordinators(t *testing.T) {
 		}
 	})
 
-	t.Run("state with empty Coordinators map returns false", func(t *testing.T) {
+	t.Run("state with empty Runners map returns false", func(t *testing.T) {
 		state := &TripleShotState{
-			Coordinators: make(map[string]*tripleshot.Coordinator),
+			Runners: make(map[string]tripleshot.Runner),
 		}
 		if state.HasActiveCoordinators() {
 			t.Error("expected false for empty coordinators map")
 		}
 	})
 
-	t.Run("state with coordinators in map returns true", func(t *testing.T) {
+	t.Run("state with runners in map returns true", func(t *testing.T) {
 		state := &TripleShotState{
-			Coordinators: map[string]*tripleshot.Coordinator{
-				"group-1": nil, // Even nil coordinator counts as entry
+			Runners: map[string]tripleshot.Runner{
+				"group-1": nil, // Even nil runner counts as entry
 			},
 		}
 		if !state.HasActiveCoordinators() {
@@ -243,10 +243,10 @@ func TestTripleShotState_HasActiveCoordinators(t *testing.T) {
 		}
 	})
 
-	t.Run("state with coordinator in map returns true", func(t *testing.T) {
+	t.Run("state with runner in map returns true", func(t *testing.T) {
 		state := &TripleShotState{
-			Coordinators: map[string]*tripleshot.Coordinator{
-				"group-1": {},
+			Runners: map[string]tripleshot.Runner{
+				"group-1": &tripleshot.Coordinator{},
 			},
 		}
 		if !state.HasActiveCoordinators() {
@@ -255,34 +255,34 @@ func TestTripleShotState_HasActiveCoordinators(t *testing.T) {
 	})
 }
 
-func TestTripleShotState_GetAllCoordinators(t *testing.T) {
+func TestTripleShotState_GetAllRunners(t *testing.T) {
 	t.Run("nil state returns nil", func(t *testing.T) {
 		var state *TripleShotState
-		if state.GetAllCoordinators() != nil {
+		if state.GetAllRunners() != nil {
 			t.Error("expected nil for nil state")
 		}
 	})
 
 	t.Run("empty state returns nil", func(t *testing.T) {
 		state := &TripleShotState{}
-		if state.GetAllCoordinators() != nil {
+		if state.GetAllRunners() != nil {
 			t.Error("expected nil for empty state")
 		}
 	})
 
-	t.Run("returns coordinators from map", func(t *testing.T) {
+	t.Run("returns runners from map", func(t *testing.T) {
 		coord1 := &tripleshot.Coordinator{}
 		coord2 := &tripleshot.Coordinator{}
 		state := &TripleShotState{
-			Coordinators: map[string]*tripleshot.Coordinator{
+			Runners: map[string]tripleshot.Runner{
 				"group-1": coord1,
 				"group-2": coord2,
 			},
 		}
 
-		result := state.GetAllCoordinators()
+		result := state.GetAllRunners()
 		if len(result) != 2 {
-			t.Errorf("expected 2 coordinators, got %d", len(result))
+			t.Errorf("expected 2 runners, got %d", len(result))
 		}
 	})
 
@@ -291,7 +291,7 @@ func TestTripleShotState_GetAllCoordinators(t *testing.T) {
 		coord2 := &tripleshot.Coordinator{}
 		coord3 := &tripleshot.Coordinator{}
 		state := &TripleShotState{
-			Coordinators: map[string]*tripleshot.Coordinator{
+			Runners: map[string]tripleshot.Runner{
 				"z-group": coord1,
 				"a-group": coord2,
 				"m-group": coord3,
@@ -300,22 +300,22 @@ func TestTripleShotState_GetAllCoordinators(t *testing.T) {
 
 		// Call multiple times to verify order is deterministic
 		for i := 0; i < 10; i++ {
-			result := state.GetAllCoordinators()
+			result := state.GetAllRunners()
 			// Should be sorted alphabetically: a-group, m-group, z-group
 			if result[0] != coord2 || result[1] != coord3 || result[2] != coord1 {
-				t.Error("expected coordinators to be returned in sorted key order")
+				t.Error("expected runners to be returned in sorted key order")
 			}
 		}
 	})
 
 	t.Run("returns nil when map empty", func(t *testing.T) {
 		state := &TripleShotState{
-			Coordinators: make(map[string]*tripleshot.Coordinator),
+			Runners: make(map[string]tripleshot.Runner),
 		}
 
-		result := state.GetAllCoordinators()
+		result := state.GetAllRunners()
 		if result != nil {
-			t.Errorf("expected nil for empty map, got %d coordinators", len(result))
+			t.Errorf("expected nil for empty map, got %d runners", len(result))
 		}
 	})
 }
@@ -324,7 +324,7 @@ func TestTripleShotState_GetCoordinatorForGroup(t *testing.T) {
 	t.Run("returns coordinator from map when found", func(t *testing.T) {
 		coord := &tripleshot.Coordinator{}
 		state := &TripleShotState{
-			Coordinators: map[string]*tripleshot.Coordinator{
+			Runners: map[string]tripleshot.Runner{
 				"target-group": coord,
 			},
 		}
@@ -337,7 +337,7 @@ func TestTripleShotState_GetCoordinatorForGroup(t *testing.T) {
 
 	t.Run("returns nil when not found and no fallback", func(t *testing.T) {
 		state := &TripleShotState{
-			Coordinators: map[string]*tripleshot.Coordinator{
+			Runners: map[string]tripleshot.Runner{
 				"other-group": &tripleshot.Coordinator{},
 			},
 		}
@@ -350,7 +350,7 @@ func TestTripleShotState_GetCoordinatorForGroup(t *testing.T) {
 
 	t.Run("returns nil when not in map", func(t *testing.T) {
 		state := &TripleShotState{
-			Coordinators: map[string]*tripleshot.Coordinator{},
+			Runners: map[string]tripleshot.Runner{},
 		}
 
 		result := state.GetCoordinatorForGroup("any-group")
@@ -359,15 +359,36 @@ func TestTripleShotState_GetCoordinatorForGroup(t *testing.T) {
 		}
 	})
 
-	t.Run("returns nil when coordinators map is nil", func(t *testing.T) {
+	t.Run("returns nil when runners map is nil", func(t *testing.T) {
 		state := &TripleShotState{}
 
 		result := state.GetCoordinatorForGroup("any-group")
 		if result != nil {
-			t.Error("expected nil when coordinators map is nil")
+			t.Error("expected nil when runners map is nil")
+		}
+	})
+
+	t.Run("returns nil for non-Coordinator runner", func(t *testing.T) {
+		state := &TripleShotState{
+			Runners: map[string]tripleshot.Runner{
+				"group-1": &mockRunner{},
+			},
+		}
+
+		result := state.GetCoordinatorForGroup("group-1")
+		if result != nil {
+			t.Error("expected nil for non-Coordinator runner type")
 		}
 	})
 }
+
+// mockRunner is a minimal tripleshot.Runner for testing type assertions.
+type mockRunner struct{}
+
+func (m *mockRunner) Session() *tripleshot.Session                    { return nil }
+func (m *mockRunner) SetCallbacks(_ *tripleshot.CoordinatorCallbacks) {}
+func (m *mockRunner) GetWinningBranch() string                        { return "" }
+func (m *mockRunner) Stop()                                           {}
 
 func TestTripleShotStatePlanGroupIDs(t *testing.T) {
 	t.Run("starts empty", func(t *testing.T) {

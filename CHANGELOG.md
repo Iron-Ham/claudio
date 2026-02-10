@@ -9,11 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Orchestration 2.0 Default Execution** - Made Orch 2.0 the default for both UltraPlan and TripleShot. UltraPlan flips `UsePipeline` default to `true`. TripleShot uses `teamwire.TeamCoordinator` with callback-driven execution (replacing file polling), falling back to legacy for adversarial mode or `tripleshot.use_legacy` config. Added `tripleshot.Runner` interface for dual-coordinator coexistence, channel bridge for teamwire callbacks into Bubble Tea, and `NewTripleShotAdapters()` factory to avoid import cycles.
+
+- **Pipeline Execution Path** - Wired the Orchestration 2.0 pipeline stack into `Coordinator.StartExecution()`. Added `ExecutionRunner` interface in `orchestrator` (implemented by `bridgewire.PipelineRunner`) with factory-based injection to avoid import cycles. When `UsePipeline` config is enabled, the Coordinator delegates execution to the pipeline backend instead of the legacy `ExecutionOrchestrator`. Subscribes to `pipeline.completed` events for synthesis/failure handling. Guards legacy-only methods (`RetryFailedTasks`, `RetriggerGroup`, `ResumeWithPartialWork`) when pipeline is active.
+
 - **Dynamic Team Sizing** - Connected the scaling feedback loop so bridges adjust concurrency based on workload and budget. Added `dynamicSemaphore` to the bridge for context-aware, resizable concurrency limiting. Added `SetMaxConcurrency`/`MaxConcurrency`/`ActiveInstances` to Bridge. Added `TeamScaledEvent` for TUI observability. Added `MinInstances`/`MaxInstances` to team Spec and `WithMinInstances`/`WithMaxInstances` coordination options. Decompose now populates scaling bounds from `DecomposeConfig`. `PipelineExecutor.wireScalingFeedback` connects scaling monitor decisions to bridge concurrency with budget-aware veto. (#646)
 
 - **Remaining E2E Test Scenarios** - Added 5 new E2E integration tests for the pipeline executor: dependency ordering (linear chain), dependency failure cascade, partial failure (mixed success/failure), budget exhaustion event, and context cancellation. Added `selectiveFactory` mock for per-task failure control and `waitForTeamPhase` helper. (#649)
 
 ### Fixed
+
+- **Teamwire Channel Safety** - Fixed potential panic from closing `teamwireEventCh` while callbacks may still write to it (nil-guard before close), goroutine leak from re-subscribing after triple-shot completion, and channel overwrite leak when starting multiple sessions. Surfaced session error details in `PhaseFailed` handler instead of generic "Triple-shot failed" message.
+
+- **Pipeline SaveSession Error Logging** - Replaced silent `_ = SaveSession()` calls in `onPipelineCompleted` and `Cancel()` with logged errors, preventing session state loss from going undetected. Improved pipeline factory error message for user-facing context.
 
 - **Failed-Dependency Cascade** - Teams blocked on a failed dependency now transition to `PhaseFailed` instead of staying blocked forever. The `Manager.onTeamCompleted` handler detects permanently blocked teams and cascades failure through multi-hop dependency chains (A fails → B fails → C fails). Uses a two-phase approach (collect state under lock, publish events outside) to avoid re-entrancy deadlock with the synchronous event bus. (#649)
 

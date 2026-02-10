@@ -349,3 +349,49 @@ type BridgeTaskActivityMsg struct {
 	Started    bool // true = task started, false = task completed
 	Success    bool // only meaningful when Started is false
 }
+
+// --- Teamwire callback bridge messages ---
+// These messages are produced by teamwire.TeamCoordinator callbacks and delivered
+// to the Bubble Tea event loop via a buffered channel (see ListenTeamwireEvents).
+
+// TeamwirePhaseChangedMsg signals a phase change in the teamwire coordinator.
+type TeamwirePhaseChangedMsg struct {
+	GroupID string
+	Phase   tripleshot.Phase
+}
+
+// TeamwireAttemptStartedMsg signals that a teamwire attempt has started.
+type TeamwireAttemptStartedMsg struct {
+	GroupID      string
+	AttemptIndex int
+	InstanceID   string
+}
+
+// TeamwireAttemptCompletedMsg signals that a teamwire attempt has completed.
+type TeamwireAttemptCompletedMsg struct {
+	GroupID      string
+	AttemptIndex int
+}
+
+// TeamwireAttemptFailedMsg signals that a teamwire attempt has failed.
+type TeamwireAttemptFailedMsg struct {
+	GroupID      string
+	AttemptIndex int
+	Reason       string
+}
+
+// TeamwireJudgeStartedMsg signals that the teamwire judge has started.
+type TeamwireJudgeStartedMsg struct {
+	GroupID    string
+	InstanceID string
+}
+
+// TeamwireCompletedMsg signals that the teamwire triple-shot has completed.
+type TeamwireCompletedMsg struct {
+	GroupID string
+	Success bool
+	Summary string
+}
+
+// TeamwireChannelClosedMsg signals that the teamwire event channel has been closed.
+type TeamwireChannelClosedMsg struct{}

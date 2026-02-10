@@ -22,9 +22,10 @@ var (
 
 // TripleShotState holds the state for triple-shot mode
 type TripleShotState struct {
-	// Coordinators maps group IDs to their tripleshot coordinators.
-	// This enables multiple concurrent tripleshot sessions.
-	Coordinators map[string]*tripleshot.Coordinator
+	// Runners maps group IDs to their tripleshot runners.
+	// Both *tripleshot.Coordinator (legacy) and *teamwire.TeamCoordinator (Orch 2.0)
+	// satisfy the tripleshot.Runner interface.
+	Runners map[string]tripleshot.Runner
 
 	NeedsNotification bool // Set when user input is needed (checked on tick)
 
@@ -32,43 +33,60 @@ type TripleShotState struct {
 	// These appear as separate sections in the sidebar.
 	// Note: :ultraplan is not allowed in triple-shot mode.
 	PlanGroupIDs []string
+
+	// UseTeamwire is true when using the Orch 2.0 teamwire execution path.
+	// When true, completion polling is skipped (teamwire uses callbacks).
+	UseTeamwire bool
 }
 
-// GetCoordinatorForGroup returns the coordinator for a specific group ID.
-func (s *TripleShotState) GetCoordinatorForGroup(groupID string) *tripleshot.Coordinator {
-	if s == nil || s.Coordinators == nil {
+// GetRunnerForGroup returns the runner for a specific group ID.
+func (s *TripleShotState) GetRunnerForGroup(groupID string) tripleshot.Runner {
+	if s == nil || s.Runners == nil {
 		return nil
 	}
-	return s.Coordinators[groupID]
+	return s.Runners[groupID]
 }
 
-// GetAllCoordinators returns all active tripleshot coordinators.
+// GetCoordinatorForGroup returns the legacy coordinator for a specific group ID.
+// Returns nil if the runner is not a *tripleshot.Coordinator (e.g., teamwire mode).
+// Used only by legacy polling code paths.
+func (s *TripleShotState) GetCoordinatorForGroup(groupID string) *tripleshot.Coordinator {
+	if s == nil || s.Runners == nil {
+		return nil
+	}
+	if coord, ok := s.Runners[groupID].(*tripleshot.Coordinator); ok {
+		return coord
+	}
+	return nil
+}
+
+// GetAllRunners returns all active tripleshot runners.
 // Results are sorted by group ID for deterministic ordering.
-func (s *TripleShotState) GetAllCoordinators() []*tripleshot.Coordinator {
-	if s == nil || len(s.Coordinators) == 0 {
+func (s *TripleShotState) GetAllRunners() []tripleshot.Runner {
+	if s == nil || len(s.Runners) == 0 {
 		return nil
 	}
 
 	// Sort keys for deterministic iteration order
-	keys := make([]string, 0, len(s.Coordinators))
-	for k := range s.Coordinators {
+	keys := make([]string, 0, len(s.Runners))
+	for k := range s.Runners {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
-	coords := make([]*tripleshot.Coordinator, 0, len(s.Coordinators))
+	runners := make([]tripleshot.Runner, 0, len(s.Runners))
 	for _, k := range keys {
-		coords = append(coords, s.Coordinators[k])
+		runners = append(runners, s.Runners[k])
 	}
-	return coords
+	return runners
 }
 
-// HasActiveCoordinators returns true if there are any active tripleshot coordinators.
+// HasActiveCoordinators returns true if there are any active tripleshot runners.
 func (s *TripleShotState) HasActiveCoordinators() bool {
 	if s == nil {
 		return false
 	}
-	return len(s.Coordinators) > 0
+	return len(s.Runners) > 0
 }
 
 // TripleShotRenderContext provides the necessary context for rendering triple-shot views
@@ -88,17 +106,17 @@ func RenderTripleShotHeader(ctx TripleShotRenderContext) string {
 		return ""
 	}
 
-	coordinators := ctx.TripleShot.GetAllCoordinators()
-	if len(coordinators) == 0 {
+	runners := ctx.TripleShot.GetAllRunners()
+	if len(runners) == 0 {
 		return ""
 	}
 
 	// For multiple tripleshots, show a summary
-	if len(coordinators) > 1 {
+	if len(runners) > 1 {
 		working := 0
 		complete := 0
 		failed := 0
-		for _, coord := range coordinators {
+		for _, coord := range runners {
 			session := coord.Session()
 			if session == nil {
 				continue
@@ -112,7 +130,7 @@ func RenderTripleShotHeader(ctx TripleShotRenderContext) string {
 				failed++
 			}
 		}
-		summary := fmt.Sprintf("%d active", len(coordinators))
+		summary := fmt.Sprintf("%d active", len(runners))
 		if complete > 0 {
 			summary += fmt.Sprintf(", %d complete", complete)
 		}
@@ -123,7 +141,7 @@ func RenderTripleShotHeader(ctx TripleShotRenderContext) string {
 	}
 
 	// Single tripleshot - show detailed status
-	session := coordinators[0].Session()
+	session := runners[0].Session()
 	if session == nil {
 		return ""
 	}
@@ -197,16 +215,16 @@ func RenderTripleShotSidebarSection(ctx TripleShotRenderContext, width int) stri
 
 	// Title - show count if multiple
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(styles.PurpleColor)
-	coordinators := ctx.TripleShot.GetAllCoordinators()
-	if len(coordinators) > 1 {
-		lines = append(lines, titleStyle.Render(fmt.Sprintf("Triple-Shots (%d)", len(coordinators))))
+	runners := ctx.TripleShot.GetAllRunners()
+	if len(runners) > 1 {
+		lines = append(lines, titleStyle.Render(fmt.Sprintf("Triple-Shots (%d)", len(runners))))
 	} else {
 		lines = append(lines, titleStyle.Render("Triple-Shot"))
 	}
 	lines = append(lines, "")
 
 	// Render each tripleshot session
-	for idx, coord := range coordinators {
+	for idx, coord := range runners {
 		session := coord.Session()
 		if session == nil {
 			continue
@@ -219,7 +237,7 @@ func RenderTripleShotSidebarSection(ctx TripleShotRenderContext, width int) stri
 			lines = append(lines, "")
 		}
 
-		lines = append(lines, renderSingleTripleShotSection(ctx, session, width, idx+1, len(coordinators) > 1)...)
+		lines = append(lines, renderSingleTripleShotSection(ctx, session, width, idx+1, len(runners) > 1)...)
 	}
 
 	// Render plan groups if any exist
@@ -341,8 +359,8 @@ func findTripleShotForActiveInstance(ctx TripleShotRenderContext) *tripleshot.Se
 		return nil
 	}
 
-	// Search through all coordinators to find which tripleshot owns this instance
-	for _, coord := range ctx.TripleShot.GetAllCoordinators() {
+	// Search through all runners to find which tripleshot owns this instance
+	for _, coord := range ctx.TripleShot.GetAllRunners() {
 		session := coord.Session()
 		if session == nil {
 			continue

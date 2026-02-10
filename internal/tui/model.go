@@ -16,6 +16,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/search"
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Sidebar layout constants for scroll calculations.
@@ -270,6 +271,10 @@ type Model struct {
 
 	// Triple-shot mode (nil if not in triple-shot mode)
 	tripleShot *TripleShotState
+
+	// teamwireEventCh receives Bubble Tea messages from teamwire callbacks.
+	// Nil when not using the teamwire execution path.
+	teamwireEventCh chan tea.Msg
 
 	// Pipeline orchestration state (nil until first pipeline event)
 	pipeline *view.PipelineState
@@ -1394,12 +1399,12 @@ func (m Model) GetUltraPlanCoordinator() *orchestrator.Coordinator {
 	return m.ultraPlan.Coordinator
 }
 
-// GetTripleShotCoordinators returns all active tripleshot coordinators.
-func (m Model) GetTripleShotCoordinators() []*tripleshot.Coordinator {
+// GetTripleShotRunners returns all active tripleshot runners.
+func (m Model) GetTripleShotRunners() []tripleshot.Runner {
 	if m.tripleShot == nil {
 		return nil
 	}
-	return m.tripleShot.GetAllCoordinators()
+	return m.tripleShot.GetAllRunners()
 }
 
 // GetLogger returns the logger instance.
@@ -1417,9 +1422,9 @@ func (m Model) IsInstanceTripleShotJudge(instanceID string) bool {
 	if m.tripleShot == nil {
 		return false
 	}
-	// Check all coordinators in the map
-	for _, coord := range m.tripleShot.Coordinators {
-		session := coord.Session()
+	// Check all runners in the map
+	for _, runner := range m.tripleShot.Runners {
+		session := runner.Session()
 		if session != nil && session.JudgeID == instanceID {
 			return true
 		}

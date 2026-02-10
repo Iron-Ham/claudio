@@ -37,8 +37,8 @@ func TestWorkflowStatusState_HasActiveWorkflows(t *testing.T) {
 			name: "tripleshot active returns true",
 			state: &WorkflowStatusState{
 				TripleShot: &TripleShotState{
-					Coordinators: map[string]*tripleshot.Coordinator{
-						"group1": {},
+					Runners: map[string]tripleshot.Runner{
+						"group1": createMockTripleShotCoordinator(),
 					},
 				},
 			},
@@ -59,8 +59,8 @@ func TestWorkflowStatusState_HasActiveWorkflows(t *testing.T) {
 			name: "tripleshot and adversarial active returns true",
 			state: &WorkflowStatusState{
 				TripleShot: &TripleShotState{
-					Coordinators: map[string]*tripleshot.Coordinator{
-						"group1": {},
+					Runners: map[string]tripleshot.Runner{
+						"group1": createMockTripleShotCoordinator(),
 					},
 				},
 				Adversarial: &AdversarialState{
@@ -365,13 +365,13 @@ func TestWorkflowStatusView_Render(t *testing.T) {
 // Helper functions to create mock states for testing
 
 func createMockTripleShotState(count int) *TripleShotState {
-	coordinators := make(map[string]*tripleshot.Coordinator)
+	runners := make(map[string]tripleshot.Runner)
 	for i := 0; i < count; i++ {
 		groupID := string(rune('a' + i))
-		coordinators[groupID] = createMockTripleShotCoordinator()
+		runners[groupID] = createMockTripleShotCoordinator()
 	}
 	return &TripleShotState{
-		Coordinators: coordinators,
+		Runners: runners,
 	}
 }
 
@@ -748,14 +748,14 @@ func TestTripleShotIndicator_MixedPhaseAggregation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			coordinators := make(map[string]*tripleshot.Coordinator)
+			runners := make(map[string]tripleshot.Runner)
 			for i, phase := range tt.phases {
 				groupID := string(rune('a' + i))
-				coordinators[groupID] = createMockTripleShotCoordinatorWithPhase(phase)
+				runners[groupID] = createMockTripleShotCoordinatorWithPhase(phase)
 			}
 			state := &WorkflowStatusState{
 				TripleShot: &TripleShotState{
-					Coordinators: coordinators,
+					Runners: runners,
 				},
 			}
 

@@ -745,6 +745,20 @@ func CheckAdversarialInstanceStuckAsync(
 	}
 }
 
+// ListenTeamwireEvents returns a command that reads one message from the
+// teamwire callback channel. Each handler that receives a teamwire message
+// should return another ListenTeamwireEvents to keep the subscription alive.
+// When the channel is closed, a TeamwireChannelClosedMsg is returned.
+func ListenTeamwireEvents(ch <-chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return TeamwireChannelClosedMsg{}
+		}
+		return msg
+	}
+}
+
 // RestartAdversarialStuckRoleAsync restarts the stuck role in an adversarial session.
 func RestartAdversarialStuckRoleAsync(
 	coordinator *adversarial.Coordinator,

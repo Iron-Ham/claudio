@@ -154,8 +154,8 @@ func (s *WorkflowStatusState) getTripleShotIndicator() *WorkflowIndicator {
 		return nil
 	}
 
-	coordinators := s.TripleShot.GetAllCoordinators()
-	if len(coordinators) == 0 {
+	runners := s.TripleShot.GetAllRunners()
+	if len(runners) == 0 {
 		return nil
 	}
 
@@ -165,8 +165,8 @@ func (s *WorkflowStatusState) getTripleShotIndicator() *WorkflowIndicator {
 	complete := 0
 	failed := 0
 
-	for _, coord := range coordinators {
-		session := coord.Session()
+	for _, runner := range runners {
+		session := runner.Session()
 		if session == nil {
 			continue
 		}
@@ -186,10 +186,10 @@ func (s *WorkflowStatusState) getTripleShotIndicator() *WorkflowIndicator {
 	var label string
 	var style lipgloss.Style
 
-	total := len(coordinators)
+	total := len(runners)
 	if total == 1 {
 		// Single session - show detailed phase
-		session := coordinators[0].Session()
+		session := runners[0].Session()
 		if session == nil {
 			return nil
 		}

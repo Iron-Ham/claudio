@@ -182,6 +182,9 @@ type UltraPlanConfig struct {
 	// Task verification settings
 	MaxTaskRetries         int  `json:"max_task_retries,omitempty"` // Max retry attempts for tasks with no commits (default: 3)
 	RequireVerifiedCommits bool `json:"require_verified_commits"`   // If true, tasks must produce commits to be marked successful (default: true)
+
+	// Pipeline-based execution (Orchestration 2.0)
+	UsePipeline bool `json:"use_pipeline,omitempty"` // Use Pipeline-based execution instead of legacy ExecutionOrchestrator
 }
 
 // DefaultUltraPlanConfig returns the default configuration
@@ -199,6 +202,7 @@ func DefaultUltraPlanConfig() UltraPlanConfig {
 		BranchPrefix:           "", // Uses config.Branch.Prefix if empty
 		MaxTaskRetries:         3,
 		RequireVerifiedCommits: true,
+		UsePipeline:            true, // Default to Orchestration 2.0 pipeline execution
 	}
 }
 

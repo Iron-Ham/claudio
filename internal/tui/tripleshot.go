@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 
+	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot/teamwire"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,8 +25,17 @@ func (m *Model) dispatchTripleShotCompletionChecks() []tea.Cmd {
 
 	var cmds []tea.Cmd
 
-	// Dispatch async check for each coordinator
-	for groupID, coordinator := range m.tripleShot.Coordinators {
+	// Skip polling when using teamwire (callbacks handle completion)
+	if m.tripleShot.UseTeamwire {
+		return nil
+	}
+
+	// Dispatch async check for each legacy coordinator
+	for groupID, runner := range m.tripleShot.Runners {
+		coordinator, ok := runner.(*tripleshot.Coordinator)
+		if !ok {
+			continue // Skip non-legacy runners
+		}
 		session := coordinator.Session()
 		if session == nil {
 			continue
@@ -262,23 +274,23 @@ func (m *Model) handleTripleShotJudgeStopped(judgeID string) {
 		return
 	}
 
-	// Find the coordinator whose session has this judge
-	var coordinatorToStop *tripleshot.Coordinator
+	// Find the runner whose session has this judge
+	var runnerToStop tripleshot.Runner
 	var groupIDToRemove string
-	for groupID, coord := range m.tripleShot.Coordinators {
-		session := coord.Session()
+	for groupID, runner := range m.tripleShot.Runners {
+		session := runner.Session()
 		if session != nil && session.JudgeID == judgeID {
-			coordinatorToStop = coord
+			runnerToStop = runner
 			groupIDToRemove = groupID
 			break
 		}
 	}
 
-	if coordinatorToStop == nil {
+	if runnerToStop == nil {
 		if m.logger != nil {
-			m.logger.Warn("triple-shot judge stop requested but no matching coordinator found",
+			m.logger.Warn("triple-shot judge stop requested but no matching runner found",
 				"judge_id", judgeID,
-				"coordinators_count", len(m.tripleShot.Coordinators),
+				"runners_count", len(m.tripleShot.Runners),
 			)
 		}
 		return
@@ -288,12 +300,12 @@ func (m *Model) handleTripleShotJudgeStopped(judgeID string) {
 		m.logger.Info("cleaning up triple-shot session after judge stopped", "judge_id", judgeID)
 	}
 
-	// Stop the coordinator
-	coordinatorToStop.Stop()
+	// Stop the runner
+	runnerToStop.Stop()
 
-	// Remove from coordinators map
+	// Remove from runners map
 	if groupIDToRemove != "" {
-		delete(m.tripleShot.Coordinators, groupIDToRemove)
+		delete(m.tripleShot.Runners, groupIDToRemove)
 	}
 
 	// If no more coordinators, fully clean up tripleshot state
@@ -305,21 +317,283 @@ func (m *Model) handleTripleShotJudgeStopped(judgeID string) {
 	}
 }
 
-// cleanupTripleShot stops all tripleshot coordinators and clears the tripleshot state.
+// initiateTeamwireTripleShot starts a triple-shot session using the Orch 2.0
+// teamwire path. Callbacks from the TeamCoordinator are bridged into the
+// Bubble Tea event loop via a buffered channel.
+func (m Model) initiateTeamwireTripleShot(
+	task string,
+	group *orchestrator.InstanceGroup,
+	tsConfig tripleshot.Config,
+) (Model, tea.Cmd) {
+	// Build adapters (avoids import cycle: orchestrator → teamwire)
+	orchAdapter, sessAdapter := orchestrator.NewTripleShotAdapters(m.orchestrator, m.session)
+
+	coordinator, err := teamwire.NewTeamCoordinator(teamwire.TeamCoordinatorConfig{
+		Orchestrator: orchAdapter,
+		BaseSession:  sessAdapter,
+		Task:         task,
+		Config:       tsConfig,
+		Bus:          m.orchestrator.EventBus(),
+		BaseDir:      m.session.BaseRepo,
+		Logger:       m.logger,
+	})
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to create teamwire coordinator: %v", err)
+		if m.logger != nil {
+			m.logger.Error("failed to create teamwire coordinator", "error", err)
+		}
+		return m, nil
+	}
+
+	// Link group ID to the tripleshot session before Start (no concurrency yet)
+	coordinator.Session().GroupID = group.ID
+
+	// Persist tripleshot session for potential restore
+	m.session.TripleShots = append(m.session.TripleShots, coordinator.Session())
+
+	// Create buffered channel for callback → Bubble Tea bridge
+	eventCh := make(chan tea.Msg, 16)
+	groupID := group.ID
+
+	// Register callbacks that write to the event channel
+	coordinator.SetCallbacks(&tripleshot.CoordinatorCallbacks{
+		OnPhaseChange: func(phase tripleshot.Phase) {
+			eventCh <- tuimsg.TeamwirePhaseChangedMsg{GroupID: groupID, Phase: phase}
+		},
+		OnAttemptStart: func(attemptIndex int, instanceID string) {
+			eventCh <- tuimsg.TeamwireAttemptStartedMsg{
+				GroupID: groupID, AttemptIndex: attemptIndex, InstanceID: instanceID,
+			}
+		},
+		OnAttemptComplete: func(attemptIndex int) {
+			eventCh <- tuimsg.TeamwireAttemptCompletedMsg{GroupID: groupID, AttemptIndex: attemptIndex}
+		},
+		OnAttemptFailed: func(attemptIndex int, reason string) {
+			eventCh <- tuimsg.TeamwireAttemptFailedMsg{
+				GroupID: groupID, AttemptIndex: attemptIndex, Reason: reason,
+			}
+		},
+		OnJudgeStart: func(instanceID string) {
+			eventCh <- tuimsg.TeamwireJudgeStartedMsg{GroupID: groupID, InstanceID: instanceID}
+		},
+		OnComplete: func(success bool, summary string) {
+			eventCh <- tuimsg.TeamwireCompletedMsg{GroupID: groupID, Success: success, Summary: summary}
+		},
+	})
+
+	// Start the coordinator (creates Manager, bridges, begins execution)
+	if err := coordinator.Start(context.Background()); err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to start teamwire coordinator: %v", err)
+		if m.logger != nil {
+			m.logger.Error("failed to start teamwire coordinator", "error", err)
+		}
+		close(eventCh)
+		return m, nil
+	}
+
+	// Store coordinator in runners map
+	if m.tripleShot == nil {
+		m.tripleShot = &TripleShotState{
+			Runners:     make(map[string]tripleshot.Runner),
+			UseTeamwire: true,
+		}
+	} else if m.tripleShot.Runners == nil {
+		m.tripleShot.Runners = make(map[string]tripleshot.Runner)
+	}
+	m.tripleShot.Runners[groupID] = coordinator
+	m.tripleShot.UseTeamwire = true
+
+	// Close any previous event channel to avoid goroutine leaks from the
+	// old ListenTeamwireEvents reader still blocked on the orphaned channel.
+	if ch := m.teamwireEventCh; ch != nil {
+		close(ch)
+	}
+	m.teamwireEventCh = eventCh
+
+	numActive := len(m.tripleShot.Runners)
+	if numActive > 1 {
+		m.infoMessage = fmt.Sprintf("Starting triple-shot #%d (teamwire)...", numActive)
+	} else {
+		m.infoMessage = "Starting triple-shot mode (teamwire)..."
+	}
+
+	if m.logger != nil {
+		m.logger.Info("teamwire triple-shot started", "group_id", groupID)
+	}
+
+	// Start listening for events from the callback channel
+	return m, tuimsg.ListenTeamwireEvents(eventCh)
+}
+
+// handleTeamwirePhaseChanged handles a phase change from the teamwire coordinator.
+func (m *Model) handleTeamwirePhaseChanged(msg tuimsg.TeamwirePhaseChangedMsg) (tea.Model, tea.Cmd) {
+	if m.logger != nil {
+		m.logger.Info("teamwire phase changed", "group_id", msg.GroupID, "phase", msg.Phase)
+	}
+
+	switch msg.Phase {
+	case tripleshot.PhaseWorking:
+		m.infoMessage = "Triple-shot: attempts working..."
+	case tripleshot.PhaseEvaluating:
+		m.infoMessage = "All attempts complete - judge is evaluating solutions..."
+	case tripleshot.PhaseFailed:
+		errMsg := "Triple-shot failed"
+		if m.tripleShot != nil {
+			if runner := m.tripleShot.GetRunnerForGroup(msg.GroupID); runner != nil {
+				if sess := runner.Session(); sess != nil && sess.Error != "" {
+					errMsg = "Triple-shot failed: " + sess.Error
+				}
+			}
+		}
+		m.errorMessage = errMsg
+	case tripleshot.PhaseComplete:
+		// OnComplete callback handles this
+	}
+
+	return m, tuimsg.ListenTeamwireEvents(m.teamwireEventCh)
+}
+
+// handleTeamwireAttemptStarted handles an attempt start from the teamwire coordinator.
+func (m *Model) handleTeamwireAttemptStarted(msg tuimsg.TeamwireAttemptStartedMsg) (tea.Model, tea.Cmd) {
+	if m.logger != nil {
+		m.logger.Info("teamwire attempt started",
+			"group_id", msg.GroupID,
+			"attempt_index", msg.AttemptIndex,
+			"instance_id", msg.InstanceID,
+		)
+	}
+
+	// Add the instance to the group for sidebar rendering
+	if m.session != nil {
+		group := m.session.GetGroup(msg.GroupID)
+		if group != nil {
+			group.AddInstance(msg.InstanceID)
+		}
+	}
+
+	m.infoMessage = fmt.Sprintf("Attempt %d started", msg.AttemptIndex+1)
+	return m, tuimsg.ListenTeamwireEvents(m.teamwireEventCh)
+}
+
+// handleTeamwireAttemptCompleted handles an attempt completion from the teamwire coordinator.
+func (m *Model) handleTeamwireAttemptCompleted(msg tuimsg.TeamwireAttemptCompletedMsg) (tea.Model, tea.Cmd) {
+	if m.logger != nil {
+		m.logger.Info("teamwire attempt completed",
+			"group_id", msg.GroupID,
+			"attempt_index", msg.AttemptIndex,
+		)
+	}
+
+	m.infoMessage = fmt.Sprintf("Attempt %d completed", msg.AttemptIndex+1)
+	return m, tuimsg.ListenTeamwireEvents(m.teamwireEventCh)
+}
+
+// handleTeamwireAttemptFailed handles an attempt failure from the teamwire coordinator.
+func (m *Model) handleTeamwireAttemptFailed(msg tuimsg.TeamwireAttemptFailedMsg) (tea.Model, tea.Cmd) {
+	if m.logger != nil {
+		m.logger.Warn("teamwire attempt failed",
+			"group_id", msg.GroupID,
+			"attempt_index", msg.AttemptIndex,
+			"reason", msg.Reason,
+		)
+	}
+
+	m.errorMessage = fmt.Sprintf("Attempt %d failed: %s", msg.AttemptIndex+1, msg.Reason)
+	return m, tuimsg.ListenTeamwireEvents(m.teamwireEventCh)
+}
+
+// handleTeamwireJudgeStarted handles judge start from the teamwire coordinator.
+func (m *Model) handleTeamwireJudgeStarted(msg tuimsg.TeamwireJudgeStartedMsg) (tea.Model, tea.Cmd) {
+	if m.logger != nil {
+		m.logger.Info("teamwire judge started",
+			"group_id", msg.GroupID,
+			"instance_id", msg.InstanceID,
+		)
+	}
+
+	m.infoMessage = "All attempts complete - judge is evaluating solutions..."
+
+	// Auto-collapse the implementers when the judge starts
+	if m.tripleShot != nil {
+		runner := m.tripleShot.GetRunnerForGroup(msg.GroupID)
+		if runner != nil {
+			session := runner.Session()
+			if session != nil && session.ImplementersGroupID != "" {
+				if m.groupViewState == nil {
+					m.groupViewState = view.NewGroupViewState()
+				}
+				m.groupViewState.SetLockedCollapsed(session.ImplementersGroupID, true)
+			}
+		}
+	}
+
+	return m, tuimsg.ListenTeamwireEvents(m.teamwireEventCh)
+}
+
+// handleTeamwireCompleted handles completion of the teamwire triple-shot.
+func (m *Model) handleTeamwireCompleted(msg tuimsg.TeamwireCompletedMsg) (tea.Model, tea.Cmd) {
+	if m.logger != nil {
+		m.logger.Info("teamwire triple-shot completed",
+			"group_id", msg.GroupID,
+			"success", msg.Success,
+			"summary", msg.Summary,
+		)
+	}
+
+	if msg.Success {
+		taskPreview := msg.Summary
+		if len(taskPreview) > 30 {
+			taskPreview = taskPreview[:27] + "..."
+		}
+		m.infoMessage = fmt.Sprintf("Triple-shot complete! (%s)", taskPreview)
+	} else {
+		m.errorMessage = fmt.Sprintf("Triple-shot failed: %s", msg.Summary)
+	}
+
+	if m.tripleShot != nil {
+		m.tripleShot.NeedsNotification = true
+	}
+
+	// Don't re-subscribe — the session is done. The channel will be closed
+	// during cleanup. Returning nil avoids a goroutine leak from a reader
+	// permanently blocked on a channel that will never receive another message.
+	return m, nil
+}
+
+// handleTeamwireChannelClosed handles the teamwire event channel being closed.
+func (m *Model) handleTeamwireChannelClosed() (tea.Model, tea.Cmd) {
+	if m.logger != nil {
+		m.logger.Info("teamwire event channel closed")
+	}
+	m.teamwireEventCh = nil
+	// Don't re-subscribe — the channel is gone
+	return m, nil
+}
+
+// cleanupTripleShot stops all tripleshot runners and clears the tripleshot state.
 func (m *Model) cleanupTripleShot() {
 	if m.tripleShot == nil {
 		return
 	}
 
-	// Stop all coordinators to cancel their contexts
-	for _, coordinator := range m.tripleShot.Coordinators {
-		if coordinator != nil {
-			coordinator.Stop()
+	// Stop all runners to cancel their contexts.
+	// Stop() cancels the context, unsubscribes events, and waits for goroutines.
+	for _, runner := range m.tripleShot.Runners {
+		if runner != nil {
+			runner.Stop()
 		}
 	}
 
 	// Clear TUI-level state
 	m.tripleShot = nil
+
+	// Close the teamwire event channel if open. Nil-guard prevents double-close
+	// panic if the channel was already closed (e.g., from error path in
+	// initiateTeamwireTripleShot or from handleTeamwireChannelClosed).
+	if ch := m.teamwireEventCh; ch != nil {
+		m.teamwireEventCh = nil
+		close(ch)
+	}
 
 	// Clear session-level tripleshot state
 	if m.session != nil {
