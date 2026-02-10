@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Stuck Session Recovery** - Sessions that reported as STUCK in the sidebar now automatically recover when they resume producing output. Previously, two compounding gates (monitor skipping state detection for timed-out instances, TUI only polling working/waiting instances) prevented recovery. The monitor now auto-clears the timeout when it detects a new output hash, and the TUI polls stuck/timed-out instances for status changes.
+
 - **Teamwire Channel Safety** - Fixed potential panic from closing `teamwireEventCh` while callbacks may still write to it (nil-guard before close), goroutine leak from re-subscribing after triple-shot completion, and channel overwrite leak when starting multiple sessions. Surfaced session error details in `PhaseFailed` handler instead of generic "Triple-shot failed" message.
 
 - **Pipeline SaveSession Error Logging** - Replaced silent `_ = SaveSession()` calls in `onPipelineCompleted` and `Cancel()` with logged errors, preventing session state loss from going undetected. Improved pipeline factory error message for user-facing context.
