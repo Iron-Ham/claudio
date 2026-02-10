@@ -511,6 +511,9 @@ func resumeUltraplanSession(orch *orchestrator.Orchestrator, sess *orchestrator.
 	// Create coordinator from the loaded session state
 	coordinator := orchestrator.NewCoordinator(orch, sess, ultraSession, logger)
 
+	// Register pipeline factory for lazy PipelineRunner creation
+	registerPipelineFactory(coordinator, orch, logger)
+
 	// Resume based on current phase
 	switch ultraSession.Phase {
 	case orchestrator.PhasePlanning:

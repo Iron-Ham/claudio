@@ -226,6 +226,8 @@ type TripleshotConfig struct {
 	AutoApprove bool `mapstructure:"auto_approve"`
 	// Adversarial enables adversarial review mode where each implementer must pass review before completion (default: false)
 	Adversarial bool `mapstructure:"adversarial"`
+	// UseLegacy forces the legacy polling-based coordinator instead of team-based Orch 2.0 (default: false)
+	UseLegacy bool `mapstructure:"use_legacy"`
 }
 
 // AdversarialConfig controls adversarial review mode behavior.
@@ -471,6 +473,7 @@ func Default() *Config {
 		Tripleshot: TripleshotConfig{
 			AutoApprove: false,
 			Adversarial: false,
+			UseLegacy:   false,
 		},
 		Adversarial: AdversarialConfig{
 			MaxIterations:   10, // Reasonable default to prevent infinite loops
@@ -598,6 +601,7 @@ func SetDefaults() {
 	// Tripleshot defaults
 	viper.SetDefault("tripleshot.auto_approve", defaults.Tripleshot.AutoApprove)
 	viper.SetDefault("tripleshot.adversarial", defaults.Tripleshot.Adversarial)
+	viper.SetDefault("tripleshot.use_legacy", defaults.Tripleshot.UseLegacy)
 
 	// Adversarial defaults
 	viper.SetDefault("adversarial.max_iterations", defaults.Adversarial.MaxIterations)

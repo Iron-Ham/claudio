@@ -157,6 +157,8 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 		// Auto-enable grouped sidebar mode
 		m.autoEnableGroupedMode()
 
+		registerPipelineFactory(coordinator, m.orchestrator, m.logger)
+
 		m.ultraPlan = &view.UltraPlanState{
 			Coordinator:           coordinator,
 			ShowPlanView:          false,
@@ -202,6 +204,8 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 			m.errorMessage = fmt.Sprintf("Failed to start planning: %v", err)
 			return
 		}
+
+		registerPipelineFactory(coordinator, m.orchestrator, m.logger)
 
 		m.ultraPlan = &view.UltraPlanState{
 			Coordinator:           coordinator,
@@ -896,6 +900,8 @@ func (m *Model) handleUltraPlanObjectiveSubmit(objective string) {
 		m.errorMessage = fmt.Sprintf("Failed to start planning: %v", err)
 		return
 	}
+
+	registerPipelineFactory(coordinator, m.orchestrator, m.logger)
 
 	m.ultraPlan = &view.UltraPlanState{
 		Coordinator:           coordinator,

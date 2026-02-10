@@ -39,7 +39,7 @@ type Dependencies interface {
 	IsTripleShotMode() bool
 	IsAdversarialMode() bool
 	GetUltraPlanCoordinator() *orchestrator.Coordinator
-	GetTripleShotCoordinators() []*tripleshot.Coordinator // Returns all active tripleshot coordinators
+	GetTripleShotRunners() []tripleshot.Runner // Returns all active tripleshot runners
 
 	// Logger access
 	GetLogger() *logging.Logger

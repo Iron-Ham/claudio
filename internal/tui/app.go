@@ -69,6 +69,11 @@ func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Ses
 		ShowPlanView:          false,
 		LastAutoExpandedGroup: -1, // Sentinel value to trigger initial expansion
 	}
+
+	// Register the pipeline runner factory so the Coordinator can lazily
+	// create a PipelineRunner when UsePipeline is enabled.
+	registerPipelineFactory(coordinator, orch, logger)
+
 	return &App{
 		model:        model,
 		orchestrator: orch,
@@ -80,7 +85,7 @@ func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Ses
 func NewWithTripleShot(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinator *tripleshot.Coordinator, logger *logging.Logger) *App {
 	model := NewModel(orch, session, logger)
 	model.tripleShot = &TripleShotState{
-		Coordinators: make(map[string]*tripleshot.Coordinator),
+		Runners: make(map[string]tripleshot.Runner),
 	}
 	// Add the coordinator to the map keyed by its group ID for multiple tripleshot support
 	if coordinator != nil {
@@ -99,7 +104,7 @@ func NewWithTripleShot(orch *orchestrator.Orchestrator, session *orchestrator.Se
 				// Auto-enable grouped sidebar mode
 				model.autoEnableGroupedMode()
 			}
-			model.tripleShot.Coordinators[tripleSession.GroupID] = coordinator
+			model.tripleShot.Runners[tripleSession.GroupID] = coordinator
 		}
 	}
 	return &App{
@@ -147,7 +152,7 @@ func NewWithAdversarial(orch *orchestrator.Orchestrator, session *orchestrator.S
 func NewWithTripleShots(orch *orchestrator.Orchestrator, session *orchestrator.Session, coordinators []*tripleshot.Coordinator, logger *logging.Logger) *App {
 	model := NewModel(orch, session, logger)
 	model.tripleShot = &TripleShotState{
-		Coordinators: make(map[string]*tripleshot.Coordinator),
+		Runners: make(map[string]tripleshot.Runner),
 	}
 
 	// Add all coordinators to the map keyed by their group IDs
@@ -167,7 +172,7 @@ func NewWithTripleShots(orch *orchestrator.Orchestrator, session *orchestrator.S
 					tripleSession.GroupID = tripleGroup.ID
 					createdGroup = true
 				}
-				model.tripleShot.Coordinators[tripleSession.GroupID] = coordinator
+				model.tripleShot.Runners[tripleSession.GroupID] = coordinator
 			}
 		}
 	}
@@ -673,11 +678,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Find the coordinator for this group
-		if m.tripleShot == nil || m.tripleShot.Coordinators == nil {
+		if m.tripleShot == nil || m.tripleShot.Runners == nil {
 			m.errorMessage = "Triple-shot coordinator not found"
 			return m, nil
 		}
-		coord := m.tripleShot.Coordinators[msg.GroupID]
+		coord := m.tripleShot.GetCoordinatorForGroup(msg.GroupID)
 		if coord == nil {
 			m.errorMessage = "Triple-shot coordinator not found"
 			return m, nil
@@ -712,8 +717,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Check if all attempts are now ready
-		if m.tripleShot != nil && m.tripleShot.Coordinators != nil {
-			coord := m.tripleShot.Coordinators[msg.GroupID]
+		if m.tripleShot != nil && m.tripleShot.Runners != nil {
+			coord := m.tripleShot.GetCoordinatorForGroup(msg.GroupID)
 			if coord != nil && coord.AllAttemptsReady() {
 				m.infoMessage = "Triple-shot started: 3 instances working on the task"
 			}
@@ -762,6 +767,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuimsg.TripleShotReviewProcessedMsg:
 		// Handle async adversarial review processing result
 		return m.handleTripleShotReviewProcessed(msg)
+
+	// --- Teamwire callback bridge messages ---
+	case tuimsg.TeamwirePhaseChangedMsg:
+		return m.handleTeamwirePhaseChanged(msg)
+	case tuimsg.TeamwireAttemptStartedMsg:
+		return m.handleTeamwireAttemptStarted(msg)
+	case tuimsg.TeamwireAttemptCompletedMsg:
+		return m.handleTeamwireAttemptCompleted(msg)
+	case tuimsg.TeamwireAttemptFailedMsg:
+		return m.handleTeamwireAttemptFailed(msg)
+	case tuimsg.TeamwireJudgeStartedMsg:
+		return m.handleTeamwireJudgeStarted(msg)
+	case tuimsg.TeamwireCompletedMsg:
+		return m.handleTeamwireCompleted(msg)
+	case tuimsg.TeamwireChannelClosedMsg:
+		return m.handleTeamwireChannelClosed()
 
 	case tuimsg.PlanFileCheckResultMsg:
 		// Handle async plan file check result (single-pass mode)
@@ -1772,7 +1793,8 @@ func (m Model) renderAdversarialHelp() string {
 }
 
 // initiateTripleShotMode creates and starts a triple-shot session.
-// Supports multiple concurrent tripleshots by adding to the Coordinators map.
+// Uses teamwire (Orch 2.0) by default; falls back to legacy when adversarial
+// mode is enabled or the user explicitly requests legacy via config.
 func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	// Create a group for this triple-shot session FIRST to get its ID
 	tripleGroup := orchestrator.NewInstanceGroupWithType(
@@ -1785,12 +1807,32 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	// Request intelligent name generation for the group
 	m.orchestrator.RequestGroupRename(tripleGroup.ID, task)
 
-	// Create triple-shot session with config from user settings
+	// Build config from user settings
 	tripleConfig := orchestrator.DefaultTripleShotConfig()
 	cfg := config.Get()
 	tripleConfig.AutoApprove = cfg.Tripleshot.AutoApprove
 	tripleConfig.Adversarial = cfg.Tripleshot.Adversarial
 	tripleConfig.MaxAdversarialRounds = cfg.Adversarial.MaxIterations
+
+	// Auto-enable grouped sidebar mode
+	m.autoEnableGroupedMode()
+
+	// Use teamwire unless adversarial mode is on or legacy is forced
+	useTeamwire := !tripleConfig.Adversarial && !cfg.Tripleshot.UseLegacy
+	if useTeamwire {
+		return m.initiateTeamwireTripleShot(task, tripleGroup, tripleConfig)
+	}
+	return m.initiateLegacyTripleShot(task, tripleGroup, tripleConfig)
+}
+
+// initiateLegacyTripleShot starts a triple-shot session using the legacy
+// file-polling coordinator. Used when adversarial mode is enabled or the
+// user explicitly requests legacy via config.
+func (m Model) initiateLegacyTripleShot(
+	task string,
+	tripleGroup *orchestrator.InstanceGroup,
+	tripleConfig tripleshot.Config,
+) (Model, tea.Cmd) {
 	tripleSession := orchestrator.NewTripleShotSession(task, tripleConfig)
 
 	// Link group ID to session for multi-tripleshot support
@@ -1802,22 +1844,19 @@ func (m Model) initiateTripleShotMode(task string) (Model, tea.Cmd) {
 	// Create coordinator
 	coordinator := orchestrator.NewTripleShotCoordinator(m.orchestrator, m.session, tripleSession, m.logger)
 
-	// Auto-enable grouped sidebar mode
-	m.autoEnableGroupedMode()
-
-	// Initialize triple-shot state if needed, or add to existing coordinators
+	// Initialize triple-shot state if needed, or add to existing runners
 	if m.tripleShot == nil {
 		m.tripleShot = &TripleShotState{
-			Coordinators: make(map[string]*tripleshot.Coordinator),
+			Runners: make(map[string]tripleshot.Runner),
 		}
-	} else if m.tripleShot.Coordinators == nil {
-		m.tripleShot.Coordinators = make(map[string]*tripleshot.Coordinator)
+	} else if m.tripleShot.Runners == nil {
+		m.tripleShot.Runners = make(map[string]tripleshot.Runner)
 	}
 
 	// Add coordinator to the map keyed by group ID
-	m.tripleShot.Coordinators[tripleGroup.ID] = coordinator
+	m.tripleShot.Runners[tripleGroup.ID] = coordinator
 
-	numActive := len(m.tripleShot.Coordinators)
+	numActive := len(m.tripleShot.Runners)
 	if numActive > 1 {
 		m.infoMessage = fmt.Sprintf("Starting triple-shot #%d...", numActive)
 	} else {

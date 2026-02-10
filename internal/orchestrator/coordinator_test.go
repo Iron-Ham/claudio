@@ -1,10 +1,12 @@
 package orchestrator
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
 )
@@ -2354,5 +2356,194 @@ func TestConvertPlanSpecsToCandidatePlans_TaskConversion(t *testing.T) {
 	}
 	if task.EstComplexity != string(ComplexityHigh) {
 		t.Errorf("task.EstComplexity = %q, want %q", task.EstComplexity, ComplexityHigh)
+	}
+}
+
+// --- Pipeline execution path tests ---
+
+// mockExecutionRunner is a test double for ExecutionRunner.
+type mockExecutionRunner struct {
+	started bool
+	stopped bool
+	startFn func(ctx context.Context) error
+}
+
+func (m *mockExecutionRunner) Start(ctx context.Context) error {
+	m.started = true
+	if m.startFn != nil {
+		return m.startFn(ctx)
+	}
+	return nil
+}
+
+func (m *mockExecutionRunner) Stop() {
+	m.stopped = true
+}
+
+func TestCoordinator_SetPipelineRunner(t *testing.T) {
+	session := NewUltraPlanSession("Test", DefaultUltraPlanConfig())
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{manager: manager}
+
+	if coord.usePipeline {
+		t.Error("usePipeline should be false initially")
+	}
+
+	runner := &mockExecutionRunner{}
+	coord.SetPipelineRunner(runner)
+
+	if !coord.usePipeline {
+		t.Error("usePipeline should be true after SetPipelineRunner")
+	}
+	if coord.pipelineRunner != ExecutionRunner(runner) {
+		t.Error("pipelineRunner not set correctly")
+	}
+
+	// Setting nil reverts
+	coord.SetPipelineRunner(nil)
+	if coord.usePipeline {
+		t.Error("usePipeline should be false after SetPipelineRunner(nil)")
+	}
+}
+
+func TestCoordinator_SetPipelineFactory(t *testing.T) {
+	session := NewUltraPlanSession("Test", DefaultUltraPlanConfig())
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{manager: manager}
+
+	called := false
+	coord.SetPipelineFactory(func(deps PipelineRunnerDeps) (ExecutionRunner, error) {
+		called = true
+		return &mockExecutionRunner{}, nil
+	})
+
+	if coord.pipelineFactory == nil {
+		t.Error("pipelineFactory should be set")
+	}
+
+	// Invoking the factory should work
+	_, err := coord.pipelineFactory(PipelineRunnerDeps{})
+	if err != nil {
+		t.Errorf("factory returned error: %v", err)
+	}
+	if !called {
+		t.Error("factory was not called")
+	}
+}
+
+func TestCoordinator_PipelineGuardMethods(t *testing.T) {
+	session := NewUltraPlanSession("Test", DefaultUltraPlanConfig())
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager:     manager,
+		usePipeline: true,
+	}
+
+	t.Run("ResumeWithPartialWork", func(t *testing.T) {
+		err := coord.ResumeWithPartialWork()
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "not supported with pipeline execution") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("RetryFailedTasks", func(t *testing.T) {
+		err := coord.RetryFailedTasks()
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "not supported with pipeline execution") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("RetriggerGroup", func(t *testing.T) {
+		err := coord.RetriggerGroup(0)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "not supported with pipeline execution") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestCoordinator_StartPipelineExecution_NoRunner(t *testing.T) {
+	session := NewUltraPlanSession("Test", DefaultUltraPlanConfig())
+	manager := &UltraPlanManager{session: session}
+	coord := &Coordinator{
+		manager:        manager,
+		pipelineRunner: nil,
+		usePipeline:    true,
+	}
+
+	err := coord.startPipelineExecution()
+	if err == nil {
+		t.Fatal("expected error when runner is nil")
+	}
+	if !strings.Contains(err.Error(), "pipeline runner not set") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestCoordinator_Cancel_StopsPipelineRunner(t *testing.T) {
+	session := NewUltraPlanSession("Test", DefaultUltraPlanConfig())
+	manager := NewUltraPlanManager(nil, nil, session, logging.NopLogger())
+	runner := &mockExecutionRunner{}
+
+	coord := &Coordinator{
+		manager:        manager,
+		orch:           &Orchestrator{eventBus: newMockEventBus()},
+		pipelineRunner: runner,
+		usePipeline:    true,
+		runningTasks:   make(map[string]string),
+		cancelFunc:     func() {},
+	}
+
+	coord.Cancel()
+
+	if !runner.stopped {
+		t.Error("pipeline runner was not stopped during Cancel")
+	}
+}
+
+// newMockEventBus creates a minimal event bus for testing.
+func newMockEventBus() *eventBusForTest {
+	return &eventBusForTest{}
+}
+
+// eventBusForTest wraps the real event bus to avoid nil panics in tests.
+// This is a minimal stub since we just need Unsubscribe to not panic.
+type eventBusForTest = event.Bus
+
+func TestPipelineRunnerDeps_Fields(t *testing.T) {
+	deps := PipelineRunnerDeps{
+		Orch:        &Orchestrator{},
+		Session:     &Session{ID: "sess-1"},
+		Plan:        &PlanSpec{ID: "plan-1"},
+		MaxParallel: 5,
+	}
+
+	if deps.Session.ID != "sess-1" {
+		t.Errorf("Session.ID = %q, want %q", deps.Session.ID, "sess-1")
+	}
+	if deps.Plan.ID != "plan-1" {
+		t.Errorf("Plan.ID = %q, want %q", deps.Plan.ID, "plan-1")
+	}
+	if deps.MaxParallel != 5 {
+		t.Errorf("MaxParallel = %d, want 5", deps.MaxParallel)
+	}
+}
+
+func TestCoordinator_UsePipelineConfig(t *testing.T) {
+	cfg := DefaultUltraPlanConfig()
+	cfg.UsePipeline = true
+
+	session := NewUltraPlanSession("Test", cfg)
+
+	if !session.Config.UsePipeline {
+		t.Error("UsePipeline should be true in config")
 	}
 }

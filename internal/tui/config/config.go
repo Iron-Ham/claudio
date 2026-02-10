@@ -487,6 +487,13 @@ func New() Model {
 					Type:        "bool",
 					Category:    "tripleshot",
 				},
+				{
+					Key:         "tripleshot.use_legacy",
+					Label:       "Use Legacy Coordinator",
+					Description: "Force the legacy polling coordinator instead of teamwire",
+					Type:        "bool",
+					Category:    "tripleshot",
+				},
 			},
 		},
 		{
@@ -1278,6 +1285,7 @@ func (m *Model) resetCurrentToDefault() {
 		// Tripleshot
 		"tripleshot.auto_approve": defaults.Tripleshot.AutoApprove,
 		"tripleshot.adversarial":  defaults.Tripleshot.Adversarial,
+		"tripleshot.use_legacy":   defaults.Tripleshot.UseLegacy,
 		// Adversarial
 		"adversarial.max_iterations":    defaults.Adversarial.MaxIterations,
 		"adversarial.min_passing_score": defaults.Adversarial.MinPassingScore,

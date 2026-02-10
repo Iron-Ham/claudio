@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/group"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/phase"
@@ -24,6 +25,29 @@ type Verifier interface {
 	// VerifyTaskWork checks if a task produced actual commits and determines success/retry.
 	// The opts parameter provides task-specific context (e.g., NoCode flag for verification tasks).
 	VerifyTaskWork(taskID, instanceID, worktreePath, baseBranch string, opts *verify.TaskVerifyOptions) verify.TaskCompletionResult
+}
+
+// ExecutionRunner abstracts execution backends. The default is
+// ExecutionOrchestrator; the Pipeline-based backend
+// (bridgewire.PipelineRunner) implements this too.
+type ExecutionRunner interface {
+	Start(ctx context.Context) error
+	Stop()
+}
+
+// PipelineRunnerFactory creates a PipelineRunner on demand. It is called
+// lazily from StartExecution() when UsePipeline is enabled. The factory
+// receives the Coordinator's own dependencies so the caller doesn't need
+// to plumb them at injection time — only the factory itself is injected.
+type PipelineRunnerFactory func(deps PipelineRunnerDeps) (ExecutionRunner, error)
+
+// PipelineRunnerDeps bundles the values a PipelineRunnerFactory needs.
+type PipelineRunnerDeps struct {
+	Orch        *Orchestrator
+	Session     *Session
+	Verifier    Verifier
+	Plan        *PlanSpec
+	MaxParallel int
 }
 
 // Coordinator orchestrates the execution of an ultra-plan
@@ -52,6 +76,12 @@ type Coordinator struct {
 	// Task tracking
 	runningTasks map[string]string // taskID -> instanceID
 	runningCount int
+
+	// Pipeline-based execution (Orchestration 2.0)
+	pipelineRunner  ExecutionRunner       // active pipeline runner (nil = old path)
+	pipelineFactory PipelineRunnerFactory // creates runner lazily on first StartExecution
+	pipelineSubIDs  []string              // event subscription IDs for cleanup
+	usePipeline     bool                  // opt-in flag
 }
 
 // NewCoordinator creates a new coordinator for an ultra-plan session.
@@ -176,6 +206,26 @@ func (c *Coordinator) SetCallbacks(cb *CoordinatorCallbacks) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.callbacks = cb
+}
+
+// SetPipelineRunner injects the Pipeline-based execution backend.
+// When set, StartExecution delegates to the runner instead of the legacy
+// ExecutionOrchestrator. Pass nil to revert to the default path.
+func (c *Coordinator) SetPipelineRunner(r ExecutionRunner) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pipelineRunner = r
+	c.usePipeline = (r != nil)
+}
+
+// SetPipelineFactory registers a factory that lazily creates the
+// PipelineRunner on the first call to StartExecution when UsePipeline is
+// enabled. This avoids import cycles: the caller (TUI/cmd) provides the
+// factory once; the Coordinator passes its own dependencies when invoking it.
+func (c *Coordinator) SetPipelineFactory(f PipelineRunnerFactory) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pipelineFactory = f
 }
 
 // Manager returns the underlying ultra-plan manager
@@ -519,7 +569,34 @@ func (c *Coordinator) StartExecution() error {
 	now := time.Now()
 	c.mu.Lock()
 	session.StartedAt = &now
+	usePipeline := c.usePipeline || session.Config.UsePipeline
+	factory := c.pipelineFactory
+	runner := c.pipelineRunner
 	c.mu.Unlock()
+
+	// Lazy runner creation: if UsePipeline is enabled via config but no
+	// runner has been set yet, use the registered factory to create one.
+	if usePipeline && runner == nil && factory != nil {
+		var err error
+		runner, err = factory(PipelineRunnerDeps{
+			Orch:        c.orch,
+			Session:     c.baseSession,
+			Verifier:    c.verifier,
+			Plan:        session.Plan,
+			MaxParallel: session.Config.MaxParallel,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to start plan execution: %w", err)
+		}
+		c.mu.Lock()
+		c.pipelineRunner = runner
+		c.usePipeline = true
+		c.mu.Unlock()
+	}
+
+	if usePipeline && runner != nil {
+		return c.startPipelineExecution()
+	}
 
 	// Get ExecutionOrchestrator - always delegate to it
 	eo := c.ExecutionOrchestrator()
@@ -546,6 +623,102 @@ func (c *Coordinator) StartExecution() error {
 	}()
 
 	return nil
+}
+
+// startPipelineExecution starts the Pipeline-based execution backend.
+// The PipelineRunner is already injected via SetPipelineRunner — this
+// method subscribes to pipeline.completed and starts the runner.
+func (c *Coordinator) startPipelineExecution() error {
+	c.mu.RLock()
+	runner := c.pipelineRunner
+	c.mu.RUnlock()
+
+	if runner == nil {
+		return fmt.Errorf("pipeline runner not set")
+	}
+
+	// Subscribe to pipeline.completed to drive the next phase.
+	// Handler dispatches to a goroutine to avoid inline-handler deadlock
+	// (see Known Pitfalls: synchronous event bus).
+	bus := c.orch.EventBus()
+	subID := bus.Subscribe("pipeline.completed", func(e event.Event) {
+		if pce, ok := e.(event.PipelineCompletedEvent); ok {
+			go c.onPipelineCompleted(pce)
+		}
+	})
+
+	c.mu.Lock()
+	c.pipelineSubIDs = []string{subID}
+	c.mu.Unlock()
+
+	if err := runner.Start(c.ctx); err != nil {
+		// Cleanup subscription on failure
+		bus.Unsubscribe(subID)
+		c.mu.Lock()
+		c.pipelineSubIDs = nil
+		c.mu.Unlock()
+		return fmt.Errorf("pipeline runner start: %w", err)
+	}
+
+	return nil
+}
+
+// onPipelineCompleted handles the pipeline.completed event.
+// Must run in its own goroutine (dispatched from the event handler).
+func (c *Coordinator) onPipelineCompleted(pce event.PipelineCompletedEvent) {
+	// Clean up event subscriptions
+	c.mu.RLock()
+	subIDs := c.pipelineSubIDs
+	c.mu.RUnlock()
+
+	bus := c.orch.EventBus()
+	for _, id := range subIDs {
+		bus.Unsubscribe(id)
+	}
+	c.mu.Lock()
+	c.pipelineSubIDs = nil
+	c.mu.Unlock()
+
+	session := c.Session()
+
+	if !pce.Success {
+		c.mu.Lock()
+		session.Phase = PhaseFailed
+		session.Error = "pipeline execution failed"
+		c.mu.Unlock()
+		if err := c.orch.SaveSession(); err != nil {
+			c.logger.Error("failed to persist session state", "error", err)
+		}
+		c.notifyComplete(false, session.Error)
+		return
+	}
+
+	// Pipeline succeeded — check if synthesis is needed
+	if session.Config.NoSynthesis {
+		now := time.Now()
+		c.mu.Lock()
+		session.Phase = PhaseComplete
+		session.CompletedAt = &now
+		c.mu.Unlock()
+		if err := c.orch.SaveSession(); err != nil {
+			c.logger.Error("failed to persist session state", "error", err)
+		}
+		c.notifyComplete(true, "all tasks completed successfully")
+		return
+	}
+
+	// Proceed to synthesis
+	if err := c.RunSynthesis(); err != nil {
+		c.logger.Error("failed to start synthesis after pipeline", "error", err)
+		c.mu.Lock()
+		session.Phase = PhaseFailed
+		session.Error = fmt.Sprintf("synthesis start failed: %v", err)
+		c.mu.Unlock()
+		if err := c.orch.SaveSession(); err != nil {
+			c.logger.Error("failed to persist session state", "error", err)
+		}
+		c.notifyComplete(false, session.Error)
+	}
 }
 
 // getTaskGroupIndex returns the group index for a given task ID, or -1 if not found
@@ -759,6 +932,20 @@ func (s *coordinatorSessionSaver) SaveSession() error {
 func (c *Coordinator) Cancel() {
 	c.cancelFunc()
 
+	// Stop pipeline runner if active (must happen outside mu — Stop blocks on wg.Wait)
+	c.mu.RLock()
+	runner := c.pipelineRunner
+	subIDs := c.pipelineSubIDs
+	c.mu.RUnlock()
+
+	if runner != nil {
+		runner.Stop()
+	}
+	bus := c.orch.EventBus()
+	for _, id := range subIDs {
+		bus.Unsubscribe(id)
+	}
+
 	// Stop all running task instances
 	c.mu.RLock()
 	runningTasks := make(map[string]string, len(c.runningTasks))
@@ -781,10 +968,13 @@ func (c *Coordinator) Cancel() {
 	session := c.Session()
 	session.Phase = PhaseFailed
 	session.Error = "cancelled by user"
+	c.pipelineSubIDs = nil
 	c.mu.Unlock()
 
 	// Persist the cancellation state
-	_ = c.orch.SaveSession()
+	if err := c.orch.SaveSession(); err != nil {
+		c.logger.Error("failed to persist cancellation state", "error", err)
+	}
 }
 
 // Wait waits for the ultra-plan to complete
@@ -821,6 +1011,13 @@ func (c *Coordinator) GetRunningTasks() map[string]string {
 // ResumeWithPartialWork continues execution with only the successful tasks.
 // Delegates core work to ExecutionOrchestrator, then advances the group state.
 func (c *Coordinator) ResumeWithPartialWork() error {
+	c.mu.RLock()
+	pipeline := c.usePipeline
+	c.mu.RUnlock()
+	if pipeline {
+		return fmt.Errorf("not supported with pipeline execution")
+	}
+
 	eo := c.ExecutionOrchestrator()
 	if eo == nil {
 		return fmt.Errorf("ExecutionOrchestrator not initialized")
@@ -848,6 +1045,13 @@ func (c *Coordinator) ResumeWithPartialWork() error {
 // RetryFailedTasks retries the failed tasks in the current group.
 // Delegates to ExecutionOrchestrator.RetryFailedTasks for the actual implementation.
 func (c *Coordinator) RetryFailedTasks() error {
+	c.mu.RLock()
+	pipeline := c.usePipeline
+	c.mu.RUnlock()
+	if pipeline {
+		return fmt.Errorf("not supported with pipeline execution")
+	}
+
 	eo := c.ExecutionOrchestrator()
 	if eo == nil {
 		return fmt.Errorf("ExecutionOrchestrator not initialized")
@@ -860,6 +1064,13 @@ func (c *Coordinator) RetryFailedTasks() error {
 // re-triggered group's consolidated branch.
 // Delegates to ExecutionOrchestrator.RetriggerGroup for the actual implementation.
 func (c *Coordinator) RetriggerGroup(targetGroup int) error {
+	c.mu.RLock()
+	pipeline := c.usePipeline
+	c.mu.RUnlock()
+	if pipeline {
+		return fmt.Errorf("not supported with pipeline execution")
+	}
+
 	eo := c.ExecutionOrchestrator()
 	if eo == nil {
 		return fmt.Errorf("ExecutionOrchestrator not initialized")

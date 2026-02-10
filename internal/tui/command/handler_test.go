@@ -68,9 +68,9 @@ func (m *mockDeps) IsAdversarialMode() bool                     { return m.adver
 func (m *mockDeps) GetUltraPlanCoordinator() *orchestrator.Coordinator {
 	return m.ultraCoordinator
 }
-func (m *mockDeps) GetTripleShotCoordinators() []*tripleshot.Coordinator {
+func (m *mockDeps) GetTripleShotRunners() []tripleshot.Runner {
 	if m.tripleShotCoordinator != nil {
-		return []*tripleshot.Coordinator{m.tripleShotCoordinator}
+		return []tripleshot.Runner{m.tripleShotCoordinator}
 	}
 	return nil
 }

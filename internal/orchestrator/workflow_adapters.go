@@ -233,6 +233,14 @@ func NewTripleShotCoordinator(orch *Orchestrator, session *Session, tripleSessio
 	return tripleshot.NewCoordinator(cfg)
 }
 
+// NewTripleShotAdapters returns the orchestrator and session adapters needed to construct
+// a teamwire.TeamCoordinatorConfig from outside the orchestrator package. This avoids
+// exporting the adapter types themselves while still allowing the TUI to create teamwire
+// coordinators without an import cycle.
+func NewTripleShotAdapters(orch *Orchestrator, session *Session) (tripleshot.OrchestratorInterface, tripleshot.SessionInterface) {
+	return &orchestratorAdapter{orch: orch}, &sessionAdapter{session: session}
+}
+
 // adversarialOrchestratorAdapter implements adversarial.OrchestratorInterface
 type adversarialOrchestratorAdapter struct {
 	orch *Orchestrator
