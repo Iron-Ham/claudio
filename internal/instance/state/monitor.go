@@ -294,11 +294,24 @@ func (m *Monitor) ProcessOutput(instanceID string, output []byte, outputHash str
 		return detect.StateWorking
 	}
 
-	// Skip processing if already timed out
+	// If already timed out, check whether new activity has appeared.
+	// When the output hash changes, the instance has genuinely resumed
+	// producing new content, so we auto-clear the timeout and continue
+	// with normal state detection.
 	if inst.timedOut {
-		currentState := inst.currentState
-		m.mu.Unlock()
-		return currentState
+		if outputHash == inst.lastOutputHash {
+			currentState := inst.currentState
+			m.mu.Unlock()
+			return currentState
+		}
+		// Output changed — instance recovered. Clear timeout state.
+		inst.timedOut = false
+		inst.timeoutType = 0
+		inst.repeatedOutputCount = 0
+		if m.logger != nil {
+			m.logger.Info("instance recovered from timeout, new output detected",
+				"instance_id", instanceID)
+		}
 	}
 
 	// Detect new state

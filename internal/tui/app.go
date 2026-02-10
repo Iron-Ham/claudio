@@ -1124,9 +1124,12 @@ func (m *Model) updateOutputs() {
 				}
 			}
 
-			// Update instance status based on detected waiting state
-			// Check when working OR waiting for input (to detect completion after waiting)
-			if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
+			// Update instance status based on detected state.
+			// Include stuck/timeout so instances that resume activity can recover.
+			if inst.Status == orchestrator.StatusWorking ||
+				inst.Status == orchestrator.StatusWaitingInput ||
+				inst.Status == orchestrator.StatusStuck ||
+				inst.Status == orchestrator.StatusTimeout {
 				m.updateInstanceStatus(inst, mgr)
 			}
 		}
@@ -1156,8 +1159,10 @@ func (m *Model) updateInstanceStatus(inst *orchestrator.Instance, mgr *instance.
 	case detect.StateError:
 		inst.Status = orchestrator.StatusError
 	case detect.StateWorking:
-		// If currently marked as waiting but now working, go back to working
-		if inst.Status == orchestrator.StatusWaitingInput {
+		// If currently marked as waiting/stuck/timeout but now working, go back to working
+		if inst.Status == orchestrator.StatusWaitingInput ||
+			inst.Status == orchestrator.StatusStuck ||
+			inst.Status == orchestrator.StatusTimeout {
 			inst.Status = orchestrator.StatusWorking
 		}
 	}

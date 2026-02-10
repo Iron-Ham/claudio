@@ -368,23 +368,83 @@ func TestMonitor_ProcessOutput_NonMonitored(t *testing.T) {
 	}
 }
 
-func TestMonitor_ProcessOutput_TimedOut(t *testing.T) {
+func TestMonitor_ProcessOutput_TimedOut_SameHash(t *testing.T) {
 	m := NewMonitor(MonitorConfig{
 		StaleDetection: true,
-		StaleThreshold: 1, // Low threshold
+		StaleThreshold: 2, // Low threshold
 	})
 
 	m.Start("inst-1")
 
-	// Trigger timeout
-	m.ProcessOutput("inst-1", []byte("same"), "hash")
-	m.ProcessOutput("inst-1", []byte("same"), "hash")
+	// Trigger timeout via stale detection (need > threshold repeated outputs)
+	m.ProcessOutput("inst-1", []byte("same"), "hash") // sets lastOutputHash
+	m.ProcessOutput("inst-1", []byte("same"), "hash") // repeatedOutputCount=1
+	m.ProcessOutput("inst-1", []byte("same"), "hash") // repeatedOutputCount=2
+	m.ProcessOutput("inst-1", []byte("same"), "hash") // repeatedOutputCount=3
 	m.CheckTimeouts("inst-1")
 
-	// Process output should still work but state is preserved
-	state := m.ProcessOutput("inst-1", []byte("new"), "newhash")
-	// State detection still works even when timed out - working state is expected
-	_ = state // Verify it doesn't panic; state value doesn't matter for this test
+	timedOut, _ := m.GetTimedOut("inst-1")
+	if !timedOut {
+		t.Fatal("Instance should be timed out")
+	}
+
+	// Processing with the same hash should keep the instance timed out
+	m.ProcessOutput("inst-1", []byte("same"), "hash")
+
+	timedOut, _ = m.GetTimedOut("inst-1")
+	if !timedOut {
+		t.Error("Instance should remain timed out when output hash has not changed")
+	}
+}
+
+func TestMonitor_ProcessOutput_TimedOut_AutoRecover(t *testing.T) {
+	m := NewMonitor(MonitorConfig{
+		StaleDetection: true,
+		StaleThreshold: 2, // Low threshold
+	})
+
+	var callbackCalls []struct {
+		instanceID string
+		oldState   detect.WaitingState
+		newState   detect.WaitingState
+	}
+	m.OnStateChange(func(id string, old, new detect.WaitingState) {
+		callbackCalls = append(callbackCalls, struct {
+			instanceID string
+			oldState   detect.WaitingState
+			newState   detect.WaitingState
+		}{id, old, new})
+	})
+
+	m.Start("inst-1")
+
+	// Trigger timeout via stale detection (need > threshold repeated outputs)
+	m.ProcessOutput("inst-1", []byte("same"), "hash") // sets lastOutputHash
+	m.ProcessOutput("inst-1", []byte("same"), "hash") // repeatedOutputCount=1
+	m.ProcessOutput("inst-1", []byte("same"), "hash") // repeatedOutputCount=2
+	m.ProcessOutput("inst-1", []byte("same"), "hash") // repeatedOutputCount=3
+	m.CheckTimeouts("inst-1")
+
+	timedOut, _ := m.GetTimedOut("inst-1")
+	if !timedOut {
+		t.Fatal("Instance should be timed out")
+	}
+
+	// Processing with a NEW hash should auto-clear the timeout
+	state := m.ProcessOutput("inst-1", []byte("new output"), "newhash")
+
+	timedOut, tt := m.GetTimedOut("inst-1")
+	if timedOut {
+		t.Error("Instance should no longer be timed out after new output detected")
+	}
+	if tt != 0 {
+		t.Errorf("Timeout type should be reset to zero, got %v", tt)
+	}
+
+	// State detection should resume normally
+	if state != detect.StateWorking {
+		t.Errorf("ProcessOutput state = %v, want StateWorking after recovery", state)
+	}
 }
 
 func TestMonitor_CheckTimeouts_ActivityTimeout(t *testing.T) {
