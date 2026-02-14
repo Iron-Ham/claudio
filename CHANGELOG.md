@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Teamwire TUI Freeze** - Fixed TUI freeze when starting a triple-shot in teamwire mode. `coordinator.Start()` was called synchronously in the Bubble Tea `Update()` handler, blocking the event loop while bridges created git worktrees. Moved startup to an async `tea.Cmd` so the UI remains responsive during initialization.
+
 - **Teamwire Channel Safety** - Fixed potential panic from closing `teamwireEventCh` while callbacks may still write to it (nil-guard before close), goroutine leak from re-subscribing after triple-shot completion, and channel overwrite leak when starting multiple sessions. Surfaced session error details in `PhaseFailed` handler instead of generic "Triple-shot failed" message.
 
 - **Pipeline SaveSession Error Logging** - Replaced silent `_ = SaveSession()` calls in `onPipelineCompleted` and `Cancel()` with logged errors, preventing session state loss from going undetected. Improved pipeline factory error message for user-facing context.

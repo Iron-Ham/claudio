@@ -381,17 +381,8 @@ func (m Model) initiateTeamwireTripleShot(
 		},
 	})
 
-	// Start the coordinator (creates Manager, bridges, begins execution)
-	if err := coordinator.Start(context.Background()); err != nil {
-		m.errorMessage = fmt.Sprintf("Failed to start teamwire coordinator: %v", err)
-		if m.logger != nil {
-			m.logger.Error("failed to start teamwire coordinator", "error", err)
-		}
-		close(eventCh)
-		return m, nil
-	}
-
-	// Store coordinator in runners map
+	// Store coordinator in runners map BEFORE starting so event handlers
+	// can find it when callbacks fire during Start().
 	if m.tripleShot == nil {
 		m.tripleShot = &TripleShotState{
 			Runners:     make(map[string]tripleshot.Runner),
@@ -418,11 +409,21 @@ func (m Model) initiateTeamwireTripleShot(
 	}
 
 	if m.logger != nil {
-		m.logger.Info("teamwire triple-shot started", "group_id", groupID)
+		m.logger.Info("teamwire triple-shot starting", "group_id", groupID)
 	}
 
-	// Start listening for events from the callback channel
-	return m, tuimsg.ListenTeamwireEvents(eventCh)
+	// Start coordinator asynchronously to avoid blocking the TUI event loop.
+	// coordinator.Start() creates bridges that trigger claim loops, which
+	// create git worktrees (I/O-heavy). Running it synchronously freezes the UI.
+	startCmd := func() tea.Msg {
+		if err := coordinator.Start(context.Background()); err != nil {
+			return tuimsg.TeamwireStartResultMsg{GroupID: groupID, Err: err}
+		}
+		return tuimsg.TeamwireStartResultMsg{GroupID: groupID}
+	}
+
+	// Listen for callback events and start the coordinator concurrently.
+	return m, tea.Batch(startCmd, tuimsg.ListenTeamwireEvents(eventCh))
 }
 
 // handleTeamwirePhaseChanged handles a phase change from the teamwire coordinator.
@@ -567,6 +568,37 @@ func (m *Model) handleTeamwireChannelClosed() (tea.Model, tea.Cmd) {
 	}
 	m.teamwireEventCh = nil
 	// Don't re-subscribe — the channel is gone
+	return m, nil
+}
+
+// handleTeamwireStartResult processes the result of the async coordinator start.
+// On success this is a no-op (callbacks handle progress). On failure it cleans
+// up the pre-registered coordinator state.
+func (m *Model) handleTeamwireStartResult(msg tuimsg.TeamwireStartResultMsg) (tea.Model, tea.Cmd) {
+	if msg.Err == nil {
+		if m.logger != nil {
+			m.logger.Info("teamwire coordinator started", "group_id", msg.GroupID)
+		}
+		return m, nil
+	}
+
+	m.errorMessage = fmt.Sprintf("Failed to start teamwire coordinator: %v", msg.Err)
+	if m.logger != nil {
+		m.logger.Error("failed to start teamwire coordinator", "error", msg.Err)
+	}
+
+	// Remove the failed runner and clean up. Stop() is safe even if the
+	// coordinator never fully started (it checks tc.started).
+	if m.tripleShot != nil {
+		if runner, ok := m.tripleShot.Runners[msg.GroupID]; ok {
+			runner.Stop()
+			delete(m.tripleShot.Runners, msg.GroupID)
+		}
+		if !m.tripleShot.HasActiveCoordinators() {
+			m.cleanupTripleShot()
+		}
+	}
+
 	return m, nil
 }
 
