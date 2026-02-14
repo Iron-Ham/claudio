@@ -395,3 +395,11 @@ type TeamwireCompletedMsg struct {
 
 // TeamwireChannelClosedMsg signals that the teamwire event channel has been closed.
 type TeamwireChannelClosedMsg struct{}
+
+// TeamwireStartResultMsg signals whether the teamwire coordinator started
+// successfully. Used to make coordinator startup asynchronous so it does not
+// block the TUI event loop.
+type TeamwireStartResultMsg struct {
+	GroupID string
+	Err     error
+}

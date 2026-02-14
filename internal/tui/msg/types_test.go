@@ -899,3 +899,38 @@ func TestDiffLoadedMsg(t *testing.T) {
 		})
 	}
 }
+
+func TestTeamwireStartResultMsg(t *testing.T) {
+	tests := []struct {
+		name    string
+		groupID string
+		err     error
+	}{
+		{
+			name:    "successful start",
+			groupID: "group-1",
+			err:     nil,
+		},
+		{
+			name:    "failed start",
+			groupID: "group-2",
+			err:     errors.New("bridge start failed"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := TeamwireStartResultMsg{
+				GroupID: tt.groupID,
+				Err:     tt.err,
+			}
+
+			if msg.GroupID != tt.groupID {
+				t.Errorf("GroupID = %q, want %q", msg.GroupID, tt.groupID)
+			}
+			if msg.Err != tt.err {
+				t.Errorf("Err = %v, want %v", msg.Err, tt.err)
+			}
+		})
+	}
+}

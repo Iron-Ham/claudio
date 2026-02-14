@@ -783,6 +783,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleTeamwireCompleted(msg)
 	case tuimsg.TeamwireChannelClosedMsg:
 		return m.handleTeamwireChannelClosed()
+	case tuimsg.TeamwireStartResultMsg:
+		return m.handleTeamwireStartResult(msg)
 
 	case tuimsg.PlanFileCheckResultMsg:
 		// Handle async plan file check result (single-pass mode)
