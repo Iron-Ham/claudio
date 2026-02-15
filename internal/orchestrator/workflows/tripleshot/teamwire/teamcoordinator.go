@@ -154,22 +154,14 @@ func (tc *TeamCoordinator) Start(ctx context.Context) error {
 		teamID := tc.attemptTeamIDs[i]
 		t := mgr.Team(teamID)
 		if t == nil { // Coverage: defensive — Team() returns nil if concurrent Stop() clears state.
-			tc.mu.Lock()
-			tc.unsubscribeEvents()
-			tc.cancel()
-			tc.started = false
-			tc.mu.Unlock()
+			tc.abortStart()
 			return fmt.Errorf("teamcoordinator: team %q not found after AddTeam", teamID)
 		}
 
 		recorder := tc.buildAttemptRecorder(i)
 		b := bridge.New(t, factory, checker, recorder, tc.bus, tc.bridgeOpts...)
 		if err := b.Start(tc.ctx); err != nil { // Coverage: Bridge.Start only fails if already started.
-			tc.mu.Lock()
-			tc.unsubscribeEvents()
-			tc.cancel()
-			tc.started = false
-			tc.mu.Unlock()
+			tc.abortStart()
 			return fmt.Errorf("teamcoordinator: start bridge for %q: %w", teamID, err)
 		}
 
@@ -255,7 +247,7 @@ func (tc *TeamCoordinator) registerStart(ctx context.Context) (*team.Manager, er
 		if t != nil {
 			taskID := fmt.Sprintf("attempt-%d-task", i)
 			if err := t.Hub().TaskQueue().SetMaxRetries(taskID, 0); err != nil {
-				tc.logger.Warn("failed to disable retries for attempt task",
+				tc.logger.Error("failed to disable retries for attempt task",
 					"task_id", taskID, "error", err)
 			}
 		}
@@ -315,7 +307,26 @@ func (tc *TeamCoordinator) Stop() {
 
 	// Stop the team manager.
 	if tc.tmManager != nil {
-		_ = tc.tmManager.Stop()
+		if err := tc.tmManager.Stop(); err != nil {
+			tc.logger.Warn("failed to stop team manager", "error", err)
+		}
+	}
+}
+
+// abortStart cleans up partial state when the bridge-creation loop in Start()
+// encounters an error. It stops already-started bridges, unsubscribes events,
+// cancels the context, and marks the coordinator as not started.
+func (tc *TeamCoordinator) abortStart() {
+	tc.mu.Lock()
+	bridges := make([]*bridge.Bridge, len(tc.bridges))
+	copy(bridges, tc.bridges)
+	tc.bridges = nil
+	tc.unsubscribeEvents()
+	tc.cancel()
+	tc.started = false
+	tc.mu.Unlock()
+	for _, b := range bridges {
+		b.Stop()
 	}
 }
 
@@ -393,6 +404,21 @@ func (tc *TeamCoordinator) onTeamCompleted(tce event.TeamCompletedEvent) {
 	}
 	completed := tc.completedAttempts
 
+	// Set attempt status now, while we still hold the lock. The bridge
+	// publishes BridgeTaskCompletedEvent (which also sets this status) AFTER
+	// gate.Complete returns — but gate.Complete is what triggers this
+	// TeamCompletedEvent. If we wait for onBridgeTaskCompleted, startJudge
+	// (dispatched below as a goroutine) races with it and may snapshot the
+	// status as "working" instead of "completed".
+	session := tc.tsManager.Session()
+	now := time.Now()
+	session.Attempts[attemptIndex].CompletedAt = &now
+	if tce.Success {
+		session.Attempts[attemptIndex].Status = ts.AttemptStatusCompleted
+	} else {
+		session.Attempts[attemptIndex].Status = ts.AttemptStatusFailed
+	}
+
 	tc.logger.Info("attempt team completed",
 		"team_id", tce.TeamID,
 		"attempt_index", attemptIndex,
@@ -448,7 +474,11 @@ func (tc *TeamCoordinator) onBridgeTaskStarted(bse event.BridgeTaskStartedEvent)
 		}
 	}
 
-	// Must be the judge team.
+	if bse.TeamID != "judge" {
+		tc.logger.Warn("unexpected team ID in bridge.task_started", "team_id", bse.TeamID)
+		tc.mu.Unlock()
+		return
+	}
 	tc.mu.Unlock()
 	tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
 		if cb.OnJudgeStart != nil {
@@ -467,12 +497,23 @@ func (tc *TeamCoordinator) onBridgeTaskCompleted(bce event.BridgeTaskCompletedEv
 
 	for i, id := range tc.attemptTeamIDs {
 		if bce.TeamID == id {
+			// Status and CompletedAt may already be set by onTeamCompleted
+			// (which fires before this handler for the last-completing attempt).
+			// Only update if not already terminal to avoid overwriting the
+			// earlier, more accurate CompletedAt timestamp.
 			session := tc.tsManager.Session()
-			now := time.Now()
-			session.Attempts[i].CompletedAt = &now
+			status := session.Attempts[i].Status
+			if status != ts.AttemptStatusCompleted && status != ts.AttemptStatusFailed {
+				now := time.Now()
+				session.Attempts[i].CompletedAt = &now
+				if bce.Success {
+					session.Attempts[i].Status = ts.AttemptStatusCompleted
+				} else {
+					session.Attempts[i].Status = ts.AttemptStatusFailed
+				}
+			}
 
 			if bce.Success {
-				session.Attempts[i].Status = ts.AttemptStatusCompleted
 				tc.mu.Unlock()
 				tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
 					if cb.OnAttemptComplete != nil {
@@ -480,7 +521,6 @@ func (tc *TeamCoordinator) onBridgeTaskCompleted(bce event.BridgeTaskCompletedEv
 					}
 				})
 			} else {
-				session.Attempts[i].Status = ts.AttemptStatusFailed
 				tc.mu.Unlock()
 				tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
 					if cb.OnAttemptFailed != nil {
@@ -493,6 +533,11 @@ func (tc *TeamCoordinator) onBridgeTaskCompleted(bce event.BridgeTaskCompletedEv
 	}
 
 	// Judge team completion.
+	if bce.TeamID != "judge" {
+		tc.logger.Warn("unexpected team ID in bridge.task_completed", "team_id", bce.TeamID)
+		tc.mu.Unlock()
+		return
+	}
 	tc.mu.Unlock()
 	tc.onJudgeCompleted(bce)
 }
@@ -665,7 +710,7 @@ func (tc *TeamCoordinator) startJudge() {
 
 	// Disable retries for the judge task — same rationale as attempt tasks.
 	if err := judgeTeam.Hub().TaskQueue().SetMaxRetries("judge-task", 0); err != nil {
-		tc.logger.Warn("failed to disable retries for judge task", "error", err)
+		tc.logger.Error("failed to disable retries for judge task", "error", err)
 	}
 
 	factory := newAttemptFactory(tc.orch, tc.session)

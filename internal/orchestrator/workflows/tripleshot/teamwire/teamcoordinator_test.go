@@ -971,6 +971,121 @@ func TestTeamCoordinator_OnTeamCompleted_UnknownTeam(t *testing.T) {
 	}
 }
 
+// TestTeamCoordinator_OnTeamCompleted_SetsAttemptStatus verifies that
+// onTeamCompleted sets the attempt status eagerly. Without this, startJudge
+// (dispatched as a goroutine from onTeamCompleted) races with
+// onBridgeTaskCompleted and may snapshot the last attempt as "working".
+func TestTeamCoordinator_OnTeamCompleted_SetsAttemptStatus(t *testing.T) {
+	setup := func(t *testing.T) *TeamCoordinator {
+		t.Helper()
+		bus := event.NewBus()
+		orch := newTestOrch(t)
+		session := newTestSession()
+
+		tc, _ := NewTeamCoordinator(TeamCoordinatorConfig{
+			Orchestrator: orch,
+			BaseSession:  session,
+			Bus:          bus,
+			BaseDir:      t.TempDir(),
+			Task:         "test task",
+		})
+
+		tc.mu.Lock()
+		tc.started = true
+		tc.attemptTeamIDs = [3]string{"attempt-0", "attempt-1", "attempt-2"}
+		tc.mu.Unlock()
+		return tc
+	}
+
+	t.Run("success", func(t *testing.T) {
+		tc := setup(t)
+
+		tce := event.NewTeamCompletedEvent("attempt-1", "Attempt 2", true, 1, 0)
+		tc.onTeamCompleted(tce)
+
+		// The status should be set immediately by onTeamCompleted, without
+		// needing onBridgeTaskCompleted to fire.
+		s := tc.Session()
+		if s.Attempts[1].Status != ts.AttemptStatusCompleted {
+			t.Errorf("Attempts[1].Status = %q, want %q", s.Attempts[1].Status, ts.AttemptStatusCompleted)
+		}
+		if s.Attempts[1].CompletedAt == nil {
+			t.Error("Attempts[1].CompletedAt is nil, want non-nil")
+		}
+		// Unrelated attempts should be unaffected.
+		if s.Attempts[0].Status != "" {
+			t.Errorf("Attempts[0].Status = %q, want empty", s.Attempts[0].Status)
+		}
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		tc := setup(t)
+
+		tce := event.NewTeamCompletedEvent("attempt-2", "Attempt 3", false, 0, 1)
+		tc.onTeamCompleted(tce)
+
+		s := tc.Session()
+		if s.Attempts[2].Status != ts.AttemptStatusFailed {
+			t.Errorf("Attempts[2].Status = %q, want %q", s.Attempts[2].Status, ts.AttemptStatusFailed)
+		}
+		if s.Attempts[2].CompletedAt == nil {
+			t.Error("Attempts[2].CompletedAt is nil, want non-nil")
+		}
+	})
+}
+
+// TestTeamCoordinator_OnBridgeTaskCompleted_SkipsTerminalStatus verifies that
+// onBridgeTaskCompleted does not overwrite status/CompletedAt when the attempt
+// is already in a terminal state (set earlier by onTeamCompleted).
+func TestTeamCoordinator_OnBridgeTaskCompleted_SkipsTerminalStatus(t *testing.T) {
+	bus := event.NewBus()
+	orch := newTestOrch(t)
+	session := newTestSession()
+
+	tc, _ := NewTeamCoordinator(TeamCoordinatorConfig{
+		Orchestrator: orch,
+		BaseSession:  session,
+		Bus:          bus,
+		BaseDir:      t.TempDir(),
+		Task:         "test task",
+	})
+
+	completedCh := make(chan int, 1)
+	tc.SetCallbacks(&ts.CoordinatorCallbacks{
+		OnAttemptComplete: func(idx int) { completedCh <- idx },
+	})
+
+	tc.mu.Lock()
+	tc.started = true
+	tc.attemptTeamIDs = [3]string{"attempt-0", "attempt-1", "attempt-2"}
+	tc.mu.Unlock()
+
+	// Pre-set attempt-1 as completed (simulates onTeamCompleted having run first).
+	s := tc.Session()
+	earlyTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.Attempts[1].Status = ts.AttemptStatusCompleted
+	s.Attempts[1].CompletedAt = &earlyTime
+
+	// Fire onBridgeTaskCompleted — should NOT overwrite the earlier timestamp.
+	bce := event.NewBridgeTaskCompletedEvent("attempt-1", "task-1", "inst-1", true, 1, "")
+	tc.onBridgeTaskCompleted(bce)
+
+	// Callback should still fire.
+	select {
+	case idx := <-completedCh:
+		if idx != 1 {
+			t.Errorf("callback index = %d, want 1", idx)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for callback")
+	}
+
+	// CompletedAt should retain the earlier timestamp.
+	if !s.Attempts[1].CompletedAt.Equal(earlyTime) {
+		t.Errorf("CompletedAt was overwritten: got %v, want %v", s.Attempts[1].CompletedAt, earlyTime)
+	}
+}
+
 // startInfo captures an attempt start event for test assertions.
 type startInfo struct {
 	idx        int
