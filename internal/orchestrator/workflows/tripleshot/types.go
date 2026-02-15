@@ -114,17 +114,17 @@ type AttemptRoundHistory struct {
 type Evaluation struct {
 	WinnerIndex       int                     `json:"winner_index"`        // 0, 1, or 2 (-1 if merged)
 	MergeStrategy     MergeStrategy           `json:"merge_strategy"`      // Strategy for applying solution
-	Reasoning         string                  `json:"reasoning"`           // Explanation of the decision
+	Reasoning         FlexibleString          `json:"reasoning"`           // Explanation of the decision
 	AttemptEvaluation []AttemptEvaluationItem `json:"attempt_evaluations"` // Evaluation of each attempt
-	SuggestedChanges  []string                `json:"suggested_changes"`   // If merging, changes to make
+	SuggestedChanges  FlexibleStringSlice     `json:"suggested_changes"`   // If merging, changes to make
 }
 
 // AttemptEvaluationItem holds the evaluation for a single attempt
 type AttemptEvaluationItem struct {
-	AttemptIndex int      `json:"attempt_index"`
-	Score        int      `json:"score"` // 1-10
-	Strengths    []string `json:"strengths"`
-	Weaknesses   []string `json:"weaknesses"`
+	AttemptIndex int                 `json:"attempt_index"`
+	Score        int                 `json:"score"` // 1-10
+	Strengths    FlexibleStringSlice `json:"strengths"`
+	Weaknesses   FlexibleStringSlice `json:"weaknesses"`
 }
 
 // CompletionFileName is the sentinel file that attempts write when complete
@@ -156,6 +156,30 @@ func (f *FlexibleString) UnmarshalJSON(data []byte) error {
 // String returns the FlexibleString as a regular string.
 func (f FlexibleString) String() string {
 	return string(f)
+}
+
+// FlexibleStringSlice is a custom type that can unmarshal either a JSON array of strings
+// or a single JSON string. When unmarshaling a single string, it wraps it in a slice.
+// This handles LLM output that writes a plain string where the schema expects []string.
+type FlexibleStringSlice []string
+
+// UnmarshalJSON implements json.Unmarshaler for FlexibleStringSlice.
+func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as an array of strings first (most common)
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*f = arr
+		return nil
+	}
+
+	// Try to unmarshal as a single string
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*f = []string{s}
+		return nil
+	}
+
+	return fmt.Errorf("FlexibleStringSlice: expected string or []string, got %s", string(data))
 }
 
 // CompletionFile represents the completion report written by an attempt
@@ -407,15 +431,15 @@ func FindAdversarialReviewFile(worktreePath string) (string, error) {
 
 // AdversarialReviewFile represents the reviewer's feedback on an attempt
 type AdversarialReviewFile struct {
-	AttemptIndex    int      `json:"attempt_index"`    // Which attempt (0-2) this review is for
-	Round           int      `json:"round"`            // Review round (starts at 1)
-	Approved        bool     `json:"approved"`         // Whether the implementation is approved
-	Score           int      `json:"score"`            // Quality score (1-10)
-	Strengths       []string `json:"strengths"`        // What was done well
-	Issues          []string `json:"issues"`           // Problems that must be fixed
-	Suggestions     []string `json:"suggestions"`      // Optional improvements
-	Summary         string   `json:"summary"`          // Overall assessment
-	RequiredChanges []string `json:"required_changes"` // Specific changes needed (if not approved)
+	AttemptIndex    int                 `json:"attempt_index"`    // Which attempt (0-2) this review is for
+	Round           int                 `json:"round"`            // Review round (starts at 1)
+	Approved        bool                `json:"approved"`         // Whether the implementation is approved
+	Score           int                 `json:"score"`            // Quality score (1-10)
+	Strengths       FlexibleStringSlice `json:"strengths"`        // What was done well
+	Issues          FlexibleStringSlice `json:"issues"`           // Problems that must be fixed
+	Suggestions     FlexibleStringSlice `json:"suggestions"`      // Optional improvements
+	Summary         string              `json:"summary"`          // Overall assessment
+	RequiredChanges FlexibleStringSlice `json:"required_changes"` // Specific changes needed (if not approved)
 }
 
 // Validate checks that the AdversarialReviewFile has valid values.

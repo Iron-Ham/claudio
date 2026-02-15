@@ -247,6 +247,20 @@ func (tc *TeamCoordinator) registerStart(ctx context.Context) (*team.Manager, er
 		}
 	}
 
+	// Disable retries for attempt tasks. The triple-shot workflow has its
+	// own redundancy (3 independent attempts), so retrying individual tasks
+	// just creates duplicate instances that appear as a spurious second pass.
+	for i := range 3 {
+		t := mgr.Team(tc.attemptTeamIDs[i])
+		if t != nil {
+			taskID := fmt.Sprintf("attempt-%d-task", i)
+			if err := t.Hub().TaskQueue().SetMaxRetries(taskID, 0); err != nil {
+				tc.logger.Warn("failed to disable retries for attempt task",
+					"task_id", taskID, "error", err)
+			}
+		}
+	}
+
 	tc.subscribeEvents()
 
 	if err := mgr.Start(ctx); err != nil {
@@ -647,6 +661,11 @@ func (tc *TeamCoordinator) startJudge() {
 			}
 		})
 		return
+	}
+
+	// Disable retries for the judge task — same rationale as attempt tasks.
+	if err := judgeTeam.Hub().TaskQueue().SetMaxRetries("judge-task", 0); err != nil {
+		tc.logger.Warn("failed to disable retries for judge task", "error", err)
 	}
 
 	factory := newAttemptFactory(tc.orch, tc.session)

@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Triple-Shot Spurious Second Pass** - Fixed duplicate instance creation in triple-shot workflows. Two root causes: (1) TaskQueue's `defaultMaxRetries=2` caused failed attempt/judge tasks to retry, spawning new instances. Fixed by calling `SetMaxRetries(taskID, 0)` after team creation. (2) Judge "merge" recommendations caused `json.Unmarshal` to fail when the LLM wrote `suggested_changes` as a string instead of `[]string`. The evaluation file parse failure triggered a retry, creating a second judge. Fixed by adding `FlexibleStringSlice` type (mirrors existing `FlexibleString`) to tolerate string/array mismatches in all LLM-parsed sentinel file structs (`Evaluation`, `AttemptEvaluationItem`, `AdversarialReviewFile`).
+
 - **Teamwire TUI Freeze** - Fixed TUI freeze when starting a triple-shot in teamwire mode. `coordinator.Start()` was called synchronously in the Bubble Tea `Update()` handler, blocking the event loop while bridges created git worktrees. Moved startup to an async `tea.Cmd` so the UI remains responsive during initialization.
 
 - **Teamwire Channel Safety** - Fixed potential panic from closing `teamwireEventCh` while callbacks may still write to it (nil-guard before close), goroutine leak from re-subscribing after triple-shot completion, and channel overwrite leak when starting multiple sessions. Surfaced session error details in `PhaseFailed` handler instead of generic "Triple-shot failed" message.

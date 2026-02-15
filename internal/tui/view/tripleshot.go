@@ -420,7 +420,7 @@ func RenderTripleShotEvaluation(ctx TripleShotRenderContext) string {
 	// Reasoning
 	lines = append(lines, tsSubtle.Render("Reasoning:"))
 	// Word wrap reasoning
-	words := strings.Fields(eval.Reasoning)
+	words := strings.Fields(eval.Reasoning.String())
 	var line string
 	for _, word := range words {
 		if len(line)+len(word)+1 > ctx.Width-4 {

@@ -326,6 +326,129 @@ func TestParseEvaluationFile_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestParseEvaluationFile_FlexibleFields(t *testing.T) {
+	tests := []struct {
+		name              string
+		json              string
+		wantStrategy      MergeStrategy
+		wantReasoning     string
+		wantChangesLen    int
+		wantStrengthsLen  int
+		wantWeaknessesLen int
+		wantFirstChange   string
+		wantFirstStrength string
+		wantFirstWeakness string
+	}{
+		{
+			name: "merge with suggested_changes as string",
+			json: `{
+				"winner_index": -1,
+				"merge_strategy": "merge",
+				"reasoning": "Combined approach is best",
+				"attempt_evaluations": [
+					{"attempt_index": 0, "score": 7, "strengths": ["Good"], "weaknesses": ["Missing tests"]}
+				],
+				"suggested_changes": "Combine A's error handling with B's test structure"
+			}`,
+			wantStrategy:      MergeStrategyMerge,
+			wantReasoning:     "Combined approach is best",
+			wantChangesLen:    1,
+			wantFirstChange:   "Combine A's error handling with B's test structure",
+			wantStrengthsLen:  1,
+			wantFirstStrength: "Good",
+			wantWeaknessesLen: 1,
+			wantFirstWeakness: "Missing tests",
+		},
+		{
+			name: "merge with suggested_changes as array",
+			json: `{
+				"winner_index": -1,
+				"merge_strategy": "merge",
+				"reasoning": "Merging is ideal",
+				"attempt_evaluations": [],
+				"suggested_changes": ["Change A", "Change B"]
+			}`,
+			wantStrategy:    MergeStrategyMerge,
+			wantReasoning:   "Merging is ideal",
+			wantChangesLen:  2,
+			wantFirstChange: "Change A",
+		},
+		{
+			name: "reasoning as array of strings",
+			json: `{
+				"winner_index": 0,
+				"merge_strategy": "select",
+				"reasoning": ["First point.", "Second point."],
+				"attempt_evaluations": []
+			}`,
+			wantStrategy:  MergeStrategySelect,
+			wantReasoning: "First point.\nSecond point.",
+		},
+		{
+			name: "strengths and weaknesses as strings",
+			json: `{
+				"winner_index": 0,
+				"merge_strategy": "select",
+				"reasoning": "Best one",
+				"attempt_evaluations": [
+					{"attempt_index": 0, "score": 8, "strengths": "Clean implementation", "weaknesses": "No tests"}
+				]
+			}`,
+			wantStrategy:      MergeStrategySelect,
+			wantStrengthsLen:  1,
+			wantFirstStrength: "Clean implementation",
+			wantWeaknessesLen: 1,
+			wantFirstWeakness: "No tests",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			evalPath := filepath.Join(tmpDir, EvaluationFileName)
+			if err := os.WriteFile(evalPath, []byte(tt.json), 0644); err != nil {
+				t.Fatalf("failed to write evaluation file: %v", err)
+			}
+
+			parsed, err := ParseEvaluationFile(tmpDir)
+			if err != nil {
+				t.Fatalf("ParseEvaluationFile() error = %v", err)
+			}
+
+			if parsed.MergeStrategy != tt.wantStrategy {
+				t.Errorf("MergeStrategy = %q, want %q", parsed.MergeStrategy, tt.wantStrategy)
+			}
+			if tt.wantReasoning != "" && parsed.Reasoning.String() != tt.wantReasoning {
+				t.Errorf("Reasoning = %q, want %q", parsed.Reasoning, tt.wantReasoning)
+			}
+			if tt.wantChangesLen > 0 {
+				if len(parsed.SuggestedChanges) != tt.wantChangesLen {
+					t.Errorf("len(SuggestedChanges) = %d, want %d", len(parsed.SuggestedChanges), tt.wantChangesLen)
+				}
+				if len(parsed.SuggestedChanges) > 0 && parsed.SuggestedChanges[0] != tt.wantFirstChange {
+					t.Errorf("SuggestedChanges[0] = %q, want %q", parsed.SuggestedChanges[0], tt.wantFirstChange)
+				}
+			}
+			if tt.wantStrengthsLen > 0 && len(parsed.AttemptEvaluation) > 0 {
+				if len(parsed.AttemptEvaluation[0].Strengths) != tt.wantStrengthsLen {
+					t.Errorf("Strengths len = %d, want %d", len(parsed.AttemptEvaluation[0].Strengths), tt.wantStrengthsLen)
+				}
+				if len(parsed.AttemptEvaluation[0].Strengths) > 0 && parsed.AttemptEvaluation[0].Strengths[0] != tt.wantFirstStrength {
+					t.Errorf("Strengths[0] = %q, want %q", parsed.AttemptEvaluation[0].Strengths[0], tt.wantFirstStrength)
+				}
+			}
+			if tt.wantWeaknessesLen > 0 && len(parsed.AttemptEvaluation) > 0 {
+				if len(parsed.AttemptEvaluation[0].Weaknesses) != tt.wantWeaknessesLen {
+					t.Errorf("Weaknesses len = %d, want %d", len(parsed.AttemptEvaluation[0].Weaknesses), tt.wantWeaknessesLen)
+				}
+				if len(parsed.AttemptEvaluation[0].Weaknesses) > 0 && parsed.AttemptEvaluation[0].Weaknesses[0] != tt.wantFirstWeakness {
+					t.Errorf("Weaknesses[0] = %q, want %q", parsed.AttemptEvaluation[0].Weaknesses[0], tt.wantFirstWeakness)
+				}
+			}
+		})
+	}
+}
+
 func TestParseEvaluationFromOutput(t *testing.T) {
 	tests := []struct {
 		name    string
