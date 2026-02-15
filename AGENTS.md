@@ -309,6 +309,7 @@ This is not exhaustive — update it when you add or discover undocumented packa
 - `internal/team/` — Multi-team orchestration with dependency ordering, budget tracking, and inter-team routing *(has `AGENTS.md`)*
 - `internal/bridge/` — Connects team Hubs to real Claude Code instances (worktree + tmux) *(has `AGENTS.md`)*
 - `internal/orchestrator/bridgewire/` — Adapter types that wire orchestrator infrastructure to bridge interfaces *(has `AGENTS.md`)*
+- `internal/orchestrator/workflows/tripleshot/` — Triple-shot workflow: 3 parallel attempts + judge evaluation. Defines sentinel file types (`CompletionFile`, `Evaluation`, `AdversarialReviewFile`) with flexible JSON unmarshaling *(has `AGENTS.md`)*
 - `internal/orchestrator/workflows/tripleshot/teamwire/` — Adapts TripleShot to Orchestration 2.0 teams via `TeamCoordinator` + bridge adapters *(has `AGENTS.md`)*
 - `internal/pipeline/` — Plan decomposer and multi-phase team pipeline *(has `AGENTS.md`)*
 - `internal/tui/` — Bubble Tea terminal UI components *(has `AGENTS.md`)*

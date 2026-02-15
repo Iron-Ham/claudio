@@ -180,7 +180,7 @@ func (m *Manager) SetEvaluation(eval *Evaluation) {
 
 	m.emitEvent(Event{
 		Type:    EventEvaluationReady,
-		Message: eval.Reasoning,
+		Message: eval.Reasoning.String(),
 	})
 }
 
