@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Multiple Triple-Shot Event Channel** - Fixed second triple-shot instances appearing outside their group. The teamwire event channel was replaced (old closed, new created) on each new triple-shot, causing the old listener's `TeamwireChannelClosedMsg` to nil out the new channel. Subsequent events blocked forever on a nil channel read. Now all coordinators share a single event channel (demuxed by GroupID), and `handleTeamwireCompleted` re-subscribes when the channel is still active.
+
 - **TripleShot Implementer Auto-Collapse and Judge Nesting** - Fixed two TUI visual regressions introduced when Orchestration 2.0 became the default tripleshot execution path: (1) implementer instances were not auto-collapsed when the judge started because `ImplementersGroupID` was never set, and (2) the judge instance was not nested within the tripleshot group. Ported the legacy coordinator's group restructuring logic to `teamwire.TeamCoordinator.reorganizeGroupForJudge()` and added judge-to-group registration in the TUI handler.
 
 - **TripleShot Combine Evaluation Parse Failure** - `FlexibleStringSlice` now handles LLM judge output that writes an array of objects (e.g., `[{"description":"...","source":"attempt_1"}]`) where flat strings were expected; also improved the judge prompt to show a populated `suggested_changes` example and explicitly require plain strings

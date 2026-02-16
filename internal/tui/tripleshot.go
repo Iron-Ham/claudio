@@ -351,11 +351,17 @@ func (m Model) initiateTeamwireTripleShot(
 	// Persist tripleshot session for potential restore
 	m.session.TripleShots = append(m.session.TripleShots, coordinator.Session())
 
-	// Create buffered channel for callback → Bubble Tea bridge
-	eventCh := make(chan tea.Msg, 16)
+	// Reuse the existing event channel if one is already active.
+	// Multiple triple-shot coordinators share a single channel, with each
+	// message carrying a GroupID for demultiplexing.
+	eventCh := m.teamwireEventCh
+	needsNewListener := eventCh == nil
+	if eventCh == nil {
+		eventCh = make(chan tea.Msg, 16)
+	}
 	groupID := group.ID
 
-	// Register callbacks that write to the event channel
+	// Register callbacks that write to the shared event channel
 	coordinator.SetCallbacks(&tripleshot.CoordinatorCallbacks{
 		OnPhaseChange: func(phase tripleshot.Phase) {
 			eventCh <- tuimsg.TeamwirePhaseChangedMsg{GroupID: groupID, Phase: phase}
@@ -381,19 +387,6 @@ func (m Model) initiateTeamwireTripleShot(
 		},
 	})
 
-	// Stop existing runners before closing their event channel. Their
-	// callbacks hold a reference to the old channel and would panic with
-	// "send on closed channel" if they fire after close. Stop() cancels
-	// contexts and waits for goroutines, ensuring no more callback writes.
-	if m.tripleShot != nil {
-		for id, runner := range m.tripleShot.Runners {
-			if runner != nil {
-				runner.Stop()
-			}
-			delete(m.tripleShot.Runners, id)
-		}
-	}
-
 	// Store coordinator in runners map BEFORE starting so event handlers
 	// can find it when callbacks fire during Start().
 	if m.tripleShot == nil {
@@ -407,11 +400,6 @@ func (m Model) initiateTeamwireTripleShot(
 	m.tripleShot.Runners[groupID] = coordinator
 	m.tripleShot.UseTeamwire = true
 
-	// Close the previous event channel to unblock the old ListenTeamwireEvents
-	// reader. Safe because we stopped all old runners above (no more writes).
-	if ch := m.teamwireEventCh; ch != nil {
-		close(ch)
-	}
 	m.teamwireEventCh = eventCh
 
 	numActive := len(m.tripleShot.Runners)
@@ -435,8 +423,14 @@ func (m Model) initiateTeamwireTripleShot(
 		return tuimsg.TeamwireStartResultMsg{GroupID: groupID}
 	}
 
-	// Listen for callback events and start the coordinator concurrently.
-	return m, tea.Batch(startCmd, tuimsg.ListenTeamwireEvents(eventCh))
+	// Start the coordinator. Only start a new event listener if one isn't
+	// already running — existing listeners re-subscribe after each message
+	// and share the channel with all coordinators.
+	cmds := []tea.Cmd{startCmd}
+	if needsNewListener {
+		cmds = append(cmds, tuimsg.ListenTeamwireEvents(eventCh))
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // handleTeamwirePhaseChanged handles a phase change from the teamwire coordinator.
@@ -464,7 +458,7 @@ func (m *Model) handleTeamwirePhaseChanged(msg tuimsg.TeamwirePhaseChangedMsg) (
 		// OnComplete callback handles this
 	}
 
-	return m, tuimsg.ListenTeamwireEvents(m.teamwireEventCh)
+	return m, m.listenTeamwireCmd()
 }
 
 // handleTeamwireAttemptStarted handles an attempt start from the teamwire coordinator.
@@ -486,7 +480,7 @@ func (m *Model) handleTeamwireAttemptStarted(msg tuimsg.TeamwireAttemptStartedMs
 	}
 
 	m.infoMessage = fmt.Sprintf("Attempt %d started", msg.AttemptIndex+1)
-	return m, tuimsg.ListenTeamwireEvents(m.teamwireEventCh)
+	return m, m.listenTeamwireCmd()
 }
 
 // handleTeamwireAttemptCompleted handles an attempt completion from the teamwire coordinator.
@@ -499,7 +493,7 @@ func (m *Model) handleTeamwireAttemptCompleted(msg tuimsg.TeamwireAttemptComplet
 	}
 
 	m.infoMessage = fmt.Sprintf("Attempt %d completed", msg.AttemptIndex+1)
-	return m, tuimsg.ListenTeamwireEvents(m.teamwireEventCh)
+	return m, m.listenTeamwireCmd()
 }
 
 // handleTeamwireAttemptFailed handles an attempt failure from the teamwire coordinator.
@@ -513,7 +507,7 @@ func (m *Model) handleTeamwireAttemptFailed(msg tuimsg.TeamwireAttemptFailedMsg)
 	}
 
 	m.errorMessage = fmt.Sprintf("Attempt %d failed: %s", msg.AttemptIndex+1, msg.Reason)
-	return m, tuimsg.ListenTeamwireEvents(m.teamwireEventCh)
+	return m, m.listenTeamwireCmd()
 }
 
 // handleTeamwireJudgeStarted handles judge start from the teamwire coordinator.
@@ -555,7 +549,7 @@ func (m *Model) handleTeamwireJudgeStarted(msg tuimsg.TeamwireJudgeStartedMsg) (
 		}
 	}
 
-	return m, tuimsg.ListenTeamwireEvents(m.teamwireEventCh)
+	return m, m.listenTeamwireCmd()
 }
 
 // handleTeamwireCompleted handles completion of the teamwire triple-shot.
@@ -582,10 +576,22 @@ func (m *Model) handleTeamwireCompleted(msg tuimsg.TeamwireCompletedMsg) (tea.Mo
 		m.tripleShot.NeedsNotification = true
 	}
 
-	// Don't re-subscribe — the session is done. The channel will be closed
-	// during cleanup. Returning nil avoids a goroutine leak from a reader
-	// permanently blocked on a channel that will never receive another message.
-	return m, nil
+	// Keep listening if the shared channel is still active — other
+	// triple-shot coordinators may still be running and sending events.
+	// When no runners remain, cleanup will close the channel and the
+	// listener will receive TeamwireChannelClosedMsg.
+	return m, m.listenTeamwireCmd()
+}
+
+// listenTeamwireCmd returns a tea.Cmd that re-subscribes to the shared
+// teamwire event channel. Returns nil if the channel has been closed
+// (set to nil by handleTeamwireChannelClosed or cleanupTripleShot),
+// preventing a goroutine from blocking forever on a nil channel read.
+func (m *Model) listenTeamwireCmd() tea.Cmd {
+	if m.teamwireEventCh == nil {
+		return nil
+	}
+	return tuimsg.ListenTeamwireEvents(m.teamwireEventCh)
 }
 
 // handleTeamwireChannelClosed handles the teamwire event channel being closed.
