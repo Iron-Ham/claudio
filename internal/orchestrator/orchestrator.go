@@ -1489,6 +1489,9 @@ func (o *Orchestrator) registerInstance(session *Session, inst *Instance) error 
 	// Failures are logged but do not block instance creation since local config is optional.
 	o.copyLocalBackendFilesToWorktree(inst.ID, inst.WorktreePath)
 
+	// Write team settings to prevent nested tmux sessions in Claude Code.
+	o.writeWorktreeTeamSettings(inst.ID, inst.WorktreePath)
+
 	// Add to session
 	session.Instances = append(session.Instances, inst)
 
@@ -1937,6 +1940,80 @@ func (o *Orchestrator) copyLocalBackendFilesToWorktree(instID, wtPath string) {
 			)
 		}
 		fmt.Fprintf(os.Stderr, "Warning: failed to copy local backend files to worktree: %v\n", err)
+	}
+}
+
+// writeWorktreeTeamSettings writes Claude Code team settings to the worktree to prevent
+// nested tmux sessions. When Claudio runs Claude Code inside tmux, Claude Code detects
+// $TMUX and activates tmux-based Agent Teams, creating nested sessions Claudio can't manage.
+// Setting teammateMode to "in-process" forces inline execution instead.
+func (o *Orchestrator) writeWorktreeTeamSettings(instID, wtPath string) {
+	if o.backend == nil || o.backend.Name() != ai.BackendClaude {
+		return
+	}
+
+	settingsDir := filepath.Join(wtPath, ".claude")
+	settingsFile := filepath.Join(settingsDir, "settings.local.json")
+
+	// Read existing settings if present
+	settings := make(map[string]any)
+	if data, err := os.ReadFile(settingsFile); err == nil {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			if o.logger != nil {
+				o.logger.Warn("failed to parse existing settings.local.json, overwriting",
+					"instance_id", instID,
+					"error", err,
+				)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: failed to parse existing settings.local.json, overwriting: %v\n", err)
+			settings = make(map[string]any)
+		}
+	} else if !os.IsNotExist(err) {
+		if o.logger != nil {
+			o.logger.Warn("failed to read existing settings.local.json, overwriting",
+				"instance_id", instID,
+				"error", err,
+			)
+		}
+		fmt.Fprintf(os.Stderr, "Warning: failed to read existing settings.local.json, overwriting: %v\n", err)
+	}
+
+	settings["teammateMode"] = "in-process"
+
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		if o.logger != nil {
+			o.logger.Warn("failed to marshal team settings",
+				"instance_id", instID,
+				"error", err,
+			)
+		}
+		fmt.Fprintf(os.Stderr, "Warning: failed to marshal team settings: %v\n", err)
+		return
+	}
+
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		if o.logger != nil {
+			o.logger.Warn("failed to create .claude directory in worktree",
+				"instance_id", instID,
+				"worktree_path", wtPath,
+				"error", err,
+			)
+		}
+		fmt.Fprintf(os.Stderr, "Warning: failed to create .claude directory in worktree: %v\n", err)
+		return
+	}
+
+	if err := os.WriteFile(settingsFile, data, 0o644); err != nil {
+		if o.logger != nil {
+			o.logger.Warn("failed to write team settings to worktree",
+				"instance_id", instID,
+				"worktree_path", wtPath,
+				"error", err,
+			)
+		}
+		fmt.Fprintf(os.Stderr, "Warning: failed to write team settings to worktree: %v\n", err)
+		return
 	}
 }
 
