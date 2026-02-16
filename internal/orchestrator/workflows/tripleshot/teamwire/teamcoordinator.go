@@ -242,13 +242,15 @@ func (tc *TeamCoordinator) registerStart(ctx context.Context) (*team.Manager, er
 	// Disable retries for attempt tasks. The triple-shot workflow has its
 	// own redundancy (3 independent attempts), so retrying individual tasks
 	// just creates duplicate instances that appear as a spurious second pass.
+	// This is a hard failure because leaving retries enabled risks spawning
+	// duplicate instances — see AGENTS.md "Retries disabled for tripleshot tasks".
 	for i := range 3 {
 		t := mgr.Team(tc.attemptTeamIDs[i])
 		if t != nil {
 			taskID := fmt.Sprintf("attempt-%d-task", i)
 			if err := t.Hub().TaskQueue().SetMaxRetries(taskID, 0); err != nil {
-				tc.logger.Error("failed to disable retries for attempt task",
-					"task_id", taskID, "error", err)
+				cancel()
+				return nil, fmt.Errorf("teamcoordinator: disable retries for %s: %w", taskID, err)
 			}
 		}
 	}
@@ -650,6 +652,11 @@ func (tc *TeamCoordinator) startJudge() {
 		}
 	})
 
+	// Reorganize the TUI group hierarchy: move attempt instances into an
+	// "Implementers" sub-group so the TUI can auto-collapse them when the
+	// judge starts. This mirrors the legacy coordinator's StartJudge() logic.
+	tc.reorganizeGroupForJudge()
+
 	// Add judge team dynamically.
 	judgeSpec := team.Spec{
 		ID:       "judge",
@@ -669,6 +676,10 @@ func (tc *TeamCoordinator) startJudge() {
 			},
 		},
 	}
+
+	// NOTE: The failure blocks below intentionally don't use failJudge() because
+	// the judge hasn't started yet. failJudge() publishes TripleShotJudgeCompletedEvent,
+	// which is inappropriate before the judge team exists.
 
 	// Coverage: AddTeamDynamic fails if manager is stopped or context is cancelled;
 	// both require tight timing that's impractical to test deterministically.
@@ -709,8 +720,22 @@ func (tc *TeamCoordinator) startJudge() {
 	}
 
 	// Disable retries for the judge task — same rationale as attempt tasks.
+	// Hard failure: leaving retries enabled could spawn a duplicate judge.
 	if err := judgeTeam.Hub().TaskQueue().SetMaxRetries("judge-task", 0); err != nil {
 		tc.logger.Error("failed to disable retries for judge task", "error", err)
+		tc.mu.Lock()
+		session.Error = fmt.Sprintf("failed to disable retries for judge task: %v", err)
+		tc.tsManager.SetPhase(ts.PhaseFailed)
+		tc.mu.Unlock()
+		tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
+			if cb.OnPhaseChange != nil {
+				cb.OnPhaseChange(ts.PhaseFailed)
+			}
+			if cb.OnComplete != nil {
+				cb.OnComplete(false, session.Error)
+			}
+		})
+		return
 	}
 
 	factory := newAttemptFactory(tc.orch, tc.session)
@@ -742,6 +767,66 @@ func (tc *TeamCoordinator) startJudge() {
 	tc.logger.Info("judge team added and bridge started")
 }
 
+// reorganizeGroupForJudge mirrors the legacy coordinator's group restructuring
+// from StartJudge(). It creates an "Implementers" sub-group within the tripleshot
+// group, moves the 3 attempt instances into it, and sets ImplementersGroupID on the
+// session so the TUI can auto-collapse them.
+//
+// Group mutation safety: this method runs from startJudge() after all 3 attempts
+// have completed. At this point no new BridgeTaskStartedEvents will fire for
+// attempt teams (they're done), so the TUI's handleTeamwireAttemptStarted won't
+// race on AddInstance. The production GroupInterface (groupAdapter wrapping
+// InstanceGroup) is not internally synchronized, but the sequential execution
+// model of Bubble Tea's Update loop means TUI-side group mutations are serialized.
+func (tc *TeamCoordinator) reorganizeGroupForJudge() {
+	// Snapshot session fields under the lock to follow the documented
+	// lock discipline (all session field reads must hold tc.mu).
+	tc.mu.Lock()
+	session := tc.tsManager.Session()
+	groupID := session.GroupID
+	sessionID := session.ID
+	tc.mu.Unlock()
+
+	group := tc.session.GetGroup(groupID)
+	if group == nil {
+		tc.logger.Warn("tripleshot group not found, skipping implementer reorganization",
+			"group_id", groupID,
+		)
+		return
+	}
+
+	subGroupable, ok := group.(ts.GroupWithSubGroupsInterface)
+	if !ok {
+		tc.logger.Warn("tripleshot group does not support sub-groups, skipping implementer reorganization",
+			"group_id", groupID,
+		)
+		return
+	}
+
+	implementersGroup := subGroupable.GetOrCreateSubGroup(sessionID+"-implementers", "Implementers")
+	if implementersGroup == nil {
+		tc.logger.Warn("failed to create implementers sub-group",
+			"session_id", sessionID,
+			"group_id", groupID,
+		)
+		return
+	}
+
+	// Move existing instances (the 3 implementers) from parent → sub-group.
+	for _, instID := range group.GetInstances() {
+		implementersGroup.AddInstance(instID)
+	}
+	group.SetInstances(nil)
+
+	tc.mu.Lock()
+	session.ImplementersGroupID = implementersGroup.GetID()
+	tc.mu.Unlock()
+
+	tc.logger.Debug("reorganized group for judge",
+		"implementers_group_id", implementersGroup.GetID(),
+	)
+}
+
 // onJudgeCompleted handles the judge task completion.
 func (tc *TeamCoordinator) onJudgeCompleted(bce event.BridgeTaskCompletedEvent) {
 	session := tc.tsManager.Session()
@@ -764,14 +849,15 @@ func (tc *TeamCoordinator) onJudgeCompleted(bce event.BridgeTaskCompletedEvent) 
 		return
 	}
 
-	// Hold tc.mu for session mutations to synchronize with GetWinningBranch.
+	// Hold tc.mu for session mutations and winner-info snapshot to synchronize
+	// with GetWinningBranch. Snapshot winner data under the lock so we don't
+	// read session.Attempts outside it.
 	tc.mu.Lock()
 	session.JudgeID = bce.InstanceID
 	now := time.Now()
 	session.CompletedAt = &now
 	tc.tsManager.SetEvaluation(evaluation)
 	tc.tsManager.SetPhase(ts.PhaseComplete)
-	tc.mu.Unlock()
 
 	summary := fmt.Sprintf("Strategy: %s. Reasoning: %s", evaluation.MergeStrategy, evaluation.Reasoning)
 	if evaluation.MergeStrategy == ts.MergeStrategySelect &&
@@ -780,6 +866,7 @@ func (tc *TeamCoordinator) onJudgeCompleted(bce event.BridgeTaskCompletedEvent) 
 		summary = fmt.Sprintf("Selected attempt %d (branch: %s). Reasoning: %s",
 			evaluation.WinnerIndex+1, winner.Branch, evaluation.Reasoning)
 	}
+	tc.mu.Unlock()
 
 	tc.notifyCallbacks(func(cb *ts.CoordinatorCallbacks) {
 		if cb.OnEvaluationReady != nil {

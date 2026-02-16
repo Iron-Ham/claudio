@@ -381,6 +381,19 @@ func (m Model) initiateTeamwireTripleShot(
 		},
 	})
 
+	// Stop existing runners before closing their event channel. Their
+	// callbacks hold a reference to the old channel and would panic with
+	// "send on closed channel" if they fire after close. Stop() cancels
+	// contexts and waits for goroutines, ensuring no more callback writes.
+	if m.tripleShot != nil {
+		for id, runner := range m.tripleShot.Runners {
+			if runner != nil {
+				runner.Stop()
+			}
+			delete(m.tripleShot.Runners, id)
+		}
+	}
+
 	// Store coordinator in runners map BEFORE starting so event handlers
 	// can find it when callbacks fire during Start().
 	if m.tripleShot == nil {
@@ -394,8 +407,8 @@ func (m Model) initiateTeamwireTripleShot(
 	m.tripleShot.Runners[groupID] = coordinator
 	m.tripleShot.UseTeamwire = true
 
-	// Close any previous event channel to avoid goroutine leaks from the
-	// old ListenTeamwireEvents reader still blocked on the orphaned channel.
+	// Close the previous event channel to unblock the old ListenTeamwireEvents
+	// reader. Safe because we stopped all old runners above (no more writes).
 	if ch := m.teamwireEventCh; ch != nil {
 		close(ch)
 	}
@@ -510,6 +523,20 @@ func (m *Model) handleTeamwireJudgeStarted(msg tuimsg.TeamwireJudgeStartedMsg) (
 			"group_id", msg.GroupID,
 			"instance_id", msg.InstanceID,
 		)
+	}
+
+	// Add the judge instance to the parent group for sidebar rendering,
+	// matching the pattern from handleTeamwireAttemptStarted.
+	if m.session != nil {
+		group := m.session.GetGroup(msg.GroupID)
+		if group != nil {
+			group.AddInstance(msg.InstanceID)
+		} else if m.logger != nil {
+			m.logger.Warn("tripleshot group not found, judge instance not added to sidebar",
+				"group_id", msg.GroupID,
+				"instance_id", msg.InstanceID,
+			)
+		}
 	}
 
 	m.infoMessage = "All attempts complete - judge is evaluating solutions..."

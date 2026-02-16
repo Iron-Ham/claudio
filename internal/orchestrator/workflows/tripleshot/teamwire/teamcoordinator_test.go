@@ -100,13 +100,25 @@ func (o *testOrch) getInstances() map[string]*mockInstance {
 type testSession struct {
 	mu        sync.Mutex
 	instances map[string]*mockInstance
+	groups    map[string]*mockGroup
 }
 
 func newTestSession() *testSession {
-	return &testSession{instances: make(map[string]*mockInstance)}
+	return &testSession{
+		instances: make(map[string]*mockInstance),
+		groups:    make(map[string]*mockGroup),
+	}
 }
 
-func (s *testSession) GetGroup(_ string) ts.GroupInterface              { return nil }
+func (s *testSession) GetGroup(id string) ts.GroupInterface {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	g := s.groups[id]
+	if g == nil {
+		return nil
+	}
+	return g
+}
 func (s *testSession) GetGroupBySessionType(_ string) ts.GroupInterface { return nil }
 func (s *testSession) GetInstance(id string) ts.InstanceInterface {
 	s.mu.Lock()
@@ -116,6 +128,52 @@ func (s *testSession) GetInstance(id string) ts.InstanceInterface {
 		return nil
 	}
 	return inst
+}
+
+// mockGroup implements both ts.GroupInterface and ts.GroupWithSubGroupsInterface.
+// Not thread-safe — only use in single-goroutine tests (e.g., direct method calls).
+// For concurrent/full-lifecycle tests, add a sync.Mutex.
+type mockGroup struct {
+	id        string
+	instances []string
+	subGroups map[string]*mockGroup
+}
+
+func newMockGroup(id string) *mockGroup {
+	return &mockGroup{id: id, subGroups: make(map[string]*mockGroup)}
+}
+
+func (g *mockGroup) GetID() string             { return g.id }
+func (g *mockGroup) GetInstances() []string    { return g.instances }
+func (g *mockGroup) SetInstances(ids []string) { g.instances = ids }
+func (g *mockGroup) AddInstance(id string)     { g.instances = append(g.instances, id) }
+func (g *mockGroup) AddSubGroup(sub ts.GroupInterface) {
+	mg := sub.(*mockGroup)
+	g.subGroups[mg.id] = mg
+}
+func (g *mockGroup) GetOrCreateSubGroup(id, _ string) ts.GroupInterface {
+	if sg, ok := g.subGroups[id]; ok {
+		return sg
+	}
+	sg := newMockGroup(id)
+	g.subGroups[id] = sg
+	return sg
+}
+func (g *mockGroup) GetSubGroupByID(id string) ts.GroupInterface {
+	if sg, ok := g.subGroups[id]; ok {
+		return sg
+	}
+	return nil
+}
+func (g *mockGroup) MoveSubGroupUnder(_, _, _ string) bool { return false }
+func (g *mockGroup) RemoveInstance(instanceID string) {
+	filtered := make([]string, 0, len(g.instances))
+	for _, id := range g.instances {
+		if id != instanceID {
+			filtered = append(filtered, id)
+		}
+	}
+	g.instances = filtered
 }
 
 // writeCompletionFile writes a tripleshot completion sentinel file.
@@ -913,6 +971,107 @@ func TestTeamCoordinator_StartJudge_TooFewSuccesses(t *testing.T) {
 
 	if s.Phase != ts.PhaseFailed {
 		t.Errorf("Session.Phase = %q, want %q", s.Phase, ts.PhaseFailed)
+	}
+}
+
+// TestTeamCoordinator_ReorganizeGroupForJudge verifies that startJudge()
+// creates an "Implementers" sub-group, moves attempt instances into it,
+// clears the parent group's direct instances, and sets ImplementersGroupID.
+func TestTeamCoordinator_ReorganizeGroupForJudge(t *testing.T) {
+	bus := event.NewBus()
+	orch := newTestOrch(t)
+	session := newTestSession()
+
+	// Set up a mock group with 3 attempt instance IDs.
+	group := newMockGroup("ts-group-1")
+	group.AddInstance("inst-a")
+	group.AddInstance("inst-b")
+	group.AddInstance("inst-c")
+	session.mu.Lock()
+	session.groups["ts-group-1"] = group
+	session.mu.Unlock()
+
+	tc, _ := NewTeamCoordinator(TeamCoordinatorConfig{
+		Orchestrator: orch,
+		BaseSession:  session,
+		Bus:          bus,
+		BaseDir:      t.TempDir(),
+		Task:         "test task",
+	})
+
+	tc.mu.Lock()
+	tc.started = true
+	tc.attemptTeamIDs = [3]string{"attempt-0", "attempt-1", "attempt-2"}
+	tc.mu.Unlock()
+
+	// Set up session state: all 3 attempts completed, and link GroupID.
+	s := tc.Session()
+	s.GroupID = "ts-group-1"
+	for i := range s.Attempts {
+		s.Attempts[i].Status = ts.AttemptStatusCompleted
+		s.Attempts[i].InstanceID = fmt.Sprintf("inst-%c", 'a'+i)
+		dir := t.TempDir()
+		s.Attempts[i].WorktreePath = dir
+		s.Attempts[i].Branch = fmt.Sprintf("branch-%d", i)
+		writeCompletionFile(t, dir, "complete")
+	}
+
+	// Call reorganizeGroupForJudge directly.
+	tc.reorganizeGroupForJudge()
+
+	// Verify ImplementersGroupID is set.
+	if s.ImplementersGroupID == "" {
+		t.Fatal("ImplementersGroupID is empty after reorganizeGroupForJudge")
+	}
+
+	// Verify the parent group's direct instances are cleared.
+	if got := group.GetInstances(); len(got) != 0 {
+		t.Errorf("parent group instances = %v, want empty", got)
+	}
+
+	// Verify the implementers sub-group exists and contains the 3 attempt IDs.
+	implGroup := group.subGroups[s.ImplementersGroupID]
+	if implGroup == nil {
+		t.Fatalf("implementers sub-group %q not found in parent group", s.ImplementersGroupID)
+	}
+	gotInstances := implGroup.GetInstances()
+	if len(gotInstances) != 3 {
+		t.Fatalf("implementers sub-group instances = %v, want 3 entries", gotInstances)
+	}
+	for i, want := range []string{"inst-a", "inst-b", "inst-c"} {
+		if gotInstances[i] != want {
+			t.Errorf("implementers sub-group instances[%d] = %q, want %q", i, gotInstances[i], want)
+		}
+	}
+}
+
+// TestTeamCoordinator_ReorganizeGroupForJudge_NoGroup verifies graceful
+// handling when the tripleshot group is not found in the session.
+func TestTeamCoordinator_ReorganizeGroupForJudge_NoGroup(t *testing.T) {
+	bus := event.NewBus()
+	orch := newTestOrch(t)
+	session := newTestSession()
+
+	tc, _ := NewTeamCoordinator(TeamCoordinatorConfig{
+		Orchestrator: orch,
+		BaseSession:  session,
+		Bus:          bus,
+		BaseDir:      t.TempDir(),
+		Task:         "test task",
+	})
+
+	tc.mu.Lock()
+	tc.started = true
+	tc.mu.Unlock()
+
+	s := tc.Session()
+	s.GroupID = "nonexistent-group"
+
+	// Should not panic; ImplementersGroupID should remain empty.
+	tc.reorganizeGroupForJudge()
+
+	if s.ImplementersGroupID != "" {
+		t.Errorf("ImplementersGroupID = %q, want empty", s.ImplementersGroupID)
 	}
 }
 

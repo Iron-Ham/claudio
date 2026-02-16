@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **TripleShot Implementer Auto-Collapse and Judge Nesting** - Fixed two TUI visual regressions introduced when Orchestration 2.0 became the default tripleshot execution path: (1) implementer instances were not auto-collapsed when the judge started because `ImplementersGroupID` was never set, and (2) the judge instance was not nested within the tripleshot group. Ported the legacy coordinator's group restructuring logic to `teamwire.TeamCoordinator.reorganizeGroupForJudge()` and added judge-to-group registration in the TUI handler.
+
 - **TripleShot Combine Evaluation Parse Failure** - `FlexibleStringSlice` now handles LLM judge output that writes an array of objects (e.g., `[{"description":"...","source":"attempt_1"}]`) where flat strings were expected; also improved the judge prompt to show a populated `suggested_changes` example and explicitly require plain strings
 
 - **Agent Teams tmux mode** - Prevent Claude Code Agent Teams from starting in tmux mode inside Claudio by setting `teammateMode: "in-process"` in worktree settings (#664)
@@ -37,17 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Failed-Dependency Cascade** - Teams blocked on a failed dependency now transition to `PhaseFailed` instead of staying blocked forever. The `Manager.onTeamCompleted` handler detects permanently blocked teams and cascades failure through multi-hop dependency chains (A fails → B fails → C fails). Uses a two-phase approach (collect state under lock, publish events outside) to avoid re-entrancy deadlock with the synchronous event bus. (#649)
 
+- **Manager.Stop() Deadlock** - Fixed deadlock in `team.Manager.Stop()` where holding the mutex through `wg.Wait()` blocked `monitorTeamCompletion` from publishing `TeamCompletedEvent` (which triggered `onTeamCompleted` inline, requiring the same mutex). Stop now releases the lock before waiting for goroutines, with a `started=false` guard to ensure racing handlers bail out. (#651)
+- **TeamCoordinator startJudge Data Race** - Fixed data race in `startJudge()` where session `Attempts[i].Status` was read without holding `tc.mu` while `onBridgeTaskCompleted` writes the same field concurrently. Session data is now snapshotted under the lock before I/O, and results are written back under the lock. (#654)
+- **Mailbox Watch Race** - Fixed goroutine scheduling race in `mailbox.Watch()` where the initial message snapshot was taken inside the goroutine, allowing messages sent immediately after `Watch()` returns to be missed. Snapshot is now taken synchronously before the goroutine launches.
+
 ### Changed
 
 - **Pipeline Executor DI & E2E Tests** - Refactored `PipelineExecutor` to accept `bridge.InstanceFactory` and `bridge.CompletionChecker` via dependency injection instead of constructing them internally from concrete orchestrator types. Added `NewPipelineExecutorFromOrch` convenience constructor for production callers. Added 5 E2E integration tests covering the full pipeline → bridge → completion lifecycle (single-team, multi-team, failure propagation, all phases, stop cleanup). Fixed `attachBridges` race where the phase event fires before teams are started. (#649)
 
 - **Self-Improving AGENTS.md** - Restructured AGENTS.md into a living document with a self-improvement protocol that instructs agents to update guidelines based on their learnings. Added agent-curated sections (Architecture Map, Known Pitfalls, Codebase Patterns, Testing Notes, Build & Toolchain) seeded with knowledge from codebase review. Created directory-level AGENTS.md files for `internal/mailbox/`, `internal/taskqueue/`, and `internal/tui/` with package-specific pitfalls and patterns.
-
-### Fixed
-
-- **Manager.Stop() Deadlock** - Fixed deadlock in `team.Manager.Stop()` where holding the mutex through `wg.Wait()` blocked `monitorTeamCompletion` from publishing `TeamCompletedEvent` (which triggered `onTeamCompleted` inline, requiring the same mutex). Stop now releases the lock before waiting for goroutines, with a `started=false` guard to ensure racing handlers bail out. (#651)
-- **TeamCoordinator startJudge Data Race** - Fixed data race in `startJudge()` where session `Attempts[i].Status` was read without holding `tc.mu` while `onBridgeTaskCompleted` writes the same field concurrently. Session data is now snapshotted under the lock before I/O, and results are written back under the lock. (#654)
-- **Mailbox Watch Race** - Fixed goroutine scheduling race in `mailbox.Watch()` where the initial message snapshot was taken inside the goroutine, allowing messages sent immediately after `Watch()` returns to be missed. Snapshot is now taken synchronously before the goroutine launches.
 
 ### Added
 
