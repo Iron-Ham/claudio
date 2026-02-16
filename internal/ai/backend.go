@@ -146,6 +146,10 @@ func (c *ClaudeBackend) BuildStartCommand(opts StartOptions) (string, error) {
 	if opts.SessionID != "" {
 		cmd += fmt.Sprintf(" --session-id %q", opts.SessionID)
 	}
+	// Force in-process teammate mode to prevent Claude Code from spawning nested
+	// tmux sessions. Claudio already runs instances inside tmux, so CC's auto-detection
+	// sees $TMUX and defaults to split-pane mode, creating unmanageable nested sessions.
+	cmd += " --teammate-mode in-process"
 
 	return fmt.Sprintf("%s \"$(cat %q)\" && rm %q", cmd, opts.PromptFile, opts.PromptFile), nil
 }
@@ -160,6 +164,8 @@ func (c *ClaudeBackend) BuildResumeCommand(sessionID string) (string, error) {
 		cmd += " --dangerously-skip-permissions"
 	}
 	cmd += fmt.Sprintf(" --resume %q", sessionID)
+	// Force in-process teammate mode (see BuildStartCommand for rationale).
+	cmd += " --teammate-mode in-process"
 	return cmd, nil
 }
 

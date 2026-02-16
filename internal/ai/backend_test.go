@@ -90,6 +90,9 @@ func TestClaudeBackend_BuildCommands(t *testing.T) {
 		if !strings.Contains(startCmd, "--session-id") {
 			t.Errorf("start command missing session id: %q", startCmd)
 		}
+		if !strings.Contains(startCmd, "--teammate-mode in-process") {
+			t.Errorf("start command missing teammate mode: %q", startCmd)
+		}
 	})
 
 	t.Run("one-shot with print", func(t *testing.T) {
@@ -113,6 +116,9 @@ func TestClaudeBackend_BuildCommands(t *testing.T) {
 		}
 		if !strings.Contains(resumeCmd, "--resume") {
 			t.Errorf("resume command missing --resume: %q", resumeCmd)
+		}
+		if !strings.Contains(resumeCmd, "--teammate-mode in-process") {
+			t.Errorf("resume command missing teammate mode: %q", resumeCmd)
 		}
 	})
 
