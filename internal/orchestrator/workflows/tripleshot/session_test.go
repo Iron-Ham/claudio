@@ -400,6 +400,39 @@ func TestParseEvaluationFile_FlexibleFields(t *testing.T) {
 			wantWeaknessesLen: 1,
 			wantFirstWeakness: "No tests",
 		},
+		{
+			name: "combine with suggested_changes as array of objects",
+			json: `{
+				"winner_index": -1,
+				"merge_strategy": "combine",
+				"reasoning": "Cherry-pick from multiple attempts",
+				"attempt_evaluations": [],
+				"suggested_changes": [
+					{"description": "Use Attempt 1 as the base branch", "source": "attempt_1"},
+					{"description": "Cherry-pick ContentEquatable from Attempt 3", "source": "attempt_3"}
+				]
+			}`,
+			wantStrategy:    MergeStrategyCombine,
+			wantReasoning:   "Cherry-pick from multiple attempts",
+			wantChangesLen:  2,
+			wantFirstChange: "Use Attempt 1 as the base branch",
+		},
+		{
+			name: "suggested_changes as objects with text key",
+			json: `{
+				"winner_index": -1,
+				"merge_strategy": "merge",
+				"reasoning": "Merged",
+				"attempt_evaluations": [],
+				"suggested_changes": [
+					{"text": "Apply error handling from Attempt 2"}
+				]
+			}`,
+			wantStrategy:    MergeStrategyMerge,
+			wantReasoning:   "Merged",
+			wantChangesLen:  1,
+			wantFirstChange: "Apply error handling from Attempt 2",
+		},
 	}
 
 	for _, tt := range tests {

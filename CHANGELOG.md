@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **TripleShot Combine Evaluation Parse Failure** - `FlexibleStringSlice` now handles LLM judge output that writes an array of objects (e.g., `[{"description":"...","source":"attempt_1"}]`) where flat strings were expected; also improved the judge prompt to show a populated `suggested_changes` example and explicitly require plain strings
+
 - **Agent Teams tmux mode** - Prevent Claude Code Agent Teams from starting in tmux mode inside Claudio by setting `teammateMode: "in-process"` in worktree settings (#664)
 
 - **Agent Teams tmux mode (CLI flag)** - Pass `--teammate-mode in-process` directly on the CLI command for both start and resume, ensuring CC cannot override the setting via user-level settings or `$TMUX` auto-detection

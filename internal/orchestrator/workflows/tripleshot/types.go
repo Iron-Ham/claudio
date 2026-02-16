@@ -179,7 +179,45 @@ func (f *FlexibleStringSlice) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
+	// Try to unmarshal as an array of mixed elements (handles LLM output
+	// that writes objects like [{"description":"...","source":"attempt_1"}]
+	// where flat strings were expected)
+	var mixed []any
+	if err := json.Unmarshal(data, &mixed); err == nil && len(mixed) > 0 {
+		result := make([]string, 0, len(mixed))
+		for _, item := range mixed {
+			result = append(result, stringifyItem(item))
+		}
+		*f = result
+		return nil
+	}
+
 	return fmt.Errorf("FlexibleStringSlice: expected string or []string, got %s", string(data))
+}
+
+// textLikeKeys are map keys checked in order when extracting a string from an object.
+var textLikeKeys = []string{"description", "text", "change", "message", "content", "value"}
+
+// stringifyItem converts an arbitrary JSON-decoded value into a string.
+// For maps, it looks for a well-known text key; otherwise it JSON-encodes the value.
+func stringifyItem(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case map[string]any:
+		for _, key := range textLikeKeys {
+			if text, ok := val[key]; ok {
+				if s, ok := text.(string); ok {
+					return s
+				}
+			}
+		}
+		// No known text key found — marshal the whole object
+		b, _ := json.Marshal(val)
+		return string(b)
+	default:
+		return fmt.Sprintf("%v", val)
+	}
 }
 
 // CompletionFile represents the completion report written by an attempt
@@ -699,7 +737,7 @@ Write your evaluation to ` + "`" + EvaluationFileName + "`" + ` using this struc
       "weaknesses": ["No tests", "Missing error handling"]
     }
   ],
-  "suggested_changes": []
+  "suggested_changes": ["Use Attempt 1 as the base — it has the cleanest API surface", "Cherry-pick the retry logic from Attempt 3: src/retry.go"]
 }
 ` + "```" + `
 
@@ -708,7 +746,7 @@ Write your evaluation to ` + "`" + EvaluationFileName + "`" + ` using this struc
 - **merge_strategy**: "select" (use one as-is), "merge" (combine changes), or "combine" (cherry-pick specific changes)
 - **reasoning**: Detailed explanation of your evaluation and decision
 - **attempt_evaluations**: Score and analysis for each attempt (1-10 scale)
-- **suggested_changes**: If merge_strategy is "merge" or "combine", list the specific changes to make
+- **suggested_changes**: If merge_strategy is "merge" or "combine", list the specific changes to make. Each entry must be a plain string (not an object).
 
 ## Helpful Commands
 
