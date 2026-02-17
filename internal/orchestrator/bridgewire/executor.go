@@ -25,14 +25,15 @@ type PipelineExecutor struct {
 	logger   *logging.Logger
 	recorder bridge.SessionRecorder
 
-	pipe       *pipeline.Pipeline
-	bridgeOpts []bridge.Option
-	ctx        context.Context
-	cancel     context.CancelFunc
-	mu         sync.Mutex
-	bridges    []*bridge.Bridge
-	started    bool
-	subID      string
+	pipe         *pipeline.Pipeline
+	bridgeOpts   []bridge.Option
+	ctx          context.Context
+	cancel       context.CancelFunc
+	mu           sync.Mutex
+	bridges      []*bridge.Bridge
+	started      bool
+	subID        string
+	scalingSubID string
 }
 
 // PipelineExecutorConfig holds required dependencies.
@@ -129,6 +130,21 @@ func (pe *PipelineExecutor) Start(ctx context.Context) error {
 		}
 	})
 
+	// Subscribe to adaptive scaling signals for observability. Dispatch to
+	// a goroutine to avoid deadlock with the synchronous event bus.
+	pe.scalingSubID = pe.bus.Subscribe("adaptive.scaling_signal", func(e event.Event) {
+		go func() {
+			sig, ok := e.(event.ScalingSignalEvent)
+			if !ok {
+				return
+			}
+			pe.logger.Info("bridgewire: adaptive scaling signal",
+				"pending", sig.Pending,
+				"running", sig.Running,
+				"recommendation", sig.Recommendation)
+		}()
+	})
+
 	return nil
 }
 
@@ -142,6 +158,7 @@ func (pe *PipelineExecutor) Stop() {
 	pe.started = false
 
 	pe.bus.Unsubscribe(pe.subID)
+	pe.bus.Unsubscribe(pe.scalingSubID)
 	pe.cancel()
 
 	// Copy the slice so we can release the lock before blocking on bridge.Stop().

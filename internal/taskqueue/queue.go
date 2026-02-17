@@ -241,6 +241,20 @@ func (q *TaskQueue) GetTask(taskID string) *QueuedTask {
 	return &cp
 }
 
+// AllTasks returns copies of all tasks in priority order.
+func (q *TaskQueue) AllTasks() []QueuedTask {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	result := make([]QueuedTask, 0, len(q.order))
+	for _, id := range q.order {
+		if task, ok := q.tasks[id]; ok {
+			result = append(result, *task)
+		}
+	}
+	return result
+}
+
 // SetMaxRetries sets the maximum number of retries for the given task.
 // The task must exist and be in a non-terminal state.
 func (q *TaskQueue) SetMaxRetries(taskID string, maxRetries int) error {

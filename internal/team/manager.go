@@ -9,6 +9,7 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/coordination"
 	"github.com/Iron-Ham/claudio/internal/event"
+	"github.com/Iron-Ham/claudio/internal/taskqueue"
 	"github.com/Iron-Ham/claudio/internal/ultraplan"
 )
 
@@ -334,6 +335,25 @@ func (m *Manager) AllStatuses() []Status {
 // RouteMessage routes an inter-team message through the router.
 func (m *Manager) RouteMessage(msg InterTeamMessage) error {
 	return m.router.Route(msg)
+}
+
+// CompletedTasks returns copies of all tasks in terminal state (completed or
+// failed) across all teams. Used by the debate coordinator to find overlapping
+// file modifications.
+func (m *Manager) CompletedTasks() []taskqueue.QueuedTask {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []taskqueue.QueuedTask
+	for _, id := range m.order {
+		t := m.teams[id]
+		for _, task := range t.hub.TaskQueue().AllTasks() {
+			if task.Status.IsTerminal() {
+				result = append(result, task)
+			}
+		}
+	}
+	return result
 }
 
 // Running returns whether the manager is currently started.
