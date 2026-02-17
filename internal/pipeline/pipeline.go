@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/Iron-Ham/claudio/internal/event"
+	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/team"
 )
 
@@ -43,6 +44,9 @@ func NewPipeline(cfg PipelineConfig, opts ...PipelineOption) (*Pipeline, error) 
 	pc := &pipelineConfig{}
 	for _, opt := range opts {
 		opt(pc)
+	}
+	if pc.logger == nil {
+		pc.logger = logging.NopLogger()
 	}
 
 	return &Pipeline{
@@ -165,6 +169,11 @@ func (p *Pipeline) run(ctx context.Context) {
 		phasesRun++
 	}
 
+	// Debate phase: identify and reconcile file conflicts before review.
+	if p.result.ReviewTeam != nil && p.pcfg.enableDebate {
+		p.runDebatePhase(ctx, phasesRun)
+	}
+
 	// Review phase.
 	if p.result.ReviewTeam != nil {
 		if err := p.runPhase(ctx, PhaseReview, []team.Spec{*p.result.ReviewTeam}); err != nil {
@@ -282,6 +291,57 @@ func (p *Pipeline) setPhase(phase PipelinePhase) PipelinePhase {
 	prev := p.phase
 	p.phase = phase
 	return prev
+}
+
+// runDebatePhase identifies file conflicts between completed execution tasks
+// and runs structured debate sessions to reconcile them. Debate results are
+// injected into the review team's LeadPrompt. Failures are non-blocking —
+// the review phase proceeds regardless.
+func (p *Pipeline) runDebatePhase(ctx context.Context, _ int) {
+	mgr := p.Manager(PhaseExecution)
+	if mgr == nil {
+		return
+	}
+
+	completedTasks := mgr.CompletedTasks()
+	if len(completedTasks) == 0 {
+		return
+	}
+
+	// Get the execution hub's mailbox for debate messages.
+	// Use the first execution team's hub mailbox.
+	var firstTeamID string
+	for _, s := range mgr.AllStatuses() {
+		if s.Role == team.RoleExecution {
+			firstTeamID = s.ID
+			break
+		}
+	}
+	if firstTeamID == "" {
+		return
+	}
+	t := mgr.Team(firstTeamID)
+	if t == nil {
+		return
+	}
+
+	dc := NewDebateCoordinator(t.Hub().Mailbox(), p.cfg.Bus)
+	conflicts := dc.FindConflicts(completedTasks)
+	if len(conflicts) == 0 {
+		return
+	}
+
+	resolutions, err := dc.RunDebates(ctx, conflicts, completedTasks)
+	if err != nil {
+		// Debate is non-blocking — log and continue to review without debate context.
+		p.pcfg.logger.Warn("debate phase failed, continuing to review",
+			"plan", p.cfg.Plan.ID, "error", err)
+		return
+	}
+
+	if len(resolutions) > 0 {
+		p.result.ReviewTeam.LeadPrompt += formatDebateContext(resolutions)
+	}
 }
 
 // fail transitions the pipeline to the Failed phase and publishes a

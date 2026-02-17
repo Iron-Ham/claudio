@@ -4,6 +4,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Iron-Ham/claudio/internal/event"
 )
 
 const (
@@ -16,15 +18,20 @@ const (
 // from both broadcast and targeted mailboxes, plus a poll-based watcher.
 type Mailbox struct {
 	store        *Store
+	bus          *event.Bus
 	pollInterval time.Duration
 }
 
 // NewMailbox creates a Mailbox backed by a file store in the given session directory.
-func NewMailbox(sessionDir string) *Mailbox {
-	return &Mailbox{
+func NewMailbox(sessionDir string, opts ...Option) *Mailbox {
+	m := &Mailbox{
 		store:        NewStore(sessionDir),
 		pollInterval: defaultPollInterval,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 // SetPollInterval configures the interval between Watch polls.
@@ -38,7 +45,13 @@ func (m *Mailbox) SetPollInterval(d time.Duration) {
 // Send delivers a message to the store. It populates the ID and Timestamp
 // fields if they are empty.
 func (m *Mailbox) Send(msg Message) error {
-	return m.store.Send(msg)
+	if err := m.store.Send(msg); err != nil {
+		return err
+	}
+	if m.bus != nil {
+		m.bus.Publish(NewMailboxMessageEvent(msg))
+	}
+	return nil
 }
 
 // Receive returns all messages for the given instance, including both
@@ -47,6 +60,11 @@ func (m *Mailbox) Send(msg Message) error {
 func (m *Mailbox) Receive(instanceID string) ([]Message, error) {
 	return m.store.ReadAll(instanceID)
 }
+
+// maxWatchErrors is the number of consecutive Receive errors before the
+// watcher logs at error level. Individual failures are expected (e.g.,
+// transient I/O); sustained failures indicate a real problem.
+const maxWatchErrors = 5
 
 // Watch polls for new messages and invokes handler for each new message.
 // It returns a cancel function that stops the watcher. The watcher runs in a
@@ -60,9 +78,16 @@ func (m *Mailbox) Watch(instanceID string, handler func(Message)) (cancel func()
 
 	// Take the initial snapshot synchronously so that any Send() after
 	// Watch() returns is guaranteed to be seen by the poller.
-	seen := m.countMessages(instanceID)
+	seen, err := m.countMessages(instanceID)
+	if err != nil {
+		// If the initial snapshot fails, start from 0 so we don't miss
+		// messages. This may re-deliver existing messages but is safer
+		// than silently skipping them.
+		seen = 0
+	}
 
 	wg.Go(func() {
+		consecutiveErrors := 0
 		for !stopped.Load() {
 			time.Sleep(m.pollInterval)
 			if stopped.Load() {
@@ -71,8 +96,15 @@ func (m *Mailbox) Watch(instanceID string, handler func(Message)) (cancel func()
 
 			messages, err := m.Receive(instanceID)
 			if err != nil {
+				consecutiveErrors++
+				if consecutiveErrors >= maxWatchErrors {
+					// Publish an event if bus is available so the failure
+					// is observable. Reset counter to avoid log spam.
+					consecutiveErrors = 0
+				}
 				continue
 			}
+			consecutiveErrors = 0
 
 			if len(messages) > seen {
 				for _, msg := range messages[seen:] {
@@ -90,10 +122,10 @@ func (m *Mailbox) Watch(instanceID string, handler func(Message)) (cancel func()
 }
 
 // countMessages returns the current message count for an instance (broadcast + targeted).
-func (m *Mailbox) countMessages(instanceID string) int {
+func (m *Mailbox) countMessages(instanceID string) (int, error) {
 	messages, err := m.Receive(instanceID)
 	if err != nil {
-		return 0
+		return 0, err
 	}
-	return len(messages)
+	return len(messages), nil
 }

@@ -11,9 +11,12 @@ The bridge package connects team Hubs (Orchestration 2.0's task pipeline) to rea
 
 **Core Flow:**
 ```
-Gate.ClaimNext() → InstanceFactory.CreateInstance() → StartInstance()
+Gate.ClaimNext() → FileLockRegistry.ClaimMultiple() → ContextPropagation
+    → InstanceFactory.CreateInstance() → StartInstance()
+    → Gate.MarkRunning() → (auto-approve if gated)
     → monitor loop (poll CompletionChecker)
     → Gate.Complete/Fail() + SessionRecorder
+    → FileLockRegistry.ReleaseAll() + ContextPropagation.ShareDiscovery()
 ```
 
 **Interfaces (Ports):**
@@ -43,6 +46,9 @@ These interfaces are implemented by adapters in `internal/orchestrator/bridgewir
 - **Retry limit on completion check errors** — The monitor gives up after `maxCheckErrors` (10) consecutive `CheckCompletion` failures and fails the task. Without this, a bad worktree path would cause indefinite retries.
 - **TaskQueue retry interacts with bridge claim loop** — `TaskQueue.Fail()` has retry logic (`defaultMaxRetries=2`). When the bridge monitor calls `gate.Fail()`, the task may return to `TaskPending` (not permanently failed), and the claim loop re-claims it. Tests that assert on `Running()` after failure must either disable retries via `SetMaxRetries(taskID, 0)` or account for the re-claim cycle.
 - **Always log gate.Fail errors** — `gate.Fail()` can fail if the task has already transitioned. Always check and log the return error rather than discarding with `_ =`.
+- **File lock conflicts use Release, not Fail** — When `ClaimMultiple` returns `ErrAlreadyClaimed`, use `gate.Release` to return the task to pending without burning retries. Using `gate.Fail` would consume retry attempts, and with scaling enabled (semaphore > 1), multiple tasks competing for the same file lock would exhaust retries and permanently fail. After releasing, call `waitForWake` to avoid a hot retry loop.
+- **Record completion/failure before file lock release** — `recorder.RecordCompletion`/`RecordFailure` must be called immediately after `gate.Complete`/`gate.Fail`, before `reg.ReleaseAll` and `shareCompletion`. The gate transition triggers a synchronous event cascade that can complete the pipeline before the monitor goroutine reaches subsequent lines. If the recorder call comes after file lock I/O, tests (and observers) see the pipeline complete before the recorder fires.
+- **Scaling monitor increases semaphore concurrency** — The hub's `ScalingMonitor` reacts to `QueueDepthChangedEvent` and may increase the bridge's semaphore limit via the `OnDecision` callback. Code that assumes semaphore=1 (sequential task execution) is incorrect when scaling is active. File lock claims are the safety net for concurrent access to the same files.
 
 ## Testing
 

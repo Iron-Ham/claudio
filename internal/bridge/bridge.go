@@ -2,13 +2,16 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/event"
+	"github.com/Iron-Ham/claudio/internal/filelock"
 	"github.com/Iron-Ham/claudio/internal/logging"
+	"github.com/Iron-Ham/claudio/internal/mailbox"
 	"github.com/Iron-Ham/claudio/internal/team"
 )
 
@@ -187,11 +190,45 @@ func (b *Bridge) claimLoop() {
 			continue
 		}
 
-		// Build a prompt and create an instance.
-		prompt := BuildTaskPrompt(task.Title, task.Description, task.Files)
+		hub := b.team.Hub()
+
+		// Claim file locks to prevent concurrent edits.
+		if len(task.Files) > 0 {
+			if err := hub.FileLockRegistry().ClaimMultiple(task.ID, task.Files); err != nil {
+				b.sem.Release()
+				if errors.Is(err, filelock.ErrAlreadyClaimed) {
+					// File is held by another task — release back to the
+					// queue without burning a retry.  The task will be
+					// re-claimed once the lock holder finishes.
+					b.logger.Debug("bridge: file lock conflict, releasing task",
+						"team", b.team.Spec().ID, "task", task.ID, "error", err)
+					if relErr := gate.Release(task.ID, "file lock conflict"); relErr != nil {
+						b.logger.Error("bridge: gate.Release failed",
+							"task", task.ID, "error", relErr)
+					}
+				} else {
+					b.logger.Error("bridge: file lock claim failed",
+						"team", b.team.Spec().ID, "task", task.ID, "error", err)
+					if failErr := gate.Fail(task.ID, fmt.Sprintf("file lock: %v", err)); failErr != nil {
+						b.logger.Error("bridge: gate.Fail also failed",
+							"task", task.ID, "error", failErr)
+					}
+				}
+				b.waitForWake(wake)
+				continue
+			}
+		}
+
+		// Retrieve prior discoveries for context injection.
+		prompt := BuildTaskPromptWithContext(
+			task.Title, task.Description, task.Files,
+			b.getInstanceContext(task.ID),
+		)
+
 		inst, err := b.factory.CreateInstance(prompt)
 		if err != nil {
 			b.sem.Release()
+			hub.FileLockRegistry().ReleaseAll(task.ID) //nolint:errcheck // best-effort cleanup
 			b.logger.Error("bridge: failed to create instance",
 				"team", b.team.Spec().ID, "task", task.ID, "error", err)
 			if failErr := gate.Fail(task.ID, fmt.Sprintf("create instance: %v", err)); failErr != nil {
@@ -203,6 +240,7 @@ func (b *Bridge) claimLoop() {
 
 		if err := b.factory.StartInstance(inst); err != nil {
 			b.sem.Release()
+			hub.FileLockRegistry().ReleaseAll(task.ID) //nolint:errcheck // best-effort cleanup
 			b.logger.Error("bridge: failed to start instance",
 				"team", b.team.Spec().ID, "task", task.ID, "error", err)
 			if failErr := gate.Fail(task.ID, fmt.Sprintf("start instance: %v", err)); failErr != nil {
@@ -215,6 +253,7 @@ func (b *Bridge) claimLoop() {
 		// Transition the task to running.
 		if err := gate.MarkRunning(task.ID); err != nil {
 			b.sem.Release()
+			hub.FileLockRegistry().ReleaseAll(task.ID) //nolint:errcheck // best-effort cleanup
 			b.logger.Error("bridge: failed to mark running",
 				"team", b.team.Spec().ID, "task", task.ID, "error", err)
 			if failErr := gate.Fail(task.ID, fmt.Sprintf("mark running: %v", err)); failErr != nil {
@@ -222,6 +261,23 @@ func (b *Bridge) claimLoop() {
 					"task", task.ID, "error", failErr)
 			}
 			continue
+		}
+
+		// Auto-approve gated tasks to prevent stuck states.
+		if gate.IsAwaitingApproval(task.ID) {
+			if approveErr := gate.Approve(task.ID); approveErr != nil {
+				b.sem.Release()
+				hub.FileLockRegistry().ReleaseAll(task.ID) //nolint:errcheck // best-effort cleanup
+				b.logger.Error("bridge: failed to auto-approve gated task",
+					"team", b.team.Spec().ID, "task", task.ID, "error", approveErr)
+				if failErr := gate.Fail(task.ID, fmt.Sprintf("auto-approve: %v", approveErr)); failErr != nil {
+					b.logger.Error("bridge: gate.Fail also failed",
+						"task", task.ID, "error", failErr)
+				}
+				continue
+			}
+			b.logger.Debug("bridge: auto-approved gated task",
+				"team", b.team.Spec().ID, "task", task.ID)
 		}
 
 		// Record assignment and publish event.
@@ -267,6 +323,9 @@ func (b *Bridge) monitorInstance(taskID string, inst Instance) {
 
 	consecutiveErrors := 0
 
+	hub := b.team.Hub()
+	reg := hub.FileLockRegistry()
+
 	for {
 		select {
 		case <-b.ctx.Done():
@@ -275,6 +334,7 @@ func (b *Bridge) monitorInstance(taskID string, inst Instance) {
 			b.mu.Lock()
 			delete(b.running, taskID)
 			b.mu.Unlock()
+			reg.ReleaseAll(taskID) //nolint:errcheck // best-effort cleanup
 			return
 		case <-ticker.C:
 		}
@@ -288,7 +348,7 @@ func (b *Bridge) monitorInstance(taskID string, inst Instance) {
 			if consecutiveErrors >= maxCheckErrors {
 				b.logger.Error("bridge: max check errors reached, failing task",
 					"task", taskID, "limit", maxCheckErrors)
-				gate := b.team.Hub().Gate()
+				gate := hub.Gate()
 				reason := fmt.Sprintf("completion check failed %d times: %v", maxCheckErrors, err)
 				if failErr := gate.Fail(taskID, reason); failErr != nil {
 					b.logger.Error("bridge: gate.Fail failed after check errors",
@@ -300,6 +360,7 @@ func (b *Bridge) monitorInstance(taskID string, inst Instance) {
 				delete(b.running, taskID)
 				b.mu.Unlock()
 				b.recorder.RecordFailure(taskID, reason)
+				reg.ReleaseAll(taskID) //nolint:errcheck // best-effort cleanup
 				return
 			}
 			continue
@@ -315,7 +376,7 @@ func (b *Bridge) monitorInstance(taskID string, inst Instance) {
 			taskID, inst.ID(), inst.WorktreePath(), inst.Branch(),
 		)
 
-		gate := b.team.Hub().Gate()
+		gate := hub.Gate()
 		teamID := b.team.Spec().ID
 
 		// Clean up running map before recording/publishing so observers see
@@ -329,7 +390,15 @@ func (b *Bridge) monitorInstance(taskID string, inst Instance) {
 				b.logger.Error("bridge: failed to complete task",
 					"task", taskID, "error", completeErr)
 			}
+			// Record completion immediately after gate transition so that
+			// observers who react to the synchronous event cascade see the
+			// recorder state before any I/O-heavy cleanup runs.
 			b.recorder.RecordCompletion(taskID, commitCount)
+			reg.ReleaseAll(taskID) //nolint:errcheck // best-effort cleanup
+
+			// Share completion as a discovery for context propagation.
+			b.shareCompletion(taskID, inst)
+
 			b.bus.Publish(event.NewBridgeTaskCompletedEvent(
 				teamID, taskID, inst.ID(), true, commitCount, "",
 			))
@@ -342,7 +411,10 @@ func (b *Bridge) monitorInstance(taskID string, inst Instance) {
 				b.logger.Error("bridge: failed to fail task",
 					"task", taskID, "error", failErr)
 			}
+			// Record failure immediately after gate transition (same
+			// reasoning as the success path above).
 			b.recorder.RecordFailure(taskID, reason)
+			reg.ReleaseAll(taskID) //nolint:errcheck // best-effort cleanup
 			b.bus.Publish(event.NewBridgeTaskCompletedEvent(
 				teamID, taskID, inst.ID(), false, commitCount, reason,
 			))
@@ -391,4 +463,45 @@ func BuildTaskPrompt(title, description string, files []string) string {
 	}
 
 	return sb.String()
+}
+
+// BuildTaskPromptWithContext builds a task prompt and appends prior discoveries
+// from context propagation. If priorContext is empty, it returns the same
+// result as BuildTaskPrompt.
+func BuildTaskPromptWithContext(title, description string, files []string, priorContext string) string {
+	prompt := BuildTaskPrompt(title, description, files)
+	if priorContext == "" {
+		return prompt
+	}
+	return prompt + "\n\n## Prior Discoveries\n" + priorContext
+}
+
+// maxContextMessages limits the number of prior messages injected into an
+// instance's prompt to prevent unbounded context growth in large sessions.
+const maxContextMessages = 50
+
+// getInstanceContext retrieves prior discoveries from the context propagator.
+// Returns an empty string if no relevant context exists or on error.
+func (b *Bridge) getInstanceContext(taskID string) string {
+	ctx, err := b.team.Hub().Propagator().GetContextForInstance(taskID, mailbox.FilterOptions{
+		Types:       []mailbox.MessageType{mailbox.MessageDiscovery, mailbox.MessageWarning},
+		MaxMessages: maxContextMessages,
+	})
+	if err != nil {
+		b.logger.Warn("bridge: failed to get instance context",
+			"task", taskID, "error", err)
+		return ""
+	}
+	return ctx
+}
+
+// shareCompletion broadcasts a completion discovery so future instances have
+// awareness of what has been done. Only called on success paths.
+func (b *Bridge) shareCompletion(taskID string, inst Instance) {
+	body := fmt.Sprintf("Task completed: %s (instance: %s, worktree: %s)",
+		taskID, inst.ID(), inst.WorktreePath())
+	if err := b.team.Hub().Propagator().ShareDiscovery(taskID, body, nil); err != nil {
+		b.logger.Warn("bridge: failed to share completion discovery",
+			"task", taskID, "error", err)
+	}
 }

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"github.com/Iron-Ham/claudio/internal/coordination"
 	"github.com/Iron-Ham/claudio/internal/event"
+	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/team"
 	"github.com/Iron-Ham/claudio/internal/ultraplan"
 )
@@ -84,5 +85,7 @@ type DecomposeResult struct {
 
 // pipelineConfig holds optional settings for the Pipeline.
 type pipelineConfig struct {
-	hubOpts []coordination.Option
+	hubOpts      []coordination.Option
+	enableDebate bool
+	logger       *logging.Logger
 }

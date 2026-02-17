@@ -93,7 +93,7 @@ func NewHub(cfg Config, opts ...Option) (*Hub, error) {
 		policy = scaling.NewPolicy(policyOpts...)
 	}
 
-	mb := mailbox.NewMailbox(cfg.SessionDir)
+	mb := mailbox.NewMailbox(cfg.SessionDir, mailbox.WithBus(cfg.Bus))
 	queue := taskqueue.NewFromPlan(cfg.Plan)
 	eq := taskqueue.NewEventQueue(queue, cfg.Bus)
 	gate := approval.NewGate(eq, cfg.Bus, lookup)
