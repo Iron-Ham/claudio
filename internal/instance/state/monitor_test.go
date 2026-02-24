@@ -890,3 +890,93 @@ func TestMonitor_MultipleInstances(t *testing.T) {
 		t.Errorf("inst-3 state = %v, want StateWaitingPermission", m.GetState("inst-3"))
 	}
 }
+
+func TestMonitor_WaitingStatePreventsStaleCounter(t *testing.T) {
+	m := NewMonitor(MonitorConfig{
+		StaleDetection: true,
+		StaleThreshold: 3,
+	})
+
+	m.Start("inst-1")
+
+	// Simulate output that puts the instance in a waiting state (input prompt).
+	// The ❯ character triggers StateWaitingInput in the detector.
+	waitingOutput := []byte("Answer to your question.\n❯ ")
+	for i := 0; i < 10; i++ {
+		m.ProcessOutput("inst-1", waitingOutput, "samehash")
+	}
+
+	// Stale timeout should NOT fire because the detector sees StateWaitingInput
+	result := m.CheckTimeouts("inst-1")
+	if result != nil {
+		t.Errorf("Expected no timeout when instance is in waiting state, got %v", *result)
+	}
+}
+
+func TestMonitor_WaitingStateGuardInCheckTimeouts(t *testing.T) {
+	m := NewMonitor(MonitorConfig{
+		StaleDetection: true,
+		StaleThreshold: 3,
+	})
+
+	m.Start("inst-1")
+
+	// Manually build up the stale counter with non-waiting output first
+	staticOutput := []byte("Some static output")
+	for i := 0; i < 5; i++ {
+		m.ProcessOutput("inst-1", staticOutput, "statichash")
+	}
+
+	// Now the counter exceeds the threshold. But set the state to waiting.
+	m.SetState("inst-1", detect.StateWaitingInput)
+
+	// CheckTimeouts should NOT trigger because the current state is waiting,
+	// even though the counter exceeded the threshold.
+	result := m.CheckTimeouts("inst-1")
+	if result != nil {
+		t.Errorf("Expected no timeout when state is waiting, got %v", *result)
+	}
+}
+
+func TestMonitor_ResetStaleCounter(t *testing.T) {
+	m := NewMonitor(MonitorConfig{
+		StaleDetection: true,
+		StaleThreshold: 5,
+	})
+
+	m.Start("inst-1")
+
+	// Accumulate stale ticks (but stay below threshold)
+	staticOutput := []byte("Some static output")
+	for i := 0; i < 4; i++ {
+		m.ProcessOutput("inst-1", staticOutput, "statichash")
+	}
+
+	// Reset the counter (simulates what happens on Resume)
+	m.ResetStaleCounter("inst-1")
+
+	// Now accumulate a few more — should NOT cross threshold since counter was reset
+	for i := 0; i < 4; i++ {
+		m.ProcessOutput("inst-1", staticOutput, "statichash")
+	}
+
+	result := m.CheckTimeouts("inst-1")
+	if result != nil {
+		t.Errorf("Expected no timeout after counter reset, got %v", *result)
+	}
+
+	// One more push should cross the threshold (count = 5, threshold = 5, needs > 5)
+	m.ProcessOutput("inst-1", staticOutput, "statichash")
+	m.ProcessOutput("inst-1", staticOutput, "statichash")
+	result = m.CheckTimeouts("inst-1")
+	if result == nil {
+		t.Error("Expected stale timeout after counter exceeded threshold")
+	}
+}
+
+func TestMonitor_ResetStaleCounter_NonMonitored(t *testing.T) {
+	m := NewMonitorWithDefaults()
+
+	// Should not panic for non-monitored instance
+	m.ResetStaleCounter("nonexistent")
+}

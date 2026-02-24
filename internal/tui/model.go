@@ -827,6 +827,9 @@ func (m *Model) handleGroupAutoExpandCollapse(oldTab, newTab int) {
 // Used when adding new instances to pause the previously active one.
 // Note: Pause() currently always returns nil, so error is safely discarded.
 func (m *Model) pauseInstance(instanceID string) {
+	if m.orchestrator == nil {
+		return
+	}
 	if mgr := m.orchestrator.GetInstanceManager(instanceID); mgr != nil {
 		_ = mgr.Pause()
 	}
@@ -1560,6 +1563,11 @@ func (c *modelUpdateContext) PauseInstance(instanceID string) {
 // EnsureActiveVisible ensures the active tab is visible in the sidebar.
 func (c *modelUpdateContext) EnsureActiveVisible() {
 	c.model.ensureActiveVisible()
+}
+
+// ResumeActiveInstance resumes the current active instance's output capture.
+func (c *modelUpdateContext) ResumeActiveInstance() {
+	c.model.resumeActiveInstance()
 }
 
 // newUpdateContext creates an update context adapter for the model.
