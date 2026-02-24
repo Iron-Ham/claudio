@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Subprocess Execution Mode** - Wired `internal/streamjson/` into the production pipeline execution path as an alternative to tmux sessions. New `subprocessFactory` in `bridgewire` implements `bridge.InstanceFactory` using `streamjson.RunSubprocess` (direct `claude --print --output-format stream-json` invocation) instead of tmux screen scraping. Enabled via `experimental.subprocess_mode` config flag. The existing sentinel file completion checker works unchanged since Claude Code writes the completion file before exiting regardless of execution mode.
+
 - **Native Worktree Flag Support** - Added `NativeWorktree` config option (`ai.claude.native_worktree`) and `Worktree` field on `StartOptions` to support Claude Code's built-in `--worktree` flag for isolated git worktree execution. Wired through the full invocation chain: config, `ClaudeBackend.BuildStartCommand`, and `streamjson.BuildSubprocessArgs`. When enabled, Claude Code creates and manages its own worktree internally instead of Claudio managing it externally.
 
 - **Stream-JSON Subprocess Infrastructure** - Added `internal/streamjson/` package providing typed event parsing for Claude Code's NDJSON stream-json output format. Includes `Reader` for parsing events from stdout, `CollectResult` for extracting the final `ResultEvent` with usage/cost data, `RunSubprocess` for launching `claude -p --output-format stream-json` as a child process, and `BuildSubprocessArgs` for constructing exec-safe argument lists. This is the foundation for replacing tmux-based screen scraping with direct process control for pipeline instances.
