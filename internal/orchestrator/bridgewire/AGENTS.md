@@ -10,9 +10,9 @@ See `doc.go` for package overview and API usage.
 The bridgewire package provides adapter types that connect the orchestrator's concrete infrastructure (worktrees, tmux, verification) to the bridge package's narrow interfaces. It exists specifically to break the import cycle: `bridge` cannot import `orchestrator` (which would create `bridge → team → ... → orchestrator → bridge`), so this sub-package inside `orchestrator/` imports both and bridges the gap.
 
 **Key Types:**
-- `PipelineExecutor` — Subscribes to `pipeline.phase_changed` events; when the execution phase starts, creates a Bridge per execution-role team. Accepts `bridge.InstanceFactory` and `bridge.CompletionChecker` via dependency injection for testability.
-- `NewPipelineExecutorFromOrch` — Production convenience constructor that wraps `NewInstanceFactory`/`NewCompletionChecker` adapter creation. Tests should use `NewPipelineExecutor` directly with mock factory/checker.
-- `instanceFactory` — Adapts `*orchestrator.Orchestrator` to `bridge.InstanceFactory`
+- `PipelineExecutor` — Subscribes to `pipeline.phase_changed` events; when the execution phase starts, creates a Bridge per execution-role team. Accepts `bridge.InstanceFactory` and `bridge.CompletionChecker` via dependency injection for testability. Supports per-role CLI flag overrides via `RoleOverrides` and `FactoryWithOverrides`.
+- `NewPipelineExecutorFromOrch` — Production convenience constructor that wraps `NewInstanceFactory`/`NewCompletionChecker` adapter creation, and wires `FactoryWithOverrides` for per-role overrides. Tests should use `NewPipelineExecutor` directly with mock factory/checker.
+- `instanceFactory` — Adapts `*orchestrator.Orchestrator` to `bridge.InstanceFactory`. Optionally carries `startOverrides ai.StartOptions` for role-specific CLI flags (use `NewInstanceFactoryWithOverrides` constructor).
 - `completionChecker` — Adapts `orchestrator.Verifier` to `bridge.CompletionChecker`
 - `sessionRecorder` — Callback-based `bridge.SessionRecorder` using `SessionRecorderDeps`
 
@@ -21,7 +21,11 @@ The bridgewire package provides adapter types that connect the orchestrator's co
 Pipeline fires PipelinePhaseChangedEvent
   → PipelineExecutor.attachBridges() (dispatched via goroutine)
     → polls for teams to reach PhaseWorking (event fires before Manager.Start)
-    → creates Bridge per execution team using injected factory/checker
+    → for each execution team:
+      → if RoleOverrides has entry for team's role AND FactoryWithOverrides is set:
+        → creates per-team factory with role-specific StartOptions overrides
+      → else: uses default shared factory
+    → creates Bridge per execution team using factory + checker
     → Bridge.Start(ctx)
 ```
 
@@ -46,4 +50,5 @@ Pipeline fires PipelinePhaseChangedEvent
 - **Bridge does NOT call `recorder.RecordFailure` on `CreateInstance` errors** — The recorder is only called after instance creation succeeds and the monitor detects failure. When `CreateInstance` fails, the bridge calls `gate.Fail()` directly. Tests asserting on failure should check pipeline/team status, not recorder.
 - Use `bridge.WithPollInterval(10*time.Millisecond)` via `BridgeOpts` for fast E2E tests.
 - Use `coordination.WithRebalanceInterval(-1)` on the pipeline's hub options to disable rebalance interference.
+- **Role override tests use recording factory builder** — The `FactoryWithOverrides` function in tests captures the `ai.StartOptions` passed to it, then delegates to `autoCompleteFactory`. This verifies the executor selects the right factory for each team's role without requiring real orchestrator infrastructure.
 - Always run with `-race` — the executor has concurrent event handlers and bridge goroutines.

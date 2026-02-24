@@ -907,6 +907,67 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 	return o.saveSession()
 }
 
+// StartInstanceWithOverrides starts an AI backend process with per-instance CLI flag overrides.
+// The overrides are merged into the StartOptions used to build the backend command, taking
+// precedence over the backend's config-level defaults. This allows different roles (e.g.,
+// execution vs review) to use different permission modes, models, or tool restrictions.
+func (o *Orchestrator) StartInstanceWithOverrides(inst *Instance, overrides ai.StartOptions) error {
+	if inst.Status == StatusPreparing {
+		return fmt.Errorf("instance is still preparing (worktree being created)")
+	}
+
+	o.ensureInstanceSessionID(inst)
+
+	o.mu.Lock()
+	mgr, ok := o.instances[inst.ID]
+	o.mu.Unlock()
+
+	if !ok {
+		mgr = o.newInstanceManagerWithOverrides(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID, overrides)
+		o.mu.Lock()
+		o.instances[inst.ID] = mgr
+		o.mu.Unlock()
+	} else {
+		mgr.SetClaudeSessionID(inst.ClaudeSessionID)
+	}
+
+	if err := mgr.Start(); err != nil {
+		if o.logger != nil {
+			o.logger.Error("failed to start instance",
+				"instance_id", inst.ID,
+				"error", err,
+			)
+		}
+		return fmt.Errorf("failed to start instance: %w", err)
+	}
+
+	inst.Status = StatusWorking
+	inst.PID = mgr.PID()
+	inst.TmuxSession = mgr.SessionName()
+
+	now := mgr.StartTime()
+	if inst.Metrics == nil {
+		inst.Metrics = &Metrics{StartTime: now}
+	} else {
+		inst.Metrics.StartTime = now
+	}
+
+	if o.namer != nil && !inst.ManuallyNamed {
+		o.namer.RequestRename(inst.ID, inst.Task)
+	}
+
+	if o.logger != nil {
+		o.logger.Info("instance started with overrides",
+			"instance_id", inst.ID,
+			"tmux_session", inst.TmuxSession,
+			"pid", inst.PID,
+			"backend_session_id", inst.ClaudeSessionID,
+		)
+	}
+
+	return o.saveSession()
+}
+
 // StopInstance stops a running AI backend instance
 func (o *Orchestrator) StopInstance(inst *Instance) error {
 	o.mu.RLock()
@@ -1402,6 +1463,53 @@ func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessi
 	})
 
 	// Register the manager as a resize observer so it receives dimension updates
+	o.displayMgr.AddObserver(mgr)
+
+	return mgr
+}
+
+// newInstanceManagerWithOverrides creates an instance manager with per-instance CLI flag
+// overrides. The overrides are stored in the Manager and merged into StartOptions during
+// Start(), taking precedence over backend config defaults. This is used by bridgewire to
+// apply role-specific settings (e.g., permission mode, model) for pipeline execution.
+func (o *Orchestrator) newInstanceManagerWithOverrides(instanceID, workdir, task, claudeSessionID string, overrides ai.StartOptions) *instance.Manager {
+	cfg := o.instanceManagerConfig()
+
+	callbacks := instance.ManagerCallbacks{
+		OnStateChange: func(id string, state detect.WaitingState) {
+			switch state {
+			case detect.StateCompleted:
+				o.handleInstanceExit(id)
+			case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
+				o.handleInstanceWaitingInput(id)
+			case detect.StatePROpened:
+				o.handleInstancePROpened(id)
+			}
+		},
+		OnMetrics: func(id string, m *instmetrics.ParsedMetrics) {
+			o.handleInstanceMetrics(id, m)
+		},
+		OnTimeout: func(id string, timeoutType instance.TimeoutType) {
+			o.handleInstanceTimeout(id, timeoutType)
+		},
+		OnBell: func(id string) {
+			o.handleInstanceBell(id)
+		},
+	}
+
+	mgr := instance.NewManagerWithDeps(instance.ManagerOptions{
+		ID:              instanceID,
+		SessionID:       o.sessionID,
+		WorkDir:         workdir,
+		Task:            task,
+		Config:          cfg,
+		Callbacks:       callbacks,
+		StateMonitor:    o.stateMonitor,
+		ClaudeSessionID: claudeSessionID,
+		Backend:         o.backend,
+		StartOverrides:  overrides,
+	})
+
 	o.displayMgr.AddObserver(mgr)
 
 	return mgr

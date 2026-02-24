@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/bridge"
 	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/pipeline"
+	"github.com/Iron-Ham/claudio/internal/team"
 	"github.com/Iron-Ham/claudio/internal/ultraplan"
 )
 
@@ -24,6 +26,11 @@ type PipelineRunnerConfig struct {
 	BaseDir  string // Base directory for pipeline state files (defaults to Session.BaseRepo)
 
 	MaxParallel int // from UltraPlanConfig.MaxParallel
+
+	// RoleOverrides maps team roles to per-invocation CLI flag overrides.
+	// When set, execution instances for a given role will use these overrides
+	// for permission mode, model, tool restrictions, etc.
+	RoleOverrides map[team.Role]ai.StartOptions
 }
 
 // PipelineRunner implements orchestrator.ExecutionRunner using the
@@ -97,6 +104,7 @@ func NewPipelineRunner(cfg PipelineRunnerConfig) (*PipelineRunner, error) {
 	exec, err := NewPipelineExecutorFromOrch(
 		cfg.Orch, cfg.Session, cfg.Verifier,
 		cfg.Bus, pipe, cfg.Recorder, logger,
+		cfg.RoleOverrides,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("bridgewire: create executor: %w", err)
