@@ -857,6 +857,7 @@ func (r *signalingRecorder) RecordFailure(taskID, reason string) {
 
 func TestBuildTaskPrompt(t *testing.T) {
 	prompt := bridge.BuildTaskPrompt(
+		"task-1",
 		"Add auth middleware",
 		"Implement JWT validation in the API gateway.",
 		[]string{"api/middleware.go", "api/auth.go"},
@@ -864,6 +865,9 @@ func TestBuildTaskPrompt(t *testing.T) {
 
 	if !strings.Contains(prompt, "Add auth middleware") {
 		t.Error("prompt missing title")
+	}
+	if !strings.Contains(prompt, "task-1") {
+		t.Error("prompt missing task ID")
 	}
 	if !strings.Contains(prompt, "Implement JWT validation") {
 		t.Error("prompt missing description")
@@ -874,12 +878,20 @@ func TestBuildTaskPrompt(t *testing.T) {
 }
 
 func TestBuildTaskPrompt_NoFiles(t *testing.T) {
-	prompt := bridge.BuildTaskPrompt("Review", "Review all changes.", nil)
+	prompt := bridge.BuildTaskPrompt("task-2", "Review", "Review all changes.", nil)
 
 	if !strings.Contains(prompt, "Review") {
 		t.Error("prompt missing title")
 	}
 	if strings.Contains(prompt, "## Files") {
 		t.Error("prompt should not contain Files section when no files specified")
+	}
+}
+
+func TestBuildTaskPrompt_EmptyTaskID(t *testing.T) {
+	prompt := bridge.BuildTaskPrompt("", "Title", "Description", nil)
+
+	if strings.Contains(prompt, "Task ID") {
+		t.Error("prompt should not contain Task ID section when taskID is empty")
 	}
 }

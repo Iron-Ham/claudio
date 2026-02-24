@@ -255,6 +255,13 @@ func New() Model {
 					Category:    "ai",
 				},
 				{
+					Key:         "ai.claude.native_worktree",
+					Label:       "Claude Native Worktree",
+					Description: "Use Claude Code's built-in --worktree flag for session isolation",
+					Type:        "bool",
+					Category:    "ai",
+				},
+				{
 					Key:         "ai.codex.command",
 					Label:       "Codex Command",
 					Description: "Command or path for Codex CLI binary (default: codex)",
@@ -1293,6 +1300,7 @@ func (m *Model) resetCurrentToDefault() {
 		"ai.claude.max_turns":            defaults.AI.Claude.MaxTurns,
 		"ai.claude.model":                defaults.AI.Claude.Model,
 		"ai.claude.append_system_prompt": defaults.AI.Claude.AppendSystemPrompt,
+		"ai.claude.native_worktree":      defaults.AI.Claude.NativeWorktree,
 		"ai.codex.command":               defaults.AI.Codex.Command,
 		"ai.codex.approval_mode":         defaults.AI.Codex.ApprovalMode,
 		// Pull Request

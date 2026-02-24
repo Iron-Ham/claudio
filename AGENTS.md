@@ -302,6 +302,7 @@ This is not exhaustive — update it when you add or discover undocumented packa
 - `internal/coordination/` — Hub that wires all Orchestration 2.0 components for a session *(has `AGENTS.md`)*
 - `internal/filelock/` — Advisory file lock registry for conflict prevention *(has `AGENTS.md`)*
 - `internal/instance/` — Claude Code instance lifecycle management
+- `internal/streamjson/` — NDJSON parser and subprocess runner for Claude Code's stream-json output format
 - `internal/mailbox/` — JSONL file-based inter-instance messaging *(has `AGENTS.md`)*
 - `internal/orchestrator/` — Session coordination, instance orchestration
 - `internal/scaling/` — Queue-depth-based elastic scaling policies *(has `AGENTS.md`)*
@@ -359,7 +360,7 @@ Patterns and conventions observed in this codebase that aren't covered by the ge
 - **Per-team hub options** — `team.Manager.buildAndRegisterTeamLocked` copies the shared `m.hubOpts`, then appends per-team overrides (`WithInitialInstances`, `WithMinInstances`, `WithMaxInstances`) from the team `Spec`. This ensures each team gets its own scaling policy tuned to its bounds rather than sharing one global configuration.
 - **Dynamic semaphore for resizable concurrency** — The bridge uses a `sync.Cond`-based semaphore instead of a channel because channels cannot be resized after creation. `SetLimit` calls `Broadcast` to wake all blocked goroutines so they can re-evaluate against the new limit. The `0 = unlimited` convention preserves backward compatibility.
 - **Config field → StartOptions override chain** — `ClaudeBackendConfig` stores persistent defaults; `StartOptions` provides per-invocation overrides. In `BuildStartCommand`, each flag uses a priority chain: `StartOptions` value > `ClaudeBackend` value > no flag. See `firstNonEmpty`/`firstPositive`/`mergeUnique` helpers in `internal/ai/backend.go`. This enables role-specific behavior (e.g., `PermissionMode: "plan"` for reviewers).
-- **Per-role factory creation in bridgewire** — `PipelineExecutor.attachBridges` creates a *per-team* `instanceFactory` when `RoleOverrides` contains an entry for the team's role. The factory carries `ai.StartOptions` that flow through `Orchestrator.StartInstanceWithOverrides → newInstanceManagerWithOverrides → ManagerOptions.StartOverrides → Manager.Start()`. The default shared factory is used for teams without role overrides.
+- **Per-role factory creation in bridgewire** — `PipelineExecutor.attachBridges` creates a *per-team* `instanceFactory` when `RoleOverrides` contains an entry for the team's role. The factory carries `ai.StartOptions` that flow through `Orchestrator.StartInstanceWithOverrides → newInstanceManager → ManagerOptions.StartOverrides → Manager.Start()`. The default shared factory is used for teams without role overrides.
 
 ---
 

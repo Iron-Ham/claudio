@@ -66,6 +66,9 @@ type StartOptions struct {
 	Model string
 	// OutputFormat controls output serialization (only used with OutputOnly/--print).
 	OutputFormat OutputFormat
+	// Worktree enables Claude Code's native --worktree flag for isolated git worktree execution.
+	// When true, Claude Code creates and manages the worktree internally.
+	Worktree bool
 }
 
 // Backend provides backend-specific behavior for running AI sessions.
@@ -189,6 +192,7 @@ type ClaudeBackend struct {
 	maxTurns           int
 	model              string
 	appendSystemPrompt string
+	nativeWorktree     bool
 }
 
 // NewClaudeBackend creates a Claude backend from config.
@@ -205,6 +209,7 @@ func NewClaudeBackend(cfg config.ClaudeBackendConfig) *ClaudeBackend {
 		maxTurns:           cfg.MaxTurns,
 		model:              cfg.Model,
 		appendSystemPrompt: cfg.AppendSystemPrompt,
+		nativeWorktree:     cfg.NativeWorktree,
 	}
 }
 
@@ -262,6 +267,11 @@ func (c *ClaudeBackend) BuildStartCommand(opts StartOptions) (string, error) {
 
 	if opts.NoUserPrompt {
 		cmd += " --no-user-prompt"
+	}
+
+	// Worktree: per-invocation overrides backend config.
+	if opts.Worktree || c.nativeWorktree {
+		cmd += " --worktree"
 	}
 
 	// Force in-process teammate mode to prevent Claude Code from spawning nested
