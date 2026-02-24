@@ -302,6 +302,7 @@ This is not exhaustive — update it when you add or discover undocumented packa
 - `internal/coordination/` — Hub that wires all Orchestration 2.0 components for a session *(has `AGENTS.md`)*
 - `internal/filelock/` — Advisory file lock registry for conflict prevention *(has `AGENTS.md`)*
 - `internal/instance/` — Claude Code instance lifecycle management
+- `internal/streamjson/` — NDJSON parser and subprocess runner for Claude Code's stream-json output format
 - `internal/mailbox/` — JSONL file-based inter-instance messaging *(has `AGENTS.md`)*
 - `internal/orchestrator/` — Session coordination, instance orchestration
 - `internal/scaling/` — Queue-depth-based elastic scaling policies *(has `AGENTS.md`)*
@@ -358,6 +359,8 @@ Patterns and conventions observed in this codebase that aren't covered by the ge
 - **TUI-local state from events** — `view/pipeline_status.go` defines `PipelineState` and `TeamSnapshot` types built entirely from event data (no backend imports). This avoids import cycles and keeps TUI types decoupled from the orchestration stack. The `m.pipeline` field is lazy-initialized on first pipeline event, so non-pipeline sessions are unaffected.
 - **Per-team hub options** — `team.Manager.buildAndRegisterTeamLocked` copies the shared `m.hubOpts`, then appends per-team overrides (`WithInitialInstances`, `WithMinInstances`, `WithMaxInstances`) from the team `Spec`. This ensures each team gets its own scaling policy tuned to its bounds rather than sharing one global configuration.
 - **Dynamic semaphore for resizable concurrency** — The bridge uses a `sync.Cond`-based semaphore instead of a channel because channels cannot be resized after creation. `SetLimit` calls `Broadcast` to wake all blocked goroutines so they can re-evaluate against the new limit. The `0 = unlimited` convention preserves backward compatibility.
+- **Config field → StartOptions override chain** — `ClaudeBackendConfig` stores persistent defaults; `StartOptions` provides per-invocation overrides. In `BuildStartCommand`, each flag uses a priority chain: `StartOptions` value > `ClaudeBackend` value > no flag. See `firstNonEmpty`/`firstPositive`/`mergeUnique` helpers in `internal/ai/backend.go`. This enables role-specific behavior (e.g., `PermissionMode: "plan"` for reviewers).
+- **Per-role factory creation in bridgewire** — `PipelineExecutor.attachBridges` creates a *per-team* `instanceFactory` when `RoleOverrides` contains an entry for the team's role. The factory carries `ai.StartOptions` that flow through `Orchestrator.StartInstanceWithOverrides → newInstanceManager → ManagerOptions.StartOverrides → Manager.Start()`. The default shared factory is used for teams without role overrides.
 
 ---
 
@@ -369,6 +372,7 @@ Testing patterns specific to this codebase, beyond the general testing guideline
 - **Temp directories for persistence tests** — Use `t.TempDir()` for tests that exercise file-based persistence (taskqueue, mailbox). This auto-cleans on test completion.
 - **Channel-based event assertions** — For async event-driven tests, subscribe to the bus with a buffered channel and use `select` with a timeout. Never use `time.Sleep` for event synchronization. See `internal/team/manager_test.go` and `internal/pipeline/pipeline_test.go` for examples.
 - **Disable rebalance loop in team/pipeline tests** — Use `coordination.WithRebalanceInterval(-1)` when constructing Managers in tests to prevent the adaptive lead's periodic rebalance from interfering with deterministic test behavior.
+- **TUI config coverage test** — `TestTUIConfigCoversAllConfigFields` in `internal/tui/config/config_test.go` uses reflection to ensure every `config.Config` field appears in the TUI config editor or is explicitly excluded. When adding new config fields, add corresponding TUI entries in `internal/tui/config/config.go` (both the `categories` items and the `expectedDefaults` map) or the test will fail.
 
 ---
 

@@ -221,7 +221,7 @@ func (b *Bridge) claimLoop() {
 
 		// Retrieve prior discoveries for context injection.
 		prompt := BuildTaskPromptWithContext(
-			task.Title, task.Description, task.Files,
+			task.ID, task.Title, task.Description, task.Files,
 			b.getInstanceContext(task.ID),
 		)
 
@@ -446,11 +446,20 @@ func (b *Bridge) ActiveInstances() int {
 // Accepts basic fields rather than a concrete type to avoid import cycles.
 // The coordinator adapters may use the orchestrator's prompt.TaskBuilder for
 // richer formatting; this is the bridge-level default.
-func BuildTaskPrompt(title, description string, files []string) string {
+//
+// The taskID is included so the instance can reference it in the completion file.
+// When orchestration instructions are injected via --append-system-prompt-file,
+// the instance needs the task ID to fill in the completion protocol JSON.
+func BuildTaskPrompt(taskID, title, description string, files []string) string {
 	var sb strings.Builder
 	sb.WriteString("# Task: ")
 	sb.WriteString(title)
 	sb.WriteString("\n\n")
+	if taskID != "" {
+		sb.WriteString("**Task ID**: `")
+		sb.WriteString(taskID)
+		sb.WriteString("`\n\n")
+	}
 	sb.WriteString(description)
 
 	if len(files) > 0 {
@@ -468,8 +477,8 @@ func BuildTaskPrompt(title, description string, files []string) string {
 // BuildTaskPromptWithContext builds a task prompt and appends prior discoveries
 // from context propagation. If priorContext is empty, it returns the same
 // result as BuildTaskPrompt.
-func BuildTaskPromptWithContext(title, description string, files []string, priorContext string) string {
-	prompt := BuildTaskPrompt(title, description, files)
+func BuildTaskPromptWithContext(taskID, title, description string, files []string, priorContext string) string {
+	prompt := BuildTaskPrompt(taskID, title, description, files)
 	if priorContext == "" {
 		return prompt
 	}

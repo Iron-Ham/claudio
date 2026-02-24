@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
 	"github.com/Iron-Ham/claudio/internal/instance/lifecycle"
 	"github.com/Iron-Ham/claudio/internal/instance/state"
@@ -958,4 +959,59 @@ func TestManager_UnresponsiveFieldsSetOnStartMethods(t *testing.T) {
 	// Clean up - stop the capture loop
 	close(mgr.doneChan)
 	mgr.captureTick.Stop()
+}
+
+func TestNewManagerWithDeps_StartOverrides(t *testing.T) {
+	overrides := ai.StartOptions{
+		PermissionMode:  "plan",
+		MaxTurns:        50,
+		Model:           "claude-sonnet-4-6",
+		AllowedTools:    []string{"Read", "Write"},
+		DisallowedTools: []string{"Bash"},
+		NoUserPrompt:    true,
+	}
+
+	mgr := NewManagerWithDeps(ManagerOptions{
+		ID:             "test-overrides",
+		WorkDir:        "/tmp/test",
+		Task:           "test task",
+		StartOverrides: overrides,
+	})
+
+	if mgr.startOverrides.PermissionMode != "plan" {
+		t.Errorf("PermissionMode = %q, want %q", mgr.startOverrides.PermissionMode, "plan")
+	}
+	if mgr.startOverrides.MaxTurns != 50 {
+		t.Errorf("MaxTurns = %d, want %d", mgr.startOverrides.MaxTurns, 50)
+	}
+	if mgr.startOverrides.Model != "claude-sonnet-4-6" {
+		t.Errorf("Model = %q, want %q", mgr.startOverrides.Model, "claude-sonnet-4-6")
+	}
+	if len(mgr.startOverrides.AllowedTools) != 2 {
+		t.Errorf("AllowedTools len = %d, want 2", len(mgr.startOverrides.AllowedTools))
+	}
+	if len(mgr.startOverrides.DisallowedTools) != 1 {
+		t.Errorf("DisallowedTools len = %d, want 1", len(mgr.startOverrides.DisallowedTools))
+	}
+	if !mgr.startOverrides.NoUserPrompt {
+		t.Error("NoUserPrompt = false, want true")
+	}
+}
+
+func TestNewManagerWithDeps_StartOverridesEmpty(t *testing.T) {
+	mgr := NewManagerWithDeps(ManagerOptions{
+		ID:      "test-empty-overrides",
+		WorkDir: "/tmp/test",
+		Task:    "test task",
+	})
+
+	if mgr.startOverrides.PermissionMode != "" {
+		t.Errorf("PermissionMode = %q, want empty", mgr.startOverrides.PermissionMode)
+	}
+	if mgr.startOverrides.MaxTurns != 0 {
+		t.Errorf("MaxTurns = %d, want 0", mgr.startOverrides.MaxTurns)
+	}
+	if mgr.startOverrides.Model != "" {
+		t.Errorf("Model = %q, want empty", mgr.startOverrides.Model)
+	}
 }

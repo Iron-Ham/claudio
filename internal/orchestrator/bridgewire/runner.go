@@ -3,12 +3,16 @@ package bridgewire
 import (
 	"context"
 	"fmt"
+	"maps"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/bridge"
 	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
 	"github.com/Iron-Ham/claudio/internal/pipeline"
+	"github.com/Iron-Ham/claudio/internal/team"
 	"github.com/Iron-Ham/claudio/internal/ultraplan"
 )
 
@@ -24,6 +28,11 @@ type PipelineRunnerConfig struct {
 	BaseDir  string // Base directory for pipeline state files (defaults to Session.BaseRepo)
 
 	MaxParallel int // from UltraPlanConfig.MaxParallel
+
+	// RoleOverrides maps team roles to per-invocation CLI flag overrides.
+	// When set, execution instances for a given role will use these overrides
+	// for permission mode, model, tool restrictions, etc.
+	RoleOverrides map[team.Role]ai.StartOptions
 }
 
 // PipelineRunner implements orchestrator.ExecutionRunner using the
@@ -94,9 +103,22 @@ func NewPipelineRunner(cfg PipelineRunnerConfig) (*PipelineRunner, error) {
 		logger = logging.NopLogger()
 	}
 
+	// Generate orchestration system prompt file and inject it into execution role
+	// overrides. This gives all execution instances the guidelines and completion
+	// protocol via --append-system-prompt-file, keeping task prompts clean.
+	// This is a hard error: without the system prompt, instances won't know the
+	// completion protocol (writing the sentinel file), causing all tasks to time out.
+	roleOverrides := cfg.RoleOverrides
+	sysPromptPath, sysErr := prompt.WriteOrchestrationSystemPrompt(baseDir)
+	if sysErr != nil {
+		return nil, fmt.Errorf("bridgewire: write orchestration system prompt: %w", sysErr)
+	}
+	roleOverrides = injectSystemPrompt(roleOverrides, sysPromptPath)
+
 	exec, err := NewPipelineExecutorFromOrch(
 		cfg.Orch, cfg.Session, cfg.Verifier,
 		cfg.Bus, pipe, cfg.Recorder, logger,
+		roleOverrides,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("bridgewire: create executor: %w", err)
@@ -190,4 +212,20 @@ func convertPlan(src *orchestrator.PlanSpec) *ultraplan.PlanSpec {
 		Constraints:     constraints,
 		CreatedAt:       src.CreatedAt,
 	}
+}
+
+// injectSystemPrompt ensures the execution role's overrides include the given
+// system prompt file path. If the role already has an AppendSystemPromptFile
+// set (explicitly by the caller), it is not overwritten.
+//
+// Returns a new map to avoid mutating the caller's data (defensive copy).
+func injectSystemPrompt(overrides map[team.Role]ai.StartOptions, path string) map[team.Role]ai.StartOptions {
+	result := make(map[team.Role]ai.StartOptions, len(overrides)+1)
+	maps.Copy(result, overrides)
+	execOverrides := result[team.RoleExecution]
+	if execOverrides.AppendSystemPromptFile == "" {
+		execOverrides.AppendSystemPromptFile = path
+		result[team.RoleExecution] = execOverrides
+	}
+	return result
 }

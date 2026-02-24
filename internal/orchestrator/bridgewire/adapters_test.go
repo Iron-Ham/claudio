@@ -3,6 +3,7 @@ package bridgewire
 import (
 	"testing"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/bridge"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/verify"
@@ -151,6 +152,55 @@ func TestOrchInstance_Methods(t *testing.T) {
 	}
 	if inst.Branch() != "feature-branch" {
 		t.Errorf("Branch() = %q, want %q", inst.Branch(), "feature-branch")
+	}
+}
+
+func TestNewInstanceFactoryWithOverrides(t *testing.T) {
+	orch := &orchestrator.Orchestrator{}
+	sess := &orchestrator.Session{}
+	overrides := ai.StartOptions{
+		PermissionMode: "plan",
+		MaxTurns:       100,
+		Model:          "claude-opus-4-6",
+	}
+
+	f := NewInstanceFactoryWithOverrides(orch, sess, overrides)
+	if f == nil {
+		t.Fatal("NewInstanceFactoryWithOverrides returned nil")
+	}
+
+	// Verify the factory has the overrides stored
+	ifactory, ok := f.(*instanceFactory)
+	if !ok {
+		t.Fatal("expected *instanceFactory type")
+	}
+	if ifactory.startOverrides.PermissionMode != "plan" {
+		t.Errorf("PermissionMode = %q, want %q", ifactory.startOverrides.PermissionMode, "plan")
+	}
+	if ifactory.startOverrides.MaxTurns != 100 {
+		t.Errorf("MaxTurns = %d, want %d", ifactory.startOverrides.MaxTurns, 100)
+	}
+	if ifactory.startOverrides.Model != "claude-opus-4-6" {
+		t.Errorf("Model = %q, want %q", ifactory.startOverrides.Model, "claude-opus-4-6")
+	}
+}
+
+func TestNewInstanceFactory_NoOverrides(t *testing.T) {
+	orch := &orchestrator.Orchestrator{}
+	sess := &orchestrator.Session{}
+
+	f := NewInstanceFactory(orch, sess)
+	ifactory, ok := f.(*instanceFactory)
+	if !ok {
+		t.Fatal("expected *instanceFactory type")
+	}
+
+	// Default factory should have zero-value overrides
+	if ifactory.startOverrides.PermissionMode != "" {
+		t.Errorf("PermissionMode = %q, want empty", ifactory.startOverrides.PermissionMode)
+	}
+	if ifactory.startOverrides.MaxTurns != 0 {
+		t.Errorf("MaxTurns = %d, want 0", ifactory.startOverrides.MaxTurns)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/bridge"
 	"github.com/Iron-Ham/claudio/internal/coordination"
 	"github.com/Iron-Ham/claudio/internal/event"
@@ -1504,4 +1505,229 @@ func TestPipelineExecutor_E2E_ContextCancel(t *testing.T) {
 
 	// Calling Stop again should be idempotent.
 	pe.Stop()
+}
+
+// --- Role override tests ---
+
+func TestPipelineExecutor_RoleOverrides_UsesOverriddenFactory(t *testing.T) {
+	// Verify that when RoleOverrides and FactoryWithOverrides are set,
+	// attachBridges creates a per-team factory with the role's overrides.
+	plan := &ultraplan.PlanSpec{
+		ID:        "role-override-plan",
+		Objective: "Role override test",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Description: "Do thing 1", Files: []string{"a.go"}},
+		},
+	}
+
+	checker := newAutoCompleteChecker()
+
+	// Track which overrides were used to create factories
+	var factoryOverridesMu sync.Mutex
+	var capturedOverrides []ai.StartOptions
+
+	// The actual factory that does the work
+	baseFactory := newAutoCompleteFactory(checker)
+
+	// Factory builder that records the overrides it receives
+	factoryBuilder := func(overrides ai.StartOptions) bridge.InstanceFactory {
+		factoryOverridesMu.Lock()
+		capturedOverrides = append(capturedOverrides, overrides)
+		factoryOverridesMu.Unlock()
+		// Return the same auto-complete factory (overrides are recorded, not executed)
+		return baseFactory
+	}
+
+	roleOverrides := map[team.Role]ai.StartOptions{
+		team.RoleExecution: {
+			PermissionMode: "auto-accept",
+			MaxTurns:       200,
+			Model:          "claude-opus-4-6",
+		},
+	}
+
+	bus := event.NewBus()
+	pipe, err := pipeline.NewPipeline(pipeline.PipelineConfig{
+		Bus:     bus,
+		BaseDir: t.TempDir(),
+		Plan:    plan,
+	}, pipeline.WithHubOptions(coordination.WithRebalanceInterval(-1)))
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+
+	if _, err := pipe.Decompose(pipeline.DecomposeConfig{}); err != nil {
+		t.Fatalf("Decompose: %v", err)
+	}
+
+	pe, err := NewPipelineExecutor(PipelineExecutorConfig{
+		Factory:              baseFactory,
+		FactoryWithOverrides: factoryBuilder,
+		RoleOverrides:        roleOverrides,
+		Checker:              checker,
+		Bus:                  bus,
+		Pipeline:             pipe,
+		Recorder:             newTrackingRecorder(),
+		BridgeOpts: []bridge.Option{
+			bridge.WithPollInterval(10 * time.Millisecond),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewPipelineExecutor: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pipelineCompleted := make(chan event.Event, 5)
+	bus.Subscribe("pipeline.completed", func(e event.Event) {
+		pipelineCompleted <- e
+	})
+
+	if err := pe.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer pe.Stop()
+
+	if err := pipe.Start(ctx); err != nil {
+		t.Fatalf("Pipeline.Start: %v", err)
+	}
+
+	select {
+	case <-pipelineCompleted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("pipeline did not complete in time")
+	}
+
+	// Verify the factory builder was called with the execution role's overrides
+	factoryOverridesMu.Lock()
+	defer factoryOverridesMu.Unlock()
+
+	if len(capturedOverrides) == 0 {
+		t.Fatal("FactoryWithOverrides was never called")
+	}
+
+	found := false
+	for _, o := range capturedOverrides {
+		if o.PermissionMode == "auto-accept" && o.MaxTurns == 200 && o.Model == "claude-opus-4-6" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected overrides with PermissionMode=auto-accept, MaxTurns=200, Model=claude-opus-4-6; got %v", capturedOverrides)
+	}
+}
+
+func TestPipelineExecutor_NoRoleOverrides_UsesDefaultFactory(t *testing.T) {
+	// When no RoleOverrides are set, the default factory should be used for all teams.
+	plan := &ultraplan.PlanSpec{
+		ID:        "no-override-plan",
+		Objective: "No override test",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Description: "Do thing 1", Files: []string{"a.go"}},
+		},
+	}
+
+	checker := newAutoCompleteChecker()
+	factory := newAutoCompleteFactory(checker)
+
+	factoryBuilderCalled := false
+	factoryBuilder := func(overrides ai.StartOptions) bridge.InstanceFactory {
+		factoryBuilderCalled = true
+		return factory
+	}
+
+	bus := event.NewBus()
+	pipe, err := pipeline.NewPipeline(pipeline.PipelineConfig{
+		Bus:     bus,
+		BaseDir: t.TempDir(),
+		Plan:    plan,
+	}, pipeline.WithHubOptions(coordination.WithRebalanceInterval(-1)))
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+
+	if _, err := pipe.Decompose(pipeline.DecomposeConfig{}); err != nil {
+		t.Fatalf("Decompose: %v", err)
+	}
+
+	// No RoleOverrides set — FactoryWithOverrides should not be called
+	pe, err := NewPipelineExecutor(PipelineExecutorConfig{
+		Factory:              factory,
+		FactoryWithOverrides: factoryBuilder,
+		Checker:              checker,
+		Bus:                  bus,
+		Pipeline:             pipe,
+		Recorder:             newTrackingRecorder(),
+		BridgeOpts: []bridge.Option{
+			bridge.WithPollInterval(10 * time.Millisecond),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewPipelineExecutor: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pipelineCompleted := make(chan event.Event, 5)
+	bus.Subscribe("pipeline.completed", func(e event.Event) {
+		pipelineCompleted <- e
+	})
+
+	if err := pe.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer pe.Stop()
+
+	if err := pipe.Start(ctx); err != nil {
+		t.Fatalf("Pipeline.Start: %v", err)
+	}
+
+	select {
+	case <-pipelineCompleted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("pipeline did not complete in time")
+	}
+
+	if factoryBuilderCalled {
+		t.Error("FactoryWithOverrides should not be called when RoleOverrides is empty")
+	}
+
+	// Verify the default factory was used (it should have received task prompts)
+	created := factory.Created()
+	if len(created) == 0 {
+		t.Error("default factory was never used to create instances")
+	}
+}
+
+func TestPipelineExecutorConfig_RoleOverrides_Stored(t *testing.T) {
+	overrides := map[team.Role]ai.StartOptions{
+		team.RoleExecution: {PermissionMode: "auto-accept"},
+		team.RolePlanning:  {PermissionMode: "plan"},
+	}
+
+	pe, err := NewPipelineExecutor(PipelineExecutorConfig{
+		Factory:       nopFactory{},
+		Checker:       nopChecker{},
+		Bus:           event.NewBus(),
+		Pipeline:      &pipeline.Pipeline{},
+		RoleOverrides: overrides,
+	})
+	if err != nil {
+		t.Fatalf("NewPipelineExecutor: %v", err)
+	}
+
+	if len(pe.roleOverrides) != 2 {
+		t.Errorf("roleOverrides len = %d, want 2", len(pe.roleOverrides))
+	}
+	if pe.roleOverrides[team.RoleExecution].PermissionMode != "auto-accept" {
+		t.Errorf("execution overrides = %q, want %q",
+			pe.roleOverrides[team.RoleExecution].PermissionMode, "auto-accept")
+	}
+	if pe.roleOverrides[team.RolePlanning].PermissionMode != "plan" {
+		t.Errorf("planning overrides = %q, want %q",
+			pe.roleOverrides[team.RolePlanning].PermissionMode, "plan")
+	}
 }

@@ -785,7 +785,7 @@ func (o *Orchestrator) AddInstanceToWorktreeWithBackend(session *Session, task s
 	if backendName != "" {
 		mgr = o.newInstanceManagerWithBackend(inst.ID, inst.WorktreePath, task, inst.ClaudeSessionID, backendName)
 	} else {
-		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, task, inst.ClaudeSessionID)
+		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, task, inst.ClaudeSessionID, ai.StartOptions{})
 	}
 	o.instances[inst.ID] = mgr
 
@@ -843,8 +843,17 @@ func (o *Orchestrator) AddInstanceFromBranch(session *Session, task string, base
 	return inst, nil
 }
 
-// StartInstance starts an AI backend process for an instance
+// StartInstance starts an AI backend process for an instance.
 func (o *Orchestrator) StartInstance(inst *Instance) error {
+	return o.StartInstanceWithOverrides(inst, ai.StartOptions{})
+}
+
+// StartInstanceWithOverrides starts an AI backend process with per-instance CLI flag overrides.
+// The overrides are merged into the StartOptions used to build the backend command, taking
+// precedence over the backend's config-level defaults. This allows different roles (e.g.,
+// execution vs review) to use different permission modes, models, or tool restrictions.
+// Pass a zero-value ai.StartOptions for no overrides (equivalent to StartInstance).
+func (o *Orchestrator) StartInstanceWithOverrides(inst *Instance, overrides ai.StartOptions) error {
 	// Validate instance is ready to start - cannot start if still preparing
 	if inst.Status == StatusPreparing {
 		return fmt.Errorf("instance is still preparing (worktree being created)")
@@ -858,7 +867,7 @@ func (o *Orchestrator) StartInstance(inst *Instance) error {
 	o.mu.Unlock()
 
 	if !ok {
-		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
+		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID, overrides)
 		o.mu.Lock()
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
@@ -1319,7 +1328,7 @@ func (o *Orchestrator) EnsureInstanceManagers() {
 
 	for _, inst := range o.session.Instances {
 		if _, exists := o.instances[inst.ID]; !exists {
-			mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
+			mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID, ai.StartOptions{})
 			o.instances[inst.ID] = mgr
 			if o.logger != nil {
 				o.logger.Debug("created instance manager for loaded instance",
@@ -1362,7 +1371,11 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 //
 // Note: LifecycleManager delegation is available but not enabled by default.
 // The instance Manager's Start/Stop/Reconnect use their internal implementation.
-func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessionID string) *instance.Manager {
+//
+// The overrides parameter allows per-instance CLI flag overrides (permission mode, model,
+// tool restrictions, etc.) to be merged into StartOptions during Start(). Pass a zero-value
+// ai.StartOptions for no overrides.
+func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessionID string, overrides ai.StartOptions) *instance.Manager {
 	cfg := o.instanceManagerConfig()
 
 	// Build callbacks that route to orchestrator handlers
@@ -1398,6 +1411,7 @@ func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessi
 		StateMonitor:    o.stateMonitor,
 		ClaudeSessionID: claudeSessionID,
 		Backend:         o.backend,
+		StartOverrides:  overrides,
 		// LifecycleManager not set - instances use internal Start/Stop/Reconnect
 	})
 
@@ -1496,7 +1510,7 @@ func (o *Orchestrator) registerInstance(session *Session, inst *Instance) error 
 	session.Instances = append(session.Instances, inst)
 
 	// Create instance manager with config (including backend session ID for resume capability)
-	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
+	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID, ai.StartOptions{})
 	o.instances[inst.ID] = mgr
 
 	// Register with conflict detector
@@ -2444,7 +2458,7 @@ func (o *Orchestrator) ReconnectInstance(inst *Instance) error {
 
 	// If no manager exists yet, create one (with backend session ID for resume capability)
 	if !ok {
-		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
+		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID, ai.StartOptions{})
 		o.mu.Lock()
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
@@ -2516,7 +2530,7 @@ func (o *Orchestrator) ResumeInstance(inst *Instance) error {
 
 	// If no manager exists yet, create one
 	if !ok {
-		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
+		mgr = o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID, ai.StartOptions{})
 		o.mu.Lock()
 		o.instances[inst.ID] = mgr
 		o.mu.Unlock()
@@ -2683,7 +2697,7 @@ func (o *Orchestrator) CompleteInstanceSetup(session *Session, inst *Instance) e
 	o.copyLocalBackendFilesToWorktree(inst.ID, inst.WorktreePath)
 
 	// Create instance manager with config
-	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID)
+	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID, ai.StartOptions{})
 	o.instances[inst.ID] = mgr
 
 	// Register with conflict detector

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/bridge"
 	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/logging"
@@ -19,11 +20,13 @@ import (
 // instances via Bridges. It subscribes to pipeline phase change events and
 // creates a Bridge for each team when the execution phase starts.
 type PipelineExecutor struct {
-	factory  bridge.InstanceFactory
-	checker  bridge.CompletionChecker
-	bus      *event.Bus
-	logger   *logging.Logger
-	recorder bridge.SessionRecorder
+	factory              bridge.InstanceFactory
+	factoryWithOverrides func(ai.StartOptions) bridge.InstanceFactory
+	roleOverrides        map[team.Role]ai.StartOptions
+	checker              bridge.CompletionChecker
+	bus                  *event.Bus
+	logger               *logging.Logger
+	recorder             bridge.SessionRecorder
 
 	pipe         *pipeline.Pipeline
 	bridgeOpts   []bridge.Option
@@ -45,6 +48,14 @@ type PipelineExecutorConfig struct {
 	Recorder   bridge.SessionRecorder
 	Logger     *logging.Logger
 	BridgeOpts []bridge.Option
+
+	// FactoryWithOverrides creates a per-team factory with role-specific CLI flag
+	// overrides. When nil, all teams use the default Factory.
+	FactoryWithOverrides func(ai.StartOptions) bridge.InstanceFactory
+	// RoleOverrides maps team roles to per-invocation StartOptions overrides.
+	// When a team's role has an entry here and FactoryWithOverrides is set,
+	// a dedicated factory with those overrides is created for that team.
+	RoleOverrides map[team.Role]ai.StartOptions
 }
 
 // NewPipelineExecutor creates a PipelineExecutor that will attach bridges
@@ -70,19 +81,25 @@ func NewPipelineExecutor(cfg PipelineExecutorConfig) (*PipelineExecutor, error) 
 	}
 
 	return &PipelineExecutor{
-		factory:    cfg.Factory,
-		checker:    cfg.Checker,
-		bus:        cfg.Bus,
-		pipe:       cfg.Pipeline,
-		recorder:   cfg.Recorder,
-		logger:     cfg.Logger,
-		bridgeOpts: cfg.BridgeOpts,
+		factory:              cfg.Factory,
+		factoryWithOverrides: cfg.FactoryWithOverrides,
+		roleOverrides:        cfg.RoleOverrides,
+		checker:              cfg.Checker,
+		bus:                  cfg.Bus,
+		pipe:                 cfg.Pipeline,
+		recorder:             cfg.Recorder,
+		logger:               cfg.Logger,
+		bridgeOpts:           cfg.BridgeOpts,
 	}, nil
 }
 
 // NewPipelineExecutorFromOrch creates a PipelineExecutor using orchestrator
 // adapters. This is the production constructor — tests should use
 // NewPipelineExecutor directly with mock factory/checker.
+//
+// roleOverrides maps team roles to per-invocation CLI flag overrides. When a
+// team's role has an entry, a dedicated factory with those overrides is created
+// for that team's bridge. Pass nil for no role-specific overrides.
 func NewPipelineExecutorFromOrch(
 	orch *orchestrator.Orchestrator,
 	session *orchestrator.Session,
@@ -91,14 +108,19 @@ func NewPipelineExecutorFromOrch(
 	pipe *pipeline.Pipeline,
 	recorder bridge.SessionRecorder,
 	logger *logging.Logger,
+	roleOverrides map[team.Role]ai.StartOptions,
 ) (*PipelineExecutor, error) {
 	return NewPipelineExecutor(PipelineExecutorConfig{
-		Factory:  NewInstanceFactory(orch, session),
-		Checker:  NewCompletionChecker(verifier),
-		Bus:      bus,
-		Pipeline: pipe,
-		Recorder: recorder,
-		Logger:   logger,
+		Factory: NewInstanceFactory(orch, session),
+		FactoryWithOverrides: func(overrides ai.StartOptions) bridge.InstanceFactory {
+			return NewInstanceFactoryWithOverrides(orch, session, overrides)
+		},
+		RoleOverrides: roleOverrides,
+		Checker:       NewCompletionChecker(verifier),
+		Bus:           bus,
+		Pipeline:      pipe,
+		Recorder:      recorder,
+		Logger:        logger,
 	})
 }
 
@@ -242,7 +264,16 @@ func (pe *PipelineExecutor) attachBridges() {
 			continue
 		}
 
-		b := bridge.New(t, pe.factory, pe.checker, pe.recorder, pe.bus, opts...)
+		// Use a per-team factory with role-specific overrides when available,
+		// otherwise fall back to the shared default factory.
+		f := pe.factory
+		if pe.factoryWithOverrides != nil {
+			if overrides, ok := pe.roleOverrides[status.Role]; ok {
+				f = pe.factoryWithOverrides(overrides)
+			}
+		}
+
+		b := bridge.New(t, f, pe.checker, pe.recorder, pe.bus, opts...)
 		if err := b.Start(pe.ctx); err != nil {
 			pe.logger.Error("bridgewire: failed to start bridge",
 				"team", status.ID, "error", err)
