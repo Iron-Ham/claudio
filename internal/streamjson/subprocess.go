@@ -147,6 +147,10 @@ func BuildSubprocessArgs(promptFile string, opts SubprocessOptions) []string {
 		args = append(args, "--no-user-prompt")
 	}
 
+	if opts.Worktree {
+		args = append(args, "--worktree")
+	}
+
 	// Add the prompt file content via shell-safe argument
 	args = append(args, "--prompt-file", promptFile)
 
@@ -171,4 +175,6 @@ type SubprocessOptions struct {
 	AppendSystemPromptFile string
 	// NoUserPrompt prevents Claude from requesting user confirmation (for headless pipelines).
 	NoUserPrompt bool
+	// Worktree enables Claude Code's native --worktree flag for isolated execution.
+	Worktree bool
 }

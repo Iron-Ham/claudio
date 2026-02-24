@@ -117,6 +117,11 @@ type ClaudeBackendConfig struct {
 	// AppendSystemPrompt is additional text appended to Claude's default system prompt.
 	// Use this to inject orchestration instructions without replacing the full prompt.
 	AppendSystemPrompt string `mapstructure:"append_system_prompt"`
+	// NativeWorktree enables Claude Code's built-in --worktree flag for session isolation.
+	// When true, Claude Code creates and manages its own git worktree instead of Claudio
+	// managing worktrees externally. This is useful for subprocess/stream-json execution
+	// where Claudio doesn't need to control the worktree lifecycle.
+	NativeWorktree bool `mapstructure:"native_worktree"`
 }
 
 // ResolvedPermissionMode returns the effective permission mode by resolving the
@@ -595,6 +600,7 @@ func SetDefaults() {
 	viper.SetDefault("ai.claude.max_turns", defaults.AI.Claude.MaxTurns)
 	viper.SetDefault("ai.claude.model", defaults.AI.Claude.Model)
 	viper.SetDefault("ai.claude.append_system_prompt", defaults.AI.Claude.AppendSystemPrompt)
+	viper.SetDefault("ai.claude.native_worktree", defaults.AI.Claude.NativeWorktree)
 	viper.SetDefault("ai.codex.command", defaults.AI.Codex.Command)
 	viper.SetDefault("ai.codex.approval_mode", defaults.AI.Codex.ApprovalMode)
 

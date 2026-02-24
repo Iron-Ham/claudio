@@ -97,6 +97,20 @@ func TestBuildSubprocessArgs_NoTools(t *testing.T) {
 	assertNotContains(t, args, "--disallowedTools")
 }
 
+func TestBuildSubprocessArgs_Worktree(t *testing.T) {
+	args := BuildSubprocessArgs("/tmp/prompt.txt", SubprocessOptions{
+		Worktree: true,
+	})
+
+	assertContains(t, args, "--worktree")
+}
+
+func TestBuildSubprocessArgs_NoWorktree(t *testing.T) {
+	args := BuildSubprocessArgs("/tmp/prompt.txt", SubprocessOptions{})
+
+	assertNotContains(t, args, "--worktree")
+}
+
 // --- Helpers ---
 
 func assertContains(t *testing.T, args []string, want string) {
