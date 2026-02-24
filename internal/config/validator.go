@@ -283,6 +283,22 @@ func (c *Config) validateAI() []ValidationError {
 		})
 	}
 
+	if c.AI.Claude.PermissionMode != "" && !slices.Contains(ValidClaudePermissionModes(), c.AI.Claude.PermissionMode) {
+		errors = append(errors, ValidationError{
+			Field:   "ai.claude.permission_mode",
+			Value:   c.AI.Claude.PermissionMode,
+			Message: fmt.Sprintf("must be one of: %s", strings.Join(ValidClaudePermissionModes(), ", ")),
+		})
+	}
+
+	if c.AI.Claude.MaxTurns < 0 {
+		errors = append(errors, ValidationError{
+			Field:   "ai.claude.max_turns",
+			Value:   c.AI.Claude.MaxTurns,
+			Message: "must be non-negative (0 = unlimited)",
+		})
+	}
+
 	if c.AI.Codex.Command == "" {
 		errors = append(errors, ValidationError{
 			Field:   "ai.codex.command",

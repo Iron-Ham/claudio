@@ -427,6 +427,78 @@ func TestConfig_Validate_AI(t *testing.T) {
 			t.Error("expected validation error for ai.codex.approval_mode")
 		}
 	})
+
+	t.Run("valid claude permission modes", func(t *testing.T) {
+		for _, mode := range []string{"", "default", "plan", "auto-accept", "bypass"} {
+			cfg := Default()
+			cfg.AI.Claude.PermissionMode = mode
+			errs := cfg.Validate()
+
+			for _, err := range errs {
+				if err.Field == "ai.claude.permission_mode" {
+					t.Errorf("permission_mode %q should be valid, got error: %v", mode, err)
+				}
+			}
+		}
+	})
+
+	t.Run("invalid claude permission mode", func(t *testing.T) {
+		cfg := Default()
+		cfg.AI.Claude.PermissionMode = "yolo"
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "ai.claude.permission_mode" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for invalid permission mode")
+		}
+	})
+
+	t.Run("negative claude max turns", func(t *testing.T) {
+		cfg := Default()
+		cfg.AI.Claude.MaxTurns = -1
+		errs := cfg.Validate()
+
+		found := false
+		for _, err := range errs {
+			if err.Field == "ai.claude.max_turns" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected error for negative max turns")
+		}
+	})
+
+	t.Run("zero claude max turns is valid (unlimited)", func(t *testing.T) {
+		cfg := Default()
+		cfg.AI.Claude.MaxTurns = 0
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if err.Field == "ai.claude.max_turns" {
+				t.Errorf("zero max turns should be valid (unlimited): %v", err)
+			}
+		}
+	})
+
+	t.Run("positive claude max turns is valid", func(t *testing.T) {
+		cfg := Default()
+		cfg.AI.Claude.MaxTurns = 50
+		errs := cfg.Validate()
+
+		for _, err := range errs {
+			if err.Field == "ai.claude.max_turns" {
+				t.Errorf("positive max turns should be valid: %v", err)
+			}
+		}
+	})
 }
 
 func TestConfig_Validate_Branch(t *testing.T) {

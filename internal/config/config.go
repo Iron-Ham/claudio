@@ -95,7 +95,45 @@ type ClaudeBackendConfig struct {
 	// Command is the Claude CLI command name/path (default: "claude")
 	Command string `mapstructure:"command"`
 	// SkipPermissions adds --dangerously-skip-permissions when starting Claude (default: true)
+	// Deprecated: Use PermissionMode instead. Retained for backward compatibility.
+	// When PermissionMode is set, SkipPermissions is ignored.
 	SkipPermissions bool `mapstructure:"skip_permissions"`
+	// PermissionMode controls how Claude handles permission prompts.
+	// Options: "default", "plan", "auto-accept", "bypass"
+	// When set, overrides SkipPermissions. When empty, falls back to SkipPermissions
+	// (true → "bypass", false → "default").
+	PermissionMode string `mapstructure:"permission_mode"`
+	// AllowedTools specifies tools Claude may use without prompting.
+	// Uses Claude Code permission rule syntax (e.g., "Bash(git *)", "Read", "Write").
+	AllowedTools []string `mapstructure:"allowed_tools"`
+	// DisallowedTools specifies tools Claude is explicitly denied from using.
+	DisallowedTools []string `mapstructure:"disallowed_tools"`
+	// MaxTurns limits the number of agentic turns per session (0 = unlimited).
+	// Useful for bounding cost and runtime in automated pipelines.
+	MaxTurns int `mapstructure:"max_turns"`
+	// Model selects the Claude model for sessions.
+	// Accepts aliases ("sonnet", "opus", "haiku") or full model IDs (e.g., "claude-sonnet-4-6").
+	Model string `mapstructure:"model"`
+	// AppendSystemPrompt is additional text appended to Claude's default system prompt.
+	// Use this to inject orchestration instructions without replacing the full prompt.
+	AppendSystemPrompt string `mapstructure:"append_system_prompt"`
+}
+
+// ResolvedPermissionMode returns the effective permission mode by resolving the
+// PermissionMode / SkipPermissions fallback chain.
+func (c *ClaudeBackendConfig) ResolvedPermissionMode() string {
+	if c.PermissionMode != "" {
+		return c.PermissionMode
+	}
+	if c.SkipPermissions {
+		return "bypass"
+	}
+	return "default"
+}
+
+// ValidClaudePermissionModes returns the list of valid Claude permission modes.
+func ValidClaudePermissionModes() []string {
+	return []string{"default", "plan", "auto-accept", "bypass"}
 }
 
 // CodexBackendConfig controls Codex-specific settings.
@@ -551,6 +589,12 @@ func SetDefaults() {
 	viper.SetDefault("ai.backend", defaults.AI.Backend)
 	viper.SetDefault("ai.claude.command", defaults.AI.Claude.Command)
 	viper.SetDefault("ai.claude.skip_permissions", defaults.AI.Claude.SkipPermissions)
+	viper.SetDefault("ai.claude.permission_mode", defaults.AI.Claude.PermissionMode)
+	viper.SetDefault("ai.claude.allowed_tools", defaults.AI.Claude.AllowedTools)
+	viper.SetDefault("ai.claude.disallowed_tools", defaults.AI.Claude.DisallowedTools)
+	viper.SetDefault("ai.claude.max_turns", defaults.AI.Claude.MaxTurns)
+	viper.SetDefault("ai.claude.model", defaults.AI.Claude.Model)
+	viper.SetDefault("ai.claude.append_system_prompt", defaults.AI.Claude.AppendSystemPrompt)
 	viper.SetDefault("ai.codex.command", defaults.AI.Codex.Command)
 	viper.SetDefault("ai.codex.approval_mode", defaults.AI.Codex.ApprovalMode)
 
