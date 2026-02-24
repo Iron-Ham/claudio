@@ -130,6 +130,7 @@ type ManagerOptions struct {
 	LifecycleManager *lifecycle.Manager // Optional - if set, delegates Start/Stop/Reconnect
 	ClaudeSessionID  string             // Optional - backend session UUID for resume capability (legacy field name)
 	Backend          ai.Backend         // Optional - AI backend (defaults to Claude)
+	StartOverrides   ai.StartOptions    // Optional - per-instance overrides merged into BuildStartCommand
 }
 
 // Manager handles a single AI backend instance running in a tmux session.
@@ -199,6 +200,11 @@ type Manager struct {
 	// stateMonitor handles centralized state tracking (state detection, timeouts, bells).
 	// This is always set - either provided explicitly or created internally.
 	stateMonitor *state.Monitor
+
+	// startOverrides holds per-instance CLI flag overrides merged into BuildStartCommand.
+	// These are set at construction time via ManagerOptions.StartOverrides and take
+	// precedence over the backend's config-level defaults.
+	startOverrides ai.StartOptions
 }
 
 // NewManagerWithDeps creates a new instance manager with explicit dependencies.
@@ -281,6 +287,7 @@ func NewManagerWithDeps(opts ManagerOptions) *Manager {
 		stateMonitor:     monitor,
 		lifecycleManager: opts.LifecycleManager,
 		backend:          backend,
+		startOverrides:   opts.StartOverrides,
 	}
 }
 
@@ -459,11 +466,13 @@ func (m *Manager) Start() error {
 	}
 
 	// Build the backend command with optional session-id for resume capability.
-	backendCmd, err := m.backend.BuildStartCommand(ai.StartOptions{
-		PromptFile: promptFile,
-		SessionID:  m.claudeSessionID,
-		Mode:       ai.StartModeInteractive,
-	})
+	// Start with per-instance overrides (set at construction time from role config),
+	// then fill in the required start fields.
+	opts := m.startOverrides
+	opts.PromptFile = promptFile
+	opts.SessionID = m.claudeSessionID
+	opts.Mode = ai.StartModeInteractive
+	backendCmd, err := m.backend.BuildStartCommand(opts)
 	if err != nil {
 		_ = m.tmuxCmd("kill-session", "-t", m.sessionName).Run()
 		_ = os.Remove(promptFile)

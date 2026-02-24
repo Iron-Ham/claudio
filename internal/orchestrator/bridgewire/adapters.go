@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/bridge"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/verify"
@@ -12,14 +13,26 @@ import (
 // --- InstanceFactory adapter ---
 
 // instanceFactory adapts an Orchestrator to bridge.InstanceFactory.
+// It optionally carries per-instance StartOptions overrides that are applied
+// when starting instances, allowing different teams/roles to use different
+// permission modes, models, tool restrictions, etc.
 type instanceFactory struct {
-	orch    *orchestrator.Orchestrator
-	session *orchestrator.Session
+	orch           *orchestrator.Orchestrator
+	session        *orchestrator.Session
+	startOverrides ai.StartOptions
 }
 
 // NewInstanceFactory creates a bridge.InstanceFactory backed by the given Orchestrator.
 func NewInstanceFactory(orch *orchestrator.Orchestrator, session *orchestrator.Session) bridge.InstanceFactory {
 	return &instanceFactory{orch: orch, session: session}
+}
+
+// NewInstanceFactoryWithOverrides creates a bridge.InstanceFactory that applies
+// the given StartOptions overrides to every instance it starts. This allows
+// role-specific CLI flags (permission mode, model, tool restrictions) to flow
+// from pipeline configuration through to the Claude Code invocation.
+func NewInstanceFactoryWithOverrides(orch *orchestrator.Orchestrator, session *orchestrator.Session, overrides ai.StartOptions) bridge.InstanceFactory {
+	return &instanceFactory{orch: orch, session: session, startOverrides: overrides}
 }
 
 // Coverage: CreateInstance and StartInstance wrap *orchestrator.Orchestrator which
@@ -37,7 +50,7 @@ func (f *instanceFactory) StartInstance(inst bridge.Instance) error {
 	if orchInst == nil {
 		return fmt.Errorf("start instance: %q not found", inst.ID())
 	}
-	if err := f.orch.StartInstance(orchInst); err != nil {
+	if err := f.orch.StartInstanceWithOverrides(orchInst, f.startOverrides); err != nil {
 		return fmt.Errorf("start instance %q: %w", inst.ID(), err)
 	}
 	return nil

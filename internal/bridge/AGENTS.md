@@ -36,7 +36,7 @@ These interfaces are implemented by adapters in `internal/orchestrator/bridgewir
 
 ## Pitfalls
 
-- **Import cycle with ultraplan** — The `bridge` package must NOT import `ultraplan` or `orchestrator`. The chain `bridge → team → coordination → ... → ultraplan → orchestrator` creates a cycle if `orchestrator` imports `bridge`. Use simple types (strings, slices) rather than concrete domain types in the bridge API. The `BuildTaskPrompt` function accepts `(title, description string, files []string)` instead of `ultraplan.PlannedTask` for this reason.
+- **Import cycle with ultraplan** — The `bridge` package must NOT import `ultraplan` or `orchestrator`. The chain `bridge → team → coordination → ... → ultraplan → orchestrator` creates a cycle if `orchestrator` imports `bridge`. Use simple types (strings, slices) rather than concrete domain types in the bridge API. The `BuildTaskPrompt` function accepts `(taskID, title, description string, files []string)` instead of `ultraplan.PlannedTask` for this reason.
 - **Event-driven wake pattern** — The claim loop subscribes to `queue.depth_changed` events and blocks on a buffered channel. Don't replace this with polling — the event-driven approach is more efficient and responsive.
 - **Gate.IsComplete exit condition** — The claim loop exits when there are no tasks and `gate.IsComplete()` returns true (all tasks terminal). Without this check, the loop would block forever waiting for new tasks that will never arrive.
 - **Publish events outside the lock** — `BridgeTaskStartedEvent` and `BridgeTaskCompletedEvent` are published outside the mutex to avoid deadlock with synchronous event handlers that might call back into the bridge.
