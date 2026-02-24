@@ -2,11 +2,16 @@ package bridgewire
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
+	"github.com/Iron-Ham/claudio/internal/team"
 	"github.com/Iron-Ham/claudio/internal/ultraplan"
 )
 
@@ -320,5 +325,93 @@ func TestPipelineRunner_StartCtxCancel(t *testing.T) {
 		// success
 	case <-time.After(5 * time.Second):
 		t.Fatal("Stop() did not return within 5s")
+	}
+}
+
+func TestInjectSystemPrompt_NilMap(t *testing.T) {
+	result := injectSystemPrompt(nil, "/tmp/sys-prompt.md")
+
+	if result == nil {
+		t.Fatal("injectSystemPrompt returned nil for nil input")
+	}
+	execOpts, ok := result[team.RoleExecution]
+	if !ok {
+		t.Fatal("missing execution role in result")
+	}
+	if execOpts.AppendSystemPromptFile != "/tmp/sys-prompt.md" {
+		t.Errorf("AppendSystemPromptFile = %q, want %q",
+			execOpts.AppendSystemPromptFile, "/tmp/sys-prompt.md")
+	}
+}
+
+func TestInjectSystemPrompt_ExistingMap(t *testing.T) {
+	overrides := map[team.Role]ai.StartOptions{
+		team.RoleExecution: {PermissionMode: "auto-accept"},
+	}
+
+	result := injectSystemPrompt(overrides, "/tmp/sys-prompt.md")
+
+	execOpts := result[team.RoleExecution]
+	if execOpts.AppendSystemPromptFile != "/tmp/sys-prompt.md" {
+		t.Errorf("AppendSystemPromptFile = %q, want %q",
+			execOpts.AppendSystemPromptFile, "/tmp/sys-prompt.md")
+	}
+	// Existing overrides should be preserved
+	if execOpts.PermissionMode != "auto-accept" {
+		t.Errorf("PermissionMode = %q, want %q", execOpts.PermissionMode, "auto-accept")
+	}
+}
+
+func TestInjectSystemPrompt_DoesNotOverrideExplicit(t *testing.T) {
+	overrides := map[team.Role]ai.StartOptions{
+		team.RoleExecution: {AppendSystemPromptFile: "/explicit/path.md"},
+	}
+
+	result := injectSystemPrompt(overrides, "/tmp/sys-prompt.md")
+
+	execOpts := result[team.RoleExecution]
+	if execOpts.AppendSystemPromptFile != "/explicit/path.md" {
+		t.Errorf("AppendSystemPromptFile = %q, want %q (should not be overridden)",
+			execOpts.AppendSystemPromptFile, "/explicit/path.md")
+	}
+}
+
+func TestNewPipelineRunner_WritesSystemPromptFile(t *testing.T) {
+	bus := event.NewBus()
+	baseDir := t.TempDir()
+	plan := &orchestrator.PlanSpec{
+		ID:             "plan-1",
+		Tasks:          []orchestrator.PlannedTask{{ID: "t1", Title: "task", Description: "d"}},
+		ExecutionOrder: [][]string{{"t1"}},
+	}
+
+	runner, err := NewPipelineRunner(PipelineRunnerConfig{
+		Orch:        &orchestrator.Orchestrator{},
+		Session:     &orchestrator.Session{BaseRepo: baseDir},
+		Plan:        plan,
+		Bus:         bus,
+		MaxParallel: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewPipelineRunner() error = %v", err)
+	}
+	if runner == nil {
+		t.Fatal("runner is nil")
+	}
+
+	// Verify the system prompt file was written to baseDir
+	sysPromptPath := filepath.Join(baseDir, prompt.SystemPromptFileName)
+	if _, err := os.Stat(sysPromptPath); os.IsNotExist(err) {
+		t.Errorf("system prompt file not found at %q", sysPromptPath)
+	}
+
+	// Verify the executor has the system prompt path in role overrides
+	execOverrides, ok := runner.exec.roleOverrides[team.RoleExecution]
+	if !ok {
+		t.Fatal("missing execution role overrides")
+	}
+	if execOverrides.AppendSystemPromptFile != sysPromptPath {
+		t.Errorf("AppendSystemPromptFile = %q, want %q",
+			execOverrides.AppendSystemPromptFile, sysPromptPath)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
+	"github.com/Iron-Ham/claudio/internal/orchestrator/prompt"
 	"github.com/Iron-Ham/claudio/internal/pipeline"
 	"github.com/Iron-Ham/claudio/internal/team"
 	"github.com/Iron-Ham/claudio/internal/ultraplan"
@@ -101,10 +102,22 @@ func NewPipelineRunner(cfg PipelineRunnerConfig) (*PipelineRunner, error) {
 		logger = logging.NopLogger()
 	}
 
+	// Generate orchestration system prompt file and inject it into execution role
+	// overrides. This gives all execution instances the guidelines and completion
+	// protocol via --append-system-prompt-file, keeping task prompts clean.
+	roleOverrides := cfg.RoleOverrides
+	sysPromptPath, sysErr := prompt.WriteOrchestrationSystemPrompt(baseDir)
+	if sysErr != nil {
+		logger.Warn("bridgewire: failed to write orchestration system prompt, continuing without",
+			"error", sysErr)
+	} else {
+		roleOverrides = injectSystemPrompt(roleOverrides, sysPromptPath)
+	}
+
 	exec, err := NewPipelineExecutorFromOrch(
 		cfg.Orch, cfg.Session, cfg.Verifier,
 		cfg.Bus, pipe, cfg.Recorder, logger,
-		cfg.RoleOverrides,
+		roleOverrides,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("bridgewire: create executor: %w", err)
@@ -198,4 +211,19 @@ func convertPlan(src *orchestrator.PlanSpec) *ultraplan.PlanSpec {
 		Constraints:     constraints,
 		CreatedAt:       src.CreatedAt,
 	}
+}
+
+// injectSystemPrompt ensures the execution role's overrides include the given
+// system prompt file path. If the role already has an AppendSystemPromptFile
+// set (explicitly by the caller), it is not overwritten.
+func injectSystemPrompt(overrides map[team.Role]ai.StartOptions, path string) map[team.Role]ai.StartOptions {
+	if overrides == nil {
+		overrides = make(map[team.Role]ai.StartOptions)
+	}
+	execOverrides := overrides[team.RoleExecution]
+	if execOverrides.AppendSystemPromptFile == "" {
+		execOverrides.AppendSystemPromptFile = path
+		overrides[team.RoleExecution] = execOverrides
+	}
+	return overrides
 }
