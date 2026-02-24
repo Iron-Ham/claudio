@@ -33,6 +33,11 @@ type PipelineRunnerConfig struct {
 	// When set, execution instances for a given role will use these overrides
 	// for permission mode, model, tool restrictions, etc.
 	RoleOverrides map[team.Role]ai.StartOptions
+
+	// SubprocessMode uses direct subprocess execution (stream-json) instead of tmux.
+	SubprocessMode bool
+	// CommandName is the AI backend CLI binary (default: "claude").
+	CommandName string
 }
 
 // PipelineRunner implements orchestrator.ExecutionRunner using the
@@ -115,11 +120,31 @@ func NewPipelineRunner(cfg PipelineRunnerConfig) (*PipelineRunner, error) {
 	}
 	roleOverrides = injectSystemPrompt(roleOverrides, sysPromptPath)
 
-	exec, err := NewPipelineExecutorFromOrch(
-		cfg.Orch, cfg.Session, cfg.Verifier,
-		cfg.Bus, pipe, cfg.Recorder, logger,
-		roleOverrides,
-	)
+	var exec *PipelineExecutor
+	if cfg.SubprocessMode {
+		commandName := cfg.CommandName
+		if commandName == "" {
+			commandName = "claude"
+		}
+		exec, err = NewPipelineExecutor(PipelineExecutorConfig{
+			Factory: NewSubprocessFactory(cfg.Orch, cfg.Session, commandName, ai.StartOptions{}, logger),
+			FactoryWithOverrides: func(overrides ai.StartOptions) bridge.InstanceFactory {
+				return NewSubprocessFactory(cfg.Orch, cfg.Session, commandName, overrides, logger)
+			},
+			RoleOverrides: roleOverrides,
+			Checker:       NewCompletionChecker(cfg.Verifier),
+			Bus:           cfg.Bus,
+			Pipeline:      pipe,
+			Recorder:      cfg.Recorder,
+			Logger:        logger,
+		})
+	} else {
+		exec, err = NewPipelineExecutorFromOrch(
+			cfg.Orch, cfg.Session, cfg.Verifier,
+			cfg.Bus, pipe, cfg.Recorder, logger,
+			roleOverrides,
+		)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("bridgewire: create executor: %w", err)
 	}

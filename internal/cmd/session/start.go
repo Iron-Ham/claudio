@@ -512,7 +512,9 @@ func resumeUltraplanSession(orch *orchestrator.Orchestrator, sess *orchestrator.
 	coordinator := orchestrator.NewCoordinator(orch, sess, ultraSession, logger)
 
 	// Register pipeline factory for lazy PipelineRunner creation
-	registerPipelineFactory(coordinator, orch, logger)
+	registerPipelineFactory(coordinator, orch, logger,
+		viper.GetBool("experimental.subprocess_mode"),
+		viper.GetString("ai.claude.command"))
 
 	// Resume based on current phase
 	switch ultraSession.Phase {
