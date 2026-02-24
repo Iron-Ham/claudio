@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-02-24
+
 ### Added
 
 - **Native Worktree Flag Support** - Added `NativeWorktree` config option (`ai.claude.native_worktree`) and `Worktree` field on `StartOptions` to support Claude Code's built-in `--worktree` flag for isolated git worktree execution. Wired through the full invocation chain: config, `ClaudeBackend.BuildStartCommand`, and `streamjson.BuildSubprocessArgs`. When enabled, Claude Code creates and manages its own worktree internally instead of Claudio managing it externally.
@@ -1023,6 +1025,7 @@ Initial release of Claudio - a CLI/TUI orchestration tool for running multiple C
 - Configuration reference
 - Troubleshooting guide and FAQ
 
+[0.17.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.17.0
 [0.16.1]: https://github.com/Iron-Ham/claudio/releases/tag/v0.16.1
 [0.16.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.16.0
 [0.15.0]: https://github.com/Iron-Ham/claudio/releases/tag/v0.15.0
