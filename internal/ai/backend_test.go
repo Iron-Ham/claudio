@@ -659,6 +659,47 @@ func TestClaudeBackend_NoUserPrompt(t *testing.T) {
 	}
 }
 
+func TestClaudeBackend_Worktree(t *testing.T) {
+	t.Run("from config", func(t *testing.T) {
+		backend := NewClaudeBackend(config.ClaudeBackendConfig{
+			Command:        "claude",
+			NativeWorktree: true,
+		})
+		cmd, err := backend.BuildStartCommand(StartOptions{PromptFile: "/tmp/prompt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(cmd, "--worktree") {
+			t.Errorf("missing --worktree: %s", cmd)
+		}
+	})
+
+	t.Run("per-invocation override", func(t *testing.T) {
+		backend := NewClaudeBackend(config.ClaudeBackendConfig{Command: "claude"})
+		cmd, err := backend.BuildStartCommand(StartOptions{
+			PromptFile: "/tmp/prompt",
+			Worktree:   true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(cmd, "--worktree") {
+			t.Errorf("missing --worktree: %s", cmd)
+		}
+	})
+
+	t.Run("disabled by default", func(t *testing.T) {
+		backend := NewClaudeBackend(config.ClaudeBackendConfig{Command: "claude"})
+		cmd, err := backend.BuildStartCommand(StartOptions{PromptFile: "/tmp/prompt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(cmd, "--worktree") {
+			t.Errorf("--worktree should not appear when disabled: %s", cmd)
+		}
+	})
+}
+
 func TestClaudeBackend_OutputFormat(t *testing.T) {
 	backend := NewClaudeBackend(config.ClaudeBackendConfig{Command: "claude"})
 
@@ -738,6 +779,7 @@ func TestClaudeBackend_CombinedFlags(t *testing.T) {
 		OutputOnly:             true,
 		OutputFormat:           OutputFormatStreamJSON,
 		NoUserPrompt:           true,
+		Worktree:               true,
 		AppendSystemPromptFile: "/tmp/orchestration.md",
 		DisallowedTools:        []string{"Bash"},
 	})
@@ -758,6 +800,7 @@ func TestClaudeBackend_CombinedFlags(t *testing.T) {
 		"--append-system-prompt-file",
 		"--append-system-prompt",
 		"--no-user-prompt",
+		"--worktree",
 		"--teammate-mode in-process",
 	}
 	for _, flag := range expected {

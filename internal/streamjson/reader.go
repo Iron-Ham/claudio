@@ -101,7 +101,7 @@ func (r *Reader) ReadAll() ([]Event, error) {
 
 // CollectResult reads events until a ResultEvent is found and returns it.
 // Returns nil and io.EOF if the stream ends without a result event.
-// All intermediate events are passed to the optional callback if provided.
+// Every event (including the ResultEvent) is passed to the optional callback if provided.
 func (r *Reader) CollectResult(onEvent func(Event)) (*ResultEvent, error) {
 	for {
 		event, err := r.Next()

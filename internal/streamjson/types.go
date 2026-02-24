@@ -29,9 +29,8 @@ type Event interface {
 
 // RawEvent is used for initial JSON deserialization to determine the event type.
 type RawEvent struct {
-	Type    EventType       `json:"type"`
-	Subtype string          `json:"subtype,omitempty"`
-	Raw     json.RawMessage `json:"-"` // The full raw JSON for re-parsing
+	Type    EventType `json:"type"`
+	Subtype string    `json:"subtype,omitempty"`
 }
 
 // SystemEvent is emitted at the start of a session with initialization data.

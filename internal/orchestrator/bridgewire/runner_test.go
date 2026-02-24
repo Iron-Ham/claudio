@@ -362,6 +362,24 @@ func TestInjectSystemPrompt_ExistingMap(t *testing.T) {
 	}
 }
 
+func TestInjectSystemPrompt_DoesNotMutateCaller(t *testing.T) {
+	original := map[team.Role]ai.StartOptions{
+		team.RoleExecution: {PermissionMode: "auto-accept"},
+	}
+
+	result := injectSystemPrompt(original, "/tmp/sys-prompt.md")
+
+	// Result should have the system prompt
+	if result[team.RoleExecution].AppendSystemPromptFile != "/tmp/sys-prompt.md" {
+		t.Errorf("result missing system prompt")
+	}
+	// Original should NOT be mutated
+	if original[team.RoleExecution].AppendSystemPromptFile != "" {
+		t.Errorf("original was mutated: AppendSystemPromptFile = %q, want empty",
+			original[team.RoleExecution].AppendSystemPromptFile)
+	}
+}
+
 func TestInjectSystemPrompt_DoesNotOverrideExplicit(t *testing.T) {
 	overrides := map[team.Role]ai.StartOptions{
 		team.RoleExecution: {AppendSystemPromptFile: "/explicit/path.md"},
