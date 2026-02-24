@@ -25,6 +25,7 @@ type mockContext struct {
 	activeTab         int
 	pausedInstances   []string
 	ensureActiveCalls int
+	resumeActiveCalls int
 }
 
 func newMockContext() *mockContext {
@@ -80,6 +81,10 @@ func (m *mockContext) PauseInstance(instanceID string) {
 
 func (m *mockContext) EnsureActiveVisible() {
 	m.ensureActiveCalls++
+}
+
+func (m *mockContext) ResumeActiveInstance() {
+	m.resumeActiveCalls++
 }
 
 func TestHandleOutput(t *testing.T) {
@@ -1072,6 +1077,84 @@ func TestHandleInstanceSetupComplete_WithLogger(t *testing.T) {
 		expectedErr := "Failed to setup instance test-instance: setup failed"
 		if ctx.errorMessage != expectedErr {
 			t.Errorf("HandleInstanceSetupComplete() errorMessage = %q, want %q", ctx.errorMessage, expectedErr)
+		}
+	})
+}
+
+func TestHandleInstanceSetupComplete_ErrorResumesActiveInstance(t *testing.T) {
+	session := &orchestrator.Session{
+		Instances: []*orchestrator.Instance{
+			{ID: "test-instance", Task: "test task"},
+		},
+	}
+
+	t.Run("setup error resumes active instance", func(t *testing.T) {
+		ctx := newMockContext()
+		ctx.session = session
+
+		HandleInstanceSetupComplete(ctx, msg.InstanceSetupCompleteMsg{
+			InstanceID: "test-instance",
+			Err:        errors.New("worktree creation failed"),
+		})
+
+		if ctx.resumeActiveCalls != 1 {
+			t.Errorf("Expected ResumeActiveInstance to be called once, got %d", ctx.resumeActiveCalls)
+		}
+	})
+
+	t.Run("nil session resumes active instance", func(t *testing.T) {
+		ctx := newMockContext()
+		ctx.session = nil
+
+		HandleInstanceSetupComplete(ctx, msg.InstanceSetupCompleteMsg{
+			InstanceID: "test-instance",
+		})
+
+		if ctx.resumeActiveCalls != 1 {
+			t.Errorf("Expected ResumeActiveInstance to be called once for nil session, got %d", ctx.resumeActiveCalls)
+		}
+	})
+
+	t.Run("unknown instance resumes active instance", func(t *testing.T) {
+		ctx := newMockContext()
+		ctx.session = session
+
+		HandleInstanceSetupComplete(ctx, msg.InstanceSetupCompleteMsg{
+			InstanceID: "nonexistent-instance",
+		})
+
+		if ctx.resumeActiveCalls != 1 {
+			t.Errorf("Expected ResumeActiveInstance to be called once for unknown instance, got %d", ctx.resumeActiveCalls)
+		}
+	})
+
+	t.Run("nil orchestrator resumes active instance", func(t *testing.T) {
+		viper.Set("session.auto_start_on_add", true)
+		ctx := newMockContext()
+		ctx.session = session
+		ctx.orchestrator = nil
+
+		HandleInstanceSetupComplete(ctx, msg.InstanceSetupCompleteMsg{
+			InstanceID: "test-instance",
+		})
+
+		if ctx.resumeActiveCalls != 1 {
+			t.Errorf("Expected ResumeActiveInstance to be called once for nil orchestrator, got %d", ctx.resumeActiveCalls)
+		}
+	})
+
+	t.Run("success does not resume active instance", func(t *testing.T) {
+		viper.Set("session.auto_start_on_add", false)
+		ctx := newMockContext()
+		ctx.session = session
+
+		HandleInstanceSetupComplete(ctx, msg.InstanceSetupCompleteMsg{
+			InstanceID: "test-instance",
+			Err:        nil,
+		})
+
+		if ctx.resumeActiveCalls != 0 {
+			t.Errorf("Expected ResumeActiveInstance not to be called on success, got %d", ctx.resumeActiveCalls)
 		}
 	})
 }

@@ -264,6 +264,20 @@ func (m *Monitor) GetStartTime(instanceID string) *time.Time {
 	return nil
 }
 
+// ResetStaleCounter resets the stale output counter for an instance.
+// This should be called when an instance is resumed (e.g., user switches back to it)
+// to prevent stale ticks accumulated across previous active windows from carrying over.
+// Without this, intermittent viewing of an idle instance accumulates toward the
+// stale threshold even though the instance is healthy.
+func (m *Monitor) ResetStaleCounter(instanceID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if inst, exists := m.instances[instanceID]; exists {
+		inst.repeatedOutputCount = 0
+	}
+}
+
 // ClearTimeout resets the timeout state for an instance.
 // This is useful for recovery/restart scenarios.
 func (m *Monitor) ClearTimeout(instanceID string) {
@@ -315,11 +329,15 @@ func (m *Monitor) ProcessOutput(instanceID string, output []byte, outputHash str
 		inst.lastOutputHash = outputHash
 		inst.repeatedOutputCount = 0
 	} else if m.config.StaleDetection {
-		// Only increment stale counter if no working indicators are present.
-		// If the backend is showing spinners, "Reading...", etc., it's actively working
-		// even if the output hash hasn't changed (e.g., spinner is static).
-		// This prevents false positives during the backend's thinking phase.
-		if !hasWorkingIndicators {
+		// Only increment stale counter if:
+		// 1. No working indicators are present (spinners, "Reading...", etc.)
+		// 2. The instance is not in a waiting state (at the input prompt, asking a question, etc.)
+		//
+		// When the backend is waiting for user input, the output naturally stops changing.
+		// This is expected idle behavior, not a stale loop. Without this guard, instances
+		// that complete quickly and show the input prompt accumulate stale ticks across
+		// pause/resume cycles until they're falsely marked as stuck.
+		if !hasWorkingIndicators && !newState.IsWaiting() {
 			inst.repeatedOutputCount++
 		}
 	}
@@ -389,9 +407,13 @@ func (m *Monitor) CheckTimeouts(instanceID string) *TimeoutType {
 
 	// Check stale detection (repeated identical output)
 	// Note: The stale counter is only incremented in ProcessOutput when no
-	// working indicators are present, so this check is already filtered to
-	// cases where the backend is not actively showing working patterns.
-	if triggeredTimeout == nil && m.config.StaleDetection && inst.repeatedOutputCount > m.config.StaleThreshold {
+	// working indicators are present AND the instance is not in a waiting state,
+	// so this check is already filtered. The waiting-state guard here is belt-and-suspenders:
+	// even if the counter somehow accumulated, don't trigger stale for an instance
+	// that the detector has identified as waiting for user input/question/permission.
+	if triggeredTimeout == nil && m.config.StaleDetection &&
+		!inst.currentState.IsWaiting() &&
+		inst.repeatedOutputCount > m.config.StaleThreshold {
 		t := TimeoutStale
 		triggeredTimeout = &t
 		inst.timedOut = true

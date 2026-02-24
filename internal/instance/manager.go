@@ -1190,6 +1190,11 @@ func (m *Manager) Resume() error {
 
 	m.paused = false
 	m.pausedHeartbeatCounter = 0 // Reset so next pause starts fresh
+
+	// Reset the stale counter so ticks accumulated during previous active windows
+	// don't carry over. Without this, switching between instances repeatedly causes
+	// healthy idle instances to eventually cross the stale threshold.
+	m.stateMonitor.ResetStaleCounter(m.id)
 	return nil
 }
 

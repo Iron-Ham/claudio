@@ -49,6 +49,12 @@ type Context interface {
 
 	// EnsureActiveVisible ensures the active tab is visible in the sidebar.
 	EnsureActiveVisible()
+
+	// ResumeActiveInstance resumes the current active instance's output capture.
+	// This should be called in error paths where PauseInstance was called on
+	// the old instance but the new instance failed to start, leaving the UI
+	// with a broken stub and the old instance permanently paused.
+	ResumeActiveInstance()
 }
 
 // HandleOutput processes an OutputMsg, adding output data to the manager.
@@ -275,16 +281,23 @@ func HandleInstanceSetupComplete(ctx Context, m msg.InstanceSetupCompleteMsg) {
 				"error", m.Err.Error(),
 			)
 		}
+		// HandleInstanceStubCreated paused the old active instance and switched
+		// to the new stub. Since setup failed, the stub has no manager—resume
+		// whatever is now the active instance so the user isn't left with a
+		// permanently paused display.
+		ctx.ResumeActiveInstance()
 		return
 	}
 
 	session := ctx.Session()
 	if session == nil {
+		ctx.ResumeActiveInstance()
 		return
 	}
 
 	inst := session.GetInstance(m.InstanceID)
 	if inst == nil {
+		ctx.ResumeActiveInstance()
 		return
 	}
 
@@ -301,6 +314,7 @@ func HandleInstanceSetupComplete(ctx Context, m msg.InstanceSetupCompleteMsg) {
 
 	orch := ctx.Orchestrator()
 	if orch == nil {
+		ctx.ResumeActiveInstance()
 		return
 	}
 
@@ -309,6 +323,10 @@ func HandleInstanceSetupComplete(ctx Context, m msg.InstanceSetupCompleteMsg) {
 		if logger := ctx.Logger(); logger != nil {
 			logger.Error("failed to auto-start instance", "error", err.Error())
 		}
+		// Same rationale as the setup-failure path above: the old instance was
+		// paused during stub creation and the new one failed to start, so resume
+		// the active instance to avoid a frozen display.
+		ctx.ResumeActiveInstance()
 		return
 	}
 
