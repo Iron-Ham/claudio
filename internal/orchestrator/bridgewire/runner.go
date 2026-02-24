@@ -3,6 +3,7 @@ package bridgewire
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/bridge"
@@ -105,14 +106,14 @@ func NewPipelineRunner(cfg PipelineRunnerConfig) (*PipelineRunner, error) {
 	// Generate orchestration system prompt file and inject it into execution role
 	// overrides. This gives all execution instances the guidelines and completion
 	// protocol via --append-system-prompt-file, keeping task prompts clean.
+	// This is a hard error: without the system prompt, instances won't know the
+	// completion protocol (writing the sentinel file), causing all tasks to time out.
 	roleOverrides := cfg.RoleOverrides
 	sysPromptPath, sysErr := prompt.WriteOrchestrationSystemPrompt(baseDir)
 	if sysErr != nil {
-		logger.Warn("bridgewire: failed to write orchestration system prompt, continuing without",
-			"error", sysErr)
-	} else {
-		roleOverrides = injectSystemPrompt(roleOverrides, sysPromptPath)
+		return nil, fmt.Errorf("bridgewire: write orchestration system prompt: %w", sysErr)
 	}
+	roleOverrides = injectSystemPrompt(roleOverrides, sysPromptPath)
 
 	exec, err := NewPipelineExecutorFromOrch(
 		cfg.Orch, cfg.Session, cfg.Verifier,
@@ -216,14 +217,15 @@ func convertPlan(src *orchestrator.PlanSpec) *ultraplan.PlanSpec {
 // injectSystemPrompt ensures the execution role's overrides include the given
 // system prompt file path. If the role already has an AppendSystemPromptFile
 // set (explicitly by the caller), it is not overwritten.
+//
+// Returns a new map to avoid mutating the caller's data (defensive copy).
 func injectSystemPrompt(overrides map[team.Role]ai.StartOptions, path string) map[team.Role]ai.StartOptions {
-	if overrides == nil {
-		overrides = make(map[team.Role]ai.StartOptions)
-	}
-	execOverrides := overrides[team.RoleExecution]
+	result := make(map[team.Role]ai.StartOptions, len(overrides)+1)
+	maps.Copy(result, overrides)
+	execOverrides := result[team.RoleExecution]
 	if execOverrides.AppendSystemPromptFile == "" {
 		execOverrides.AppendSystemPromptFile = path
-		overrides[team.RoleExecution] = execOverrides
+		result[team.RoleExecution] = execOverrides
 	}
-	return overrides
+	return result
 }
