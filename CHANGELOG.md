@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Subprocess Mode Permission Prompt** - Fixed subprocess execution mode triggering Claude Code's interactive "trust the folder" prompt by flowing backend config defaults (permission mode, model, max turns, tool restrictions) through to subprocess invocations. The tmux path inherits these from `ClaudeBackend`; the subprocess path bypassed `ClaudeBackend` entirely, so `--dangerously-skip-permissions` was never emitted.
+
 ## [0.17.0] - 2026-02-24
 
 ### Added

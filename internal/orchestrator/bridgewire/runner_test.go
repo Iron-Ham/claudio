@@ -394,6 +394,191 @@ func TestInjectSystemPrompt_DoesNotOverrideExplicit(t *testing.T) {
 	}
 }
 
+func TestMergeUniqueStrings(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b []string
+		want []string
+	}{
+		{"both nil", nil, nil, nil},
+		{"a only", []string{"x", "y"}, nil, []string{"x", "y"}},
+		{"b only", nil, []string{"x", "y"}, []string{"x", "y"}},
+		{"no overlap", []string{"a"}, []string{"b"}, []string{"a", "b"}},
+		{"duplicates", []string{"a", "b"}, []string{"b", "c"}, []string{"a", "b", "c"}},
+		{"all same", []string{"x"}, []string{"x"}, []string{"x"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mergeUniqueStrings(tt.a, tt.b)
+			if len(got) != len(tt.want) {
+				t.Fatalf("mergeUniqueStrings() len = %d, want %d (%v vs %v)", len(got), len(tt.want), got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("mergeUniqueStrings()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestMergeStartOptions(t *testing.T) {
+	t.Run("overrides take precedence for non-zero fields", func(t *testing.T) {
+		defaults := ai.StartOptions{
+			PermissionMode: "bypass",
+			Model:          "sonnet",
+			MaxTurns:       10,
+			AllowedTools:   []string{"Read"},
+		}
+		overrides := ai.StartOptions{
+			PermissionMode: "plan",
+			Model:          "opus",
+			MaxTurns:       5,
+		}
+
+		got := mergeStartOptions(defaults, overrides)
+
+		if got.PermissionMode != "plan" {
+			t.Errorf("PermissionMode = %q, want %q", got.PermissionMode, "plan")
+		}
+		if got.Model != "opus" {
+			t.Errorf("Model = %q, want %q", got.Model, "opus")
+		}
+		if got.MaxTurns != 5 {
+			t.Errorf("MaxTurns = %d, want %d", got.MaxTurns, 5)
+		}
+		// AllowedTools should be preserved from defaults since overrides has none
+		if len(got.AllowedTools) != 1 || got.AllowedTools[0] != "Read" {
+			t.Errorf("AllowedTools = %v, want [Read]", got.AllowedTools)
+		}
+	})
+
+	t.Run("defaults used when overrides are zero", func(t *testing.T) {
+		defaults := ai.StartOptions{
+			PermissionMode:  "bypass",
+			Model:           "sonnet",
+			MaxTurns:        10,
+			AllowedTools:    []string{"Read"},
+			DisallowedTools: []string{"Write"},
+		}
+		overrides := ai.StartOptions{} // all zero
+
+		got := mergeStartOptions(defaults, overrides)
+
+		if got.PermissionMode != "bypass" {
+			t.Errorf("PermissionMode = %q, want %q", got.PermissionMode, "bypass")
+		}
+		if got.Model != "sonnet" {
+			t.Errorf("Model = %q, want %q", got.Model, "sonnet")
+		}
+		if got.MaxTurns != 10 {
+			t.Errorf("MaxTurns = %d, want %d", got.MaxTurns, 10)
+		}
+		if len(got.AllowedTools) != 1 || got.AllowedTools[0] != "Read" {
+			t.Errorf("AllowedTools = %v, want [Read]", got.AllowedTools)
+		}
+		if len(got.DisallowedTools) != 1 || got.DisallowedTools[0] != "Write" {
+			t.Errorf("DisallowedTools = %v, want [Write]", got.DisallowedTools)
+		}
+	})
+
+	t.Run("tool lists are merged and deduplicated", func(t *testing.T) {
+		defaults := ai.StartOptions{
+			AllowedTools:    []string{"Read", "Bash"},
+			DisallowedTools: []string{"Write"},
+		}
+		overrides := ai.StartOptions{
+			AllowedTools:    []string{"Bash", "Edit"},
+			DisallowedTools: []string{"Write", "Delete"},
+		}
+
+		got := mergeStartOptions(defaults, overrides)
+
+		wantAllowed := []string{"Read", "Bash", "Edit"}
+		if len(got.AllowedTools) != len(wantAllowed) {
+			t.Fatalf("AllowedTools len = %d, want %d (%v)", len(got.AllowedTools), len(wantAllowed), got.AllowedTools)
+		}
+		for i, w := range wantAllowed {
+			if got.AllowedTools[i] != w {
+				t.Errorf("AllowedTools[%d] = %q, want %q", i, got.AllowedTools[i], w)
+			}
+		}
+
+		wantDisallowed := []string{"Write", "Delete"}
+		if len(got.DisallowedTools) != len(wantDisallowed) {
+			t.Fatalf("DisallowedTools len = %d, want %d (%v)", len(got.DisallowedTools), len(wantDisallowed), got.DisallowedTools)
+		}
+		for i, w := range wantDisallowed {
+			if got.DisallowedTools[i] != w {
+				t.Errorf("DisallowedTools[%d] = %q, want %q", i, got.DisallowedTools[i], w)
+			}
+		}
+	})
+
+	t.Run("boolean fields sticky-true", func(t *testing.T) {
+		defaults := ai.StartOptions{}
+		overrides := ai.StartOptions{NoUserPrompt: true, Worktree: true}
+
+		got := mergeStartOptions(defaults, overrides)
+
+		if !got.NoUserPrompt {
+			t.Error("NoUserPrompt = false, want true")
+		}
+		if !got.Worktree {
+			t.Error("Worktree = false, want true")
+		}
+	})
+
+	t.Run("system prompt override wins", func(t *testing.T) {
+		defaults := ai.StartOptions{AppendSystemPromptFile: "/default.md"}
+		overrides := ai.StartOptions{AppendSystemPromptFile: "/override.md"}
+
+		got := mergeStartOptions(defaults, overrides)
+
+		if got.AppendSystemPromptFile != "/override.md" {
+			t.Errorf("AppendSystemPromptFile = %q, want %q", got.AppendSystemPromptFile, "/override.md")
+		}
+	})
+}
+
+func TestNewPipelineRunner_SubprocessMode_BackendDefaults(t *testing.T) {
+	bus := event.NewBus()
+	baseDir := t.TempDir()
+	plan := &orchestrator.PlanSpec{
+		ID:             "plan-1",
+		Tasks:          []orchestrator.PlannedTask{{ID: "t1", Title: "task", Description: "d"}},
+		ExecutionOrder: [][]string{{"t1"}},
+	}
+
+	runner, err := NewPipelineRunner(PipelineRunnerConfig{
+		Orch:           &orchestrator.Orchestrator{},
+		Session:        &orchestrator.Session{BaseRepo: baseDir},
+		Plan:           plan,
+		Bus:            bus,
+		MaxParallel:    1,
+		SubprocessMode: true,
+		BackendDefaults: ai.StartOptions{
+			PermissionMode: "bypass",
+			Model:          "sonnet",
+			MaxTurns:       15,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewPipelineRunner() error = %v", err)
+	}
+	if runner == nil {
+		t.Fatal("runner is nil")
+	}
+
+	// Verify the executor's default factory carries the backend defaults.
+	// We can't inspect the factory directly (it's an interface), but we can
+	// check that the executor was created successfully, confirming the
+	// BackendDefaults were passed through without error.
+	if runner.exec == nil {
+		t.Fatal("runner.exec is nil")
+	}
+}
+
 func TestNewPipelineRunner_WritesSystemPromptFile(t *testing.T) {
 	bus := event.NewBus()
 	baseDir := t.TempDir()

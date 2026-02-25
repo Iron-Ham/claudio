@@ -38,6 +38,12 @@ type PipelineRunnerConfig struct {
 	SubprocessMode bool
 	// CommandName is the AI backend CLI binary (default: "claude").
 	CommandName string
+
+	// BackendDefaults provides base CLI flag defaults from the AI backend config.
+	// In subprocess mode, these are merged with per-role overrides (role values
+	// take precedence). The tmux path gets these via ClaudeBackend; the subprocess
+	// path needs them explicitly because it bypasses ClaudeBackend entirely.
+	BackendDefaults ai.StartOptions
 }
 
 // PipelineRunner implements orchestrator.ExecutionRunner using the
@@ -126,10 +132,12 @@ func NewPipelineRunner(cfg PipelineRunnerConfig) (*PipelineRunner, error) {
 		if commandName == "" {
 			commandName = "claude"
 		}
+		defaults := cfg.BackendDefaults
 		exec, err = NewPipelineExecutor(PipelineExecutorConfig{
-			Factory: NewSubprocessFactory(cfg.Orch, cfg.Session, commandName, ai.StartOptions{}, logger),
+			Factory: NewSubprocessFactory(cfg.Orch, cfg.Session, commandName, defaults, logger),
 			FactoryWithOverrides: func(overrides ai.StartOptions) bridge.InstanceFactory {
-				return NewSubprocessFactory(cfg.Orch, cfg.Session, commandName, overrides, logger)
+				merged := mergeStartOptions(defaults, overrides)
+				return NewSubprocessFactory(cfg.Orch, cfg.Session, commandName, merged, logger)
 			},
 			RoleOverrides: roleOverrides,
 			Checker:       NewCompletionChecker(cfg.Verifier),
@@ -237,6 +245,62 @@ func convertPlan(src *orchestrator.PlanSpec) *ultraplan.PlanSpec {
 		Constraints:     constraints,
 		CreatedAt:       src.CreatedAt,
 	}
+}
+
+// mergeStartOptions returns a copy of defaults with any non-zero fields from
+// overrides taking precedence. This mirrors the merge logic in
+// ClaudeBackend.BuildStartCommand (firstNonEmpty/firstPositive/mergeUnique)
+// for the subprocess path, which bypasses ClaudeBackend entirely.
+func mergeStartOptions(defaults, overrides ai.StartOptions) ai.StartOptions {
+	result := defaults
+	if overrides.PermissionMode != "" {
+		result.PermissionMode = overrides.PermissionMode
+	}
+	if overrides.Model != "" {
+		result.Model = overrides.Model
+	}
+	if overrides.MaxTurns > 0 {
+		result.MaxTurns = overrides.MaxTurns
+	}
+	if len(overrides.AllowedTools) > 0 {
+		result.AllowedTools = mergeUniqueStrings(defaults.AllowedTools, overrides.AllowedTools)
+	}
+	if len(overrides.DisallowedTools) > 0 {
+		result.DisallowedTools = mergeUniqueStrings(defaults.DisallowedTools, overrides.DisallowedTools)
+	}
+	if overrides.AppendSystemPromptFile != "" {
+		result.AppendSystemPromptFile = overrides.AppendSystemPromptFile
+	}
+	if overrides.NoUserPrompt {
+		result.NoUserPrompt = true
+	}
+	if overrides.Worktree {
+		result.Worktree = true
+	}
+	return result
+}
+
+// mergeUniqueStrings combines two string slices, deduplicating entries.
+// Order is preserved: a's entries first, then unique entries from b.
+func mergeUniqueStrings(a, b []string) []string {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(a)+len(b))
+	var result []string
+	for _, s := range a {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	for _, s := range b {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 // injectSystemPrompt ensures the execution role's overrides include the given
