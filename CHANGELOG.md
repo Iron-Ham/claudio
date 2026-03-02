@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Automatic Tmux Session Recovery** - When a tmux server dies during a live session (macOS `/tmp` cleanup, crash, or kill), the capture loop now automatically detects the death and resumes the Claude session in a fresh tmux session using `--resume`. Recovery attempts are limited (default 3) and only triggered when a backend session ID exists. Includes `OnRecovery` callback for orchestrator state synchronization.
+- **Stable Tmux Socket Directory** - Moved tmux sockets from `/tmp/tmux-{uid}/` to `~/.claudio/sockets/` via `TMUX_TMPDIR` to prevent macOS periodic `/tmp` cleanup from killing active tmux servers. `ListClaudioSockets` checks both locations for backward compatibility.
+
+### Changed
+- **Extract `createTmuxSession()` Helper** - Extracted duplicated tmux session setup from `Start()` and `StartWithResume()` into a reusable `createTmuxSession()` method, eliminating ~40 lines of duplication.
+- **Extract `buildInstanceCallbacks()` Helper** - Consolidated duplicated callback wiring between `newInstanceManager` and `newInstanceManagerWithBackend` into a shared method to prevent sync bugs when adding new callbacks.
+- **Log tmux session option errors** - Replaced silent `_ =` error discards in `createTmuxSession` and recovery paths with Debug/Warn-level logging for better diagnostics.
+
 ### Fixed
+- **TMUX_TMPDIR overwrite in `createTmuxSession`** - Fixed `createTmuxSession()` replacing the entire env (including `TMUX_TMPDIR` set by `CommandWithSocket`) with only `TERM=xterm-256color`, silently defeating the stable socket directory feature.
+- **Recovery handler race condition** - Fixed `handleInstanceRecovery` mutating shared `InstanceInfo` without holding the orchestrator lock, and added `findInstanceLocked` helper for safe instance lookup under write lock.
+- **Recovery TOCTOU race** - Consolidated precondition checks and counter increment in `attemptSessionRecovery` under a single lock acquisition to prevent concurrent callers from bypassing the attempt limit.
+- **SocketDir fallback** - `SocketDir()` now falls back to `os.TempDir()/claudio-sockets/` when `os.UserHomeDir()` fails (e.g., `HOME` unset in containers) instead of producing a root-level path.
 - **Subprocess Mode Permission Prompt** - Fixed subprocess execution mode triggering Claude Code's interactive "trust the folder" prompt by flowing backend config defaults (permission mode, model, max turns, tool restrictions) through to subprocess invocations. The tmux path inherits these from `ClaudeBackend`; the subprocess path bypassed `ClaudeBackend` entirely, so `--dangerously-skip-permissions` was never emitted.
 
 ## [0.17.0] - 2026-02-24

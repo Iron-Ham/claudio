@@ -42,16 +42,22 @@ func CommandContext(ctx context.Context, args ...string) *exec.Cmd {
 
 // CommandWithSocket creates an exec.Cmd for tmux with a custom socket name.
 // Use this for instance-specific operations to ensure socket isolation.
+// Sets TMUX_TMPDIR so sockets are placed in SocketDir() instead of /tmp.
 func CommandWithSocket(socket string, args ...string) *exec.Cmd {
 	fullArgs := append([]string{"-L", socket}, args...)
-	return exec.Command("tmux", fullArgs...)
+	cmd := exec.Command("tmux", fullArgs...)
+	cmd.Env = append(os.Environ(), "TMUX_TMPDIR="+SocketDir())
+	return cmd
 }
 
 // CommandContextWithSocket creates a context-aware exec.Cmd with a custom socket.
 // Use this for instance-specific operations that need context cancellation.
+// Sets TMUX_TMPDIR so sockets are placed in SocketDir() instead of /tmp.
 func CommandContextWithSocket(ctx context.Context, socket string, args ...string) *exec.Cmd {
 	fullArgs := append([]string{"-L", socket}, args...)
-	return exec.CommandContext(ctx, "tmux", fullArgs...)
+	cmd := exec.CommandContext(ctx, "tmux", fullArgs...)
+	cmd.Env = append(os.Environ(), "TMUX_TMPDIR="+SocketDir())
+	return cmd
 }
 
 // CommandArgs returns the arguments needed to run a tmux command
@@ -77,6 +83,23 @@ func BaseArgsWithSocket(socket string) []string {
 	return []string{"-L", socket}
 }
 
+// SocketDir returns the directory where Claudio tmux sockets are stored.
+// Uses ~/.claudio/sockets/ instead of /tmp/tmux-{uid}/ for stability
+// (macOS periodically cleans /tmp which can kill active tmux servers).
+// Falls back to os.TempDir()/claudio-sockets/ if HOME cannot be determined.
+func SocketDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return filepath.Join(os.TempDir(), "claudio-sockets")
+	}
+	return filepath.Join(home, ".claudio", "sockets")
+}
+
+// EnsureSocketDir creates the socket directory if it doesn't exist.
+func EnsureSocketDir() error {
+	return os.MkdirAll(SocketDir(), 0700)
+}
+
 // InstanceSocketName returns the socket name for a specific instance.
 // Socket names follow the format "claudio-{instanceID}".
 func InstanceSocketName(instanceID string) string {
@@ -84,41 +107,50 @@ func InstanceSocketName(instanceID string) string {
 }
 
 // ListClaudioSockets returns all tmux sockets that belong to Claudio instances.
-// It searches the tmux socket directory for sockets matching "claudio-*".
+// It searches both the new stable socket directory (~/.claudio/sockets/) and
+// the legacy tmux directory (/tmp/tmux-{uid}/) for backward compatibility.
 func ListClaudioSockets() ([]string, error) {
-	socketDir, err := getSocketDir()
-	if err != nil {
-		return nil, err
-	}
+	seen := make(map[string]struct{})
+	var sockets []string
 
-	pattern := filepath.Join(socketDir, SocketPrefix+"-*")
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return nil, err
-	}
+	// Search the primary (stable) socket directory
+	collectSockets(SocketDir(), seen, &sockets)
 
-	// Also include the default socket if it exists
-	defaultSocket := filepath.Join(socketDir, SocketName)
-	if _, err := os.Stat(defaultSocket); err == nil {
-		matches = append(matches, defaultSocket)
-	}
-
-	// Extract just the socket names from full paths
-	sockets := make([]string, 0, len(matches))
-	for _, match := range matches {
-		sockets = append(sockets, filepath.Base(match))
+	// Search the legacy tmux socket directory for backward compatibility
+	if legacyDir, err := legacySocketDir(); err == nil {
+		collectSockets(legacyDir, seen, &sockets)
 	}
 
 	return sockets, nil
 }
 
-// getSocketDir returns the tmux socket directory for the current user.
-func getSocketDir() (string, error) {
+// collectSockets searches a directory for Claudio sockets and appends unique names.
+func collectSockets(dir string, seen map[string]struct{}, sockets *[]string) {
+	pattern := filepath.Join(dir, SocketPrefix+"-*")
+	matches, _ := filepath.Glob(pattern)
+
+	// Also include the default socket if it exists
+	defaultSocket := filepath.Join(dir, SocketName)
+	if _, err := os.Stat(defaultSocket); err == nil {
+		matches = append(matches, defaultSocket)
+	}
+
+	for _, match := range matches {
+		name := filepath.Base(match)
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
+			*sockets = append(*sockets, name)
+		}
+	}
+}
+
+// legacySocketDir returns the legacy tmux socket directory (/tmp/tmux-{uid}/).
+// Used for backward compatibility when searching for existing sockets.
+func legacySocketDir() (string, error) {
 	u, err := user.Current()
 	if err != nil {
 		return "", err
 	}
-	// tmux uses /tmp/tmux-{uid}/ for sockets
 	return filepath.Join("/tmp", "tmux-"+u.Uid), nil
 }
 

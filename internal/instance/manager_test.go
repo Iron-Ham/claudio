@@ -1015,3 +1015,175 @@ func TestNewManagerWithDeps_StartOverridesEmpty(t *testing.T) {
 		t.Errorf("Model = %q, want empty", mgr.startOverrides.Model)
 	}
 }
+
+// --- Recovery tests ---
+
+func TestManager_Recovery_DefaultMaxAttempts(t *testing.T) {
+	mgr := newTestManager("test-recovery", "/tmp", "task")
+
+	if mgr.maxRecoveryAttempts != defaultMaxRecoveryAttempts {
+		t.Errorf("maxRecoveryAttempts = %d, want %d", mgr.maxRecoveryAttempts, defaultMaxRecoveryAttempts)
+	}
+	if mgr.recoveryAttempts != 0 {
+		t.Errorf("recoveryAttempts = %d, want 0", mgr.recoveryAttempts)
+	}
+}
+
+func TestManager_Recovery_NoSessionID(t *testing.T) {
+	mgr := newTestManager("test-recovery-nosession", "/tmp", "task")
+	// No claudeSessionID set — recovery should fail immediately
+
+	recovered := mgr.attemptSessionRecovery("test-recovery-nosession")
+	if recovered {
+		t.Error("attemptSessionRecovery should return false when no session ID is set")
+	}
+	if mgr.recoveryAttempts != 0 {
+		t.Errorf("recoveryAttempts should not increment on precondition failure, got %d", mgr.recoveryAttempts)
+	}
+}
+
+func TestManager_Recovery_LimitExceeded(t *testing.T) {
+	mgr := NewManagerWithDeps(ManagerOptions{
+		ID:              "test-recovery-limit",
+		WorkDir:         "/tmp",
+		Task:            "task",
+		ClaudeSessionID: "session-123",
+	})
+	// Exhaust the recovery limit
+	mgr.recoveryAttempts = mgr.maxRecoveryAttempts
+
+	recovered := mgr.attemptSessionRecovery("test-recovery-limit")
+	if recovered {
+		t.Error("attemptSessionRecovery should return false when limit is exceeded")
+	}
+}
+
+func TestManager_Recovery_BackendDoesNotSupportResume(t *testing.T) {
+	mgr := NewManagerWithDeps(ManagerOptions{
+		ID:              "test-recovery-noresume",
+		WorkDir:         "/tmp",
+		Task:            "task",
+		ClaudeSessionID: "session-123",
+		Backend:         &noResumeBackend{},
+	})
+
+	recovered := mgr.attemptSessionRecovery("test-recovery-noresume")
+	if recovered {
+		t.Error("attemptSessionRecovery should return false when backend doesn't support resume")
+	}
+	if mgr.recoveryAttempts != 0 {
+		t.Errorf("recoveryAttempts should not increment on precondition failure, got %d", mgr.recoveryAttempts)
+	}
+}
+
+func TestManager_Recovery_AlreadyCompleted(t *testing.T) {
+	mgr := NewManagerWithDeps(ManagerOptions{
+		ID:              "test-recovery-completed",
+		WorkDir:         "/tmp",
+		Task:            "task",
+		ClaudeSessionID: "session-123",
+	})
+	// Mark state as completed before attempting recovery
+	mgr.stateMonitor.Start("test-recovery-completed")
+	mgr.stateMonitor.SetState("test-recovery-completed", detect.StateCompleted)
+
+	recovered := mgr.attemptSessionRecovery("test-recovery-completed")
+	if recovered {
+		t.Error("attemptSessionRecovery should return false when instance is already completed")
+	}
+	if mgr.recoveryAttempts != 0 {
+		t.Errorf("recoveryAttempts should not increment on precondition failure, got %d", mgr.recoveryAttempts)
+	}
+}
+
+func TestManager_Recovery_IncrementsCounter(t *testing.T) {
+	mgr := NewManagerWithDeps(ManagerOptions{
+		ID:              "test-recovery-counter",
+		WorkDir:         "/tmp",
+		Task:            "task",
+		ClaudeSessionID: "session-123",
+	})
+	// Register with state monitor so state isn't "completed"
+	mgr.stateMonitor.Start("test-recovery-counter")
+
+	// attemptSessionRecovery will pass preconditions but fail at createTmuxSession
+	// (which tries to run tmux). The counter should still increment.
+	_ = mgr.attemptSessionRecovery("test-recovery-counter")
+
+	if mgr.recoveryAttempts != 1 {
+		t.Errorf("recoveryAttempts = %d, want 1 (should increment even on tmux failure)", mgr.recoveryAttempts)
+	}
+}
+
+func TestManager_Recovery_CallbackFired(t *testing.T) {
+	var callbackFired bool
+	var callbackID string
+	var callbackAttempt int
+
+	mgr := NewManagerWithDeps(ManagerOptions{
+		ID:              "test-recovery-callback",
+		WorkDir:         "/tmp",
+		Task:            "task",
+		ClaudeSessionID: "session-123",
+		Backend:         &noResumeBackend{},
+		Callbacks: ManagerCallbacks{
+			OnRecovery: func(id string, attempt int) {
+				callbackFired = true
+				callbackID = id
+				callbackAttempt = attempt
+			},
+		},
+	})
+	mgr.stateMonitor.Start("test-recovery-callback")
+
+	// Recovery should fail because the backend does not support resume
+	recovered := mgr.attemptSessionRecovery("test-recovery-callback")
+	if recovered {
+		t.Error("should not recover with noResumeBackend")
+	}
+	if callbackFired {
+		t.Error("callback should not fire on failed recovery")
+	}
+
+	// Verify callback is wired correctly
+	if mgr.recoveryCallback == nil {
+		t.Error("recoveryCallback should be set from ManagerCallbacks.OnRecovery")
+	}
+
+	// Manually fire the callback to verify wiring
+	mgr.recoveryCallback("test-recovery-callback", 1)
+	if !callbackFired {
+		t.Error("recoveryCallback should fire when called directly")
+	}
+	if callbackID != "test-recovery-callback" {
+		t.Errorf("callback instanceID = %q, want %q", callbackID, "test-recovery-callback")
+	}
+	if callbackAttempt != 1 {
+		t.Errorf("callback attempt = %d, want 1", callbackAttempt)
+	}
+}
+
+func TestManager_CreateTmuxSession_Extracted(t *testing.T) {
+	// Verify createTmuxSession is available and returns an error when tmux can't run.
+	// This tests the extraction refactor — the method exists and follows the expected
+	// error path. Real tmux session creation is tested via integration tests.
+	mgr := newTestManager("test-create-session", "/tmp/nonexistent-dir-xyz", "task")
+
+	mgr.mu.Lock()
+	err := mgr.createTmuxSession()
+	mgr.mu.Unlock()
+
+	// Should fail because the workdir doesn't exist or tmux isn't available in CI
+	// The important thing is it doesn't panic and returns an error
+	if err == nil {
+		// If tmux is available, the session was created — clean it up
+		_ = mgr.tmuxCmd("kill-session", "-t", mgr.sessionName).Run()
+	}
+}
+
+// noResumeBackend is a minimal backend implementation that doesn't support resume.
+type noResumeBackend struct {
+	ai.ClaudeBackend
+}
+
+func (n *noResumeBackend) SupportsResume() bool { return false }
