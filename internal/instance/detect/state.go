@@ -140,6 +140,10 @@ var (
 		`(?m)^❯\s`, // Prompt at start of a line with space (user typing)
 		// Pause indicator with mode name (plan/auto/focus mode)
 		`⏸\s*(?:plan|auto|focus)\s+mode(?:\s+on)?`, // "on" suffix is optional
+		// AskUserQuestion interactive selection menu (multiple-choice prompt).
+		// Claude presents options with arrow-key navigation; the footer line contains
+		// this distinctive pattern. Without this, the static menu triggers stale timeout.
+		`(?i)enter to select.*navigate.*cancel`,
 	}
 
 	// CompletionPatterns detect task completion.
@@ -371,12 +375,23 @@ func getLastNonEmptyLines(lines []string, n int) []string {
 }
 
 // StripAnsi removes ANSI escape codes from text.
-// This handles both CSI sequences (ESC[...letter) and OSC sequences (ESC]...BEL).
+// This handles CSI sequences (ESC[...letter), OSC sequences (ESC]...BEL),
+// character set selection (ESC(B, ESC)0), and keypad mode switches (ESC=, ESC>).
+// tmux capture-pane with -e commonly emits these additional escape types, and
+// leaving them unstripped can prevent pattern matching on lines that start with
+// specific Unicode characters (e.g., ❯ at the input prompt).
 func StripAnsi(text string) string {
-	// Match ANSI escape sequences: ESC[ followed by params and a letter
-	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07`)
 	return ansiRegex.ReplaceAllString(text, "")
 }
+
+// ansiRegex matches ANSI escape sequences for stripping. Pre-compiled for efficiency
+// since StripAnsi is called on every capture tick (~100ms per instance).
+var ansiRegex = regexp.MustCompile(
+	`\x1b\[[0-9;]*[a-zA-Z]` + // CSI: ESC[ params letter (colors, cursor, etc.)
+		`|\x1b\][^\x07]*\x07` + // OSC: ESC] ... BEL (window title, etc.)
+		`|\x1b[\(\)][A-Z0-9]` + // Character set selection: ESC(B, ESC)0, etc.
+		`|\x1b[=>]`, // Keypad mode: ESC= (application), ESC> (normal)
+)
 
 // GetLastNonEmptyLines returns the last n non-empty lines from a slice.
 // This is exported for use by other packages that need similar text processing.

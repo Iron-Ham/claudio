@@ -267,6 +267,45 @@ func TestDetector_Detect_InputWaiting(t *testing.T) {
 			output: "⏸ auto mode (shift+Tab to cycle)",
 		},
 		{
+			name:   "AskUserQuestion menu footer",
+			output: "Enter to select · ↑/↓ to navigate · Esc to cancel",
+		},
+		{
+			name: "AskUserQuestion full menu",
+			output: `☐ PR Split
+
+Does this split sound right? Generated+deps in PR 1, manual code changes in PR 2?
+
+❯ 1. Yes, proceed
+     Create two stacked branches with this split and open PRs
+  2. Flip the order
+     Code changes first, generated second
+  3. Different grouping
+     I want to group the files differently
+  4. Type something.
+
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel`,
+		},
+		{
+			name: "AskUserQuestion menu with surrounding output",
+			output: `Some previous output from Claude
+
+Here's what I found:
+- Option A: Use Redis
+- Option B: Use Memcached
+
+Which caching solution should we use?
+
+❯ 1. Redis (Recommended)
+  2. Memcached
+  3. In-memory
+  4. Type something.
+
+Enter to select · ↑/↓ to navigate · Esc to cancel`,
+		},
+		{
 			name: "real claude code plan mode output",
 			output: `⎿  Interrupted · What should Claude do instead?
 
@@ -559,6 +598,44 @@ func TestDetector_Detect_ANSICodes(t *testing.T) {
 	}
 }
 
+func TestDetector_Detect_TmuxEscapeCodes(t *testing.T) {
+	d := NewDetector()
+
+	// tmux capture-pane with -e commonly emits ESC(B (character set selection)
+	// before content. This was causing (?m)^❯\s to fail because the line
+	// started with \x1b(B instead of ❯.
+	tests := []struct {
+		name   string
+		output string
+		want   WaitingState
+	}{
+		{
+			name:   "prompt with ESC(B prefix",
+			output: "Some output\n\x1b(B❯ ",
+			want:   StateWaitingInput,
+		},
+		{
+			name:   "prompt with mixed tmux escapes",
+			output: "Some output\n\x1b(B\x1b[0m\x1b(B\x1b[m❯ some input",
+			want:   StateWaitingInput,
+		},
+		{
+			name:   "AskUserQuestion menu with tmux escapes",
+			output: "\x1b(B\x1b[0mEnter to select · ↑/↓ to navigate · Esc to cancel",
+			want:   StateWaitingInput,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := d.Detect([]byte(tc.output))
+			if got != tc.want {
+				t.Errorf("Detect(%q) = %v, want %v", tc.output, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDetector_Detect_LongOutput(t *testing.T) {
 	d := NewDetector()
 
@@ -618,6 +695,31 @@ func TestStripAnsi(t *testing.T) {
 			name:  "OSC sequence",
 			input: "\x1b]0;Title\x07content",
 			want:  "content",
+		},
+		{
+			name:  "character set selection ESC(B",
+			input: "\x1b(B❯ some text",
+			want:  "❯ some text",
+		},
+		{
+			name:  "character set selection ESC)0",
+			input: "\x1b)0line content",
+			want:  "line content",
+		},
+		{
+			name:  "keypad mode ESC=",
+			input: "\x1b=content after",
+			want:  "content after",
+		},
+		{
+			name:  "keypad mode ESC>",
+			input: "\x1b>content after",
+			want:  "content after",
+		},
+		{
+			name:  "mixed escape types from tmux capture",
+			input: "\x1b(B\x1b[0m\x1b(B\x1b[m❯ prompt text",
+			want:  "❯ prompt text",
 		},
 	}
 

@@ -974,6 +974,44 @@ func TestMonitor_ResetStaleCounter(t *testing.T) {
 	}
 }
 
+func TestMonitor_AskUserQuestionPreventsStaleCounter(t *testing.T) {
+	m := NewMonitor(MonitorConfig{
+		StaleDetection: true,
+		StaleThreshold: 3,
+	})
+
+	m.Start("inst-1")
+
+	// Simulate AskUserQuestion interactive menu output — this is the exact
+	// scenario from GitHub issue #679 where the stale timeout false-fired.
+	askUserOutput := []byte(`☐ PR Split
+
+Does this split sound right?
+
+❯ 1. Yes, proceed
+     Create two stacked branches
+  2. Flip the order
+  3. Different grouping
+  4. Type something.
+
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel`)
+
+	// Feed the same output repeatedly (simulating static pane content
+	// while the menu waits for user selection).
+	for i := 0; i < 10; i++ {
+		m.ProcessOutput("inst-1", askUserOutput, "askuserhash")
+	}
+
+	// Stale timeout should NOT fire because AskUserQuestion menu is detected
+	// as StateWaitingInput via the "Enter to select...navigate...cancel" pattern.
+	result := m.CheckTimeouts("inst-1")
+	if result != nil {
+		t.Errorf("Expected no timeout for AskUserQuestion menu, got %v", *result)
+	}
+}
+
 func TestMonitor_ResetStaleCounter_NonMonitored(t *testing.T) {
 	m := NewMonitorWithDefaults()
 
