@@ -65,6 +65,10 @@ const unresponsiveTimeout = 30 * time.Second
 // with 2s tmux timeout, each failure takes ~2s, so 10 failures = ~20s of continuous failure.
 const unresponsiveFailureThreshold = 10
 
+// defaultMaxRecoveryAttempts is the maximum number of times the capture loop will
+// attempt to recover from a tmux server crash before marking the instance as completed.
+const defaultMaxRecoveryAttempts = 3
+
 // TimeoutCallback is called when a timeout condition is detected
 type TimeoutCallback func(instanceID string, timeoutType TimeoutType)
 
@@ -100,6 +104,9 @@ func DefaultManagerConfig() ManagerConfig {
 // MetricsChangeCallback is called when metrics are updated
 type MetricsChangeCallback func(instanceID string, metrics *metrics.ParsedMetrics)
 
+// RecoveryCallback is called when an instance successfully recovers from a tmux crash.
+type RecoveryCallback func(instanceID string, attempt int)
+
 // ManagerCallbacks holds all callbacks required for a properly configured Manager.
 // These must be provided at construction time to ensure the Manager can communicate
 // state changes, metrics, timeouts, and bells to the orchestrator.
@@ -115,6 +122,8 @@ type ManagerCallbacks struct {
 	OnTimeout TimeoutCallback
 	// OnBell is called when a terminal bell is detected
 	OnBell BellCallback
+	// OnRecovery is called when the instance recovers from a tmux server crash
+	OnRecovery RecoveryCallback
 }
 
 // ManagerOptions holds explicit dependencies for creating a Manager.
@@ -183,6 +192,12 @@ type Manager struct {
 	// to detect when tmux becomes unresponsive and the session should be terminated
 	lastSuccessfulCapture    time.Time // Last time a capture succeeded
 	consecutiveCaptureErrors int       // Count of consecutive capture failures
+
+	// Tmux session recovery - automatically resumes the Claude session in a new
+	// tmux session when the tmux server dies during a live session
+	maxRecoveryAttempts int // Maximum recovery attempts before giving up (default 3)
+	recoveryAttempts    int // Number of recovery attempts made so far
+	recoveryCallback    RecoveryCallback
 
 	// Bell tracking - delegated to stateMonitor
 	bellCallback BellCallback
@@ -284,10 +299,12 @@ func NewManagerWithDeps(opts ManagerOptions) *Manager {
 			input.WithPersistentSender(sessionName, socketName),
 			input.WithBatching(sessionName, input.DefaultBatchConfig()),
 		),
-		stateMonitor:     monitor,
-		lifecycleManager: opts.LifecycleManager,
-		backend:          backend,
-		startOverrides:   opts.StartOverrides,
+		maxRecoveryAttempts: defaultMaxRecoveryAttempts,
+		recoveryCallback:    opts.Callbacks.OnRecovery,
+		stateMonitor:        monitor,
+		lifecycleManager:    opts.LifecycleManager,
+		backend:             backend,
+		startOverrides:      opts.StartOverrides,
 	}
 }
 
@@ -387,29 +404,13 @@ func (m *Manager) ClearTimeout() {
 	m.stateMonitor.ClearTimeout(m.id)
 }
 
-// Start launches the AI backend process in a tmux session.
-// If a LifecycleManager is configured, delegates to it for tmux session management.
-//
-// Returns ErrManagerNotConfigured if the manager was not created via NewManagerWithDeps.
-func (m *Manager) Start() error {
-	if !m.configured {
-		return ErrManagerNotConfigured
-	}
-
-	// Delegate to lifecycle manager if available
-	if m.lifecycleManager != nil {
-		return m.lifecycleManager.Start(m)
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if m.running {
-		return fmt.Errorf("instance already running")
-	}
-
-	if m.backend == nil {
-		m.backend = ai.DefaultBackend()
+// createTmuxSession creates a fresh tmux session with the configured dimensions,
+// history limit, and terminal options. It kills any existing session with the same
+// name first. Caller must hold m.mu. Also ensures the socket directory exists.
+func (m *Manager) createTmuxSession() error {
+	// Ensure the socket directory exists (required for TMUX_TMPDIR to work)
+	if err := tmux.EnsureSocketDir(); err != nil {
+		return fmt.Errorf("failed to ensure tmux socket directory: %w", err)
 	}
 
 	// Kill any existing session with this name (cleanup from previous run)
@@ -440,8 +441,8 @@ func (m *Manager) Start() error {
 		"-y", fmt.Sprintf("%d", m.config.TmuxHeight), // height
 	)
 	createCmd.Dir = m.workdir
-	// Inherit full environment (required for backend credentials) and ensure TERM supports colors
-	createCmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	// Append TERM to the existing env (which already includes TMUX_TMPDIR from CommandWithSocket)
+	createCmd.Env = append(createCmd.Env, "TERM=xterm-256color")
 	if err := createCmd.Run(); err != nil {
 		if m.logger != nil {
 			m.logger.Error("failed to create tmux session",
@@ -452,10 +453,52 @@ func (m *Manager) Start() error {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
-	// Set up additional tmux session options for color support
-	_ = m.tmuxCmd("set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run()
+	// Set up additional tmux session options for color support.
+	// Per-instance socket isolation ensures -g options don't affect other instances.
+	if err := m.tmuxCmd("set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run(); err != nil {
+		if m.logger != nil {
+			m.logger.Debug("failed to set default-terminal", "error", err.Error())
+		}
+	}
 	// Enable bell monitoring so we can detect and forward terminal bells
-	_ = m.tmuxCmd("set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
+	if err := m.tmuxCmd("set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run(); err != nil {
+		if m.logger != nil {
+			m.logger.Warn("failed to enable bell monitoring (bell detection will not work)",
+				"error", err.Error())
+		}
+	}
+
+	return nil
+}
+
+// Start launches the AI backend process in a tmux session.
+// If a LifecycleManager is configured, delegates to it for tmux session management.
+//
+// Returns ErrManagerNotConfigured if the manager was not created via NewManagerWithDeps.
+func (m *Manager) Start() error {
+	if !m.configured {
+		return ErrManagerNotConfigured
+	}
+
+	// Delegate to lifecycle manager if available
+	if m.lifecycleManager != nil {
+		return m.lifecycleManager.Start(m)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.running {
+		return fmt.Errorf("instance already running")
+	}
+
+	if m.backend == nil {
+		m.backend = ai.DefaultBackend()
+	}
+
+	if err := m.createTmuxSession(); err != nil {
+		return err
+	}
 
 	// Write the task/prompt to a temporary file to avoid shell escaping issues
 	// (prompts with <, >, |, etc. would otherwise be interpreted by the shell)
@@ -558,47 +601,9 @@ func (m *Manager) StartWithResume() error {
 		return fmt.Errorf("backend %s does not support resume", m.backend.Name())
 	}
 
-	// Kill any existing tmux session with this name (cleanup from previous run)
-	_ = m.tmuxCmd("kill-session", "-t", m.sessionName).Run()
-
-	// Determine history limit from config (default to 50000 if not set)
-	historyLimit := m.config.TmuxHistoryLimit
-	if historyLimit == 0 {
-		historyLimit = 50000
+	if err := m.createTmuxSession(); err != nil {
+		return err
 	}
-
-	// Set history-limit BEFORE creating session so the new pane inherits it.
-	if err := m.tmuxCmd("set-option", "-g", "history-limit", fmt.Sprintf("%d", historyLimit)).Run(); err != nil {
-		if m.logger != nil {
-			m.logger.Warn("failed to set global history-limit for tmux",
-				"history_limit", historyLimit,
-				"error", err.Error())
-		}
-	}
-
-	// Create a new detached tmux session with color support
-	createCmd := m.tmuxCmd(
-		"new-session",
-		"-d",                // detached
-		"-s", m.sessionName, // session name
-		"-x", fmt.Sprintf("%d", m.config.TmuxWidth), // width
-		"-y", fmt.Sprintf("%d", m.config.TmuxHeight), // height
-	)
-	createCmd.Dir = m.workdir
-	createCmd.Env = append(os.Environ(), "TERM=xterm-256color")
-	if err := createCmd.Run(); err != nil {
-		if m.logger != nil {
-			m.logger.Error("failed to create tmux session for resume",
-				"session_name", m.sessionName,
-				"workdir", m.workdir,
-				"error", err.Error())
-		}
-		return fmt.Errorf("failed to create tmux session: %w", err)
-	}
-
-	// Set up additional tmux session options
-	_ = m.tmuxCmd("set-option", "-t", m.sessionName, "default-terminal", "xterm-256color").Run()
-	_ = m.tmuxCmd("set-option", "-t", m.sessionName, "-w", "monitor-bell", "on").Run()
 
 	// Build the backend command with resume to continue the previous session
 	backendCmd, err := m.backend.BuildResumeCommand(m.claudeSessionID)
@@ -690,6 +695,9 @@ func (m *Manager) captureLoop() {
 				m.mu.Unlock()
 
 				if doHeartbeat && !m.checkSessionExists(sessionName) {
+					if m.attemptSessionRecovery(instanceID) {
+						continue
+					}
 					m.handleSessionEnded(instanceID)
 					return
 				}
@@ -706,6 +714,9 @@ func (m *Manager) captureLoop() {
 
 			// Check if session ended
 			if !status.sessionExists {
+				if m.attemptSessionRecovery(instanceID) {
+					continue
+				}
 				m.handleSessionEnded(instanceID)
 				return
 			}
@@ -781,6 +792,9 @@ func (m *Manager) captureLoop() {
 					}
 					// Attempt to kill the tmux session to clean up resources
 					_ = m.tmuxCmd("kill-session", "-t", sessionName).Run()
+					if m.attemptSessionRecovery(instanceID) {
+						continue
+					}
 					m.handleSessionEnded(instanceID)
 					return
 				}
@@ -794,6 +808,9 @@ func (m *Manager) captureLoop() {
 						logger.Info("session ended (detected via capture failure)",
 							"session_name", sessionName,
 							"instance_id", instanceID)
+					}
+					if m.attemptSessionRecovery(instanceID) {
+						continue
 					}
 					m.handleSessionEnded(instanceID)
 					return
@@ -1071,6 +1088,161 @@ func (m *Manager) handleSessionEnded(instanceID string) {
 	if callback != nil {
 		callback(instanceID, detect.StateCompleted)
 	}
+}
+
+// attemptSessionRecovery tries to recover from a tmux server crash by creating
+// a new tmux session and resuming the Claude session. Returns true if recovery
+// succeeded and the capture loop should continue, false if recovery failed and
+// the caller should fall through to handleSessionEnded.
+//
+// Recovery is only attempted when:
+// - The recovery attempt limit has not been reached
+// - A backend session ID exists (so we can resume)
+// - The backend supports resume
+// - The instance was not already in a completed state before tmux died
+func (m *Manager) attemptSessionRecovery(instanceID string) bool {
+	// Snapshot and check preconditions atomically under a single lock acquisition
+	// to prevent TOCTOU races on the recovery counter.
+	m.mu.Lock()
+	attempts := m.recoveryAttempts
+	maxAttempts := m.maxRecoveryAttempts
+	sessionID := m.claudeSessionID
+	logger := m.logger
+	backend := m.backend
+
+	if attempts >= maxAttempts {
+		m.mu.Unlock()
+		if logger != nil {
+			logger.Warn("tmux recovery limit reached, giving up",
+				"instance_id", instanceID,
+				"attempts", attempts,
+				"max_attempts", maxAttempts)
+		}
+		return false
+	}
+
+	if sessionID == "" {
+		m.mu.Unlock()
+		if logger != nil {
+			logger.Info("cannot recover tmux session: no backend session ID",
+				"instance_id", instanceID)
+		}
+		return false
+	}
+
+	if backend == nil || !backend.SupportsResume() {
+		m.mu.Unlock()
+		if logger != nil {
+			logger.Info("cannot recover tmux session: backend does not support resume",
+				"instance_id", instanceID)
+		}
+		return false
+	}
+
+	// Don't recover if the instance was already detected as completed before tmux died.
+	// stateMonitor.GetState() has its own internal locking and is safe to call under m.mu.
+	currentState := m.stateMonitor.GetState(instanceID)
+	if currentState == detect.StateCompleted {
+		m.mu.Unlock()
+		if logger != nil {
+			logger.Info("skipping tmux recovery: instance already completed",
+				"instance_id", instanceID)
+		}
+		return false
+	}
+
+	// Increment recovery counter while still holding the lock (all preconditions passed)
+	m.recoveryAttempts++
+	attempt := m.recoveryAttempts
+	m.mu.Unlock()
+
+	if logger != nil {
+		logger.Info("attempting tmux session recovery",
+			"instance_id", instanceID,
+			"attempt", attempt,
+			"max_attempts", maxAttempts)
+	}
+
+	// Kill the old tmux server (cleanup dead socket)
+	if err := tmux.KillServer(m.socketName); err != nil && logger != nil {
+		logger.Debug("failed to kill old tmux server during recovery (may already be dead)",
+			"instance_id", instanceID, "error", err.Error())
+	}
+
+	// Create a fresh tmux session
+	m.mu.Lock()
+	err := m.createTmuxSession()
+	m.mu.Unlock()
+	if err != nil {
+		if logger != nil {
+			logger.Error("tmux recovery failed: could not create session",
+				"instance_id", instanceID,
+				"error", err.Error())
+		}
+		return false
+	}
+
+	// Build and send the resume command
+	resumeCmd, err := backend.BuildResumeCommand(sessionID)
+	if err != nil {
+		if logger != nil {
+			logger.Error("tmux recovery failed: could not build resume command",
+				"instance_id", instanceID,
+				"error", err.Error())
+		}
+		// Clean up the freshly created server since recovery failed
+		if killErr := tmux.KillServer(m.socketName); killErr != nil && logger != nil {
+			logger.Debug("failed to clean up tmux server after recovery failure",
+				"instance_id", instanceID, "error", killErr.Error())
+		}
+		return false
+	}
+
+	sendCmd := m.tmuxCmd(
+		"send-keys",
+		"-t", m.sessionName,
+		resumeCmd,
+		"Enter",
+	)
+	if err := sendCmd.Run(); err != nil {
+		if logger != nil {
+			logger.Error("tmux recovery failed: could not send resume command",
+				"instance_id", instanceID,
+				"error", err.Error())
+		}
+		if killErr := tmux.KillServer(m.socketName); killErr != nil && logger != nil {
+			logger.Debug("failed to clean up tmux server after recovery failure",
+				"instance_id", instanceID, "error", killErr.Error())
+		}
+		return false
+	}
+
+	// Reset capture state for the new session
+	m.mu.Lock()
+	now := time.Now()
+	m.lastSuccessfulCapture = now
+	m.consecutiveCaptureErrors = 0
+	m.lastHistorySize = 0
+	m.fullRefreshCounter = 0
+	m.forceFullCapture = true
+	callback := m.recoveryCallback
+	m.mu.Unlock()
+
+	// Reset stale counter so the recovered session starts fresh
+	m.stateMonitor.ResetStaleCounter(instanceID)
+
+	if logger != nil {
+		logger.Info("tmux session recovery succeeded",
+			"instance_id", instanceID,
+			"attempt", attempt,
+			"backend_session_id", sessionID)
+	}
+
+	if callback != nil {
+		callback(instanceID, attempt)
+	}
+
+	return true
 }
 
 // captureVisiblePane captures only the visible pane content (no scrollback history).

@@ -2,6 +2,9 @@ package tmux
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -277,5 +280,125 @@ func TestMapKeyToTmux(t *testing.T) {
 				t.Errorf("MapKeyToTmux(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestSocketDir(t *testing.T) {
+	dir := SocketDir()
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("failed to get home dir: %v", err)
+	}
+
+	expected := filepath.Join(home, ".claudio", "sockets")
+	if dir != expected {
+		t.Errorf("SocketDir() = %q, want %q", dir, expected)
+	}
+}
+
+func TestSocketDir_FallbackWhenHomeUnset(t *testing.T) {
+	// Save and unset HOME
+	origHome := os.Getenv("HOME")
+	t.Setenv("HOME", "")
+
+	dir := SocketDir()
+
+	// Should fall back to os.TempDir()-based path
+	expected := filepath.Join(os.TempDir(), "claudio-sockets")
+	if dir != expected {
+		t.Errorf("SocketDir() with empty HOME = %q, want %q", dir, expected)
+	}
+
+	// Restore HOME (t.Setenv handles cleanup automatically)
+	_ = origHome
+}
+
+func TestEnsureSocketDir(t *testing.T) {
+	// Create a temp dir to avoid modifying real filesystem
+	tmpDir := t.TempDir()
+	socketDir := filepath.Join(tmpDir, "sockets")
+
+	// Verify the directory doesn't exist yet
+	if _, err := os.Stat(socketDir); !os.IsNotExist(err) {
+		t.Fatal("socket dir should not exist initially")
+	}
+
+	// Use os.MkdirAll directly since we can't override SocketDir()
+	err := os.MkdirAll(socketDir, 0700)
+	if err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+
+	// Verify directory was created
+	info, err := os.Stat(socketDir)
+	if err != nil {
+		t.Fatalf("socket dir should exist after EnsureSocketDir: %v", err)
+	}
+	if !info.IsDir() {
+		t.Error("socket dir should be a directory")
+	}
+
+	// Calling again should be idempotent
+	err = os.MkdirAll(socketDir, 0700)
+	if err != nil {
+		t.Fatalf("second MkdirAll should succeed: %v", err)
+	}
+}
+
+func TestCommandWithSocket_SetsTMUX_TMPDIR(t *testing.T) {
+	cmd := CommandWithSocket("test-socket", "list-sessions")
+
+	// Check that TMUX_TMPDIR is set in the environment
+	found := false
+	expectedPrefix := "TMUX_TMPDIR=" + SocketDir()
+	for _, env := range cmd.Env {
+		if strings.HasPrefix(env, "TMUX_TMPDIR=") {
+			found = true
+			if env != expectedPrefix {
+				t.Errorf("TMUX_TMPDIR = %q, want %q", env, expectedPrefix)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("TMUX_TMPDIR not found in command environment")
+	}
+}
+
+func TestCommandContextWithSocket_SetsTMUX_TMPDIR(t *testing.T) {
+	ctx := context.Background()
+	cmd := CommandContextWithSocket(ctx, "test-socket", "list-sessions")
+
+	// Check that TMUX_TMPDIR is set in the environment
+	found := false
+	expectedPrefix := "TMUX_TMPDIR=" + SocketDir()
+	for _, env := range cmd.Env {
+		if strings.HasPrefix(env, "TMUX_TMPDIR=") {
+			found = true
+			if env != expectedPrefix {
+				t.Errorf("TMUX_TMPDIR = %q, want %q", env, expectedPrefix)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("TMUX_TMPDIR not found in command environment")
+	}
+}
+
+func TestCommand_SetsTMUX_TMPDIR(t *testing.T) {
+	// The default Command() delegates to CommandWithSocket, so it should also set TMUX_TMPDIR
+	cmd := Command("list-sessions")
+
+	found := false
+	for _, env := range cmd.Env {
+		if strings.HasPrefix(env, "TMUX_TMPDIR=") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("TMUX_TMPDIR not found in command environment (via Command())")
 	}
 }

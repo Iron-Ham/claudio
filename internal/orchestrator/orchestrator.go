@@ -1362,24 +1362,11 @@ func (o *Orchestrator) instanceManagerConfig() instance.ManagerConfig {
 	}
 }
 
-// newInstanceManager creates a new instance manager with explicit dependencies.
-// Uses the shared StateMonitor for centralized state tracking.
-// The manager is automatically registered with the display manager to receive resize events.
-//
-// Callbacks are configured at construction time to prevent the "leaky abstraction" bug
-// where Start/Reconnect could be called without callbacks, resulting in frozen output.
-//
-// Note: LifecycleManager delegation is available but not enabled by default.
-// The instance Manager's Start/Stop/Reconnect use their internal implementation.
-//
-// The overrides parameter allows per-instance CLI flag overrides (permission mode, model,
-// tool restrictions, etc.) to be merged into StartOptions during Start(). Pass a zero-value
-// ai.StartOptions for no overrides.
-func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessionID string, overrides ai.StartOptions) *instance.Manager {
-	cfg := o.instanceManagerConfig()
-
-	// Build callbacks that route to orchestrator handlers
-	callbacks := instance.ManagerCallbacks{
+// buildInstanceCallbacks creates the standard callback set that routes instance
+// events to orchestrator handlers. Shared by all instance factory methods to
+// avoid synchronization bugs from duplicated callback definitions.
+func (o *Orchestrator) buildInstanceCallbacks() instance.ManagerCallbacks {
+	return instance.ManagerCallbacks{
 		OnStateChange: func(id string, state detect.WaitingState) {
 			switch state {
 			case detect.StateCompleted:
@@ -1399,7 +1386,27 @@ func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessi
 		OnBell: func(id string) {
 			o.handleInstanceBell(id)
 		},
+		OnRecovery: func(id string, attempt int) {
+			o.handleInstanceRecovery(id, attempt)
+		},
 	}
+}
+
+// newInstanceManager creates a new instance manager with explicit dependencies.
+// Uses the shared StateMonitor for centralized state tracking.
+// The manager is automatically registered with the display manager to receive resize events.
+//
+// Callbacks are configured at construction time to prevent the "leaky abstraction" bug
+// where Start/Reconnect could be called without callbacks, resulting in frozen output.
+//
+// Note: LifecycleManager delegation is available but not enabled by default.
+// The instance Manager's Start/Stop/Reconnect use their internal implementation.
+//
+// The overrides parameter allows per-instance CLI flag overrides (permission mode, model,
+// tool restrictions, etc.) to be merged into StartOptions during Start(). Pass a zero-value
+// ai.StartOptions for no overrides.
+func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessionID string, overrides ai.StartOptions) *instance.Manager {
+	cfg := o.instanceManagerConfig()
 
 	mgr := instance.NewManagerWithDeps(instance.ManagerOptions{
 		ID:              instanceID,
@@ -1407,7 +1414,7 @@ func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessi
 		WorkDir:         workdir,
 		Task:            task,
 		Config:          cfg,
-		Callbacks:       callbacks,
+		Callbacks:       o.buildInstanceCallbacks(),
 		StateMonitor:    o.stateMonitor,
 		ClaudeSessionID: claudeSessionID,
 		Backend:         o.backend,
@@ -1440,36 +1447,13 @@ func (o *Orchestrator) newInstanceManagerWithBackend(instanceID, workdir, task, 
 		requestedBackend = o.backend
 	}
 
-	// Build callbacks that route to orchestrator handlers
-	callbacks := instance.ManagerCallbacks{
-		OnStateChange: func(id string, state detect.WaitingState) {
-			switch state {
-			case detect.StateCompleted:
-				o.handleInstanceExit(id)
-			case detect.StateWaitingInput, detect.StateWaitingQuestion, detect.StateWaitingPermission:
-				o.handleInstanceWaitingInput(id)
-			case detect.StatePROpened:
-				o.handleInstancePROpened(id)
-			}
-		},
-		OnMetrics: func(id string, m *instmetrics.ParsedMetrics) {
-			o.handleInstanceMetrics(id, m)
-		},
-		OnTimeout: func(id string, timeoutType instance.TimeoutType) {
-			o.handleInstanceTimeout(id, timeoutType)
-		},
-		OnBell: func(id string) {
-			o.handleInstanceBell(id)
-		},
-	}
-
 	mgr := instance.NewManagerWithDeps(instance.ManagerOptions{
 		ID:              instanceID,
 		SessionID:       o.sessionID,
 		WorkDir:         workdir,
 		Task:            task,
 		Config:          cfg,
-		Callbacks:       callbacks,
+		Callbacks:       o.buildInstanceCallbacks(),
 		StateMonitor:    o.stateMonitor,
 		ClaudeSessionID: claudeSessionID,
 		Backend:         requestedBackend,
@@ -1608,6 +1592,10 @@ func (o *Orchestrator) wireStateMonitorCallbacks() {
 	o.stateMonitor.OnBell(func(instanceID string) {
 		o.handleInstanceBell(instanceID)
 	})
+
+	// Note: OnRecovery is not wired here because recovery is triggered by the
+	// instance Manager's captureLoop (not the centralized state monitor) and
+	// routed directly via ManagerCallbacks.OnRecovery.
 }
 
 // initBudgetManager creates and configures the budget manager.
@@ -2045,6 +2033,44 @@ func timeoutTypeString(t instance.TimeoutType) string {
 	}
 }
 
+// handleInstanceRecovery handles when an instance recovers from a tmux server crash.
+// It updates the instance status back to working and refreshes the PID.
+func (o *Orchestrator) handleInstanceRecovery(id string, attempt int) {
+	o.mu.Lock()
+	inst := o.findInstanceLocked(id)
+	if inst != nil {
+		inst.Status = StatusWorking
+		// PID will be re-detected on next capture tick
+		inst.PID = 0
+		if err := o.saveSession(); err != nil {
+			if o.logger != nil {
+				o.logger.Error("failed to save session after recovery",
+					"instance_id", id,
+					"attempt", attempt,
+					"error", err,
+				)
+			}
+		}
+	}
+	o.mu.Unlock()
+
+	if inst != nil {
+		if o.logger != nil {
+			o.logger.Info("instance recovered from tmux crash",
+				"instance_id", id,
+				"attempt", attempt,
+			)
+		}
+	} else {
+		if o.logger != nil {
+			o.logger.Warn("instance not found during recovery",
+				"instance_id", id,
+				"attempt", attempt,
+			)
+		}
+	}
+}
+
 // handleInstanceExit handles when an instance process exits
 func (o *Orchestrator) handleInstanceExit(id string) {
 	inst := o.GetInstance(id)
@@ -2409,6 +2435,19 @@ func (o *Orchestrator) executeNotification(configKey string, inst *Instance) {
 	go func() {
 		_ = exec.Command("sh", "-c", cmd).Run()
 	}()
+}
+
+// findInstanceLocked returns an instance by ID. Caller must hold o.mu.
+func (o *Orchestrator) findInstanceLocked(id string) *Instance {
+	if o.session == nil {
+		return nil
+	}
+	for _, inst := range o.session.Instances {
+		if inst.ID == id {
+			return inst
+		}
+	}
+	return nil
 }
 
 // GetInstance returns an instance by ID from the current session
