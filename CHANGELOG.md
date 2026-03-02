@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Log tmux session option errors** - Replaced silent `_ =` error discards in `createTmuxSession` and recovery paths with Debug/Warn-level logging for better diagnostics.
 
 ### Fixed
+- **Stale Timeout False Positive on AskUserQuestion** - Fixed state detector not recognizing Claude Code's `AskUserQuestion` interactive selection menus as a waiting state, causing the stale timeout to fire after ~5 minutes of static menu content and marking the instance as stuck. Added pattern for the menu footer (`Enter to select · ↑/↓ to navigate · Esc to cancel`) to `InputWaitingPatterns`, and hardened `StripAnsi` to strip character set selection (`ESC(B`) and keypad mode (`ESC=`, `ESC>`) escape sequences that tmux commonly emits (#679)
 - **TMUX_TMPDIR overwrite in `createTmuxSession`** - Fixed `createTmuxSession()` replacing the entire env (including `TMUX_TMPDIR` set by `CommandWithSocket`) with only `TERM=xterm-256color`, silently defeating the stable socket directory feature.
 - **Recovery handler race condition** - Fixed `handleInstanceRecovery` mutating shared `InstanceInfo` without holding the orchestrator lock, and added `findInstanceLocked` helper for safe instance lookup under write lock.
 - **Recovery TOCTOU race** - Consolidated precondition checks and counter increment in `attemptSessionRecovery` under a single lock acquisition to prevent concurrent callers from bypassing the attempt limit.
