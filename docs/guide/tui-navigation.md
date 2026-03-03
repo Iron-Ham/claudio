@@ -73,7 +73,6 @@ Use `J`/`K` to view instances that are off-screen (indicated by "▲ N more abov
 | Key | Action |
 |-----|--------|
 | `d` | Toggle diff preview panel |
-| `c` | Toggle conflict view |
 | `?` | Toggle help overlay |
 
 ### Diff Panel
@@ -90,21 +89,6 @@ Press `d` to see a live diff of changes made by the selected instance:
 │ +                                                                 │
 │ + router.post('/login', async (req, res) => {                     │
 │ +   const { email, password } = req.body;                         │
-└───────────────────────────────────────────────────────────────────┘
-```
-
-### Conflict View
-
-Press `c` to see files modified by multiple instances:
-
-```
-┌─ File Conflicts ─────────────────────────────────────────────────┐
-│                                                                   │
-│ src/config.ts                                                     │
-│   Modified by: auth-api (abc123), tests (def456)                  │
-│                                                                   │
-│ No conflicts detected in other files.                             │
-│                                                                   │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -328,6 +312,5 @@ claudio sessions recover
 | Key | Action |
 |-----|--------|
 | `d` | Diff panel |
-| `c` | Conflict view |
 | `/` | Search |
 | `n`/`N` | Next/prev match |

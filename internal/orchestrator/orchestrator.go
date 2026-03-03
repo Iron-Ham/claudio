@@ -14,7 +14,6 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/ai"
 	"github.com/Iron-Ham/claudio/internal/config"
-	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/event"
 	"github.com/Iron-Ham/claudio/internal/instance"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
@@ -63,12 +62,11 @@ type Orchestrator struct {
 	budgetMgr     *budget.Manager        // Budget monitoring and enforcement
 	namer         *namer.Namer           // Intelligent instance naming (optional)
 
-	session          *Session
-	instances        map[string]*instance.Manager
-	wt               *worktree.Manager
-	conflictDetector *conflict.Detector
-	config           *config.Config
-	backend          ai.Backend
+	session   *Session
+	instances map[string]*instance.Manager
+	wt        *worktree.Manager
+	config    *config.Config
+	backend   ai.Backend
 
 	// Callback for when a PR URL is detected in instance output (inline PR creation)
 	prOpenedCallback func(instanceID string)
@@ -104,12 +102,6 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 		if len(dirs) > 0 {
 			wt.SetSparseCheckoutConfig(dirs, cfg.Paths.SparseCheckout.ConeMode)
 		}
-	}
-
-	// Create conflict detector
-	detector, err := conflict.New()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create conflict detector: %w", err)
 	}
 
 	// Create event bus for inter-component communication
@@ -155,20 +147,19 @@ func NewWithConfig(baseDir string, cfg *config.Config) (*Orchestrator, error) {
 	}, backend.Detector())
 
 	orch := &Orchestrator{
-		baseDir:          baseDir,
-		claudioDir:       claudioDir,
-		worktreeDir:      worktreeDir,
-		sessionMgr:       sessionMgr,
-		lifecycleMgr:     lifecycleMgr,
-		prWorkflowMgr:    prWorkflowMgr,
-		displayMgr:       displayMgr,
-		eventBus:         eventBus,
-		stateMonitor:     stateMonitor,
-		instances:        make(map[string]*instance.Manager),
-		wt:               wt,
-		conflictDetector: detector,
-		config:           cfg,
-		backend:          backend,
+		baseDir:       baseDir,
+		claudioDir:    claudioDir,
+		worktreeDir:   worktreeDir,
+		sessionMgr:    sessionMgr,
+		lifecycleMgr:  lifecycleMgr,
+		prWorkflowMgr: prWorkflowMgr,
+		displayMgr:    displayMgr,
+		eventBus:      eventBus,
+		stateMonitor:  stateMonitor,
+		instances:     make(map[string]*instance.Manager),
+		wt:            wt,
+		config:        cfg,
+		backend:       backend,
 	}
 
 	// Initialize budget manager with orchestrator as provider and pauser
@@ -202,12 +193,6 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 		if len(dirs) > 0 {
 			wt.SetSparseCheckoutConfig(dirs, cfg.Paths.SparseCheckout.ConeMode)
 		}
-	}
-
-	// Create conflict detector
-	detector, err := conflict.New()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create conflict detector: %w", err)
 	}
 
 	// Create event bus for inter-component communication
@@ -259,22 +244,21 @@ func NewWithSession(baseDir, sessionID string, cfg *config.Config) (*Orchestrato
 	}, backend.Detector())
 
 	orch := &Orchestrator{
-		baseDir:          baseDir,
-		claudioDir:       claudioDir,
-		worktreeDir:      worktreeDir,
-		sessionID:        sessionID,
-		sessionDir:       sessionDir,
-		sessionMgr:       sessionMgr,
-		lifecycleMgr:     lifecycleMgr,
-		prWorkflowMgr:    prWorkflowMgr,
-		displayMgr:       displayMgr,
-		eventBus:         eventBus,
-		stateMonitor:     stateMonitor,
-		instances:        make(map[string]*instance.Manager),
-		wt:               wt,
-		conflictDetector: detector,
-		config:           cfg,
-		backend:          backend,
+		baseDir:       baseDir,
+		claudioDir:    claudioDir,
+		worktreeDir:   worktreeDir,
+		sessionID:     sessionID,
+		sessionDir:    sessionDir,
+		sessionMgr:    sessionMgr,
+		lifecycleMgr:  lifecycleMgr,
+		prWorkflowMgr: prWorkflowMgr,
+		displayMgr:    displayMgr,
+		eventBus:      eventBus,
+		stateMonitor:  stateMonitor,
+		instances:     make(map[string]*instance.Manager),
+		wt:            wt,
+		config:        cfg,
+		backend:       backend,
 	}
 
 	// Initialize budget manager with orchestrator as provider and pauser
@@ -346,9 +330,6 @@ func (o *Orchestrator) StartSession(name string) (*Session, error) {
 	sess.CleanShutdown = false
 	o.session = sess
 
-	// Start conflict detector
-	o.conflictDetector.Start()
-
 	// Save session state
 	if err := o.saveSession(); err != nil {
 		if o.logger != nil {
@@ -396,20 +377,6 @@ func (o *Orchestrator) LoadSession() (*Session, error) {
 	// Set sessionID from loaded session if not already set
 	if o.sessionID == "" && sess.ID != "" {
 		o.sessionID = sess.ID
-	}
-
-	// Start conflict detector and register existing instances
-	o.conflictDetector.Start()
-	for _, inst := range sess.Instances {
-		if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
-			if o.logger != nil {
-				o.logger.Warn("failed to register instance with conflict detector",
-					"instance_id", inst.ID,
-					"worktree_path", inst.WorktreePath,
-					"error", err,
-				)
-			}
-		}
 	}
 
 	// Log session loaded
@@ -1158,11 +1125,6 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 
 	instanceCount := len(sess.Instances)
 
-	// Stop conflict detector
-	if o.conflictDetector != nil {
-		o.conflictDetector.Stop()
-	}
-
 	// Stop namer service
 	if o.namer != nil {
 		o.namer.Stop()
@@ -1245,12 +1207,6 @@ func (o *Orchestrator) StopSession(sess *Session, force bool) error {
 func (o *Orchestrator) Shutdown() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-
-	// Stop conflict detector (nil it out to prevent double-close on repeated calls)
-	if o.conflictDetector != nil {
-		o.conflictDetector.Stop()
-		o.conflictDetector = nil
-	}
 
 	// Stop namer service
 	if o.namer != nil {
@@ -1497,18 +1453,6 @@ func (o *Orchestrator) registerInstance(session *Session, inst *Instance) error 
 	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID, ai.StartOptions{})
 	o.instances[inst.ID] = mgr
 
-	// Register with conflict detector
-	if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
-		// Non-fatal, log at DEBUG since this is conflict detection related
-		if o.logger != nil {
-			o.logger.Debug("failed to watch instance for conflicts",
-				"instance_id", inst.ID,
-				"error", err,
-			)
-		}
-		fmt.Fprintf(os.Stderr, "Warning: failed to watch instance for conflicts: %v\n", err)
-	}
-
 	// Update shared context
 	if err := o.updateContext(); err != nil {
 		// Non-fatal, log but continue
@@ -1540,11 +1484,6 @@ func (o *Orchestrator) Session() *Session {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 	return o.session
-}
-
-// GetConflictDetector returns the conflict detector
-func (o *Orchestrator) GetConflictDetector() *conflict.Detector {
-	return o.conflictDetector
 }
 
 // SetDisplayDimensions sets the initial display dimensions for new instances
@@ -2738,16 +2677,6 @@ func (o *Orchestrator) CompleteInstanceSetup(session *Session, inst *Instance) e
 	// Create instance manager with config
 	mgr := o.newInstanceManager(inst.ID, inst.WorktreePath, inst.Task, inst.ClaudeSessionID, ai.StartOptions{})
 	o.instances[inst.ID] = mgr
-
-	// Register with conflict detector
-	if err := o.conflictDetector.AddInstance(inst.ID, inst.WorktreePath); err != nil {
-		if o.logger != nil {
-			o.logger.Debug("failed to watch instance for conflicts",
-				"instance_id", inst.ID,
-				"error", err,
-			)
-		}
-	}
 
 	// Update shared context
 	if err := o.updateContext(); err != nil {

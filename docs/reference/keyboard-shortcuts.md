@@ -63,7 +63,6 @@ These shortcuts use a vim-style `g` prefix. Press `g` first, then the action key
 | Key | Action |
 |-----|--------|
 | `d` | Toggle diff preview |
-| `c` | Toggle conflict view |
 | `?` | Toggle help overlay |
 
 ## Search

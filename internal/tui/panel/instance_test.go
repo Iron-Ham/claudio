@@ -187,7 +187,6 @@ func TestInstancePanelState_Interface(t *testing.T) {
 		session:             session,
 		activeTab:           2,
 		sidebarScrollOffset: 5,
-		conflicts:           nil,
 		terminalWidth:       80,
 		terminalHeight:      24,
 		isAddingTask:        true,
@@ -202,9 +201,6 @@ func TestInstancePanelState_Interface(t *testing.T) {
 	}
 	if state.SidebarScrollOffset() != 5 {
 		t.Errorf("SidebarScrollOffset() = %d, want 5", state.SidebarScrollOffset())
-	}
-	if state.Conflicts() != nil {
-		t.Error("Conflicts() should be nil")
 	}
 	if state.TerminalWidth() != 80 {
 		t.Errorf("TerminalWidth() = %d, want 80", state.TerminalWidth())

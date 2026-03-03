@@ -145,19 +145,9 @@ Reference it in tasks:
 Convert src/api/ to async/await following .claudio/migration-guide.md patterns.
 ```
 
-## Step 6: Monitor for Conflicts
+## Step 6: Monitor Progress
 
-With a large refactor, conflicts are likely. Press `c` regularly to check:
-
-```
-Conflicting Files:
-─────────────────────────────────────────
-src/index.ts
-  Modified by: api-refactor (abc123), services-refactor (def456)
-
-src/types/index.d.ts
-  Modified by: api-refactor (abc123), db-refactor (ghi789)
-```
+With a large refactor, keep an eye on each instance's progress. Use `d` to review diffs and watch the sidebar for status changes.
 
 ## Step 7: Handle Shared Files
 

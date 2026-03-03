@@ -726,7 +726,7 @@ func flattenGroupRecursive(group *orchestrator.InstanceGroup, session *orchestra
 }
 
 // RenderGroupedInstance renders a single instance within a group.
-func RenderGroupedInstance(gi GroupedInstance, isActiveInstance bool, hasConflict bool, width int) string {
+func RenderGroupedInstance(gi GroupedInstance, isActiveInstance bool, width int) string {
 	inst := gi.Instance
 
 	// For ungrouped instances (Depth == -1), render without tree connector

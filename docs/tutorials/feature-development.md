@@ -75,17 +75,9 @@ The sidebar shows each instance's state:
 
 Press `1`, `2`, `3`, or `4` to see each instance's output.
 
-### Check for Conflicts
+### Check Progress
 
-Press `c` to see the conflict view. Ideally, each instance works on different files.
-
-If you see conflicts:
-```
-src/index.ts
-  Modified by: Instance 1 (abc123), Instance 2 (def456)
-```
-
-This is expected for files like `index.ts` that might need imports from multiple modules.
+Ideally, each instance works on different files. Use `d` to review diffs and ensure instances aren't stepping on each other. Shared files like `index.ts` that need imports from multiple modules are expected overlap.
 
 ## Step 5: Handle Input Requests
 
@@ -224,8 +216,7 @@ For files that multiple instances might touch (like `index.ts`):
 
 With multiple instances, use the TUI effectively:
 - Keep an eye on the sidebar for state changes
-- Press `c` periodically to check conflicts
-- Review diffs before creating PRs
+- Review diffs with `d` before creating PRs
 
 ### Cost Awareness
 

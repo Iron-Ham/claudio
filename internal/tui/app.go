@@ -938,10 +938,6 @@ func (m *Model) applyCommandResult(result command.Result) {
 	if result.DiffScroll != nil {
 		m.diffScroll = *result.DiffScroll
 	}
-	if result.ShowConflicts != nil {
-		// Toggle conflicts
-		m.showConflicts = !m.showConflicts
-	}
 	if result.Quitting != nil {
 		m.quitting = *result.Quitting
 		// Cleanup terminal pane if running
@@ -1095,8 +1091,7 @@ func (m *Model) applyCommandResult(result command.Result) {
 	}
 }
 
-// shouldShowLine determines if a line should be shown based on filters
-// updateOutputs fetches latest output from all instances, updates their status, and checks for conflicts
+// updateOutputs fetches latest output from all instances and updates their status
 func (m *Model) updateOutputs() {
 	if m.session == nil {
 		return
@@ -1134,12 +1129,6 @@ func (m *Model) updateOutputs() {
 				m.updateInstanceStatus(inst, mgr)
 			}
 		}
-	}
-
-	// Check for file conflicts
-	detector := m.orchestrator.GetConflictDetector()
-	if detector != nil {
-		m.conflicts = detector.GetConflicts()
 	}
 }
 
@@ -1289,12 +1278,6 @@ func (m Model) View() string {
 	if m.terminalManager.IsVisible() {
 		b.WriteString("\n")
 		b.WriteString(m.renderTerminalPane())
-	}
-
-	// Conflict warning banner (always show if conflicts exist)
-	if len(m.conflicts) > 0 {
-		b.WriteString("\n")
-		b.WriteString(m.renderConflictWarning())
 	}
 
 	// Info or error message if any
@@ -1466,10 +1449,6 @@ func (m Model) renderContent(width int) string {
 
 	if m.showDiff {
 		return m.renderDiffPanel(width)
-	}
-
-	if m.showConflicts && len(m.conflicts) > 0 {
-		return m.renderConflictPanel(width)
 	}
 
 	if m.showStats {
@@ -1647,14 +1626,9 @@ func (m Model) renderDiffPanel(width int) string {
 }
 
 // calculateExtraFooterLines returns the number of extra lines needed in the footer
-// beyond the base help bar. This accounts for conflict warnings and error/info messages.
+// beyond the base help bar. This accounts for error/info messages.
 func (m Model) calculateExtraFooterLines() int {
 	extra := 0
-
-	// Conflict warning adds 1 line when present
-	if len(m.conflicts) > 0 {
-		extra++
-	}
 
 	// Error or info message adds 1 line when present (they are mutually exclusive)
 	if m.errorMessage != "" || m.infoMessage != "" {
@@ -1669,33 +1643,6 @@ func (m Model) calculateExtraFooterLines() int {
 	return extra
 }
 
-// renderConflictWarning renders the file conflict warning banner
-func (m Model) renderConflictWarning() string {
-	conflictsView := view.NewConflictsView(m.conflicts, m.buildInstanceInfoList())
-	return conflictsView.RenderWarningBanner()
-}
-
-// renderConflictPanel renders a detailed conflict view showing all files and instances
-func (m Model) renderConflictPanel(width int) string {
-	conflictsView := view.NewConflictsView(m.conflicts, m.buildInstanceInfoList())
-	return conflictsView.Render(width)
-}
-
-// buildInstanceInfoList builds a list of instance info for view components
-func (m Model) buildInstanceInfoList() []view.InstanceInfo {
-	if m.session == nil {
-		return nil
-	}
-	instances := make([]view.InstanceInfo, len(m.session.Instances))
-	for i, inst := range m.session.Instances {
-		instances[i] = view.InstanceInfo{
-			ID:   inst.ID,
-			Task: inst.Task,
-		}
-	}
-	return instances
-}
-
 // buildHelpBarState creates the view.HelpBarState from the current model state.
 func (m Model) buildHelpBarState() *view.HelpBarState {
 	state := &view.HelpBarState{
@@ -1705,7 +1652,6 @@ func (m Model) buildHelpBarState() *view.HelpBarState {
 		ShowDiff:      m.showDiff,
 		FilterMode:    m.filterMode,
 		SearchMode:    m.searchMode,
-		ConflictCount: len(m.conflicts),
 	}
 
 	// Terminal manager may be nil in tests

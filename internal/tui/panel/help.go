@@ -223,7 +223,6 @@ func DefaultHelpSections() []HelpSection {
 			Items: []HelpItem{
 				{Key: ":d  :diff", Description: "Toggle diff preview panel"},
 				{Key: ":m  :stats", Description: "Toggle metrics panel"},
-				{Key: ":c  :conflicts", Description: "Toggle conflict view"},
 				{Key: ":f  :filter", Description: "Open filter panel"},
 				{Key: ":tmux", Description: "Show tmux attach command"},
 				{Key: ":r  :pr", Description: "Show PR creation command"},

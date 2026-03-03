@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
@@ -35,7 +34,6 @@ type mockDeps struct {
 	session               *orchestrator.Session
 	activeInstance        *orchestrator.Instance
 	instanceCount         int
-	conflicts             int
 	terminalVisible       bool
 	diffVisible           bool
 	diffContent           string
@@ -58,7 +56,6 @@ func (m *mockDeps) GetOrchestrator() *orchestrator.Orchestrator { return m.orche
 func (m *mockDeps) GetSession() *orchestrator.Session           { return m.session }
 func (m *mockDeps) ActiveInstance() *orchestrator.Instance      { return m.activeInstance }
 func (m *mockDeps) InstanceCount() int                          { return m.instanceCount }
-func (m *mockDeps) GetConflicts() int                           { return m.conflicts }
 func (m *mockDeps) IsTerminalVisible() bool                     { return m.terminalVisible }
 func (m *mockDeps) IsDiffVisible() bool                         { return m.diffVisible }
 func (m *mockDeps) GetDiffContent() string                      { return m.diffContent }
@@ -169,7 +166,7 @@ func TestCategoriesContainAllShortcuts(t *testing.T) {
 	}
 
 	// Verify key shortcuts are documented
-	expectedShortcuts := []string{"s", "x", "e", "p", "R", "a", "D", "C", "d", "m", "c", "f", "t", "r", "h", "q", "q!"}
+	expectedShortcuts := []string{"s", "x", "e", "p", "R", "a", "D", "C", "d", "m", "f", "t", "r", "h", "q", "q!"}
 	for _, key := range expectedShortcuts {
 		if !shortKeys[key] {
 			t.Errorf("shortcut %q not found in categories", key)
@@ -730,41 +727,6 @@ func TestDiffCommand(t *testing.T) {
 	})
 }
 
-func TestConflictsCommand(t *testing.T) {
-	t.Run("shows conflicts panel when conflicts exist", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-		deps.conflicts = 3
-
-		result := h.Execute("conflicts", deps)
-		if result.ShowConflicts == nil || !*result.ShowConflicts {
-			t.Error("expected ShowConflicts to be set to true")
-		}
-	})
-
-	t.Run("c alias", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-		deps.conflicts = 1
-
-		result := h.Execute("c", deps)
-		if result.ShowConflicts == nil || !*result.ShowConflicts {
-			t.Error("expected ShowConflicts to be set to true")
-		}
-	})
-
-	t.Run("shows message when no conflicts", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-		deps.conflicts = 0
-
-		result := h.Execute("conflicts", deps)
-		if result.InfoMessage != "No conflicts detected" {
-			t.Errorf("expected 'No conflicts detected', got %q", result.InfoMessage)
-		}
-	})
-}
-
 func TestTerminalCommands(t *testing.T) {
 	// Terminal commands require experimental.terminal_support to be enabled
 	viper.Set("experimental.terminal_support", true)
@@ -1041,7 +1003,7 @@ func TestAllCommandsRecognized(t *testing.T) {
 		// Instance management
 		"a", "add", "chain", "dep", "depends", "D", "remove", "kill", "C", "clear",
 		// View toggles
-		"d", "diff", "m", "metrics", "stats", "c", "conflicts",
+		"d", "diff", "m", "metrics", "stats",
 		"f", "F", "filter",
 		// Utilities
 		"tmux", "r", "pr",
@@ -2040,6 +2002,3 @@ func TestArgCommandsPrecedence(t *testing.T) {
 
 // Ensure mockDeps satisfies the interface at compile time
 var _ Dependencies = (*mockDeps)(nil)
-
-// Ensure conflict package import is used (for testing scenarios)
-var _ = conflict.FileConflict{}

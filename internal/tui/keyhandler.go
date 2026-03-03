@@ -758,10 +758,6 @@ func (m Model) handleScrollDown() (tea.Model, tea.Cmd) {
 		m.helpScroll++
 		return m, nil
 	}
-	if m.showConflicts {
-		// Don't scroll output when conflict panel is shown
-		return m, nil
-	}
 	if inst := m.activeInstance(); inst != nil {
 		// Scroll output down
 		m.scrollOutputDown(inst.ID, 1)
@@ -784,10 +780,6 @@ func (m Model) handleScrollUp() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.showConflicts {
-		// Don't scroll output when conflict panel is shown
-		return m, nil
-	}
 	if inst := m.activeInstance(); inst != nil {
 		// Scroll output up
 		m.scrollOutputUp(inst.ID, 1)
@@ -805,7 +797,7 @@ func (m Model) handleHalfPageUp() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.showDiff || m.showConflicts {
+	if m.showDiff {
 		return m, nil
 	}
 	if inst := m.activeInstance(); inst != nil {
@@ -821,7 +813,7 @@ func (m Model) handleHalfPageDown() (tea.Model, tea.Cmd) {
 		m.helpScroll += 10
 		return m, nil
 	}
-	if m.showDiff || m.showConflicts {
+	if m.showDiff {
 		return m, nil
 	}
 	if inst := m.activeInstance(); inst != nil {
@@ -840,7 +832,7 @@ func (m Model) handleFullPageUp() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.showDiff || m.showConflicts {
+	if m.showDiff {
 		return m, nil
 	}
 	if inst := m.activeInstance(); inst != nil {
@@ -856,7 +848,7 @@ func (m Model) handleFullPageDown() (tea.Model, tea.Cmd) {
 		m.helpScroll += 20
 		return m, nil
 	}
-	if m.showDiff || m.showConflicts {
+	if m.showDiff {
 		return m, nil
 	}
 	if inst := m.activeInstance(); inst != nil {
@@ -931,9 +923,6 @@ func (m Model) handleGoToTop() (tea.Model, tea.Cmd) {
 		m.helpScroll = 0
 		return m, nil
 	}
-	if m.showConflicts {
-		return m, nil
-	}
 	if inst := m.activeInstance(); inst != nil {
 		m.scrollOutputToTop(inst.ID)
 	}
@@ -958,9 +947,6 @@ func (m Model) handleGoToBottom() (tea.Model, tea.Cmd) {
 	if m.showHelp {
 		// Jump to bottom of help (will be clamped in render)
 		m.helpScroll = 1000
-		return m, nil
-	}
-	if m.showConflicts {
 		return m, nil
 	}
 	if inst := m.activeInstance(); inst != nil {

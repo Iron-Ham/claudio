@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 )
@@ -15,21 +14,19 @@ type mockDashboardState struct {
 	session                  *orchestrator.Session
 	activeTab                int
 	sidebarScrollOffset      int
-	conflicts                []conflict.FileConflict
 	terminalWidth            int
 	terminalHeight           int
 	isAddingTask             bool
 	intelligentNamingEnabled bool
 }
 
-func (m *mockDashboardState) Session() *orchestrator.Session     { return m.session }
-func (m *mockDashboardState) ActiveTab() int                     { return m.activeTab }
-func (m *mockDashboardState) SidebarScrollOffset() int           { return m.sidebarScrollOffset }
-func (m *mockDashboardState) Conflicts() []conflict.FileConflict { return m.conflicts }
-func (m *mockDashboardState) TerminalWidth() int                 { return m.terminalWidth }
-func (m *mockDashboardState) TerminalHeight() int                { return m.terminalHeight }
-func (m *mockDashboardState) IsAddingTask() bool                 { return m.isAddingTask }
-func (m *mockDashboardState) IntelligentNamingEnabled() bool     { return m.intelligentNamingEnabled }
+func (m *mockDashboardState) Session() *orchestrator.Session { return m.session }
+func (m *mockDashboardState) ActiveTab() int                 { return m.activeTab }
+func (m *mockDashboardState) SidebarScrollOffset() int       { return m.sidebarScrollOffset }
+func (m *mockDashboardState) TerminalWidth() int             { return m.terminalWidth }
+func (m *mockDashboardState) TerminalHeight() int            { return m.terminalHeight }
+func (m *mockDashboardState) IsAddingTask() bool             { return m.isAddingTask }
+func (m *mockDashboardState) IntelligentNamingEnabled() bool { return m.intelligentNamingEnabled }
 
 func TestRenderSidebar_NoDuplicateTitle(t *testing.T) {
 	tests := []struct {

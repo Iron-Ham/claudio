@@ -146,33 +146,6 @@ branch:
 3. **Safe experimentation** - Bad changes don't affect other instances
 4. **Easy cleanup** - Remove a worktree without affecting others
 
-## Conflict Detection
-
-Claudio detects when multiple instances modify the same files:
-
-### Viewing Conflicts
-
-Press `c` in the TUI to see the conflict view:
-
-```
-Conflicting Files:
-─────────────────────────────────────────
-src/auth.ts
-  Modified by: Instance 1 (abc123), Instance 2 (def456)
-
-src/config.ts
-  Modified by: Instance 1 (abc123)
-```
-
-### Handling Conflicts
-
-When conflicts are detected:
-
-1. **Review** - Check what each instance changed
-2. **Coordinate** - Let one instance finish first
-3. **Merge** - Use Git to merge branches manually
-4. **Rebase** - Use `pr --auto-rebase` to handle during PR creation
-
 ## Reconnecting to Instances
 
 If you quit the TUI but instances are still running:

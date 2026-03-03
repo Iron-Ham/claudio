@@ -495,7 +495,6 @@ cargo bench
 
 ### Monitoring
 
-- Press `c` to check for conflicts (especially Cargo.toml)
 - Review diffs with `d` before creating PRs
 - Watch for compilation errors in instance output
 

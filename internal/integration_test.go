@@ -117,14 +117,13 @@ func TestEventBusWildcardSubscription(t *testing.T) {
 	bus.Publish(event.NewBellEvent("inst-1"))
 	bus.Publish(event.NewTaskCompletedEvent("task-1", "inst-1", true, ""))
 	bus.Publish(event.NewPhaseChangeEvent("session-1", event.PhasePlanning, event.PhaseExecuting))
-	bus.Publish(event.NewConflictDetectedEvent("inst-1", "branch", []string{"file.go"}))
 
 	mu.Lock()
 	count := len(allEvents)
 	mu.Unlock()
 
-	if count != 6 {
-		t.Errorf("Expected wildcard subscriber to receive 6 events, got %d", count)
+	if count != 5 {
+		t.Errorf("Expected wildcard subscriber to receive 5 events, got %d", count)
 	}
 }
 
@@ -498,7 +497,6 @@ func TestEventTypesIntegration(t *testing.T) {
 		event.NewInstanceStoppedEvent("id", true, "reason"),
 		event.NewPRCompleteEvent("id", true, "url", ""),
 		event.NewPROpenedEvent("id", "url"),
-		event.NewConflictDetectedEvent("id", "branch", []string{"file"}),
 		event.NewTimeoutEvent("id", event.TimeoutActivity, "5m"),
 		event.NewTimeoutEvent("id", event.TimeoutCompletion, "30m"),
 		event.NewTimeoutEvent("id", event.TimeoutStale, "5m"),

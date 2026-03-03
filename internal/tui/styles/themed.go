@@ -97,9 +97,6 @@ type ThemedStyles struct {
 	SuccessMsg lipgloss.Style
 	WarningMsg lipgloss.Style
 
-	// Conflict banner
-	ConflictBanner lipgloss.Style
-
 	// Dropdown styles
 	DropdownContainer    lipgloss.Style
 	DropdownItem         lipgloss.Style
@@ -333,12 +330,6 @@ func NewThemedStyles(p *ColorPalette) *ThemedStyles {
 	s.WarningMsg = lipgloss.NewStyle().
 		Foreground(p.Warning).
 		Bold(true)
-
-	s.ConflictBanner = lipgloss.NewStyle().
-		Foreground(p.Text).
-		Background(p.Warning).
-		Bold(true).
-		Padding(0, 1)
 
 	s.DropdownContainer = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -619,9 +610,6 @@ func syncGlobalStyles() {
 	ErrorMsg = activeTheme.ErrorMsg
 	SuccessMsg = activeTheme.SuccessMsg
 	WarningMsg = activeTheme.WarningMsg
-
-	// Update conflict banner
-	ConflictBanner = activeTheme.ConflictBanner
 
 	// Update dropdown styles
 	DropdownContainer = activeTheme.DropdownContainer

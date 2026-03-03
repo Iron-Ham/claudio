@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Iron-Ham/claudio/internal/conflict"
 	instmetrics "github.com/Iron-Ham/claudio/internal/instance/metrics"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
@@ -29,8 +28,6 @@ type DashboardState interface {
 	ActiveTab() int
 	// SidebarScrollOffset returns the scroll offset for the sidebar
 	SidebarScrollOffset() int
-	// Conflicts returns the current file conflicts
-	Conflicts() []conflict.FileConflict
 	// TerminalWidth returns the terminal width
 	TerminalWidth() int
 	// TerminalHeight returns the terminal height
@@ -95,9 +92,6 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 		// Reserve space for scroll down indicator (1 line)
 		availableLines--
 
-		// Build a set of instance IDs that have conflicts
-		conflictingInstances := dv.buildConflictMap(state.Conflicts())
-
 		// Track actual lines used and where we stop rendering
 		linesUsed := 0
 		lastRenderedIdx := scrollOffset - 1 // Will be updated as we render
@@ -111,7 +105,7 @@ func (dv *DashboardView) RenderSidebar(state DashboardState, width, height int) 
 
 		for i := scrollOffset; i < instanceCount; i++ {
 			inst := session.Instances[i]
-			renderedContent := dv.renderSidebarInstance(i, inst, conflictingInstances, activeTab, width, intelligentNaming)
+			renderedContent := dv.renderSidebarInstance(i, inst, activeTab, width, intelligentNaming)
 
 			// Calculate how many lines this item will take
 			itemLines := strings.Count(renderedContent, "\n") + 1
@@ -203,7 +197,6 @@ func renderEnhancedStatusLine(inst *orchestrator.Instance, statusColor lipgloss.
 func (dv *DashboardView) renderSidebarInstance(
 	i int,
 	inst *orchestrator.Instance,
-	conflictingInstances map[string]bool,
 	activeTab int,
 	width int,
 	intelligentNaming bool,
@@ -215,12 +208,6 @@ func (dv *DashboardView) renderSidebarInstance(
 	// Build prefix icons
 	prefix := ""
 	prefixLen := 0
-
-	// Add conflict indicator if instance has conflicts
-	if conflictingInstances[inst.ID] {
-		prefix += "⚠ "
-		prefixLen += 2
-	}
 
 	// Add chain indicator if instance has dependencies (waiting for others)
 	if len(inst.DependsOn) > 0 && inst.Status == orchestrator.StatusPending {
@@ -367,17 +354,6 @@ func wrapAtWordBoundary(runes []rune, maxLen int) string {
 
 	// No suitable word boundary found, fall back to character-based breaking
 	return string(runes[:maxLen])
-}
-
-// buildConflictMap creates a map of instance IDs that have conflicts.
-func (dv *DashboardView) buildConflictMap(conflicts []conflict.FileConflict) map[string]bool {
-	conflictingInstances := make(map[string]bool)
-	for _, c := range conflicts {
-		for _, instID := range c.Instances {
-			conflictingInstances[instID] = true
-		}
-	}
-	return conflictingInstances
 }
 
 // truncate truncates a string to max length, adding ellipsis if needed.
