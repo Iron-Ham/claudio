@@ -1,7 +1,10 @@
 package terminal
 
 import (
+	"slices"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 )
@@ -806,4 +809,92 @@ func TestSendPaste_NoProcess(t *testing.T) {
 	if err != ErrNotRunning {
 		t.Errorf("SendPaste() error = %v, want ErrNotRunning", err)
 	}
+}
+
+// newTestManagerWithProcess creates a Manager with a running mock process for key tests.
+func newTestManagerWithProcess(mock *mockCommandRunner) *Manager {
+	m := NewManager()
+	p := NewProcessWithRunner("test", "socket", "/tmp", 100, 50, mock)
+	p.mu.Lock()
+	p.running = true
+	p.mu.Unlock()
+	m.process = p
+	return m
+}
+
+func TestSendKey_AltBackspace(t *testing.T) {
+	mock := &mockCommandRunner{}
+	m := newTestManagerWithProcess(mock)
+
+	// Send Alt+Backspace (Opt+Backspace on macOS)
+	m.SendKey(tea.KeyMsg{Type: tea.KeyBackspace, Alt: true})
+
+	// Should send Escape followed by BSpace (two separate keys)
+	if len(mock.commands) != 2 {
+		t.Fatalf("SendKey(Alt+Backspace) sent %d commands, want 2", len(mock.commands))
+	}
+
+	// First command: Escape
+	if !containsArg(mock.commands[0].args, "Escape") {
+		t.Errorf("first command args = %v, want Escape key", mock.commands[0].args)
+	}
+
+	// Second command: BSpace
+	if !containsArg(mock.commands[1].args, "BSpace") {
+		t.Errorf("second command args = %v, want BSpace key", mock.commands[1].args)
+	}
+}
+
+func TestSendKey_AltArrows(t *testing.T) {
+	tests := []struct {
+		name        string
+		keyType     tea.KeyType
+		expectedKey string
+	}{
+		{"Alt+Up", tea.KeyUp, "Up"},
+		{"Alt+Down", tea.KeyDown, "Down"},
+		{"Alt+Left", tea.KeyLeft, "Left"},
+		{"Alt+Right", tea.KeyRight, "Right"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockCommandRunner{}
+			m := newTestManagerWithProcess(mock)
+
+			m.SendKey(tea.KeyMsg{Type: tt.keyType, Alt: true})
+
+			if len(mock.commands) != 2 {
+				t.Fatalf("SendKey(%s) sent %d commands, want 2", tt.name, len(mock.commands))
+			}
+
+			if !containsArg(mock.commands[0].args, "Escape") {
+				t.Errorf("first command args = %v, want Escape key", mock.commands[0].args)
+			}
+			if !containsArg(mock.commands[1].args, tt.expectedKey) {
+				t.Errorf("second command args = %v, want %s key", mock.commands[1].args, tt.expectedKey)
+			}
+		})
+	}
+}
+
+func TestSendKey_PlainBackspace(t *testing.T) {
+	mock := &mockCommandRunner{}
+	m := newTestManagerWithProcess(mock)
+
+	// Plain backspace without Alt should send just BSpace
+	m.SendKey(tea.KeyMsg{Type: tea.KeyBackspace})
+
+	if len(mock.commands) != 1 {
+		t.Fatalf("SendKey(Backspace) sent %d commands, want 1", len(mock.commands))
+	}
+
+	if !containsArg(mock.commands[0].args, "BSpace") {
+		t.Errorf("command args = %v, want BSpace key", mock.commands[0].args)
+	}
+}
+
+// containsArg checks if any of the args slice elements match the given value.
+func containsArg(args []string, value string) bool {
+	return slices.Contains(args, value)
 }

@@ -512,6 +512,11 @@ func (m *Manager) SendKey(msg tea.KeyMsg) {
 	case tea.KeyEnter:
 		key = "Enter"
 	case tea.KeyBackspace:
+		if msg.Alt {
+			logKeyErr("SendKey", "Escape", m.process.SendKey("Escape"))
+			logKeyErr("SendKey", "BSpace", m.process.SendKey("BSpace"))
+			return
+		}
 		key = "BSpace"
 	case tea.KeyTab:
 		key = "Tab"
@@ -523,14 +528,34 @@ func (m *Manager) SendKey(msg tea.KeyMsg) {
 	case tea.KeyEsc:
 		key = "Escape"
 
-	// Arrow keys
+	// Arrow keys - check for Alt modifier (Opt+Arrow on macOS)
 	case tea.KeyUp:
+		if msg.Alt {
+			logKeyErr("SendKey", "Escape", m.process.SendKey("Escape"))
+			logKeyErr("SendKey", "Up", m.process.SendKey("Up"))
+			return
+		}
 		key = "Up"
 	case tea.KeyDown:
+		if msg.Alt {
+			logKeyErr("SendKey", "Escape", m.process.SendKey("Escape"))
+			logKeyErr("SendKey", "Down", m.process.SendKey("Down"))
+			return
+		}
 		key = "Down"
 	case tea.KeyRight:
+		if msg.Alt {
+			logKeyErr("SendKey", "Escape", m.process.SendKey("Escape"))
+			logKeyErr("SendKey", "Right", m.process.SendKey("Right"))
+			return
+		}
 		key = "Right"
 	case tea.KeyLeft:
+		if msg.Alt {
+			logKeyErr("SendKey", "Escape", m.process.SendKey("Escape"))
+			logKeyErr("SendKey", "Left", m.process.SendKey("Left"))
+			return
+		}
 		key = "Left"
 
 	// Navigation keys
