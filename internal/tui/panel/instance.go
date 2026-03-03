@@ -2,7 +2,8 @@
 package panel
 
 import (
-	"github.com/Iron-Ham/claudio/internal/conflict"
+	"strings"
+
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 )
@@ -32,7 +33,6 @@ func (p *InstancePanel) Render(state *RenderState) string {
 		session:                  state.Session,
 		activeTab:                state.ActiveIndex,
 		sidebarScrollOffset:      state.ScrollOffset,
-		conflicts:                state.Conflicts,
 		terminalWidth:            state.Width,
 		terminalHeight:           state.Height,
 		isAddingTask:             state.IsAddingTask,
@@ -57,7 +57,6 @@ type instancePanelState struct {
 	session                  *orchestrator.Session
 	activeTab                int
 	sidebarScrollOffset      int
-	conflicts                []conflict.FileConflict
 	terminalWidth            int
 	terminalHeight           int
 	isAddingTask             bool
@@ -79,11 +78,6 @@ func (s *instancePanelState) SidebarScrollOffset() int {
 	return s.sidebarScrollOffset
 }
 
-// Conflicts implements view.DashboardState.
-func (s *instancePanelState) Conflicts() []conflict.FileConflict {
-	return s.conflicts
-}
-
 // TerminalWidth implements view.DashboardState.
 func (s *instancePanelState) TerminalWidth() int {
 	return s.terminalWidth
@@ -102,4 +96,9 @@ func (s *instancePanelState) IsAddingTask() bool {
 // IntelligentNamingEnabled implements view.DashboardState.
 func (s *instancePanelState) IntelligentNamingEnabled() bool {
 	return s.intelligentNamingEnabled
+}
+
+// countNewlines returns the number of newline characters in a string.
+func countNewlines(s string) int {
+	return strings.Count(s, "\n")
 }

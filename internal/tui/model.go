@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/Iron-Ham/claudio/internal/config"
-	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/logging"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/ralph"
@@ -303,8 +302,7 @@ type Model struct {
 	ready           bool
 	quitting        bool
 	showHelp        bool
-	helpScroll      int  // Scroll offset for help panel
-	showConflicts   bool // When true, show detailed conflict view
+	helpScroll      int // Scroll offset for help panel
 	addingTask      bool
 	taskInput       string
 	taskInputCursor int // Cursor position within taskInput (0 = before first char)
@@ -344,9 +342,6 @@ type Model struct {
 	branchSearchInput    string   // Current search/filter text
 	selectedBaseBranch   string   // The selected base branch for the new instance
 	branchSelectorHeight int      // Visible height for branch list (calculated from terminal)
-
-	// File conflict tracking
-	conflicts []conflict.FileConflict
 
 	// Output management (handles per-instance output buffers, scrolling, and auto-scroll)
 	outputManager *output.Manager
@@ -1327,11 +1322,6 @@ func (m Model) SidebarScrollOffset() int {
 	return m.sidebarScrollOffset
 }
 
-// Conflicts returns the current file conflicts.
-func (m Model) Conflicts() []conflict.FileConflict {
-	return m.conflicts
-}
-
 // TerminalWidth returns the terminal width.
 func (m Model) TerminalWidth() int {
 	return m.terminalManager.Width()
@@ -1377,11 +1367,6 @@ func (m Model) ActiveInstance() *orchestrator.Instance {
 // InstanceCount returns the number of instances.
 func (m Model) InstanceCount() int {
 	return m.instanceCount()
-}
-
-// GetConflicts returns the number of file conflicts.
-func (m Model) GetConflicts() int {
-	return len(m.conflicts)
 }
 
 // IsDiffVisible returns true if the diff panel is visible.

@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	"github.com/spf13/viper"
@@ -649,7 +648,6 @@ func TestCalculateExtraFooterLines(t *testing.T) {
 		name               string
 		errorMessage       string
 		infoMessage        string
-		conflicts          []conflict.FileConflict
 		commandMode        bool
 		verboseCommandHelp bool
 		expectedLines      int
@@ -667,23 +665,6 @@ func TestCalculateExtraFooterLines(t *testing.T) {
 			name:          "info message only",
 			infoMessage:   "Task started",
 			expectedLines: 1,
-		},
-		{
-			name:          "conflicts only",
-			conflicts:     []conflict.FileConflict{{RelativePath: "test.go"}},
-			expectedLines: 1,
-		},
-		{
-			name:          "error message and conflicts",
-			errorMessage:  "Something went wrong",
-			conflicts:     []conflict.FileConflict{{RelativePath: "test.go"}},
-			expectedLines: 2,
-		},
-		{
-			name:          "info message and conflicts",
-			infoMessage:   "Task started",
-			conflicts:     []conflict.FileConflict{{RelativePath: "test.go"}},
-			expectedLines: 2,
 		},
 		{
 			name:               "command mode with verbose help",
@@ -706,10 +687,9 @@ func TestCalculateExtraFooterLines(t *testing.T) {
 		{
 			name:               "all elements combined",
 			errorMessage:       "Something went wrong",
-			conflicts:          []conflict.FileConflict{{RelativePath: "test.go"}},
 			commandMode:        true,
 			verboseCommandHelp: true,
-			expectedLines:      4, // 1 (error) + 1 (conflicts) + 2 (verbose help)
+			expectedLines:      3, // 1 (error) + 2 (verbose help)
 		},
 	}
 
@@ -722,7 +702,6 @@ func TestCalculateExtraFooterLines(t *testing.T) {
 			m := Model{
 				errorMessage: tt.errorMessage,
 				infoMessage:  tt.infoMessage,
-				conflicts:    tt.conflicts,
 				commandMode:  tt.commandMode,
 			}
 

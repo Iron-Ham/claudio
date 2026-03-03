@@ -26,7 +26,6 @@
 //
 // Status Events:
 //   - [TimeoutEvent]: Emitted when an instance times out
-//   - [ConflictDetectedEvent]: Emitted when a git conflict is detected
 //   - [BellEvent]: Emitted when a terminal bell is detected
 //
 // Ultra-Plan Events:
@@ -68,7 +67,6 @@
 // Event types follow the pattern "category.action":
 //   - instance.started, instance.stopped, instance.timeout, instance.bell
 //   - pr.completed, pr.opened
-//   - conflict.detected
 //   - task.completed
 //   - phase.changed
 //   - metrics.updated

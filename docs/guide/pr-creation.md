@@ -341,6 +341,6 @@ Change to non-draft when ready for review.
 ### Coordinate Overlapping Work
 
 If instances touched the same files:
-1. Check conflict view with `c`
+1. Review diffs with `d` to check for overlapping changes
 2. Create PRs in order
 3. Each subsequent PR rebases on updated main

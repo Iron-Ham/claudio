@@ -643,7 +643,6 @@ claudio validate <plan-file> [flags]
 - Valid JSON syntax
 - Required fields present
 - Task dependency validity (no cycles, no missing references)
-- File conflict detection between parallel tasks
 - Warnings for high complexity tasks
 
 **Examples:**

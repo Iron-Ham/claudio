@@ -492,7 +492,6 @@ func TestCommandAliases(t *testing.T) {
 		// View toggles (these work without orchestrator)
 		"d", "diff",
 		"m", "metrics", "stats",
-		"c", "conflicts",
 		"f", "F", "filter",
 		// Help
 		"h", "help",
@@ -549,30 +548,6 @@ func TestCommandAliasesRequiringInstance(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestConflictsCommandRequiresConflicts(t *testing.T) {
-	t.Run("shows message when no conflicts", func(t *testing.T) {
-		m := testModel()
-		m.conflicts = nil
-		result, _ := m.executeCommand("conflicts")
-		model := result.(Model)
-
-		if model.infoMessage == "" {
-			t.Error("expected info message when no conflicts exist")
-		}
-	})
-
-	t.Run("c alias shows message when no conflicts", func(t *testing.T) {
-		m := testModel()
-		m.conflicts = nil
-		result, _ := m.executeCommand("c")
-		model := result.(Model)
-
-		if model.infoMessage == "" {
-			t.Error("expected info message when no conflicts exist")
-		}
-	})
 }
 
 func TestTerminalFocusCommand(t *testing.T) {

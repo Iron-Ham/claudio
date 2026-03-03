@@ -223,13 +223,6 @@ var (
 			Foreground(WarningColor).
 			Bold(true)
 
-	// Conflict warning banner
-	ConflictBanner = lipgloss.NewStyle().
-			Foreground(TextColor).
-			Background(WarningColor).
-			Bold(true).
-			Padding(0, 1)
-
 	// Template dropdown styles
 	DropdownContainer = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).

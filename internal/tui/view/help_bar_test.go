@@ -122,13 +122,6 @@ func TestRenderHelp(t *testing.T) {
 			contains: []string{"hide"},
 		},
 		{
-			name: "conflicts present shows conflict indicator",
-			state: &HelpBarState{
-				ConflictCount: 3,
-			},
-			contains: []string{"conflicts"},
-		},
-		{
 			name: "search matches shows match count",
 			state: &HelpBarState{
 				SearchHasMatches:   true,

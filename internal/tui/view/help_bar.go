@@ -38,9 +38,6 @@ type HelpBarState struct {
 	// SearchMode indicates whether search mode is active
 	SearchMode bool
 
-	// ConflictCount is the number of file conflicts detected
-	ConflictCount int
-
 	// SearchHasMatches indicates whether the search has matches
 	SearchHasMatches bool
 
@@ -190,12 +187,6 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 		keys = append(keys, styles.HelpKey.Render("[:t]")+" term "+styles.HelpKey.Render("[`]")+" hide")
 	} else {
 		keys = append(keys, styles.HelpKey.Render("[`]")+" term")
-	}
-
-	// Add conflict indicator when conflicts exist
-	if state.ConflictCount > 0 {
-		conflictKey := styles.Warning.Bold(true).Render("[:c]") + styles.Warning.Render(" conflicts")
-		keys = append([]string{conflictKey}, keys...)
 	}
 
 	// Add search status indicator if search is active

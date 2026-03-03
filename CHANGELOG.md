@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Extract `buildInstanceCallbacks()` Helper** - Consolidated duplicated callback wiring between `newInstanceManager` and `newInstanceManagerWithBackend` into a shared method to prevent sync bugs when adding new callbacks.
 - **Log tmux session option errors** - Replaced silent `_ =` error discards in `createTmuxSession` and recovery paths with Debug/Warn-level logging for better diagnostics.
 
+### Removed
+- **Conflict Detector** - Removed the legacy `internal/conflict` package and all TUI wiring (warning banner, `:c`/`:conflicts` command, conflict panel, sidebar indicators). This reactive fsnotify-based system produced false positives (especially for `CLAUDE.md` which every worktree modifies) and was fully superseded by the preventive `filelock.Registry` in Orchestration 2.0.
+
 ### Fixed
 - **Stale Timeout False Positive on AskUserQuestion** - Fixed state detector not recognizing Claude Code's `AskUserQuestion` interactive selection menus as a waiting state, causing the stale timeout to fire after ~5 minutes of static menu content and marking the instance as stuck. Added pattern for the menu footer (`Enter to select · ↑/↓ to navigate · Esc to cancel`) to `InputWaitingPatterns`, and hardened `StripAnsi` to strip character set selection (`ESC(B`) and keypad mode (`ESC=`, `ESC>`) escape sequences that tmux commonly emits (#679)
 - **TMUX_TMPDIR overwrite in `createTmuxSession`** - Fixed `createTmuxSession()` replacing the entire env (including `TMUX_TMPDIR` set by `CommandWithSocket`) with only `TERM=xterm-256color`, silently defeating the stable socket directory feature.

@@ -521,7 +521,6 @@ go test ./internal/worker/...
 
 ### Monitoring
 
-- Press `c` to check for conflicts (especially go.mod)
 - Review diffs with `d` before creating PRs
 - Watch for test failures in instance output
 

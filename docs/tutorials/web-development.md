@@ -444,7 +444,6 @@ npm test
 
 ### Monitoring
 
-- Press `c` to check for conflicts in shared files
 - Review diffs with `d` before creating PRs
 - Watch for build failures in instance output
 

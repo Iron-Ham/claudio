@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/adversarial"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
@@ -15,7 +14,6 @@ type mockSidebarState struct {
 	session                  *orchestrator.Session
 	activeTab                int
 	sidebarScrollOffset      int
-	conflicts                []conflict.FileConflict
 	terminalWidth            int
 	terminalHeight           int
 	isAddingTask             bool
@@ -25,19 +23,18 @@ type mockSidebarState struct {
 	adversarialState         *AdversarialState
 }
 
-func (m *mockSidebarState) Session() *orchestrator.Session     { return m.session }
-func (m *mockSidebarState) ActiveTab() int                     { return m.activeTab }
-func (m *mockSidebarState) SidebarScrollOffset() int           { return m.sidebarScrollOffset }
-func (m *mockSidebarState) Conflicts() []conflict.FileConflict { return m.conflicts }
-func (m *mockSidebarState) TerminalWidth() int                 { return m.terminalWidth }
-func (m *mockSidebarState) TerminalHeight() int                { return m.terminalHeight }
-func (m *mockSidebarState) IsAddingTask() bool                 { return m.isAddingTask }
-func (m *mockSidebarState) IntelligentNamingEnabled() bool     { return m.intelligentNamingEnabled }
-func (m *mockSidebarState) GroupViewState() *GroupViewState    { return m.groupViewState }
-func (m *mockSidebarState) SidebarMode() SidebarMode           { return m.sidebarMode }
-func (m *mockSidebarState) UltraPlanState() *UltraPlanState    { return nil }
-func (m *mockSidebarState) MultiPlanState() *MultiPlanState    { return nil }
-func (m *mockSidebarState) PlanStateData() *PlanState          { return nil }
+func (m *mockSidebarState) Session() *orchestrator.Session  { return m.session }
+func (m *mockSidebarState) ActiveTab() int                  { return m.activeTab }
+func (m *mockSidebarState) SidebarScrollOffset() int        { return m.sidebarScrollOffset }
+func (m *mockSidebarState) TerminalWidth() int              { return m.terminalWidth }
+func (m *mockSidebarState) TerminalHeight() int             { return m.terminalHeight }
+func (m *mockSidebarState) IsAddingTask() bool              { return m.isAddingTask }
+func (m *mockSidebarState) IntelligentNamingEnabled() bool  { return m.intelligentNamingEnabled }
+func (m *mockSidebarState) GroupViewState() *GroupViewState { return m.groupViewState }
+func (m *mockSidebarState) SidebarMode() SidebarMode        { return m.sidebarMode }
+func (m *mockSidebarState) UltraPlanState() *UltraPlanState { return nil }
+func (m *mockSidebarState) MultiPlanState() *MultiPlanState { return nil }
+func (m *mockSidebarState) PlanStateData() *PlanState       { return nil }
 func (m *mockSidebarState) Orchestrator() *orchestrator.Orchestrator {
 	return nil
 }
@@ -1508,7 +1505,7 @@ func TestRenderGroupedInstance_UngroupedInstance(t *testing.T) {
 		AbsoluteIdx: 0,
 	}
 
-	result := RenderGroupedInstance(gi, false, false, 40)
+	result := RenderGroupedInstance(gi, false, 40)
 
 	// Should not contain tree connector characters (vertical line or corner)
 	if strings.Contains(result, "\u2502") || strings.Contains(result, "\u2514") {
@@ -1600,8 +1597,8 @@ func TestSidebarView_GroupedModeNoHighlightWhenAddingTask(t *testing.T) {
 		GlobalIdx:   0,
 		AbsoluteIdx: 0,
 	}
-	activeRendered := RenderGroupedInstance(gi, true, false, 40)
-	inactiveRendered := RenderGroupedInstance(gi, false, false, 40)
+	activeRendered := RenderGroupedInstance(gi, true, 40)
+	inactiveRendered := RenderGroupedInstance(gi, false, 40)
 
 	// RenderGroupedInstance returns two lines (name and status), so check each line
 	// is present in the sidebar output
@@ -1635,7 +1632,7 @@ func TestRenderGroupedInstance_GroupedInstance(t *testing.T) {
 		AbsoluteIdx: 0,
 	}
 
-	result := RenderGroupedInstance(gi, false, false, 40)
+	result := RenderGroupedInstance(gi, false, 40)
 
 	// Should contain tree connector (vertical line for non-last)
 	if !strings.Contains(result, "\u2502") {
@@ -1644,7 +1641,7 @@ func TestRenderGroupedInstance_GroupedInstance(t *testing.T) {
 
 	// Test last instance in group (should have corner connector)
 	gi.IsLast = true
-	result = RenderGroupedInstance(gi, false, false, 40)
+	result = RenderGroupedInstance(gi, false, 40)
 
 	if !strings.Contains(result, "\u2514") {
 		t.Errorf("grouped last instance should have corner connector, got: %s", result)

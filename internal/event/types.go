@@ -101,28 +101,6 @@ func NewPRCompleteEvent(instanceID string, success bool, prURL, errMsg string) P
 }
 
 // -----------------------------------------------------------------------------
-// Conflict Events
-// -----------------------------------------------------------------------------
-
-// ConflictDetectedEvent is emitted when a git conflict is detected.
-type ConflictDetectedEvent struct {
-	baseEvent
-	InstanceID    string   // Instance that encountered the conflict
-	Branch        string   // Branch with the conflict
-	ConflictFiles []string // Files with conflicts
-}
-
-// NewConflictDetectedEvent creates a ConflictDetectedEvent.
-func NewConflictDetectedEvent(instanceID, branch string, conflictFiles []string) ConflictDetectedEvent {
-	return ConflictDetectedEvent{
-		baseEvent:     newBaseEvent("conflict.detected"),
-		InstanceID:    instanceID,
-		Branch:        branch,
-		ConflictFiles: conflictFiles,
-	}
-}
-
-// -----------------------------------------------------------------------------
 // Timeout Events
 // -----------------------------------------------------------------------------
 

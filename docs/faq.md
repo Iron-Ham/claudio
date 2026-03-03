@@ -14,7 +14,6 @@ Claudio provides:
 - **Automatic isolation** via Git worktrees (each instance gets its own working directory)
 - **Coordination** through shared context files
 - **Unified dashboard** to monitor all instances
-- **Conflict detection** to catch overlapping changes
 - **Integrated PR workflow** with AI-generated descriptions
 
 ### Does Claudio work with backend APIs directly?
@@ -204,7 +203,7 @@ All instances are paused automatically. You can:
 
 ### What if two instances modify the same file?
 
-Claudio detects this and shows it in the conflict view (press `c`). You have options:
+Each instance works in its own worktree, so they won't interfere at the filesystem level. When creating PRs, use `auto_rebase` to handle merge conflicts automatically. You can also:
 
 1. **Let them continue** - Merge manually later
 2. **Pause one** - Let the other finish first

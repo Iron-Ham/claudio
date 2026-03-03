@@ -11,7 +11,6 @@ Claudio enables parallel AI-assisted development by running multiple AI backend 
 - **Worktree Isolation** - Each instance works in its own Git worktree and branch
 - **TUI Dashboard** - Real-time view of all instances with output streaming
 - **Shared Context** - Instances can see what others are working on
-- **Conflict Detection** - Detect when instances modify the same files
 - **Task Chaining** - Define dependencies between tasks with `--depends-on`
 
 ### Planning Modes

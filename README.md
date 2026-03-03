@@ -27,7 +27,6 @@ Claudio enables parallel AI-assisted development by orchestrating multiple Claud
 - **TUI Dashboard** - Real-time view of all instances with output streaming
 - **Shared Context** - Instances can see what others are working on via auto-generated context files
 - **Process Control** - Start, pause, resume, and stop instances
-- **Conflict Detection** - Detect when instances modify the same files
 - **Task Chaining** - Define dependencies between tasks with `--depends-on`
 
 ### Planning Modes
@@ -133,7 +132,6 @@ claudio add "Update API documentation"
 | `p` | Pause/resume instance |
 | `x` | Stop instance |
 | `d` | Toggle diff view |
-| `c` | Toggle conflict view |
 | `/` | Search output |
 | `Enter` | Focus instance for input |
 | `?` | Toggle help |
@@ -457,7 +455,6 @@ Logs are stored in JSON format for machine parsing:
 ```json
 {"time":"2024-01-15T10:30:45.123Z","level":"INFO","msg":"session started","session_id":"abc123"}
 {"time":"2024-01-15T10:30:46.456Z","level":"DEBUG","msg":"instance created","session_id":"abc123","instance_id":"def456","task":"implement auth"}
-{"time":"2024-01-15T10:31:00.789Z","level":"WARN","msg":"conflict detected","session_id":"abc123","files":["src/auth.go"]}
 ```
 
 The `claudio logs` command renders these with colors and formatting:
@@ -465,7 +462,6 @@ The `claudio logs` command renders these with colors and formatting:
 ```
 [10:30:45.123] [INFO] session started session_id=abc123
 [10:30:46.456] [DEBUG] instance created session_id=abc123 instance_id=def456 task=implement auth
-[10:31:00.789] [WARN] conflict detected session_id=abc123 files=["src/auth.go"]
 ```
 
 ### Log Aggregation and Export

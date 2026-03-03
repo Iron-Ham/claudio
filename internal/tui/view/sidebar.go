@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/charmbracelet/lipgloss"
@@ -120,10 +119,6 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 	groupState := state.GroupViewState()
 	isAddingTask := state.IsAddingTask()
 
-	// Build conflict map
-	conflicts := state.Conflicts()
-	conflictingInstances := sv.buildConflictMap(conflicts)
-
 	// Calculate available lines for content (not slots - actual lines!)
 	// Reserve: 1 for title, 1 for blank line, 1 for hint, 2 for scroll indicators, plus padding
 	reservedLines := 6
@@ -188,8 +183,7 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 
 			case GroupedInstance:
 				isActive := v.AbsoluteIdx == activeInstanceIdx
-				hasConflict := conflictingInstances[v.Instance.ID]
-				renderedContent = RenderGroupedInstance(v, isActive, hasConflict, width)
+				renderedContent = RenderGroupedInstance(v, isActive, width)
 				// RenderGroupedInstance returns 2 lines (name + status with internal \n)
 				itemLines = strings.Count(renderedContent, "\n") + 1
 			}
@@ -240,17 +234,6 @@ func (sv *SidebarView) RenderGroupedSidebar(state SidebarState, width, height in
 
 	// Wrap in sidebar box
 	return styles.Sidebar.Width(width - 2).Render(b.String())
-}
-
-// buildConflictMap creates a map of instance IDs that have conflicts.
-func (sv *SidebarView) buildConflictMap(conflicts []conflict.FileConflict) map[string]bool {
-	conflictingInstances := make(map[string]bool)
-	for _, c := range conflicts {
-		for _, instID := range c.Instances {
-			conflictingInstances[instID] = true
-		}
-	}
-	return conflictingInstances
 }
 
 // GroupNavigator handles keyboard navigation for the grouped sidebar view.

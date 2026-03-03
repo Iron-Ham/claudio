@@ -7,7 +7,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Iron-Ham/claudio/internal/conflict"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -138,10 +137,6 @@ type RenderState struct {
 	// HelpSections contains help text organized by section.
 	// Used by the help panel to display categorized keybindings.
 	HelpSections []HelpSection
-
-	// Conflicts contains detected file conflicts between instances.
-	// Used by the conflict panel to display conflict information.
-	Conflicts []conflict.FileConflict
 
 	// Session is the current orchestrator session.
 	// Used by the instance panel to render the full sidebar.

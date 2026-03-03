@@ -31,7 +31,6 @@ type Dependencies interface {
 	InstanceCount() int
 
 	// State queries
-	GetConflicts() int
 	IsTerminalVisible() bool
 	IsDiffVisible() bool
 	GetDiffContent() string
@@ -72,15 +71,14 @@ type Result struct {
 	TeaCmd tea.Cmd
 
 	// State changes (use pointers to distinguish "not set" from "set to false/zero")
-	ShowHelp      *bool
-	ShowStats     *bool
-	ShowDiff      *bool
-	ShowConflicts *bool
-	Quitting      *bool
-	AddingTask    *bool
-	FilterMode    *bool
-	DiffContent   *string
-	DiffScroll    *int
+	ShowHelp    *bool
+	ShowStats   *bool
+	ShowDiff    *bool
+	Quitting    *bool
+	AddingTask  *bool
+	FilterMode  *bool
+	DiffContent *string
+	DiffScroll  *int
 
 	// AddingDependentTask signals entering dependent task input mode
 	// DependentOnInstanceID is the ID of the instance the new task will depend on
@@ -267,8 +265,6 @@ func (h *Handler) registerCommands() {
 	h.commands["m"] = cmdStats
 	h.commands["metrics"] = cmdStats
 	h.commands["stats"] = cmdStats
-	h.commands["c"] = cmdConflicts
-	h.commands["conflicts"] = cmdConflicts
 	h.commands["f"] = cmdFilter
 	h.commands["F"] = cmdFilter
 	h.commands["filter"] = cmdFilter
@@ -359,7 +355,6 @@ func (h *Handler) buildCategories() {
 			Commands: []CommandInfo{
 				{ShortKey: "d", LongKey: "diff", Description: "Toggle diff preview panel", Category: "view"},
 				{ShortKey: "m", LongKey: "stats", Description: "Toggle metrics panel", Category: "view"},
-				{ShortKey: "c", LongKey: "conflicts", Description: "Toggle conflict view", Category: "view"},
 				{ShortKey: "f", LongKey: "filter", Description: "Open filter panel", Category: "view"},
 			},
 		},
@@ -791,14 +786,6 @@ func cmdDiff(deps Dependencies) Result {
 func cmdStats(_ Dependencies) Result {
 	showStats := true
 	return Result{ShowStats: &showStats}
-}
-
-func cmdConflicts(deps Dependencies) Result {
-	if deps.GetConflicts() > 0 {
-		showConflicts := true
-		return Result{ShowConflicts: &showConflicts}
-	}
-	return Result{InfoMessage: "No conflicts detected"}
 }
 
 func cmdFilter(_ Dependencies) Result {

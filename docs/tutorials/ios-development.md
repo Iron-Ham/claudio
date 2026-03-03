@@ -382,7 +382,6 @@ Run tests: xcodebuild test -scheme MyApp -destination 'platform=iOS Simulator,na
 
 ### Monitoring
 
-- Press `c` to toggle conflict view and see files modified by multiple instances
 - Review diffs with `d` before creating PRs
 - Watch for build failures in instance output
 
