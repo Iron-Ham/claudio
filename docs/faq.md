@@ -277,7 +277,6 @@ gh auth login --hostname github.mycompany.com
 Yes, with some considerations:
 - Disable interactive features
 - Use `--force` flags for automated cleanup
-- Set `auto_pr_on_stop: true` for automatic PR creation
 
 Example:
 ```bash

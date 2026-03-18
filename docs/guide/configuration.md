@@ -153,9 +153,6 @@ pr:
   # Use the configured backend to generate PR title and description
   use_ai: true
 
-  # Auto-create PR when stopping instance with 'x'
-  auto_pr_on_stop: false
-
   # Custom PR body template (Go text/template syntax)
   template: |
     ## Summary
@@ -448,7 +445,6 @@ pr:
   draft: false
   auto_rebase: true
   use_ai: true
-  auto_pr_on_stop: true
 
 cleanup:
   warn_on_stale: false

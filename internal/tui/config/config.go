@@ -303,13 +303,6 @@ func New() Model {
 					Category:    "pr",
 				},
 				{
-					Key:         "pr.auto_pr_on_stop",
-					Label:       "Auto PR on Stop",
-					Description: "Automatically commit, push, and create PR when stopping an instance with 'x'",
-					Type:        "bool",
-					Category:    "pr",
-				},
-				{
 					Key:         "pr.labels",
 					Label:       "Default Labels",
 					Description: "Comma-separated list of labels to add to all PRs",
@@ -1314,7 +1307,6 @@ func (m *Model) resetCurrentToDefault() {
 		"pr.draft":             defaults.PR.Draft,
 		"pr.auto_rebase":       defaults.PR.AutoRebase,
 		"pr.use_ai":            defaults.PR.UseAI,
-		"pr.auto_pr_on_stop":   defaults.PR.AutoPROnStop,
 		"pr.labels":            strings.Join(defaults.PR.Labels, ","),
 		"pr.reviewers.default": strings.Join(defaults.PR.Reviewers.Default, ","),
 		// Branch

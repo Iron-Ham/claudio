@@ -81,10 +81,6 @@ func TestDefault(t *testing.T) {
 	if !cfg.PR.UseAI {
 		t.Error("PR.UseAI should be true by default")
 	}
-	if cfg.PR.AutoPROnStop {
-		t.Error("PR.AutoPROnStop should be false by default")
-	}
-
 	// Verify default cleanup config
 	if !cfg.Cleanup.WarnOnStale {
 		t.Error("Cleanup.WarnOnStale should be true by default")

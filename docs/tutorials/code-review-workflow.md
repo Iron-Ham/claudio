@@ -194,9 +194,6 @@ Set up config for review workflows:
 completion:
   default_action: keep_branch  # Don't auto-PR for reviews
 
-pr:
-  auto_pr_on_stop: false  # Manual control
-
 resources:
   cost_limit: 5.00  # Cap review costs
 ```

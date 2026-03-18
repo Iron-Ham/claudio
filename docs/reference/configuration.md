@@ -191,7 +191,6 @@ Controls pull request creation behavior.
 | `pr.draft` | bool | `false` | Create PRs as drafts |
 | `pr.auto_rebase` | bool | `true` | Rebase on main before PR |
 | `pr.use_ai` | bool | `true` | Use the configured backend for PR title/description |
-| `pr.auto_pr_on_stop` | bool | `false` | Auto-create PR when stopping with 'x' |
 | `pr.template` | string | `""` | Custom PR body template |
 | `pr.labels` | []string | `[]` | Default labels for all PRs |
 | `pr.reviewers.default` | []string | `[]` | Default reviewers |
@@ -202,7 +201,6 @@ pr:
   draft: false
   auto_rebase: true
   use_ai: true
-  auto_pr_on_stop: false
   template: ""
   labels:
     - automated
@@ -650,7 +648,6 @@ pr:
   draft: false
   auto_rebase: true
   use_ai: true
-  auto_pr_on_stop: false
   labels:
     - ai-generated
   reviewers:

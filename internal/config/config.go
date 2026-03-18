@@ -170,8 +170,6 @@ type PRConfig struct {
 	AutoRebase bool `mapstructure:"auto_rebase"`
 	// UseAI uses the configured AI backend to generate PR title and description (default: true)
 	UseAI bool `mapstructure:"use_ai"`
-	// AutoPROnStop automatically creates a PR when an instance is stopped with 'x' (default: false)
-	AutoPROnStop bool `mapstructure:"auto_pr_on_stop"`
 	// Template is a custom PR body template using Go text/template syntax
 	Template string `mapstructure:"template"`
 	// Reviewers configuration for automatic reviewer assignment
@@ -476,11 +474,10 @@ func Default() *Config {
 			IncludeID: true,
 		},
 		PR: PRConfig{
-			Draft:        false,
-			AutoRebase:   true,
-			UseAI:        true,
-			AutoPROnStop: false,
-			Template:     "",
+			Draft:      false,
+			AutoRebase: true,
+			UseAI:      true,
+			Template:   "",
 			Reviewers: ReviewerConfig{
 				Default: []string{},
 				ByPath:  map[string][]string{},
@@ -618,7 +615,6 @@ func SetDefaults() {
 	viper.SetDefault("pr.draft", defaults.PR.Draft)
 	viper.SetDefault("pr.auto_rebase", defaults.PR.AutoRebase)
 	viper.SetDefault("pr.use_ai", defaults.PR.UseAI)
-	viper.SetDefault("pr.auto_pr_on_stop", defaults.PR.AutoPROnStop)
 	viper.SetDefault("pr.template", defaults.PR.Template)
 	viper.SetDefault("pr.reviewers.default", defaults.PR.Reviewers.Default)
 	viper.SetDefault("pr.reviewers.by_path", defaults.PR.Reviewers.ByPath)
