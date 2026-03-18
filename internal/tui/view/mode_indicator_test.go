@@ -54,22 +54,6 @@ func TestModeIndicatorView_GetModeInfo_TerminalMode(t *testing.T) {
 	}
 }
 
-func TestModeIndicatorView_GetModeInfo_SearchMode(t *testing.T) {
-	v := NewModeIndicatorView()
-	state := &ModeIndicatorState{SearchMode: true}
-	info := v.GetModeInfo(state)
-
-	if info == nil {
-		t.Fatal("GetModeInfo for search mode should not return nil")
-	}
-	if info.Label != "SEARCH" {
-		t.Errorf("GetModeInfo Label = %q, want %q", info.Label, "SEARCH")
-	}
-	if info.IsHighPriority {
-		t.Error("Search mode should not be high priority")
-	}
-}
-
 func TestModeIndicatorView_GetModeInfo_FilterMode(t *testing.T) {
 	v := NewModeIndicatorView()
 	state := &ModeIndicatorState{FilterMode: true}
@@ -115,7 +99,6 @@ func TestModeIndicatorView_GetModeInfo_Priority(t *testing.T) {
 	state := &ModeIndicatorState{
 		InputMode:   true,
 		CommandMode: true,
-		SearchMode:  true,
 	}
 	info := v.GetModeInfo(state)
 
@@ -127,12 +110,11 @@ func TestModeIndicatorView_GetModeInfo_Priority(t *testing.T) {
 	}
 }
 
-func TestModeIndicatorView_GetModeInfo_TerminalPriorityOverSearch(t *testing.T) {
-	// Test that TerminalFocused takes precedence over search/command
+func TestModeIndicatorView_GetModeInfo_TerminalPriorityOverCommand(t *testing.T) {
+	// Test that TerminalFocused takes precedence over command
 	v := NewModeIndicatorView()
 	state := &ModeIndicatorState{
 		TerminalFocused: true,
-		SearchMode:      true,
 		CommandMode:     true,
 	}
 	info := v.GetModeInfo(state)
@@ -141,7 +123,7 @@ func TestModeIndicatorView_GetModeInfo_TerminalPriorityOverSearch(t *testing.T) 
 		t.Fatal("GetModeInfo should not return nil")
 	}
 	if info.Label != "TERMINAL" {
-		t.Errorf("TerminalFocused should take precedence over search/command, got Label = %q", info.Label)
+		t.Errorf("TerminalFocused should take precedence over command, got Label = %q", info.Label)
 	}
 }
 
@@ -181,20 +163,6 @@ func TestModeIndicatorView_RenderWithExitHint_InputMode(t *testing.T) {
 	}
 	if !strings.Contains(result, "Ctrl+]") {
 		t.Errorf("RenderWithExitHint for high priority mode should contain exit hint, got %q", result)
-	}
-}
-
-func TestModeIndicatorView_RenderWithExitHint_SearchMode(t *testing.T) {
-	v := NewModeIndicatorView()
-	state := &ModeIndicatorState{SearchMode: true}
-	result := v.RenderWithExitHint(state)
-
-	if result == "" {
-		t.Error("RenderWithExitHint for search mode should not return empty string")
-	}
-	// Search is not high priority, so no exit hint
-	if strings.Contains(result, "Ctrl+]") {
-		t.Errorf("RenderWithExitHint for non-high-priority mode should not contain Ctrl+] hint, got %q", result)
 	}
 }
 
@@ -255,7 +223,6 @@ func TestModeIndicatorView_AllModes_HaveNonEmptyLabels(t *testing.T) {
 	}{
 		{"InputMode", &ModeIndicatorState{InputMode: true}},
 		{"TerminalFocused", &ModeIndicatorState{TerminalFocused: true}},
-		{"SearchMode", &ModeIndicatorState{SearchMode: true}},
 		{"FilterMode", &ModeIndicatorState{FilterMode: true}},
 		{"CommandMode", &ModeIndicatorState{CommandMode: true}},
 		{"AddingTask", &ModeIndicatorState{AddingTask: true}},

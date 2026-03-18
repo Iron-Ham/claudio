@@ -22,7 +22,6 @@ func TestCalculateOverheadLines(t *testing.T) {
 				ShowMetrics:        false,
 				HasMetrics:         false,
 				IsRunning:          false,
-				HasSearchActive:    false,
 				HasScrollIndicator: false,
 			},
 			// Header (2) + Empty banner (1) = 3
@@ -36,7 +35,6 @@ func TestCalculateOverheadLines(t *testing.T) {
 				ShowMetrics:        false,
 				HasMetrics:         false,
 				IsRunning:          true,
-				HasSearchActive:    false,
 				HasScrollIndicator: true,
 			},
 			// Header (2) + Banner (2) + Scroll (2) = 6
@@ -50,7 +48,6 @@ func TestCalculateOverheadLines(t *testing.T) {
 				ShowMetrics:        false,
 				HasMetrics:         false,
 				IsRunning:          false,
-				HasSearchActive:    false,
 				HasScrollIndicator: false,
 			},
 			// Header (2) + Dependencies (1) + Empty banner (1) = 4
@@ -64,7 +61,6 @@ func TestCalculateOverheadLines(t *testing.T) {
 				ShowMetrics:        false,
 				HasMetrics:         false,
 				IsRunning:          false,
-				HasSearchActive:    false,
 				HasScrollIndicator: false,
 			},
 			// Header (2) + Dependents (1) + Empty banner (1) = 4
@@ -78,7 +74,6 @@ func TestCalculateOverheadLines(t *testing.T) {
 				ShowMetrics:        false,
 				HasMetrics:         false,
 				IsRunning:          false,
-				HasSearchActive:    false,
 				HasScrollIndicator: false,
 			},
 			// Header (2) + Dependencies (1) + Dependents (1) + Empty banner (1) = 5
@@ -92,7 +87,6 @@ func TestCalculateOverheadLines(t *testing.T) {
 				ShowMetrics:        true,
 				HasMetrics:         true,
 				IsRunning:          false,
-				HasSearchActive:    false,
 				HasScrollIndicator: false,
 			},
 			// Header (2) + Metrics (2) + Empty banner (1) = 5
@@ -106,25 +100,10 @@ func TestCalculateOverheadLines(t *testing.T) {
 				ShowMetrics:        true,
 				HasMetrics:         false,
 				IsRunning:          false,
-				HasSearchActive:    false,
 				HasScrollIndicator: false,
 			},
 			// Header (2) + Empty banner (1) = 3
 			expected: 3,
-		},
-		{
-			name: "instance with search active",
-			params: OverheadParams{
-				HasDependencies:    false,
-				HasDependents:      false,
-				ShowMetrics:        false,
-				HasMetrics:         false,
-				IsRunning:          false,
-				HasSearchActive:    true,
-				HasScrollIndicator: false,
-			},
-			// Header (2) + Empty banner (1) + Search (2) = 5
-			expected: 5,
 		},
 		{
 			name: "maximum overhead - everything enabled",
@@ -134,11 +113,10 @@ func TestCalculateOverheadLines(t *testing.T) {
 				ShowMetrics:        true,
 				HasMetrics:         true,
 				IsRunning:          true,
-				HasSearchActive:    true,
 				HasScrollIndicator: true,
 			},
-			// Header (2) + Deps (1) + Dependents (1) + Metrics (2) + Banner (2) + Scroll (2) + Search (2) = 12
-			expected: 12,
+			// Header (2) + Deps (1) + Dependents (1) + Metrics (2) + Banner (2) + Scroll (2) = 10
+			expected: 10,
 		},
 	}
 
@@ -165,7 +143,6 @@ func TestCalculateOverheadLinesConsistency(t *testing.T) {
 		ShowMetrics:        false,
 		HasMetrics:         false,
 		IsRunning:          false,
-		HasSearchActive:    false,
 		HasScrollIndicator: false,
 	}
 	baseOverhead := v.CalculateOverheadLines(baseParams)
@@ -194,13 +171,6 @@ func TestCalculateOverheadLinesConsistency(t *testing.T) {
 		t.Errorf("Adding scroll indicator should increase overhead: base=%d, withScroll=%d", baseOverhead, scrollOverhead)
 	}
 
-	// Adding search should increase overhead
-	withSearch := baseParams
-	withSearch.HasSearchActive = true
-	searchOverhead := v.CalculateOverheadLines(withSearch)
-	if searchOverhead <= baseOverhead {
-		t.Errorf("Adding search should increase overhead: base=%d, withSearch=%d", baseOverhead, searchOverhead)
-	}
 }
 
 func TestOverheadAtLeastMinimum(t *testing.T) {
@@ -271,11 +241,10 @@ func TestCalculateOverheadLinesWithGroupHeader(t *testing.T) {
 				ShowMetrics:          true,
 				HasMetrics:           true,
 				IsRunning:            true,
-				HasSearchActive:      true,
 				HasScrollIndicator:   true,
 			},
-			// Header (2) + Group header (4) + Deps (1) + Dependents (1) + Metrics (2) + Banner (2) + Scroll (2) + Search (2) = 16
-			expected: 16,
+			// Header (2) + Group header (4) + Deps (1) + Dependents (1) + Metrics (2) + Banner (2) + Scroll (2) = 14
+			expected: 14,
 		},
 	}
 

@@ -499,8 +499,25 @@ func completeAllTeamTasks(t *testing.T, p *Pipeline, phase PipelinePhase) {
 			}
 		}
 
+		statuses := m.AllStatuses()
+
+		// Guard against the race where the manager exists but teams haven't
+		// been added yet (runPhase publishes phase_changed before AddTeam).
+		// Without this, the allDone check below is vacuously true on an
+		// empty slice, causing the function to return without completing
+		// any tasks.
+		if len(statuses) == 0 {
+			select {
+			case <-deadline:
+				t.Fatalf("timed out waiting for teams in phase %s", phase)
+			default:
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+		}
+
 		// Try to claim and complete tasks from all teams.
-		for _, s := range m.AllStatuses() {
+		for _, s := range statuses {
 			tm := m.Team(s.ID)
 			if tm == nil {
 				continue
@@ -522,7 +539,7 @@ func completeAllTeamTasks(t *testing.T, p *Pipeline, phase PipelinePhase) {
 
 		// Check if all teams are done.
 		allDone := true
-		for _, s := range m.AllStatuses() {
+		for _, s := range statuses {
 			if !s.Phase.IsTerminal() {
 				allDone = false
 				break

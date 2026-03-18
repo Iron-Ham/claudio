@@ -3,7 +3,6 @@ package view
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -52,16 +51,6 @@ type RenderState struct {
 	AutoScrollEnabled bool
 	// HasNewOutput indicates new output arrived while scrolled up
 	HasNewOutput bool
-	// SearchPattern is the current search pattern (empty if no search)
-	SearchPattern string
-	// SearchRegex is the compiled search regex (nil if no search)
-	SearchRegex *regexp.Regexp
-	// SearchMatches are the line numbers with matches
-	SearchMatches []int
-	// SearchCurrent is the index of the current match
-	SearchCurrent int
-	// SearchMode indicates if the search input is active
-	SearchMode bool
 	// GroupedViewEnabled indicates if the grouped view mode is active
 	GroupedViewEnabled bool
 }
@@ -134,12 +123,6 @@ func (v *InstanceView) RenderWithSession(inst *orchestrator.Instance, state Rend
 
 	// Render output area
 	b.WriteString(v.RenderOutput(inst.ID, state))
-
-	// Render search bar if in search mode or has active search
-	if state.SearchMode || state.SearchPattern != "" {
-		b.WriteString("\n")
-		b.WriteString(v.RenderSearchBar(state))
-	}
 
 	return b.String()
 }
@@ -400,8 +383,6 @@ type OverheadParams struct {
 	HasMetrics bool
 	// IsRunning indicates if the instance is currently running
 	IsRunning bool
-	// HasSearchActive indicates if a search pattern is active
-	HasSearchActive bool
 	// HasScrollIndicator indicates if the output needs a scroll indicator
 	HasScrollIndicator bool
 	// HasGroupHeader indicates if the group status header should be shown
@@ -414,7 +395,7 @@ type OverheadParams struct {
 
 // CalculateOverheadLines calculates the number of lines used by the instance view
 // above the output area. This accounts for header, group status, dependencies,
-// metrics, status banner, scroll indicator, and search bar.
+// metrics, status banner, and scroll indicator.
 func (v *InstanceView) CalculateOverheadLines(params OverheadParams) int {
 	lines := 0
 
@@ -458,11 +439,6 @@ func (v *InstanceView) CalculateOverheadLines(params OverheadParams) int {
 
 	// Scroll indicator: 1 line + newline if output is scrollable
 	if params.HasScrollIndicator {
-		lines += 2
-	}
-
-	// Search bar: 1 line + newline if search is active
-	if params.HasSearchActive {
 		lines += 2
 	}
 
@@ -586,11 +562,6 @@ func (v *InstanceView) RenderOutput(instanceID string, state RenderState) string
 		visibleLines = lines[startLine:endLine]
 	}
 
-	// Apply search highlighting
-	if state.SearchRegex != nil && state.SearchPattern != "" {
-		visibleLines = v.highlightSearchMatches(visibleLines, startLine, state)
-	}
-
 	visibleOutput := strings.Join(visibleLines, "\n")
 
 	// Build scroll indicator
@@ -648,84 +619,6 @@ func (v *InstanceView) buildScrollIndicator(
 	}
 	return styles.Muted.Render(fmt.Sprintf("Line %d-%d/%d (%d%%)", startLine+1, endLine, totalLines, percent)) +
 		"  " + styles.Muted.Render("[j/k] scroll  [0/G] top/bottom")
-}
-
-// highlightSearchMatches highlights search matches in visible lines.
-func (v *InstanceView) highlightSearchMatches(lines []string, startLine int, state RenderState) []string {
-	if state.SearchRegex == nil {
-		return lines
-	}
-
-	result := make([]string, len(lines))
-	for i, line := range lines {
-		lineNum := startLine + i
-		isCurrentMatchLine := false
-
-		// Check if this line contains the current match
-		if len(state.SearchMatches) > 0 && state.SearchCurrent < len(state.SearchMatches) {
-			if lineNum == state.SearchMatches[state.SearchCurrent] {
-				isCurrentMatchLine = true
-			}
-		}
-
-		// Find and highlight all matches in this line
-		matches := state.SearchRegex.FindAllStringIndex(line, -1)
-		if len(matches) == 0 {
-			result[i] = line
-			continue
-		}
-
-		var highlighted strings.Builder
-		lastEnd := 0
-		for j, match := range matches {
-			// Add text before match
-			highlighted.WriteString(line[lastEnd:match[0]])
-
-			// Highlight the match
-			matchText := line[match[0]:match[1]]
-			if isCurrentMatchLine && j == 0 {
-				// Current match gets special highlighting
-				highlighted.WriteString(styles.SearchCurrentMatch.Render(matchText))
-			} else {
-				highlighted.WriteString(styles.SearchMatch.Render(matchText))
-			}
-			lastEnd = match[1]
-		}
-		// Add remaining text after last match
-		highlighted.WriteString(line[lastEnd:])
-		result[i] = highlighted.String()
-	}
-
-	return result
-}
-
-// RenderSearchBar renders the search input bar.
-func (v *InstanceView) RenderSearchBar(state RenderState) string {
-	var b strings.Builder
-
-	// Search prompt
-	b.WriteString(styles.SearchPrompt.Render("/"))
-	b.WriteString(styles.SearchInput.Render(state.SearchPattern))
-
-	if state.SearchMode {
-		b.WriteString("█") // Cursor
-	}
-
-	// Match info
-	if state.SearchPattern != "" {
-		if len(state.SearchMatches) > 0 {
-			info := fmt.Sprintf(" [%d/%d]", state.SearchCurrent+1, len(state.SearchMatches))
-			b.WriteString(styles.SearchInfo.Render(info))
-			b.WriteString(styles.Muted.Render("  n/N next/prev"))
-		} else if !state.SearchMode {
-			b.WriteString(styles.SearchInfo.Render(" No matches"))
-		}
-		if !state.SearchMode {
-			b.WriteString(styles.Muted.Render("  Ctrl+/ clear"))
-		}
-	}
-
-	return styles.SearchBar.Render(b.String())
 }
 
 // RenderWaitingState renders a waiting state indicator for instances

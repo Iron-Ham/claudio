@@ -17,9 +17,6 @@ const (
 	// ModeCommand is vim-style ex command mode (triggered by ':').
 	ModeCommand
 
-	// ModeSearch is pattern search mode (triggered by '/').
-	ModeSearch
-
 	// ModeFilter is output filtering mode (triggered by 'f' or 'F').
 	ModeFilter
 
@@ -46,8 +43,6 @@ func (m Mode) String() string {
 		return "normal"
 	case ModeCommand:
 		return "command"
-	case ModeSearch:
-		return "search"
 	case ModeFilter:
 		return "filter"
 	case ModeInput:
@@ -129,7 +124,7 @@ type Router struct {
 	mode     Mode
 	handlers map[Mode]Handler
 
-	// Buffer holds text being typed in command/search modes.
+	// Buffer holds text being typed in command/filter/task-input modes.
 	Buffer string
 
 	// Submode tracking for complex modes
@@ -301,8 +296,6 @@ func (r *Router) Route(msg tea.KeyMsg) Result {
 func (r *Router) effectiveMode() Mode {
 	// Priority order matches app.go handleKeypress
 	switch r.mode {
-	case ModeSearch:
-		return ModeSearch
 	case ModeFilter:
 		return ModeFilter
 	case ModeInput:
@@ -328,7 +321,7 @@ func (r *Router) effectiveMode() Mode {
 // ShouldExitModeOnEscape returns true if the current mode should exit on Escape.
 func (r *Router) ShouldExitModeOnEscape() bool {
 	switch r.mode {
-	case ModeCommand, ModeSearch, ModeFilter, ModeTaskInput:
+	case ModeCommand, ModeFilter, ModeTaskInput:
 		return true
 	default:
 		return false
@@ -348,7 +341,7 @@ func (r *Router) ShouldExitModeOnCtrlBracket() bool {
 // IsBufferedMode returns true if the current mode uses a text buffer.
 func (r *Router) IsBufferedMode() bool {
 	switch r.mode {
-	case ModeCommand, ModeSearch, ModeFilter, ModeTaskInput:
+	case ModeCommand, ModeFilter, ModeTaskInput:
 		return true
 	default:
 		return false
@@ -374,12 +367,6 @@ func (r *Router) TransitionToNormal() {
 // TransitionToCommand enters command mode.
 func (r *Router) TransitionToCommand() {
 	r.mode = ModeCommand
-	r.Buffer = ""
-}
-
-// TransitionToSearch enters search mode.
-func (r *Router) TransitionToSearch() {
-	r.mode = ModeSearch
 	r.Buffer = ""
 }
 

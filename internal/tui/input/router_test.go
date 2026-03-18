@@ -13,7 +13,6 @@ func TestMode_String(t *testing.T) {
 	}{
 		{ModeNormal, "normal"},
 		{ModeCommand, "command"},
-		{ModeSearch, "search"},
 		{ModeFilter, "filter"},
 		{ModeInput, "input"},
 		{ModeTerminal, "terminal"},
@@ -48,7 +47,7 @@ func TestNewRouter(t *testing.T) {
 func TestRouter_SetMode(t *testing.T) {
 	r := NewRouter()
 
-	modes := []Mode{ModeCommand, ModeSearch, ModeFilter, ModeInput, ModeTerminal, ModeTaskInput, ModeNormal}
+	modes := []Mode{ModeCommand, ModeFilter, ModeInput, ModeTerminal, ModeTaskInput, ModeNormal}
 
 	for _, mode := range modes {
 		r.SetMode(mode)
@@ -121,12 +120,12 @@ func TestRouter_RegisterHandlerFunc(t *testing.T) {
 	r := NewRouter()
 	called := false
 
-	r.RegisterHandlerFunc(ModeSearch, func(msg tea.KeyMsg) Result {
+	r.RegisterHandlerFunc(ModeFilter, func(msg tea.KeyMsg) Result {
 		called = true
 		return NewResult()
 	})
 
-	r.SetMode(ModeSearch)
+	r.SetMode(ModeFilter)
 	r.Route(tea.KeyMsg{Type: tea.KeyEnter})
 
 	if !called {
@@ -202,9 +201,9 @@ func TestResult_Builder(t *testing.T) {
 	}
 
 	// Test WithModeChange
-	r = NewResult().WithModeChange(ModeSearch)
-	if r.NextMode == nil || *r.NextMode != ModeSearch {
-		t.Errorf("WithModeChange(ModeSearch): NextMode = %v, want ModeSearch", r.NextMode)
+	r = NewResult().WithModeChange(ModeFilter)
+	if r.NextMode == nil || *r.NextMode != ModeFilter {
+		t.Errorf("WithModeChange(ModeFilter): NextMode = %v, want ModeFilter", r.NextMode)
 	}
 
 	// Test WithBufferClear
@@ -229,7 +228,6 @@ func TestRouter_Transitions(t *testing.T) {
 		expected Mode
 	}{
 		{"TransitionToCommand", r.TransitionToCommand, ModeCommand},
-		{"TransitionToSearch", r.TransitionToSearch, ModeSearch},
 		{"TransitionToFilter", r.TransitionToFilter, ModeFilter},
 		{"TransitionToInput", r.TransitionToInput, ModeInput},
 		{"TransitionToTerminal", r.TransitionToTerminal, ModeTerminal},
@@ -258,7 +256,6 @@ func TestRouter_TransitionClearsBuffer(t *testing.T) {
 	}{
 		{"TransitionToNormal", (*Router).TransitionToNormal, true},
 		{"TransitionToCommand", (*Router).TransitionToCommand, true},
-		{"TransitionToSearch", (*Router).TransitionToSearch, true},
 		{"TransitionToTaskInput", (*Router).TransitionToTaskInput, true},
 		{"TransitionToFilter", (*Router).TransitionToFilter, false},
 		{"TransitionToInput", (*Router).TransitionToInput, false},
@@ -288,7 +285,6 @@ func TestRouter_ShouldExitModeOnEscape(t *testing.T) {
 	}{
 		{ModeNormal, false},
 		{ModeCommand, true},
-		{ModeSearch, true},
 		{ModeFilter, true},
 		{ModeInput, false},
 		{ModeTerminal, false},
@@ -317,7 +313,6 @@ func TestRouter_ShouldExitModeOnCtrlBracket(t *testing.T) {
 	}{
 		{ModeNormal, false},
 		{ModeCommand, false},
-		{ModeSearch, false},
 		{ModeFilter, false},
 		{ModeInput, true},
 		{ModeTerminal, true},
@@ -346,7 +341,6 @@ func TestRouter_IsBufferedMode(t *testing.T) {
 	}{
 		{ModeNormal, false},
 		{ModeCommand, true},
-		{ModeSearch, true},
 		{ModeFilter, true},
 		{ModeInput, false},
 		{ModeTerminal, false},
@@ -375,7 +369,6 @@ func TestRouter_IsForwardingMode(t *testing.T) {
 	}{
 		{ModeNormal, false},
 		{ModeCommand, false},
-		{ModeSearch, false},
 		{ModeFilter, false},
 		{ModeInput, true},
 		{ModeTerminal, true},
@@ -500,7 +493,6 @@ func TestRouter_EffectiveMode_Priority(t *testing.T) {
 	}
 
 	r.RegisterHandler(ModeNormal, makeHandler(ModeNormal))
-	r.RegisterHandler(ModeSearch, makeHandler(ModeSearch))
 	r.RegisterHandler(ModeFilter, makeHandler(ModeFilter))
 	r.RegisterHandler(ModeInput, makeHandler(ModeInput))
 	r.RegisterHandler(ModeTerminal, makeHandler(ModeTerminal))
@@ -510,14 +502,6 @@ func TestRouter_EffectiveMode_Priority(t *testing.T) {
 	r.RegisterHandler(ModeUltraPlan, makeHandler(ModeUltraPlan))
 
 	msg := tea.KeyMsg{Type: tea.KeyEnter}
-
-	// Test search mode has high priority
-	r.SetMode(ModeSearch)
-	r.SetUltraPlanActive(true) // Should not affect search mode
-	r.Route(msg)
-	if calledMode != ModeSearch {
-		t.Errorf("Search mode: called %v, want ModeSearch", calledMode)
-	}
 
 	// Test filter mode
 	r.SetMode(ModeFilter)

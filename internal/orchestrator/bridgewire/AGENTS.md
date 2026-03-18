@@ -56,4 +56,5 @@ Pipeline fires PipelinePhaseChangedEvent
 - Use `bridge.WithPollInterval(10*time.Millisecond)` via `BridgeOpts` for fast E2E tests.
 - Use `coordination.WithRebalanceInterval(-1)` on the pipeline's hub options to disable rebalance interference.
 - **Role override tests use recording factory builder** — The `FactoryWithOverrides` function in tests captures the `ai.StartOptions` passed to it, then delegates to `autoCompleteFactory`. This verifies the executor selects the right factory for each team's role without requiring real orchestrator infrastructure.
+- **`completeAllTeamTasks` must guard against empty teams** — `pipeline.runPhase` publishes `phase_changed` before calling `m.AddTeam`. If the test goroutine races ahead, `m.AllStatuses()` returns empty and `allDone` is vacuously true. The guard `if len(statuses) == 0 { continue }` prevents premature return. Same fix applies to the copy in `pipeline/pipeline_test.go`.
 - Always run with `-race` — the executor has concurrent event handlers and bridge goroutines.

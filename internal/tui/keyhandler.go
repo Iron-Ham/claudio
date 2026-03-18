@@ -22,11 +22,6 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Sync router state for mode tracking
 	m.syncRouterState()
 
-	// Handle search mode - typing search pattern
-	if m.searchMode {
-		return m.handleSearchInput(msg)
-	}
-
 	// Handle filter mode - selecting categories
 	if m.filterMode {
 		return m.handleFilterInput(msg)
@@ -569,27 +564,6 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "G":
 		return m.handleGoToBottom()
 
-	case "/":
-		// Enter search mode
-		m.searchMode = true
-		m.searchEngine.Clear()
-		return m, nil
-
-	case "n":
-		// Next search match
-		m.SearchHandler().NextMatch()
-		return m, nil
-
-	case "N":
-		// Previous search match
-		m.SearchHandler().PreviousMatch()
-		return m, nil
-
-	case "ctrl+/":
-		// Clear search
-		m.SearchHandler().Clear()
-		return m, nil
-
 	case "d":
 		// Toggle dependency graph view
 		m.toggleGraphView()
@@ -978,43 +952,6 @@ func (m Model) handleSidebarScrollDown() (tea.Model, tea.Cmd) {
 }
 
 // -----------------------------------------------------------------------------
-// Search Input Handler
-// -----------------------------------------------------------------------------
-
-// handleSearchInput handles keyboard input when in search mode.
-// Delegates to search.Handler for actual search operations.
-func (m Model) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	handler := m.SearchHandler()
-
-	switch msg.Type {
-	case tea.KeyEsc:
-		// Cancel search mode (keep existing pattern if any)
-		m.searchMode = false
-		return m, nil
-
-	case tea.KeyEnter:
-		// Execute search and exit search mode
-		handler.Execute()
-		m.searchMode = false
-		return m, nil
-
-	case tea.KeyBackspace:
-		handler.HandleBackspace()
-		return m, nil
-
-	case tea.KeyRunes:
-		handler.HandleRunes(string(msg.Runes))
-		return m, nil
-
-	case tea.KeySpace:
-		handler.HandleRunes(" ")
-		return m, nil
-	}
-
-	return m, nil
-}
-
-// -----------------------------------------------------------------------------
 // Filter Input Handler
 // -----------------------------------------------------------------------------
 
@@ -1351,8 +1288,6 @@ func (m Model) CurrentInputMode() input.Mode {
 	}
 	// Fallback if router not initialized
 	switch {
-	case m.searchMode:
-		return input.ModeSearch
 	case m.filterMode:
 		return input.ModeFilter
 	case m.inputMode:
