@@ -856,6 +856,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuimsg.InstanceRemovedMsg:
 		return m.handleInstanceRemoved(msg)
 
+	case tuimsg.AllInstancesRemovedMsg:
+		return m.handleAllInstancesRemoved(msg)
+
 	case tuimsg.GroupDismissedMsg:
 		return m.handleGroupDismissed(msg)
 
@@ -1910,6 +1913,41 @@ func (m Model) handleInstanceRemoved(msg tuimsg.InstanceRemovedMsg) (tea.Model, 
 	m.infoMessage = fmt.Sprintf("Removed instance %s", msg.InstanceID)
 
 	// Adjust active tab if needed (instance count decreased)
+	if m.activeTab >= m.instanceCount() {
+		m.activeTab = m.instanceCount() - 1
+		if m.activeTab < 0 {
+			m.activeTab = 0
+		}
+	}
+
+	m.resumeActiveInstance()
+	m.ensureActiveVisible()
+
+	return m, nil
+}
+
+// handleAllInstancesRemoved processes the result of async removal of all instances.
+func (m Model) handleAllInstancesRemoved(msg tuimsg.AllInstancesRemovedMsg) (tea.Model, tea.Cmd) {
+	m.infoMessage = ""
+
+	if len(msg.Errors) > 0 {
+		if m.logger != nil {
+			for _, err := range msg.Errors {
+				m.logger.Error("failed to remove instance during remove-all", "error", err)
+			}
+		}
+		if msg.RemovedCount > 0 {
+			m.errorMessage = fmt.Sprintf("Removed %d instance(s), but %d failed", msg.RemovedCount, len(msg.Errors))
+		} else {
+			m.errorMessage = fmt.Sprintf("Failed to remove instances: %v", msg.Errors[0])
+		}
+	} else if msg.RemovedCount > 0 {
+		m.infoMessage = fmt.Sprintf("Removed all %d instance(s)", msg.RemovedCount)
+	} else {
+		m.infoMessage = "No instances to remove"
+	}
+
+	// Adjust active tab — may be 0 if all removed, or clamped if partial failure
 	if m.activeTab >= m.instanceCount() {
 		m.activeTab = m.instanceCount() - 1
 		if m.activeTab < 0 {

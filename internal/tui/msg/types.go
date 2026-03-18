@@ -80,6 +80,12 @@ type InstanceRemovedMsg struct {
 	Err        error
 }
 
+// AllInstancesRemovedMsg is sent when async removal of all instances completes.
+type AllInstancesRemovedMsg struct {
+	RemovedCount int
+	Errors       []error
+}
+
 // GroupDismissedMsg is sent when async group dismissal completes.
 type GroupDismissedMsg struct {
 	GroupID      string

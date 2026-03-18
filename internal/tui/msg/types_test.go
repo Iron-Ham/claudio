@@ -792,6 +792,51 @@ func TestInstanceRemovedMsg(t *testing.T) {
 	}
 }
 
+func TestAllInstancesRemovedMsg(t *testing.T) {
+	tests := []struct {
+		name         string
+		removedCount int
+		errors       []error
+	}{
+		{
+			name:         "successful removal of all instances",
+			removedCount: 3,
+			errors:       nil,
+		},
+		{
+			name:         "partial removal with errors",
+			removedCount: 2,
+			errors:       []error{errors.New("instance inst-1: worktree still in use")},
+		},
+		{
+			name:         "complete failure",
+			removedCount: 0,
+			errors:       []error{errors.New("instance inst-1: failed"), errors.New("instance inst-2: failed")},
+		},
+		{
+			name:         "no instances",
+			removedCount: 0,
+			errors:       nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := AllInstancesRemovedMsg{
+				RemovedCount: tt.removedCount,
+				Errors:       tt.errors,
+			}
+
+			if msg.RemovedCount != tt.removedCount {
+				t.Errorf("AllInstancesRemovedMsg.RemovedCount = %d, want %d", msg.RemovedCount, tt.removedCount)
+			}
+			if len(msg.Errors) != len(tt.errors) {
+				t.Errorf("AllInstancesRemovedMsg.Errors length = %d, want %d", len(msg.Errors), len(tt.errors))
+			}
+		})
+	}
+}
+
 func TestGroupDismissedMsg(t *testing.T) {
 	tests := []struct {
 		name         string

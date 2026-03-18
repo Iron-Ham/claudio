@@ -255,6 +255,8 @@ func (h *Handler) registerCommands() {
 	h.argCommands["depends"] = cmdChain
 	h.commands["D"] = cmdRemove
 	h.commands["remove"] = cmdRemove
+	h.commands["D!"] = cmdRemoveAll
+	h.commands["remove!"] = cmdRemoveAll
 	h.commands["kill"] = cmdKill
 	h.commands["C"] = cmdClearCompleted
 	h.commands["clear"] = cmdClearCompleted
@@ -346,6 +348,7 @@ func (h *Handler) buildCategories() {
 				{ShortKey: "a", LongKey: "add", Description: "Create and add a new instance", Category: "management"},
 				{ShortKey: "", LongKey: "chain", Description: "Add task that auto-starts after selected instance", Category: "management"},
 				{ShortKey: "D", LongKey: "remove", Description: "Remove instance from session", Category: "management"},
+				{ShortKey: "D!", LongKey: "remove!", Description: "Remove all instances from session", Category: "management"},
 				{ShortKey: "", LongKey: "kill", Description: "Force kill instance process and remove from session", Category: "management"},
 				{ShortKey: "C", LongKey: "clear", Description: "Remove all completed instances", Category: "management"},
 			},
@@ -698,6 +701,29 @@ func cmdRemove(deps Dependencies) Result {
 	return Result{
 		InfoMessage: fmt.Sprintf("Removing instance %s...", instanceID),
 		TeaCmd:      msg.RemoveInstanceAsync(orch, session, instanceID),
+	}
+}
+
+func cmdRemoveAll(deps Dependencies) Result {
+	orch := deps.GetOrchestrator()
+	session := deps.GetSession()
+	if orch == nil || session == nil {
+		return Result{ErrorMessage: "No orchestrator or session available"}
+	}
+
+	if len(session.Instances) == 0 {
+		return Result{InfoMessage: "No instances to remove"}
+	}
+
+	// Snapshot instance IDs before the async operation
+	instanceIDs := make([]string, len(session.Instances))
+	for i, inst := range session.Instances {
+		instanceIDs[i] = inst.ID
+	}
+
+	return Result{
+		InfoMessage: fmt.Sprintf("Removing all %d instance(s)...", len(instanceIDs)),
+		TeaCmd:      msg.RemoveAllInstancesAsync(orch, session, instanceIDs),
 	}
 }
 
