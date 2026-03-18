@@ -7,7 +7,7 @@
 // # Main Types
 //
 //   - [InstanceView]: Renders a single instance's detail view with output, status, and metrics
-//   - [RenderState]: Dynamic state needed for rendering (output, scroll position, search)
+//   - [RenderState]: Dynamic state needed for rendering (output, scroll position)
 //
 // # InstanceView Components
 //
@@ -16,8 +16,7 @@
 //   - Task: Task description with truncation
 //   - Metrics: Token usage, cost, and duration (when enabled)
 //   - Status Banner: Running/input mode indicators
-//   - Output Area: Scrollable output with search highlighting
-//   - Search Bar: Search input with match navigation
+//   - Output Area: Scrollable output display
 //
 // # Render State
 //
@@ -28,7 +27,6 @@
 //   - ScrollOffset: Current scroll position in output
 //   - AutoScrollEnabled: Whether to follow new output
 //   - HasNewOutput: New output arrived while scrolled up
-//   - Search*: Search pattern, regex, matches, and current match index
 //
 // # Scrolling
 //
@@ -37,14 +35,6 @@
 //   - g/G: Jump to top/bottom
 //   - Auto-scroll: Follows output when at bottom
 //   - New output indicator: Shows when scrolled up and new output arrives
-//
-// # Search
-//
-// Output search with regex support:
-//   - / to start search
-//   - n/N to navigate matches
-//   - Highlights current match differently from other matches
-//   - Shows match count and current position
 //
 // # Basic Usage
 //

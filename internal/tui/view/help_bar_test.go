@@ -103,13 +103,6 @@ func TestRenderHelp(t *testing.T) {
 			contains: []string{"FILTER", "toggle"},
 		},
 		{
-			name: "search mode shows search help",
-			state: &HelpBarState{
-				SearchMode: true,
-			},
-			contains: []string{"SEARCH", "pattern", "regex"},
-		},
-		{
 			name:     "normal mode shows default keys with NORMAL badge",
 			state:    &HelpBarState{},
 			contains: []string{"NORMAL", "cmd", "scroll", "switch", "help", "quit"},
@@ -120,15 +113,6 @@ func TestRenderHelp(t *testing.T) {
 				TerminalVisible: true,
 			},
 			contains: []string{"hide"},
-		},
-		{
-			name: "search matches shows match count",
-			state: &HelpBarState{
-				SearchHasMatches:   true,
-				SearchCurrentIndex: 2,
-				SearchMatchCount:   5,
-			},
-			contains: []string{"3/5"}, // 2+1 = 3 (0-indexed to 1-indexed)
 		},
 	}
 
@@ -157,7 +141,7 @@ func TestRenderTripleShotHelp(t *testing.T) {
 		result := RenderTripleShotHelp(nil)
 
 		// Should contain standard navigation keys
-		expectedKeys := []string{"cmd", "scroll", "switch", "search", "help", "quit"}
+		expectedKeys := []string{"cmd", "scroll", "switch", "help", "quit"}
 		for _, key := range expectedKeys {
 			if !strings.Contains(result, key) {
 				t.Errorf("expected triple-shot help to contain %q, got: %s", key, result)

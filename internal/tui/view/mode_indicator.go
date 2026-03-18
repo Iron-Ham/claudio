@@ -10,9 +10,6 @@ type ModeIndicatorState struct {
 	// CommandMode indicates command mode is active (typing after ':')
 	CommandMode bool
 
-	// SearchMode indicates search mode is active
-	SearchMode bool
-
 	// FilterMode indicates filter mode is active
 	FilterMode bool
 
@@ -78,18 +75,6 @@ func (v *ModeIndicatorView) GetModeInfo(state *ModeIndicatorState) *ModeInfo {
 				Background(styles.SecondaryColor).
 				Padding(0, 1),
 			IsHighPriority: true,
-		}
-	}
-
-	if state.SearchMode {
-		return &ModeInfo{
-			Label: "SEARCH",
-			Style: lipgloss.NewStyle().
-				Bold(true).
-				Foreground(styles.TextColor).
-				Background(styles.PrimaryColor).
-				Padding(0, 1),
-			IsHighPriority: false,
 		}
 	}
 

@@ -1,7 +1,6 @@
 package view
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
@@ -34,18 +33,6 @@ type HelpBarState struct {
 
 	// FilterMode indicates whether filter mode is active
 	FilterMode bool
-
-	// SearchMode indicates whether search mode is active
-	SearchMode bool
-
-	// SearchHasMatches indicates whether the search has matches
-	SearchHasMatches bool
-
-	// SearchCurrentIndex is the current search match index (0-based)
-	SearchCurrentIndex int
-
-	// SearchMatchCount is the total number of search matches
-	SearchMatchCount int
 }
 
 // HelpBarView handles rendering of help bars for different modes.
@@ -160,15 +147,6 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 		return styles.HelpBar.Render(badge + "  " + help)
 	}
 
-	if state.SearchMode {
-		badge := styles.ModeBadgeSearch.Render("SEARCH")
-		help := "Type pattern  " +
-			styles.HelpKey.Render("[Enter]") + " confirm  " +
-			styles.HelpKey.Render("[Esc]") + " cancel  " +
-			styles.Muted.Render("r:pattern for regex")
-		return styles.HelpBar.Render(badge + "  " + help)
-	}
-
 	// Normal mode - show NORMAL badge
 	badge := styles.ModeBadgeNormal.Render("NORMAL")
 
@@ -177,7 +155,6 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 		styles.HelpKey.Render("[j/k]") + " scroll",
 		styles.HelpKey.Render("[Tab]") + " switch",
 		styles.HelpKey.Render("[i]") + " input",
-		styles.HelpKey.Render("[/]") + " search",
 		styles.HelpKey.Render("[?]") + " help",
 		styles.HelpKey.Render("[:q]") + " quit",
 	}
@@ -187,12 +164,6 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 		keys = append(keys, styles.HelpKey.Render("[:t]")+" term "+styles.HelpKey.Render("[`]")+" hide")
 	} else {
 		keys = append(keys, styles.HelpKey.Render("[`]")+" term")
-	}
-
-	// Add search status indicator if search is active
-	if state.SearchHasMatches {
-		searchStatus := styles.Secondary.Render(fmt.Sprintf("[%d/%d]", state.SearchCurrentIndex+1, state.SearchMatchCount))
-		keys = append(keys, searchStatus+" "+styles.HelpKey.Render("[n/N]")+" match")
 	}
 
 	return styles.HelpBar.Render(badge + "  " + strings.Join(keys, "  "))
@@ -228,7 +199,6 @@ func (v *HelpBarView) RenderTripleShotHelp(state *HelpBarState) string {
 		styles.HelpKey.Render("[:]") + " cmd",
 		styles.HelpKey.Render("[j/k]") + " scroll",
 		styles.HelpKey.Render("[Tab]") + " switch",
-		styles.HelpKey.Render("[/]") + " search",
 		styles.HelpKey.Render("[?]") + " help",
 		styles.HelpKey.Render("[:q]") + " quit",
 	}

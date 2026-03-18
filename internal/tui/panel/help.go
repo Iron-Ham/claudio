@@ -249,15 +249,6 @@ func DefaultHelpSections() []HelpSection {
 			},
 		},
 		{
-			Title: "Search",
-			Items: []HelpItem{
-				{Key: "/", Description: "Start search"},
-				{Key: "n  N", Description: "Next / previous match"},
-				{Key: "Ctrl+/", Description: "Clear search"},
-				{Key: "r:pattern", Description: "Use regex search"},
-			},
-		},
-		{
 			Title: "Session",
 			Items: []HelpItem{
 				{Key: ":h  :help", Description: "Toggle this help panel"},

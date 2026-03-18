@@ -1334,7 +1334,6 @@ func (m Model) renderUnifiedHeader() string {
 	// Build mode indicator state
 	modeState := &view.ModeIndicatorState{
 		CommandMode:     m.commandMode,
-		SearchMode:      m.searchMode,
 		FilterMode:      m.filterMode,
 		InputMode:       m.inputMode,
 		TerminalFocused: m.terminalManager.IsFocused(),
@@ -1490,11 +1489,6 @@ func (m Model) renderInstance(inst *orchestrator.Instance, width int) string {
 		ScrollOffset:      m.outputManager.GetScrollOffset(inst.ID),
 		AutoScrollEnabled: m.isOutputAutoScroll(inst.ID),
 		HasNewOutput:      m.hasNewOutput(inst.ID),
-		SearchPattern:     m.searchInput,
-		SearchRegex:       m.searchEngine.Regex(),
-		SearchMatches:     m.searchEngine.MatchingLines(),
-		SearchCurrent:     m.searchEngine.CurrentIndex(),
-		SearchMode:        m.searchMode,
 	}
 
 	instanceView := view.NewInstanceView(width, m.getOutputMaxLines())
@@ -1654,7 +1648,6 @@ func (m Model) buildHelpBarState() *view.HelpBarState {
 		InputMode:     m.inputMode,
 		ShowDiff:      m.showDiff,
 		FilterMode:    m.filterMode,
-		SearchMode:    m.searchMode,
 	}
 
 	// Terminal manager may be nil in tests
@@ -1666,13 +1659,6 @@ func (m Model) buildHelpBarState() *view.HelpBarState {
 		} else {
 			state.TerminalDirMode = "invoke"
 		}
-	}
-
-	// Search engine may be nil in tests
-	if m.searchEngine != nil {
-		state.SearchHasMatches = m.searchEngine.HasMatches()
-		state.SearchCurrentIndex = m.searchEngine.CurrentIndex()
-		state.SearchMatchCount = m.searchEngine.MatchCount()
 	}
 
 	return state

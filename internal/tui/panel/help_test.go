@@ -30,7 +30,6 @@ func TestHelpPanel_Render(t *testing.T) {
 				"View Commands",
 				"Terminal Pane",
 				"Input Mode",
-				"Search",
 				"Session",
 			},
 			notEmpty: true,
@@ -195,7 +194,6 @@ func TestDefaultHelpSections(t *testing.T) {
 		"View Commands",
 		"Terminal Pane",
 		"Input Mode",
-		"Search",
 		"Session",
 	}
 

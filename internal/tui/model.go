@@ -12,7 +12,6 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/filter"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
 	"github.com/Iron-Ham/claudio/internal/tui/output"
-	"github.com/Iron-Ham/claudio/internal/tui/search"
 	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
@@ -362,16 +361,9 @@ type Model struct {
 	// Resource metrics display
 	showStats bool // When true, show the stats panel
 
-	// Search state
-	searchMode   bool           // Whether search mode is active (typing pattern)
-	searchInput  string         // Current search input being typed (live updated)
-	searchEngine *search.Engine // Search engine for output buffer searching
-
 	// Filter state
 	filterMode   bool // Whether filter mode is active
 	outputFilter *filter.Filter
-	outputScroll int // Scroll position in output (for search navigation)
-
 }
 
 // IsUltraPlanMode returns true if the model is in ultra-plan mode
@@ -656,7 +648,6 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 		commandHandler:  command.New(),
 		inputRouter:     input.NewRouter(),
 		outputManager:   outputManager,
-		searchEngine:    search.NewEngine(),
 		terminalManager: termMgr,
 		outputFilter:    outputFilter,
 	}
@@ -676,8 +667,6 @@ func (m *Model) syncRouterState() {
 
 	// Sync mode based on priority order (matching handleKeypress)
 	switch {
-	case m.searchMode:
-		m.inputRouter.SetMode(input.ModeSearch)
 	case m.filterMode:
 		m.inputRouter.SetMode(input.ModeFilter)
 	case m.inputMode:
@@ -1065,7 +1054,6 @@ func (m Model) calculateInstanceOverhead() int {
 		ShowMetrics:     showMetrics,
 		HasMetrics:      hasMetrics,
 		IsRunning:       isRunning,
-		HasSearchActive: m.searchMode || m.searchInput != "",
 		// Always assume scroll indicator will be shown to avoid overflow
 		// This is a conservative estimate that prevents clipping
 		HasScrollIndicator: true,
@@ -1418,65 +1406,6 @@ func (m Model) IsInstanceTripleShotJudge(instanceID string) bool {
 		}
 	}
 	return false
-}
-
-// -----------------------------------------------------------------------------
-// search.Context interface implementation
-// These methods implement the search.Context interface for the search Handler.
-// -----------------------------------------------------------------------------
-
-// modelSearchContext adapts the Model to implement search.Context.
-// This allows the search Handler to interact with the Model without circular imports.
-type modelSearchContext struct {
-	model *Model
-}
-
-// GetSearchInput returns the current search input string.
-func (c *modelSearchContext) GetSearchInput() string {
-	return c.model.searchInput
-}
-
-// SetSearchInput sets the search input string.
-func (c *modelSearchContext) SetSearchInput(input string) {
-	c.model.searchInput = input
-}
-
-// GetSearchEngine returns the search engine.
-func (c *modelSearchContext) GetSearchEngine() *search.Engine {
-	return c.model.searchEngine
-}
-
-// GetOutputForActiveInstance returns output for the active instance.
-func (c *modelSearchContext) GetOutputForActiveInstance() string {
-	if inst := c.model.activeInstance(); inst != nil {
-		return c.model.outputManager.GetOutput(inst.ID)
-	}
-	return ""
-}
-
-// GetViewportHeight returns the output viewport height.
-func (c *modelSearchContext) GetViewportHeight() int {
-	return c.model.terminalManager.Height() - 12
-}
-
-// GetOutputScroll returns the current output scroll position.
-func (c *modelSearchContext) GetOutputScroll() int {
-	return c.model.outputScroll
-}
-
-// SetOutputScroll sets the output scroll position.
-func (c *modelSearchContext) SetOutputScroll(scroll int) {
-	c.model.outputScroll = scroll
-}
-
-// newSearchContext creates a search context adapter for the model.
-func (m *Model) newSearchContext() *modelSearchContext {
-	return &modelSearchContext{model: m}
-}
-
-// SearchHandler returns a new search handler for this model.
-func (m *Model) SearchHandler() *search.Handler {
-	return search.NewHandler(m.newSearchContext())
 }
 
 // -----------------------------------------------------------------------------
