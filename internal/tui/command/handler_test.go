@@ -1132,6 +1132,76 @@ func TestRemoveCommandNoSession(t *testing.T) {
 	})
 }
 
+func TestRemoveAllCommand(t *testing.T) {
+	t.Run("no session returns error", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.session = nil
+		deps.orchestrator = nil
+
+		result := h.Execute("D!", deps)
+
+		if result.ErrorMessage == "" {
+			t.Error("expected error without session/orchestrator")
+		}
+	})
+
+	t.Run("no instances returns info message", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.orchestrator = &orchestrator.Orchestrator{}
+		deps.session = &orchestrator.Session{Instances: []*orchestrator.Instance{}}
+
+		result := h.Execute("D!", deps)
+
+		if result.InfoMessage != "No instances to remove" {
+			t.Errorf("InfoMessage = %q, want %q", result.InfoMessage, "No instances to remove")
+		}
+		if result.TeaCmd != nil {
+			t.Error("expected nil TeaCmd when no instances")
+		}
+	})
+
+	t.Run("with instances returns async command", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.orchestrator = &orchestrator.Orchestrator{}
+		deps.session = &orchestrator.Session{
+			Instances: []*orchestrator.Instance{
+				{ID: "inst-1"},
+				{ID: "inst-2"},
+				{ID: "inst-3"},
+			},
+		}
+
+		result := h.Execute("D!", deps)
+
+		if result.TeaCmd == nil {
+			t.Error("expected non-nil TeaCmd")
+		}
+		if result.InfoMessage == "" {
+			t.Error("expected info message about removing instances")
+		}
+	})
+
+	t.Run("remove! alias works", func(t *testing.T) {
+		h := New()
+		deps := newMockDeps()
+		deps.orchestrator = &orchestrator.Orchestrator{}
+		deps.session = &orchestrator.Session{
+			Instances: []*orchestrator.Instance{
+				{ID: "inst-1"},
+			},
+		}
+
+		result := h.Execute("remove!", deps)
+
+		if result.TeaCmd == nil {
+			t.Error("expected non-nil TeaCmd")
+		}
+	})
+}
+
 // TestKillCommandNoSession tests cmdKill when session is nil
 func TestKillCommandNoSession(t *testing.T) {
 	t.Run("no session returns error", func(t *testing.T) {

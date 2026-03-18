@@ -551,6 +551,43 @@ func TestDismissGroupAsync(t *testing.T) {
 	})
 }
 
+func TestRemoveAllInstancesAsync(t *testing.T) {
+	t.Run("returns non-nil command", func(t *testing.T) {
+		cmd := RemoveAllInstancesAsync(nil, nil, []string{"inst-1", "inst-2"})
+		if cmd == nil {
+			t.Fatal("RemoveAllInstancesAsync() returned nil command")
+		}
+	})
+
+	t.Run("returns error when orchestrator is nil", func(t *testing.T) {
+		cmd := RemoveAllInstancesAsync(nil, nil, []string{"inst-1", "inst-2"})
+		msg := cmd()
+
+		removedMsg, ok := msg.(AllInstancesRemovedMsg)
+		if !ok {
+			t.Fatalf("RemoveAllInstancesAsync()() returned %T, want AllInstancesRemovedMsg", msg)
+		}
+
+		if len(removedMsg.Errors) == 0 {
+			t.Error("expected errors when orchestrator is nil")
+		}
+	})
+
+	t.Run("returns error when session is nil", func(t *testing.T) {
+		cmd := RemoveAllInstancesAsync(nil, nil, []string{"inst-1"})
+		msg := cmd()
+
+		removedMsg, ok := msg.(AllInstancesRemovedMsg)
+		if !ok {
+			t.Fatalf("RemoveAllInstancesAsync()() returned %T, want AllInstancesRemovedMsg", msg)
+		}
+
+		if len(removedMsg.Errors) == 0 {
+			t.Error("expected errors when session is nil")
+		}
+	})
+}
+
 func TestLoadDiffAsync(t *testing.T) {
 	t.Run("returns non-nil command", func(t *testing.T) {
 		cmd := LoadDiffAsync(nil, "/path/to/worktree", "test-instance-id")
