@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Log tmux session option errors** - Replaced silent `_ =` error discards in `createTmuxSession` and recovery paths with Debug/Warn-level logging for better diagnostics.
 
 ### Removed
+- **Stop Command (`:x` / `:stop`)** - Removed the `:x` / `:stop` command and its `auto_pr_on_stop` config option. Use `:e` / `:exit` to stop instances, and `claudio pr` for PR creation
 - **Search Feature** - Removed the output search (`/`) feature from the TUI, including the `internal/tui/search/` package, key bindings (`/`, `n`/`N`, `Ctrl+/`), search bar, match highlighting, mode indicator, and help panel entries (#685)
 - **Conflict Detector** - Removed the legacy `internal/conflict` package and all TUI wiring (warning banner, `:c`/`:conflicts` command, conflict panel, sidebar indicators). This reactive fsnotify-based system produced false positives (especially for `CLAUDE.md` which every worktree modifies) and was fully superseded by the preventive `filelock.Registry` in Orchestration 2.0.
 

@@ -15,10 +15,7 @@ When an instance completes its task, you can create a PR with:
 ### From the TUI
 
 1. Select the completed instance
-2. Press `x` to stop
-3. Choose "Create PR" when prompted
-
-Or if `auto_pr_on_stop` is enabled, the PR is created automatically.
+2. Choose "Create PR" when prompted
 
 ### From the CLI
 
@@ -30,18 +27,6 @@ claudio pr <instance-id>
 claudio pr <instance-id> --draft
 claudio pr <instance-id> --no-ai
 ```
-
-### Automatic PR Creation
-
-Enable auto-PR on stop:
-
-```yaml
-# config.yaml
-pr:
-  auto_pr_on_stop: true
-```
-
-Now pressing `x` in the TUI automatically creates a PR.
 
 ## The PR Workflow
 

@@ -133,9 +133,9 @@ type Result struct {
 
 // CommandInfo contains metadata about a command for help display.
 type CommandInfo struct {
-	// ShortKey is the single-letter shortcut (e.g., "s", "x")
+	// ShortKey is the single-letter shortcut (e.g., "s", "e")
 	ShortKey string
-	// LongKey is the full command name (e.g., "start", "stop")
+	// LongKey is the full command name (e.g., "start", "exit")
 	LongKey string
 	// Description is a brief description of what the command does
 	Description string
@@ -237,8 +237,6 @@ func (h *Handler) registerCommands() {
 	// Instance control commands
 	h.commands["s"] = cmdStart
 	h.commands["start"] = cmdStart
-	h.commands["x"] = cmdStop
-	h.commands["stop"] = cmdStop
 	h.commands["e"] = cmdExit
 	h.commands["exit"] = cmdExit
 	h.commands["p"] = cmdPause
@@ -335,8 +333,7 @@ func (h *Handler) buildCategories() {
 			Name: "Instance Control",
 			Commands: []CommandInfo{
 				{ShortKey: "s", LongKey: "start", Description: "Start a stopped/new instance", Category: "control"},
-				{ShortKey: "x", LongKey: "stop", Description: "Stop instance and trigger auto-PR workflow", Category: "control"},
-				{ShortKey: "e", LongKey: "exit", Description: "Stop instance without auto-PR", Category: "control"},
+				{ShortKey: "e", LongKey: "exit", Description: "Stop instance", Category: "control"},
 				{ShortKey: "p", LongKey: "pause", Description: "Pause/resume a running instance", Category: "control"},
 				{ShortKey: "R", LongKey: "reconnect", Description: "Reattach to a stopped instance's tmux session", Category: "control"},
 				{ShortKey: "", LongKey: "restart", Description: "Restart a stuck or timed-out instance", Category: "control"},
@@ -445,7 +442,7 @@ func cmdStart(deps Dependencies) Result {
 
 	// Guard against starting already-running instances
 	if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
-		return Result{InfoMessage: "Instance is already running. Use :p to pause/resume or :x to stop."}
+		return Result{InfoMessage: "Instance is already running. Use :p to pause/resume or :e to stop."}
 	}
 	if inst.Status == orchestrator.StatusCreatingPR {
 		return Result{InfoMessage: "Instance is creating PR. Wait for it to complete."}
@@ -455,45 +452,6 @@ func cmdStart(deps Dependencies) Result {
 		return Result{ErrorMessage: err.Error()}
 	}
 	return Result{InfoMessage: fmt.Sprintf("Started instance %s", inst.ID)}
-}
-
-func cmdStop(deps Dependencies) Result {
-	inst := deps.ActiveInstance()
-	if inst == nil {
-		return Result{InfoMessage: "No instance selected"}
-	}
-
-	orch := deps.GetOrchestrator()
-	if orch == nil {
-		return Result{ErrorMessage: "No orchestrator available"}
-	}
-
-	// Check if this is a triple-shot judge before stopping
-	isJudge := deps.IsInstanceTripleShotJudge(inst.ID)
-
-	// Log user stopping instance
-	if logger := deps.GetLogger(); logger != nil {
-		logger.Info("user stopped instance", "instance_id", inst.ID)
-	}
-
-	prStarted, err := orch.StopInstanceWithAutoPR(inst)
-	if err != nil {
-		return Result{ErrorMessage: err.Error()}
-	}
-
-	result := Result{}
-	if prStarted {
-		result.InfoMessage = fmt.Sprintf("Instance stopped. Creating PR for %s...", inst.ID)
-	} else {
-		result.InfoMessage = fmt.Sprintf("Instance stopped. Create PR with: claudio pr %s", inst.ID)
-	}
-
-	// If this was a triple-shot judge, signal to clean up the triple-shot session
-	if isJudge {
-		result.StoppedTripleShotJudgeID = &inst.ID
-	}
-
-	return result
 }
 
 func cmdExit(deps Dependencies) Result {
@@ -575,7 +533,7 @@ func cmdReconnect(deps Dependencies) Result {
 
 	// Only allow reconnecting to non-running instances
 	if inst.Status == orchestrator.StatusWorking || inst.Status == orchestrator.StatusWaitingInput {
-		return Result{InfoMessage: "Instance is already running. Use :p to pause/resume or :x to stop."}
+		return Result{InfoMessage: "Instance is already running. Use :p to pause/resume or :e to stop."}
 	}
 	if inst.Status == orchestrator.StatusCreatingPR {
 		return Result{InfoMessage: "Instance is creating PR. Wait for it to complete."}
@@ -624,7 +582,7 @@ func cmdRestart(deps Dependencies) Result {
 	// Only allow restarting non-running instances
 	switch inst.Status {
 	case orchestrator.StatusWorking, orchestrator.StatusWaitingInput:
-		return Result{InfoMessage: "Instance is running. Use :x to stop it first, or :p to pause."}
+		return Result{InfoMessage: "Instance is running. Use :e to stop it first, or :p to pause."}
 	case orchestrator.StatusCreatingPR:
 		return Result{InfoMessage: "Instance is creating PR. Wait for it to complete."}
 	}

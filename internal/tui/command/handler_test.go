@@ -1,7 +1,7 @@
 package command
 
 // Coverage Note:
-// Many command implementations (cmdStart, cmdStop, cmdPause, etc.) require
+// Many command implementations (cmdStart, cmdPause, etc.) require
 // interaction with the concrete orchestrator.Orchestrator type, which cannot
 // be easily mocked without significant refactoring.
 //
@@ -166,7 +166,7 @@ func TestCategoriesContainAllShortcuts(t *testing.T) {
 	}
 
 	// Verify key shortcuts are documented
-	expectedShortcuts := []string{"s", "x", "e", "p", "R", "a", "D", "C", "d", "m", "f", "t", "r", "h", "q", "q!"}
+	expectedShortcuts := []string{"s", "e", "p", "R", "a", "D", "C", "d", "m", "f", "t", "r", "h", "q", "q!"}
 	for _, key := range expectedShortcuts {
 		if !shortKeys[key] {
 			t.Errorf("shortcut %q not found in categories", key)
@@ -858,7 +858,6 @@ func TestInstanceControlCommandsNoInstance(t *testing.T) {
 	// All instance control commands should return "No instance selected" when no instance
 	commands := []string{
 		"s", "start",
-		"x", "stop",
 		"e", "exit",
 		"p", "pause",
 		"R", "reconnect",
@@ -892,7 +891,6 @@ func TestInstanceControlCommandsNoOrchestrator(t *testing.T) {
 		needsStatus bool
 	}{
 		{"start", true, true},
-		{"stop", true, false},
 		{"exit", true, false},
 		{"pause", true, false},
 		{"reconnect", true, true},
@@ -998,7 +996,7 @@ func TestAllCommandsRecognized(t *testing.T) {
 	// Verify all expected commands are registered and don't return "Unknown command"
 	commands := []string{
 		// Instance control
-		"s", "start", "x", "stop", "e", "exit", "p", "pause",
+		"s", "start", "e", "exit", "p", "pause",
 		"R", "reconnect", "restart",
 		// Instance management
 		"a", "add", "chain", "dep", "depends", "D", "remove", "kill", "C", "clear",
@@ -1234,25 +1232,6 @@ func TestQuitCommandHandlesNilLogger(t *testing.T) {
 		}
 		if result.TeaCmd == nil {
 			t.Error("expected tea.Quit command")
-		}
-	})
-}
-
-// TestStopCommandHandlesNilLogger tests cmdStop doesn't panic with nil logger
-func TestStopCommandHandlesNilLogger(t *testing.T) {
-	t.Run("stop with nil logger doesn't panic", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-		deps.activeInstance = &orchestrator.Instance{ID: "test-123"}
-		deps.logger = nil
-		deps.orchestrator = nil
-
-		// Should not panic even with nil logger
-		result := h.Execute("stop", deps)
-
-		// We get error because orchestrator is nil, but no panic from nil logger
-		if result.ErrorMessage != "No orchestrator available" {
-			t.Errorf("expected 'No orchestrator available', got %q", result.ErrorMessage)
 		}
 	})
 }

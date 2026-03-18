@@ -917,27 +917,6 @@ func (o *Orchestrator) StopInstance(inst *Instance) error {
 	return o.saveSession()
 }
 
-// StopInstanceWithAutoPR stops an instance and optionally starts PR workflow
-// Returns true if PR workflow was started, false if instance was just stopped
-func (o *Orchestrator) StopInstanceWithAutoPR(inst *Instance) (bool, error) {
-	// First, stop the backend instance
-	if err := o.StopInstance(inst); err != nil {
-		return false, err
-	}
-
-	// Check if auto PR is enabled
-	if !o.config.PR.AutoPROnStop {
-		return false, nil
-	}
-
-	// Start the PR workflow
-	if err := o.StartPRWorkflow(inst); err != nil {
-		return false, fmt.Errorf("failed to start PR workflow: %w", err)
-	}
-
-	return true, nil
-}
-
 // StartPRWorkflow starts the commit-push-PR workflow for an instance.
 // Delegates to the prWorkflowMgr for workflow management.
 func (o *Orchestrator) StartPRWorkflow(inst *Instance) error {

@@ -155,8 +155,7 @@ func DefaultHelpSections() []HelpSection {
 			Title: "Instance Control",
 			Items: []HelpItem{
 				{Key: ":s  :start", Description: "Start a stopped/new instance"},
-				{Key: ":x  :stop", Description: "Stop instance + auto-PR workflow"},
-				{Key: ":e  :exit", Description: "Stop instance (no auto-PR)"},
+				{Key: ":e  :exit", Description: "Stop instance"},
 				{Key: ":p  :pause", Description: "Pause/resume instance"},
 				{Key: ":R  :reconnect", Description: "Reattach to stopped tmux session"},
 				{Key: ":restart", Description: "Restart stuck/timeout instance"},

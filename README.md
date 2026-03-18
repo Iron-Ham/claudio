@@ -279,7 +279,6 @@ pr:
   draft: false
   auto_rebase: true
   use_ai: true
-  auto_pr_on_stop: false
 
 # Resource limits
 resources:

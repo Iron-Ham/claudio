@@ -838,7 +838,7 @@ func (m Model) handleRestartInstance() (tea.Model, tea.Cmd) {
 		// Only allow restarting stuck, timeout, completed, paused, or error instances
 		switch inst.Status {
 		case orchestrator.StatusWorking, orchestrator.StatusWaitingInput:
-			m.infoMessage = "Instance is running. Use [:x] to stop it first, or [:p] to pause."
+			m.infoMessage = "Instance is running. Use [:e] to stop it first, or [:p] to pause."
 			return m, nil
 		case orchestrator.StatusCreatingPR:
 			m.infoMessage = "Instance is creating PR. Wait for it to complete."
