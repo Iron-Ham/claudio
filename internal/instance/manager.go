@@ -665,8 +665,14 @@ func (m *Manager) StartWithResume() error {
 // are detected. This ensures the TUI always displays up-to-date output. Only state detection
 // and timeout checking are skipped after a timeout, not the actual capture.
 func (m *Manager) captureLoop() {
-	// Track last output hash to detect changes
-	var lastOutput string
+	// Track last capture output separately for visible vs full captures.
+	// These must be independent because visible-only captures don't write to outputBuf.
+	// If a single variable were used, a visible capture would set it to "CONTENT", then
+	// the subsequent forced full capture (which returns the same "CONTENT" when there's
+	// no scrollback) would see no change and skip the buffer write — leaving the TUI
+	// showing stale/empty output until scrollback appears.
+	var lastVisibleOutput string
+	var lastFullOutput string
 
 	for {
 		select {
@@ -696,6 +702,8 @@ func (m *Manager) captureLoop() {
 
 				if doHeartbeat && !m.checkSessionExists(sessionName) {
 					if m.attemptSessionRecovery(instanceID) {
+						lastVisibleOutput = ""
+						lastFullOutput = ""
 						continue
 					}
 					m.handleSessionEnded(instanceID)
@@ -715,6 +723,8 @@ func (m *Manager) captureLoop() {
 			// Check if session ended
 			if !status.sessionExists {
 				if m.attemptSessionRecovery(instanceID) {
+					lastVisibleOutput = ""
+					lastFullOutput = ""
 					continue
 				}
 				m.handleSessionEnded(instanceID)
@@ -793,6 +803,8 @@ func (m *Manager) captureLoop() {
 					// Attempt to kill the tmux session to clean up resources
 					_ = m.tmuxCmd("kill-session", "-t", sessionName).Run()
 					if m.attemptSessionRecovery(instanceID) {
+						lastVisibleOutput = ""
+						lastFullOutput = ""
 						continue
 					}
 					m.handleSessionEnded(instanceID)
@@ -810,6 +822,8 @@ func (m *Manager) captureLoop() {
 							"instance_id", instanceID)
 					}
 					if m.attemptSessionRecovery(instanceID) {
+						lastVisibleOutput = ""
+						lastFullOutput = ""
 						continue
 					}
 					m.handleSessionEnded(instanceID)
@@ -825,14 +839,15 @@ func (m *Manager) captureLoop() {
 			m.consecutiveCaptureErrors = 0
 			m.mu.Unlock()
 
-			// Check if content changed
+			// Check if content changed — using separate tracking for visible vs full captures.
+			// Visible captures only trigger forceFullCapture; full captures write to outputBuf.
 			currentOutput := string(output)
-			if currentOutput != lastOutput {
-				m.mu.RLock()
-				logger := m.logger
-				m.mu.RUnlock()
+			if doFullCapture {
+				if currentOutput != lastFullOutput {
+					m.mu.RLock()
+					logger := m.logger
+					m.mu.RUnlock()
 
-				if doFullCapture {
 					// Only update the output buffer with full captures to preserve scrollback.
 					// Visible-only captures don't include scrollback history, so writing them
 					// to the buffer would cause the output to flash between short (visible) and
@@ -846,7 +861,15 @@ func (m *Manager) captureLoop() {
 						logger.Debug("output captured",
 							"byte_count", byteCount)
 					}
-				} else {
+
+					lastFullOutput = currentOutput
+				}
+			} else {
+				if currentOutput != lastVisibleOutput {
+					m.mu.RLock()
+					logger := m.logger
+					m.mu.RUnlock()
+
 					// Visible-only capture detected content change (e.g., user typing).
 					// Schedule a full capture on the next tick to update the output buffer.
 					// Do NOT write visible-only content to the buffer - it lacks scrollback
@@ -859,8 +882,7 @@ func (m *Manager) captureLoop() {
 						logger.Debug("visible content changed, scheduling full capture")
 					}
 				}
-
-				lastOutput = currentOutput
+				lastVisibleOutput = currentOutput
 			}
 
 			// Skip state detection and timeout checks if already timed out.
