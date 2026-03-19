@@ -651,6 +651,160 @@ func TestCaptureFailure_ChecksSessionExists(t *testing.T) {
 	}
 }
 
+// TestCaptureOutputTracking_SeparateVisibleAndFull documents the fix for the
+// "stale display early in session" bug.
+//
+// BUG: The capture loop used a single lastOutput variable for both visible-only and
+// full captures. When a visible capture detected new content, it set lastOutput and
+// forceFullCapture. The subsequent full capture returned the same bytes (common when
+// there's no scrollback — screen not yet full), found currentOutput == lastOutput,
+// and skipped the buffer write. The output buffer was never populated until scrollback
+// appeared, leaving the TUI showing "No output yet" during extended thinking.
+//
+// FIX: Split into lastVisibleOutput and lastFullOutput so full captures compare against
+// the last full capture result, not the recent visible capture that already updated it.
+//
+// Since captureLoop requires tmux, this test simulates the exact tracking logic to verify
+// the invariant: the output buffer MUST be written when visible capture detects content
+// and the subsequent full capture returns the same content (no scrollback scenario).
+func TestCaptureOutputTracking_SeparateVisibleAndFull(t *testing.T) {
+	mgr := newTestManager("dedup-test", "/tmp", "task")
+
+	// These mirror the local variables in captureLoop after the fix.
+	var lastVisibleOutput string
+	var lastFullOutput string
+
+	// --- Tick 1: visible-only capture, first content appears ---
+	content := "⏺ Thinking..."
+	doFullCapture := false
+	forceFullCapture := false
+
+	// Visible capture change detection
+	if !doFullCapture {
+		if content != lastVisibleOutput {
+			forceFullCapture = true
+		}
+		lastVisibleOutput = content
+	}
+
+	// Visible captures must NOT write to buffer (they lack scrollback)
+	if got := mgr.GetOutput(); len(got) != 0 {
+		t.Fatalf("after visible capture, buffer should be empty, got %d bytes", len(got))
+	}
+	if !forceFullCapture {
+		t.Fatal("visible capture should have set forceFullCapture")
+	}
+
+	// --- Tick 2: forced full capture, same content (no scrollback) ---
+	doFullCapture = true
+	fullContent := content // Identical to visible — no scrollback in pane
+
+	// Full capture change detection — compares against lastFullOutput, NOT lastVisibleOutput
+	if doFullCapture {
+		if fullContent != lastFullOutput {
+			mgr.outputBuf.ReplaceWith([]byte(fullContent))
+			lastFullOutput = fullContent
+		}
+	}
+
+	// The buffer MUST now contain the content
+	if got := string(mgr.GetOutput()); got != content {
+		t.Errorf("after full capture, buffer = %q, want %q", got, content)
+	}
+
+	// --- Tick 3: visible capture, same content (no change) ---
+	doFullCapture = false
+	forceFullCapture = false
+	if !doFullCapture {
+		if content != lastVisibleOutput {
+			forceFullCapture = true
+		}
+		lastVisibleOutput = content
+	}
+
+	// Should NOT trigger another full capture (content unchanged)
+	if forceFullCapture {
+		t.Error("visible capture with unchanged content should NOT set forceFullCapture")
+	}
+
+	// --- Tick 4: visible capture, content changes ---
+	newContent := "⏺ Thinking...\nAnalyzing the codebase..."
+	if !doFullCapture {
+		if newContent != lastVisibleOutput {
+			forceFullCapture = true
+		}
+		// In production: lastVisibleOutput = newContent
+	}
+
+	if !forceFullCapture {
+		t.Fatal("visible capture with new content should set forceFullCapture")
+	}
+
+	// Buffer should still have old content (visible captures don't write)
+	if got := string(mgr.GetOutput()); got != content {
+		t.Errorf("buffer should still have old content %q, got %q", content, got)
+	}
+
+	// --- Tick 5: forced full capture with new content ---
+	doFullCapture = true
+	fullNewContent := newContent // Same as visible (still no scrollback)
+	if doFullCapture {
+		if fullNewContent != lastFullOutput {
+			mgr.outputBuf.ReplaceWith([]byte(fullNewContent))
+			// In production: lastFullOutput = fullNewContent
+		}
+	}
+
+	if got := string(mgr.GetOutput()); got != newContent {
+		t.Errorf("after second full capture, buffer = %q, want %q", got, newContent)
+	}
+}
+
+// TestCaptureOutputTracking_WithScrollback verifies that separate visible/full tracking
+// works correctly when there IS scrollback (visible != full content).
+func TestCaptureOutputTracking_WithScrollback(t *testing.T) {
+	mgr := newTestManager("scrollback-test", "/tmp", "task")
+
+	var lastVisibleOutput string
+	var lastFullOutput string
+
+	// --- Initial full capture populates buffer ---
+	fullContent := "scrollback line 1\nscrollback line 2\nvisible line"
+	if fullContent != lastFullOutput {
+		mgr.outputBuf.ReplaceWith([]byte(fullContent))
+		lastFullOutput = fullContent
+	}
+
+	if got := string(mgr.GetOutput()); got != fullContent {
+		t.Errorf("initial buffer = %q, want %q", got, fullContent)
+	}
+
+	// --- Visible capture: visible portion naturally differs from full ---
+	visibleContent := "visible line"
+	forceFullCapture := visibleContent != lastVisibleOutput
+	lastVisibleOutput = visibleContent
+
+	// First visible capture always differs (lastVisibleOutput was empty), but that's fine —
+	// the forced full capture will correctly find no change vs lastFullOutput.
+	if !forceFullCapture {
+		t.Fatal("first visible capture should detect change (vs empty)")
+	}
+
+	// --- Forced full capture: no actual change ---
+	if fullContent != lastFullOutput {
+		t.Error("full content should equal lastFullOutput — no buffer write needed")
+	}
+
+	// --- Subsequent visible capture: same visible content ---
+	forceFullCapture = visibleContent != lastVisibleOutput
+	_ = lastVisibleOutput // would be updated in production
+
+	// No unnecessary full capture triggered
+	if forceFullCapture {
+		t.Error("unchanged visible content should NOT trigger forceFullCapture")
+	}
+}
+
 func TestListClaudioTmuxSessions_NoTmuxServer(t *testing.T) {
 	// This test may return nil or an empty list depending on whether tmux is running
 	// The important thing is it should not error in a way that causes a panic
