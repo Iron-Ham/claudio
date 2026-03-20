@@ -119,8 +119,7 @@ type ClaudeBackendConfig struct {
 	AppendSystemPrompt string `mapstructure:"append_system_prompt"`
 	// NativeWorktree enables Claude Code's built-in --worktree flag for session isolation.
 	// When true, Claude Code creates and manages its own git worktree instead of Claudio
-	// managing worktrees externally. This is useful for subprocess/stream-json execution
-	// where Claudio doesn't need to control the worktree lifecycle.
+	// managing worktrees externally.
 	NativeWorktree bool `mapstructure:"native_worktree"`
 }
 
@@ -393,11 +392,6 @@ type ExperimentalConfig struct {
 	// in the TUI sidebar. Related tasks are organized together, with sub-groups
 	// for dependency chains. (default: false)
 	GroupedInstanceView bool `mapstructure:"grouped_instance_view"`
-
-	// SubprocessMode uses direct subprocess execution (claude --print --output-format stream-json)
-	// instead of tmux sessions for pipeline instances. This replaces screen scraping with typed
-	// NDJSON event parsing for more reliable completion detection. (default: false)
-	SubprocessMode bool `mapstructure:"subprocess_mode"`
 }
 
 // ResolveWorktreeDir returns the resolved worktree directory path.
@@ -546,7 +540,6 @@ func Default() *Config {
 			InlinePlan:          false, // Controls :multiplan only; :plan is always available
 			InlineUltraPlan:     false, // Disabled by default until stable
 			GroupedInstanceView: false, // Disabled by default until stable
-			SubprocessMode:      false, // Disabled by default until stable
 		},
 	}
 }
@@ -679,7 +672,6 @@ func SetDefaults() {
 	viper.SetDefault("experimental.inline_plan", defaults.Experimental.InlinePlan)
 	viper.SetDefault("experimental.inline_ultraplan", defaults.Experimental.InlineUltraPlan)
 	viper.SetDefault("experimental.grouped_instance_view", defaults.Experimental.GroupedInstanceView)
-	viper.SetDefault("experimental.subprocess_mode", defaults.Experimental.SubprocessMode)
 }
 
 // Load reads the configuration from viper into a Config struct and validates it

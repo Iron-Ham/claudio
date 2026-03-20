@@ -192,14 +192,6 @@ func (pe *PipelineExecutor) Stop() {
 	for _, b := range bridges {
 		b.Stop()
 	}
-
-	// If the factory implements Stop() (e.g., subprocessFactory), call it to
-	// cancel running child processes and drain goroutines. The bridge.InstanceFactory
-	// interface has no lifecycle method, so we use a type-assert for optional cleanup.
-	type stoppable interface{ Stop() }
-	if s, ok := pe.factory.(stoppable); ok {
-		s.Stop()
-	}
 }
 
 // attachBridgesTimeout is the maximum time attachBridges waits for execution
