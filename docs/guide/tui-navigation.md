@@ -164,7 +164,7 @@ Press `:` to enter command mode for advanced operations. Type a command and pres
 | `:D` | Remove selected instance (with confirmation) |
 | `:plan "objective"` | Start inline plan generation |
 | `:ultraplan "objective"` | Start inline UltraPlan workflow |
-| `:multiplan "objective"` | Multi-pass planning (requires `experimental.inline_plan`) |
+| `:multiplan "objective"` | Multi-pass planning |
 | `:tripleshot "task"` | Start TripleShot execution (aliases: `:triple`, `:3shot`) |
 | `:adversarial-retry` | Restart a stuck adversarial implementer or reviewer |
 | `:group create [name]` | Create a new instance group |
@@ -187,21 +187,6 @@ This starts the inline planning workflow:
 2. A structured plan is generated
 3. You review and edit tasks in the plan editor
 4. Confirm to spawn instances organized by groups
-
-### Enabling Experimental Commands
-
-Some commands require experimental flags in your config:
-
-```yaml
-# ~/.config/claudio/config.yaml
-experimental:
-  inline_plan: true       # Enables :multiplan
-  inline_ultraplan: true  # Enables :ultraplan
-  triple_shot: true       # Enables :tripleshot
-  grouped_instance_view: true  # Enables :group commands
-```
-
----
 
 ## Adding Instances
 

@@ -1532,19 +1532,9 @@ func (o *Orchestrator) initBudgetManager() {
 }
 
 // initNamer initializes the intelligent naming service.
-// This is optional - requires both:
-// 1. experimental.intelligent_naming config set to true
-// 2. ANTHROPIC_API_KEY environment variable set
-// If disabled or API key not set, instances use their original task as the display name.
+// This is optional - requires ANTHROPIC_API_KEY environment variable set.
+// If API key not set, instances use their original task as the display name.
 func (o *Orchestrator) initNamer() {
-	// Check if intelligent naming is enabled in config
-	if o.config == nil || !o.config.Experimental.IntelligentNaming {
-		if o.logger != nil {
-			o.logger.Debug("intelligent naming disabled via config")
-		}
-		return
-	}
-
 	client, err := namer.NewAnthropicClient()
 	if err != nil {
 		// API key not set or other issue - namer won't be available

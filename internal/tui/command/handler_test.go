@@ -728,10 +728,6 @@ func TestDiffCommand(t *testing.T) {
 }
 
 func TestTerminalCommands(t *testing.T) {
-	// Terminal commands require experimental.terminal_support to be enabled
-	viper.Set("experimental.terminal_support", true)
-	defer viper.Set("experimental.terminal_support", false)
-
 	t.Run("term toggles terminal visibility", func(t *testing.T) {
 		h := New()
 		deps := newMockDeps()
@@ -829,29 +825,6 @@ func TestTerminalCommands(t *testing.T) {
 			t.Error("expected TerminalDirMode to be set to 0 (project)")
 		}
 	})
-}
-
-func TestTerminalCommandsDisabled(t *testing.T) {
-	// When terminal support is disabled, commands should return an error
-	viper.Set("experimental.terminal_support", false)
-
-	commands := []string{"term", "terminal", "t", "termdir worktree", "termdir wt", "termdir project", "termdir proj", "termdir invoke", "termdir invocation"}
-
-	for _, cmd := range commands {
-		t.Run(cmd, func(t *testing.T) {
-			h := New()
-			deps := newMockDeps()
-			deps.terminalVisible = true // Even with terminal visible, should fail
-
-			result := h.Execute(cmd, deps)
-			if result.ErrorMessage == "" {
-				t.Error("expected error message when terminal support is disabled")
-			}
-			if result.ToggleTerminal || result.EnterTerminalMode || result.TerminalDirMode != nil {
-				t.Error("expected no terminal state changes when disabled")
-			}
-		})
-	}
 }
 
 func TestInstanceControlCommandsNoInstance(t *testing.T) {
@@ -1723,33 +1696,9 @@ func TestPlanCommand(t *testing.T) {
 	})
 }
 
-// TestMultiPlanCommand tests the multiplan command with config check (remains experimental)
+// TestMultiPlanCommand tests the multiplan command
 func TestMultiPlanCommand(t *testing.T) {
-	t.Run("disabled by default", func(t *testing.T) {
-		// Reset viper to ensure clean state
-		viper.Reset()
-
-		h := New()
-		deps := newMockDeps()
-
-		result := h.Execute("multiplan", deps)
-
-		if result.ErrorMessage == "" {
-			t.Error("expected error when multiplan mode is disabled")
-		}
-		if result.ErrorMessage != "MultiPlan mode is disabled. Enable it in :config under Experimental" {
-			t.Errorf("unexpected error message: %q", result.ErrorMessage)
-		}
-		if result.StartMultiPlanMode != nil {
-			t.Error("StartMultiPlanMode should be nil when disabled")
-		}
-	})
-
-	t.Run("enabled via config", func(t *testing.T) {
-		// Reset and enable plan mode
-		viper.Reset()
-		viper.Set("experimental.inline_plan", true)
-
+	t.Run("starts multiplan mode", func(t *testing.T) {
 		h := New()
 		deps := newMockDeps()
 
@@ -1764,15 +1713,9 @@ func TestMultiPlanCommand(t *testing.T) {
 		if result.InfoMessage != "Enter an objective for multiplan mode (3 planners + 1 assessor)" {
 			t.Errorf("unexpected info message: %q", result.InfoMessage)
 		}
-
-		// Clean up
-		viper.Reset()
 	})
 
 	t.Run("mp alias works", func(t *testing.T) {
-		viper.Reset()
-		viper.Set("experimental.inline_plan", true)
-
 		h := New()
 		deps := newMockDeps()
 
@@ -1784,14 +1727,9 @@ func TestMultiPlanCommand(t *testing.T) {
 		if result.StartMultiPlanMode == nil || !*result.StartMultiPlanMode {
 			t.Error("expected StartMultiPlanMode to be true with mp alias")
 		}
-
-		viper.Reset()
 	})
 
 	t.Run("blocked in ultraplan mode", func(t *testing.T) {
-		viper.Reset()
-		viper.Set("experimental.inline_plan", true)
-
 		h := New()
 		deps := newMockDeps()
 		deps.ultraPlanMode = true
@@ -1804,14 +1742,9 @@ func TestMultiPlanCommand(t *testing.T) {
 		if result.StartMultiPlanMode != nil {
 			t.Error("StartMultiPlanMode should be nil when blocked")
 		}
-
-		viper.Reset()
 	})
 
 	t.Run("allowed when in triple-shot mode", func(t *testing.T) {
-		viper.Reset()
-		viper.Set("experimental.inline_plan", true)
-
 		h := New()
 		deps := newMockDeps()
 		deps.tripleShotMode = true
@@ -1825,37 +1758,12 @@ func TestMultiPlanCommand(t *testing.T) {
 		if result.StartMultiPlanMode == nil || !*result.StartMultiPlanMode {
 			t.Error("StartMultiPlanMode should be true when in triple-shot mode")
 		}
-
-		viper.Reset()
 	})
 }
 
-// TestUltraPlanCommand tests the ultraplan command with config check and argument parsing
+// TestUltraPlanCommand tests the ultraplan command argument parsing
 func TestUltraPlanCommand(t *testing.T) {
-	t.Run("disabled by default", func(t *testing.T) {
-		// Reset viper to ensure clean state
-		viper.Reset()
-
-		h := New()
-		deps := newMockDeps()
-
-		result := h.Execute("ultraplan", deps)
-
-		if result.ErrorMessage == "" {
-			t.Error("expected error when ultraplan mode is disabled")
-		}
-		if result.ErrorMessage != "UltraPlan mode is disabled. Enable it in :config under Experimental" {
-			t.Errorf("unexpected error message: %q", result.ErrorMessage)
-		}
-		if result.StartUltraPlanMode != nil {
-			t.Error("StartUltraPlanMode should be nil when disabled")
-		}
-	})
-
-	t.Run("enabled via config without objective", func(t *testing.T) {
-		viper.Reset()
-		viper.Set("experimental.inline_ultraplan", true)
-
+	t.Run("without objective", func(t *testing.T) {
 		h := New()
 		deps := newMockDeps()
 
@@ -1876,14 +1784,9 @@ func TestUltraPlanCommand(t *testing.T) {
 		if result.UltraPlanFromFile != nil {
 			t.Error("UltraPlanFromFile should be nil without --plan flag")
 		}
-
-		viper.Reset()
 	})
 
-	t.Run("enabled with objective", func(t *testing.T) {
-		viper.Reset()
-		viper.Set("experimental.inline_ultraplan", true)
-
+	t.Run("with objective", func(t *testing.T) {
 		h := New()
 		deps := newMockDeps()
 
@@ -1901,14 +1804,9 @@ func TestUltraPlanCommand(t *testing.T) {
 		if result.InfoMessage != "Starting ultraplan: Add user authentication" {
 			t.Errorf("unexpected info message: %q", result.InfoMessage)
 		}
-
-		viper.Reset()
 	})
 
 	t.Run("multi-pass flag", func(t *testing.T) {
-		viper.Reset()
-		viper.Set("experimental.inline_ultraplan", true)
-
 		h := New()
 		deps := newMockDeps()
 
@@ -1926,14 +1824,9 @@ func TestUltraPlanCommand(t *testing.T) {
 		if result.UltraPlanObjective == nil || *result.UltraPlanObjective != "Implement new feature" {
 			t.Errorf("expected objective 'Implement new feature', got: %v", result.UltraPlanObjective)
 		}
-
-		viper.Reset()
 	})
 
 	t.Run("plan flag with file", func(t *testing.T) {
-		viper.Reset()
-		viper.Set("experimental.inline_ultraplan", true)
-
 		h := New()
 		deps := newMockDeps()
 
@@ -1951,14 +1844,9 @@ func TestUltraPlanCommand(t *testing.T) {
 		if result.InfoMessage != "Loading ultraplan from: /path/to/plan.json" {
 			t.Errorf("unexpected info message: %q", result.InfoMessage)
 		}
-
-		viper.Reset()
 	})
 
 	t.Run("plan flag without file", func(t *testing.T) {
-		viper.Reset()
-		viper.Set("experimental.inline_ultraplan", true)
-
 		h := New()
 		deps := newMockDeps()
 
@@ -1967,14 +1855,9 @@ func TestUltraPlanCommand(t *testing.T) {
 		if result.ErrorMessage != "Usage: :ultraplan --plan <file>" {
 			t.Errorf("expected usage error, got: %q", result.ErrorMessage)
 		}
-
-		viper.Reset()
 	})
 
 	t.Run("blocked in ultraplan mode", func(t *testing.T) {
-		viper.Reset()
-		viper.Set("experimental.inline_ultraplan", true)
-
 		h := New()
 		deps := newMockDeps()
 		deps.ultraPlanMode = true
@@ -1987,14 +1870,9 @@ func TestUltraPlanCommand(t *testing.T) {
 		if result.StartUltraPlanMode != nil {
 			t.Error("StartUltraPlanMode should be nil when blocked")
 		}
-
-		viper.Reset()
 	})
 
 	t.Run("blocked when in triple-shot mode", func(t *testing.T) {
-		viper.Reset()
-		viper.Set("experimental.inline_ultraplan", true)
-
 		h := New()
 		deps := newMockDeps()
 		deps.tripleShotMode = true
@@ -2008,14 +1886,9 @@ func TestUltraPlanCommand(t *testing.T) {
 		if result.StartUltraPlanMode != nil {
 			t.Error("StartUltraPlanMode should be nil when blocked")
 		}
-
-		viper.Reset()
 	})
 
 	t.Run("up alias works", func(t *testing.T) {
-		viper.Reset()
-		viper.Set("experimental.inline_ultraplan", true)
-
 		h := New()
 		deps := newMockDeps()
 
@@ -2030,8 +1903,6 @@ func TestUltraPlanCommand(t *testing.T) {
 		if result.UltraPlanObjective == nil || *result.UltraPlanObjective != "my objective" {
 			t.Errorf("expected objective 'my objective', got: %v", result.UltraPlanObjective)
 		}
-
-		viper.Reset()
 	})
 }
 

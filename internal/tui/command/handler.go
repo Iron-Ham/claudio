@@ -15,7 +15,6 @@ import (
 	"github.com/Iron-Ham/claudio/internal/orchestrator/workflows/tripleshot"
 	"github.com/Iron-Ham/claudio/internal/tui/msg"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/spf13/viper"
 )
 
 // Dependencies defines the interface for dependencies that the CommandHandler needs.
@@ -777,25 +776,11 @@ func cmdFilter(_ Dependencies) Result {
 	return Result{FilterMode: &filterMode}
 }
 
-// terminalDisabledError is the error message when terminal support is disabled.
-const terminalDisabledError = "Terminal support is disabled. Enable it in :config under Experimental"
-
-// isTerminalEnabled checks if the experimental terminal support feature is enabled.
-func isTerminalEnabled() bool {
-	return viper.GetBool("experimental.terminal_support")
-}
-
 func cmdTerminal(_ Dependencies) Result {
-	if !isTerminalEnabled() {
-		return Result{ErrorMessage: terminalDisabledError}
-	}
 	return Result{ToggleTerminal: true}
 }
 
 func cmdTerminalFocus(deps Dependencies) Result {
-	if !isTerminalEnabled() {
-		return Result{ErrorMessage: terminalDisabledError}
-	}
 	if deps.IsTerminalVisible() {
 		return Result{
 			EnterTerminalMode: true,
@@ -806,17 +791,11 @@ func cmdTerminalFocus(deps Dependencies) Result {
 }
 
 func cmdTerminalDirWorktree(_ Dependencies) Result {
-	if !isTerminalEnabled() {
-		return Result{ErrorMessage: terminalDisabledError}
-	}
 	mode := 1 // TerminalDirWorktree
 	return Result{TerminalDirMode: &mode}
 }
 
 func cmdTerminalDirProject(_ Dependencies) Result {
-	if !isTerminalEnabled() {
-		return Result{ErrorMessage: terminalDisabledError}
-	}
 	mode := 0 // TerminalDirProject (the directory where Claudio was started)
 	return Result{TerminalDirMode: &mode}
 }
@@ -1099,11 +1078,6 @@ func cmdPlan(deps Dependencies) Result {
 }
 
 func cmdMultiPlan(deps Dependencies) Result {
-	// Check if inline plan is enabled in config (multiplan remains experimental)
-	if !viper.GetBool("experimental.inline_plan") {
-		return Result{ErrorMessage: "MultiPlan mode is disabled. Enable it in :config under Experimental"}
-	}
-
 	// Don't allow starting multiplan mode if already in ultraplan mode
 	if deps.IsUltraPlanMode() {
 		return Result{ErrorMessage: "Cannot start multiplan mode while in ultraplan mode"}
@@ -1126,11 +1100,6 @@ func cmdMultiPlan(deps Dependencies) Result {
 //   - :ultraplan --multi-pass [obj]    - Use multi-pass planning
 //   - :ultraplan --plan <file>         - Load existing plan file
 func cmdUltraPlan(deps Dependencies, args string) Result {
-	// Check if inline ultraplan is enabled in config
-	if !viper.GetBool("experimental.inline_ultraplan") {
-		return Result{ErrorMessage: "UltraPlan mode is disabled. Enable it in :config under Experimental"}
-	}
-
 	// Don't allow starting another ultraplan if already in ultraplan mode
 	if deps.IsUltraPlanMode() {
 		return Result{ErrorMessage: "Already in ultraplan mode"}

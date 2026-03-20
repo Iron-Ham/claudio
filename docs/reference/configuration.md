@@ -509,29 +509,17 @@ Controls experimental features that may change or be removed. These features are
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `experimental.intelligent_naming` | bool | `false` | Use Claude (Anthropic API) to generate short, descriptive instance names |
-| `experimental.triple_shot` | bool | `false` | Spawn three parallel instances and select the best solution |
-| `experimental.inline_plan` | bool | `false` | Enable `:multiplan` command in the TUI (`:plan` is always available) |
-| `experimental.inline_ultraplan` | bool | `false` | Enable `:ultraplan` command in the TUI |
-| `experimental.grouped_instance_view` | bool | `false` | Enable visual group organization in the sidebar |
+| `experimental.subprocess_mode` | bool | `false` | Use stream-json subprocess backend instead of tmux |
 
 **Feature descriptions:**
 
 | Feature | Description |
 |---------|-------------|
-| `intelligent_naming` | Uses Claude (Anthropic API) to generate short, descriptive instance names for the sidebar based on the task and Claude's initial output. Requires `ANTHROPIC_API_KEY`. |
-| `triple_shot` | Spawns three parallel instances working on the same problem, then uses a judge instance to evaluate and select the best solution. |
-| `inline_plan` | Enables the `:multiplan` command in the standard TUI for multi-pass planning with 3 planners + assessor. The `:plan` command is always available without this setting. |
-| `inline_ultraplan` | Enables the `:ultraplan` command in the standard TUI, allowing you to start an UltraPlan workflow with parallel task execution. |
-| `grouped_instance_view` | Organizes instances visually by execution group in the TUI sidebar. Related tasks are grouped together, with sub-groups for dependency chains. |
+| `subprocess_mode` | Uses the stream-json subprocess backend instead of the default tmux backend for instance execution. |
 
 ```yaml
 experimental:
-  intelligent_naming: false
-  triple_shot: false
-  inline_plan: false  # enables :multiplan; :plan is always available
-  inline_ultraplan: false
-  grouped_instance_view: false
+  subprocess_mode: false
 ```
 
 See the [Inline Planning Guide](../guide/inline-planning.md) for detailed usage of inline planning features.
@@ -556,9 +544,7 @@ Replace dots with underscores and use uppercase:
 | `resources.cost_limit` | `CLAUDIO_RESOURCES_COST_LIMIT` |
 | `ultraplan.max_parallel` | `CLAUDIO_ULTRAPLAN_MAX_PARALLEL` |
 | `paths.worktree_dir` | `CLAUDIO_PATHS_WORKTREE_DIR` |
-| `experimental.inline_plan` | `CLAUDIO_EXPERIMENTAL_INLINE_PLAN` |
-| `experimental.inline_ultraplan` | `CLAUDIO_EXPERIMENTAL_INLINE_ULTRAPLAN` |
-| `experimental.grouped_instance_view` | `CLAUDIO_EXPERIMENTAL_GROUPED_INSTANCE_VIEW` |
+| `experimental.subprocess_mode` | `CLAUDIO_EXPERIMENTAL_SUBPROCESS_MODE` |
 
 **Priority:** Environment variables override config file values.
 
@@ -681,11 +667,7 @@ ultraplan:
 
 # Experimental features (disabled by default)
 experimental:
-  intelligent_naming: false
-  triple_shot: false
-  inline_plan: false
-  inline_ultraplan: false
-  grouped_instance_view: false
+  subprocess_mode: false
 ```
 
 ---
