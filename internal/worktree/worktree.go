@@ -956,7 +956,7 @@ var localClaudeFiles = []string{
 
 // CopyLocalConfigFiles copies gitignored backend configuration files from the main
 // repository to the specified worktree. This ensures that local settings like
-// CLAUDE.local.md or CODEX.local.md are available in worktrees even though they're not tracked by git.
+// CLAUDE.local.md is available in worktrees even though it's not tracked by git.
 //
 // Files that don't exist in the source are silently skipped.
 // Errors during individual file copies are logged but don't fail the operation.
@@ -1006,7 +1006,7 @@ func (m *Manager) CopyLocalConfigFiles(worktreePath string, filenames []string, 
 
 // CopyLocalClaudeFiles copies gitignored Claude configuration files from the main
 // repository to the specified worktree. This ensures that local settings like
-// CLAUDE.local.md are available in worktrees even though they're not tracked by git.
+// CLAUDE.local.md is available in worktrees even though it's not tracked by git.
 //
 // Files that don't exist in the source are silently skipped.
 // Errors during individual file copies are logged but don't fail the operation.

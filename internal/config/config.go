@@ -82,12 +82,10 @@ type InstanceConfig struct {
 // AIConfig controls which AI backend Claudio uses.
 type AIConfig struct {
 	// Backend selects the AI backend to use for instances and AI workflows.
-	// Options: "claude", "codex"
+	// Options: "claude"
 	Backend string `mapstructure:"backend"`
 	// Claude-specific settings
 	Claude ClaudeBackendConfig `mapstructure:"claude"`
-	// Codex-specific settings
-	Codex CodexBackendConfig `mapstructure:"codex"`
 }
 
 // ClaudeBackendConfig controls Claude-specific settings.
@@ -138,16 +136,6 @@ func (c *ClaudeBackendConfig) ResolvedPermissionMode() string {
 // ValidClaudePermissionModes returns the list of valid Claude permission modes.
 func ValidClaudePermissionModes() []string {
 	return []string{"default", "plan", "auto-accept", "bypass"}
-}
-
-// CodexBackendConfig controls Codex-specific settings.
-type CodexBackendConfig struct {
-	// Command is the Codex CLI command name/path (default: "codex")
-	Command string `mapstructure:"command"`
-	// ApprovalMode controls how Codex handles approvals/sandboxing.
-	// Options: "bypass" (use --dangerously-bypass-approvals-and-sandbox),
-	// "full-auto" (use --full-auto), or "default" (no extra flags).
-	ApprovalMode string `mapstructure:"approval_mode"`
 }
 
 // BranchConfig controls branch naming conventions
@@ -282,8 +270,6 @@ type AdversarialConfig struct {
 	MinPassingScore int `mapstructure:"min_passing_score"`
 	// ReviewerBackend specifies which AI backend to use for the reviewer role.
 	// If empty (default), uses the global ai.backend setting.
-	// Options: "claude", "codex"
-	// This allows configurations like Claude as implementer with Codex as reviewer.
 	ReviewerBackend string `mapstructure:"reviewer_backend"`
 }
 
@@ -440,10 +426,6 @@ func Default() *Config {
 				Command:         "claude",
 				SkipPermissions: true,
 			},
-			Codex: CodexBackendConfig{
-				Command:      "codex",
-				ApprovalMode: "full-auto",
-			},
 		},
 		Branch: BranchConfig{
 			Prefix:    "claudio",
@@ -575,8 +557,6 @@ func SetDefaults() {
 	viper.SetDefault("ai.claude.model", defaults.AI.Claude.Model)
 	viper.SetDefault("ai.claude.append_system_prompt", defaults.AI.Claude.AppendSystemPrompt)
 	viper.SetDefault("ai.claude.native_worktree", defaults.AI.Claude.NativeWorktree)
-	viper.SetDefault("ai.codex.command", defaults.AI.Codex.Command)
-	viper.SetDefault("ai.codex.approval_mode", defaults.AI.Codex.ApprovalMode)
 
 	// Branch defaults
 	viper.SetDefault("branch.prefix", defaults.Branch.Prefix)
@@ -699,12 +679,7 @@ func ValidCompletionActions() []string {
 
 // ValidAIBackends returns the list of supported AI backend identifiers.
 func ValidAIBackends() []string {
-	return []string{"claude", "codex"}
-}
-
-// ValidCodexApprovalModes returns the list of valid Codex approval modes.
-func ValidCodexApprovalModes() []string {
-	return []string{"bypass", "full-auto", "default"}
+	return []string{"claude"}
 }
 
 // IsValidCompletionAction checks if the given action is valid

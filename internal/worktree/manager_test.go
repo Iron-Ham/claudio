@@ -841,18 +841,6 @@ func TestManagerCopyLocalConfigFiles(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name: "copies codex config file when present",
-			setupSource: func(t *testing.T, repoDir string) {
-				content := []byte("# Local Codex Settings\nconfig")
-				if err := os.WriteFile(filepath.Join(repoDir, "CODEX.local.md"), content, 0644); err != nil {
-					t.Fatalf("failed to create source file: %v", err)
-				}
-			},
-			files:      []string{"CODEX.local.md"},
-			wantCopied: []string{"CODEX.local.md"},
-			wantErr:    false,
-		},
-		{
 			name:        "no error when files do not exist",
 			setupSource: func(t *testing.T, repoDir string) {},
 			files:       []string{"MISSING.local.md"},
@@ -875,7 +863,7 @@ func TestManagerCopyLocalConfigFiles(t *testing.T) {
 				t.Fatalf("Create() error = %v", err)
 			}
 
-			err = mgr.CopyLocalConfigFiles(worktreePath, tt.files, "Codex")
+			err = mgr.CopyLocalConfigFiles(worktreePath, tt.files, "backend")
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CopyLocalConfigFiles() error = %v, wantErr %v", err, tt.wantErr)
 				return

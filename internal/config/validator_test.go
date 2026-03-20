@@ -412,22 +412,6 @@ func TestConfig_Validate_AI(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid codex approval mode", func(t *testing.T) {
-		cfg := Default()
-		cfg.AI.Codex.ApprovalMode = "nope"
-		errs := cfg.Validate()
-		hasError := false
-		for _, err := range errs {
-			if err.Field == "ai.codex.approval_mode" {
-				hasError = true
-				break
-			}
-		}
-		if !hasError {
-			t.Error("expected validation error for ai.codex.approval_mode")
-		}
-	})
-
 	t.Run("valid claude permission modes", func(t *testing.T) {
 		for _, mode := range []string{"", "default", "plan", "auto-accept", "bypass"} {
 			cfg := Default()
@@ -910,7 +894,7 @@ func TestConfig_Validate_Adversarial(t *testing.T) {
 	})
 
 	t.Run("valid reviewer backend options", func(t *testing.T) {
-		for _, backend := range []string{"", "claude", "codex"} {
+		for _, backend := range []string{"", "claude"} {
 			cfg := Default()
 			cfg.Adversarial.ReviewerBackend = backend
 			errs := cfg.Validate()

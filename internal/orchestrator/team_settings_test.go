@@ -90,7 +90,7 @@ func TestWriteWorktreeTeamSettings_MergesExisting(t *testing.T) {
 func TestWriteWorktreeTeamSettings_SkipsNonClaude(t *testing.T) {
 	wtPath := t.TempDir()
 	o := &Orchestrator{
-		backend: &stubBackend{name: ai.BackendCodex},
+		backend: &stubBackend{name: ai.BackendName("other")},
 	}
 
 	o.writeWorktreeTeamSettings("inst-1", wtPath)

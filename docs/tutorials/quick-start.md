@@ -7,7 +7,7 @@ This tutorial walks you through running multiple AI backend instances in paralle
 ## Prerequisites
 
 - Claudio installed (`claudio --help` works)
-- Preferred backend CLI authenticated (Claude Code or Codex)
+- Claude Code CLI installed and authenticated
 - A Git repository to work in
 
 ## Step 1: Set Up Your Project

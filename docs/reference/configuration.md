@@ -138,25 +138,18 @@ instance:
 
 ### ai
 
-Selects and configures the AI backend used for instances and AI-assisted workflows.
+Configures the Claude Code backend used for instances and AI-assisted workflows.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `ai.backend` | string | `"claude"` | Backend to use (`claude` or `codex`) |
-| `ai.claude.command` | string | `"claude"` | Claude CLI command name/path |
-| `ai.claude.skip_permissions` | bool | `true` | Add `--dangerously-skip-permissions` when starting Claude |
-| `ai.codex.command` | string | `"codex"` | Codex CLI command name/path |
-| `ai.codex.approval_mode` | string | `"full-auto"` | Codex approval mode: `bypass`, `full-auto`, or `default` |
+| `ai.claude.command` | string | `"claude"` | Claude Code CLI command name/path |
+| `ai.claude.skip_permissions` | bool | `true` | Add `--dangerously-skip-permissions` when starting Claude Code |
 
 ```yaml
 ai:
-  backend: claude
   claude:
     command: claude
     skip_permissions: true
-  codex:
-    command: codex
-    approval_mode: full-auto
 ```
 
 ---

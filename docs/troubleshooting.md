@@ -164,22 +164,21 @@ Output buffer may not have captured the prompt.
 
 ### Backend process not starting
 
-The configured backend CLI (Claude Code or Codex) may not be installed or authenticated.
+Claude Code may not be installed or authenticated.
 
 **Solutions:**
 
-1. Verify the backend CLI is installed:
+1. Verify Claude Code is installed:
    ```bash
-   claude --version  # Claude Code
-   codex --version   # Codex
+   claude --version
    ```
 
-2. Check authentication (Claude Code):
+2. Check authentication:
    ```bash
    claude auth status
    ```
 
-3. Re-authenticate if needed (Claude Code):
+3. Re-authenticate if needed:
    ```bash
    claude auth login
    ```
@@ -428,10 +427,9 @@ AI generation may have failed silently.
 
 **Solutions:**
 
-1. Check the backend CLI is working:
+1. Check the Claude Code CLI is working:
    ```bash
-   claude --version  # Claude Code
-   codex --version   # Codex
+   claude --version
    ```
 
 2. Try without AI:
