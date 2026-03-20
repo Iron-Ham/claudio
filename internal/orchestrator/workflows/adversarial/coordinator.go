@@ -18,7 +18,7 @@ type OrchestratorInterface interface {
 	AddInstanceToWorktree(session SessionInterface, task, worktreePath, branch string) (InstanceInterface, error)
 	// AddInstanceToWorktreeWithBackend creates an instance with a specific backend.
 	// If backendName is empty, uses the default backend.
-	// This enables mixed-backend adversarial sessions (e.g., Claude implementer + Codex reviewer).
+	// This enables mixed-backend adversarial sessions with different reviewer backends.
 	AddInstanceToWorktreeWithBackend(session SessionInterface, task, worktreePath, branch, backendName string) (InstanceInterface, error)
 	StartInstance(inst InstanceInterface) error
 	SaveSession() error
@@ -106,7 +106,7 @@ type Coordinator struct {
 	sessionType string
 
 	// Backend configuration
-	// reviewerBackend is the backend name for the reviewer role (e.g., "codex").
+	// reviewerBackend is the backend name for the reviewer role.
 	// If empty, uses the default orchestrator backend (same as implementer).
 	reviewerBackend string
 

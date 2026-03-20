@@ -1,8 +1,8 @@
 # Claudio
 
-**Multi-instance AI backend orchestrator using Git worktrees**
+**Multi-instance Claude Code orchestrator using Git worktrees**
 
-Claudio enables parallel AI-assisted development by running multiple AI backend instances (Claude Code or Codex) simultaneously, each working in isolated Git worktrees.
+Claudio enables parallel AI-assisted development by running multiple Claude Code instances simultaneously, each working in isolated Git worktrees.
 
 ## Features
 
@@ -101,7 +101,7 @@ Frequently asked questions.
 - Go 1.21+
 - Git
 - tmux
-- Claude Code CLI or Codex CLI (authenticated)
+- Claude Code CLI (authenticated)
 
 ## Architecture
 

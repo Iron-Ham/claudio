@@ -3075,11 +3075,11 @@ func TestCoordinator_ReviewerBackend(t *testing.T) {
 			BaseSession:     newMockSession(),
 			AdvSession:      advSession,
 			SessionType:     "adversarial",
-			ReviewerBackend: "codex", // Use Codex for reviewer
+			ReviewerBackend: "other-backend",
 		}
 		coord := NewCoordinator(cfg)
-		if coord.reviewerBackend != "codex" {
-			t.Errorf("expected reviewerBackend = 'codex', got %q", coord.reviewerBackend)
+		if coord.reviewerBackend != "other-backend" {
+			t.Errorf("expected reviewerBackend = 'other-backend', got %q", coord.reviewerBackend)
 		}
 	})
 
@@ -3109,7 +3109,7 @@ func TestCoordinator_ReviewerBackend(t *testing.T) {
 			BaseSession:     newMockSession(),
 			AdvSession:      advSession,
 			SessionType:     "adversarial",
-			ReviewerBackend: "codex",
+			ReviewerBackend: "other-backend",
 		}
 		coord := NewCoordinator(cfg)
 		coord.SetWorktrees(tmpDir)
@@ -3135,8 +3135,8 @@ func TestCoordinator_ReviewerBackend(t *testing.T) {
 		if !usedBackendMethod {
 			t.Error("expected AddInstanceToWorktreeWithBackend to be called")
 		}
-		if passedBackendName != "codex" {
-			t.Errorf("expected backend name 'codex', got %q", passedBackendName)
+		if passedBackendName != "other-backend" {
+			t.Errorf("expected backend name 'other-backend', got %q", passedBackendName)
 		}
 	})
 
@@ -3213,7 +3213,7 @@ func TestConfig_ReviewerBackend(t *testing.T) {
 		cfg := Config{
 			MaxIterations:   5,
 			MinPassingScore: 7,
-			ReviewerBackend: "codex",
+			ReviewerBackend: "other-backend",
 		}
 		// Marshal and unmarshal to verify JSON persistence
 		data, err := json.Marshal(cfg)
@@ -3226,8 +3226,8 @@ func TestConfig_ReviewerBackend(t *testing.T) {
 			t.Fatalf("failed to unmarshal config: %v", err)
 		}
 
-		if loaded.ReviewerBackend != "codex" {
-			t.Errorf("expected ReviewerBackend = 'codex', got %q", loaded.ReviewerBackend)
+		if loaded.ReviewerBackend != "other-backend" {
+			t.Errorf("expected ReviewerBackend = 'other-backend', got %q", loaded.ReviewerBackend)
 		}
 	})
 }

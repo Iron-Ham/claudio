@@ -3,7 +3,6 @@ package ai
 import (
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/instance/detect"
@@ -15,7 +14,6 @@ type BackendName string
 
 const (
 	BackendClaude BackendName = "claude"
-	BackendCodex  BackendName = "codex"
 )
 
 // StartMode selects how a backend should be launched.
@@ -72,12 +70,11 @@ type StartOptions struct {
 }
 
 // Backend provides backend-specific behavior for running AI sessions.
-// Implementations include ClaudeBackend for Claude Code CLI and CodexBackend for Codex CLI.
 type Backend interface {
-	// Name returns the unique identifier for this backend (e.g., "claude", "codex").
+	// Name returns the unique identifier for this backend (e.g., "claude").
 	Name() BackendName
 
-	// DisplayName returns a human-readable name for UI display (e.g., "Claude", "Codex").
+	// DisplayName returns a human-readable name for UI display (e.g., "Claude").
 	DisplayName() string
 
 	// PromptFileName returns the filename used for prompt files (e.g., ".claude-prompt").
@@ -95,7 +92,6 @@ type Backend interface {
 	SupportsResume() bool
 
 	// SupportsExplicitSessionID indicates whether the backend accepts user-specified session IDs.
-	// Claude supports this; Codex generates its own session IDs.
 	SupportsExplicitSessionID() bool
 
 	// Detector returns a state detector configured for this backend's output patterns.
@@ -126,8 +122,8 @@ func NewFromConfig(cfg *config.Config) (Backend, error) {
 	switch strings.ToLower(cfg.AI.Backend) {
 	case string(BackendClaude), "":
 		return NewClaudeBackend(cfg.AI.Claude), nil
-	case string(BackendCodex):
-		return NewCodexBackend(cfg.AI.Codex), nil
+	case "codex":
+		return nil, fmt.Errorf("codex backend has been removed; update ai.backend to \"claude\" in your config")
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnknownBackend, cfg.AI.Backend)
 	}
@@ -331,101 +327,4 @@ func (c *ClaudeBackend) EstimateCost(inputTokens, outputTokens, cacheRead, cache
 
 func (c *ClaudeBackend) LocalConfigFiles() []string {
 	return []string{"CLAUDE.local.md"}
-}
-
-// CodexBackend implements Backend for Codex CLI.
-type CodexBackend struct {
-	command        string
-	approvalMode   string
-	detectorOnce   sync.Once
-	cachedDetector detect.StateDetector
-}
-
-// NewCodexBackend creates a Codex backend from config.
-func NewCodexBackend(cfg config.CodexBackendConfig) *CodexBackend {
-	command := cfg.Command
-	if command == "" {
-		command = "codex"
-	}
-	mode := cfg.ApprovalMode
-	if mode == "" {
-		mode = "full-auto"
-	}
-	return &CodexBackend{
-		command:      command,
-		approvalMode: mode,
-	}
-}
-
-func (c *CodexBackend) Name() BackendName { return BackendCodex }
-
-func (c *CodexBackend) DisplayName() string { return "Codex" }
-
-func (c *CodexBackend) PromptFileName() string { return ".codex-prompt" }
-
-func (c *CodexBackend) BuildStartCommand(opts StartOptions) (string, error) {
-	if opts.PromptFile == "" {
-		return "", fmt.Errorf("prompt file required")
-	}
-
-	cmd := c.command
-	if opts.Mode == StartModeOneShot {
-		cmd += " exec"
-	}
-	cmd += c.approvalFlags()
-
-	return fmt.Sprintf("%s \"$(cat %q)\" && rm %q", cmd, opts.PromptFile, opts.PromptFile), nil
-}
-
-func (c *CodexBackend) BuildResumeCommand(sessionID string) (string, error) {
-	if sessionID == "" {
-		return "", fmt.Errorf("session id required for resume")
-	}
-	cmd := c.command + " resume" + c.approvalFlags()
-	cmd += fmt.Sprintf(" %q", sessionID)
-	return cmd, nil
-}
-
-func (c *CodexBackend) SupportsResume() bool { return true }
-
-func (c *CodexBackend) SupportsExplicitSessionID() bool { return false }
-
-func (c *CodexBackend) Detector() detect.StateDetector {
-	c.detectorOnce.Do(func() {
-		patterns := detect.DefaultPatternSet()
-		patterns.InputWaitingPatterns = append([]string{}, patterns.InputWaitingPatterns...)
-		patterns.InputWaitingPatterns = append(patterns.InputWaitingPatterns,
-			`(?m)^>\s*$`,
-			`(?m)^›\s*$`,
-		)
-		patterns.ErrorPatterns = append([]string{}, patterns.ErrorPatterns...)
-		patterns.ErrorPatterns = append(patterns.ErrorPatterns,
-			`(?i)codex (?:exited|terminated|crashed|died)`,
-		)
-		c.cachedDetector = detect.NewDetectorWithPatterns(patterns)
-	})
-	return c.cachedDetector
-}
-
-func (c *CodexBackend) MetricsParser() *metrics.MetricsParser {
-	return metrics.NewMetricsParser()
-}
-
-func (c *CodexBackend) EstimateCost(inputTokens, outputTokens, cacheRead, cacheWrite int64) (float64, bool) {
-	return 0, false
-}
-
-func (c *CodexBackend) LocalConfigFiles() []string {
-	return []string{"CODEX.local.md"}
-}
-
-func (c *CodexBackend) approvalFlags() string {
-	switch strings.ToLower(c.approvalMode) {
-	case "bypass":
-		return " --dangerously-bypass-approvals-and-sandbox"
-	case "full-auto":
-		return " --full-auto"
-	default:
-		return ""
-	}
 }

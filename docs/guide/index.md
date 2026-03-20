@@ -4,7 +4,7 @@ Welcome to the Claudio User Guide. This documentation covers everything you need
 
 ## What is Claudio?
 
-Claudio is a CLI/TUI tool that orchestrates multiple AI backend instances (Claude Code or Codex) simultaneously on a single project. It uses Git worktrees to isolate each instance's work, preventing conflicts while enabling truly parallel development.
+Claudio is a CLI/TUI tool that orchestrates multiple Claude Code instances simultaneously on a single project. It uses Git worktrees to isolate each instance's work, preventing conflicts while enabling truly parallel development.
 
 ## Guides
 

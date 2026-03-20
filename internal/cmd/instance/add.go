@@ -14,7 +14,7 @@ import (
 var addCmd = &cobra.Command{
 	Use:   "add [task description]",
 	Short: "Add a new AI backend instance with a task",
-	Long: `Add a new AI backend instance (Claude Code or Codex) to the current session.
+	Long: `Add a new Claude Code instance to the current session.
 The instance will be created in its own worktree and start working on the specified task.
 
 Task Chaining:

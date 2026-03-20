@@ -9,7 +9,7 @@ Before installing Claudio, ensure you have:
 - **Go 1.21+** - [Download Go](https://golang.org/dl/)
 - **Git** - For version control and worktree management
 - **tmux** - For process management (usually pre-installed on macOS/Linux)
-- **Claude Code CLI or Codex CLI** - Install and authenticate your preferred backend
+- **Claude Code CLI** - Install and authenticate ([Claude Code](https://claude.ai/claude-code))
 
 ### Verifying Prerequisites
 
@@ -23,13 +23,9 @@ git --version
 # Check tmux
 tmux -V
 
-# Check Claude Code (if using Claude)
+# Check Claude Code
 claude --version
 claude auth status  # Should show authenticated
-
-# Check Codex (if using Codex)
-codex --version
-# Authenticate via the Codex CLI per its documentation
 ```
 
 ## Installation

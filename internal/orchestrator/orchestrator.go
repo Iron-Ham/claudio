@@ -732,7 +732,7 @@ func (o *Orchestrator) AddInstanceToWorktree(session *Session, task string, work
 
 // AddInstanceToWorktreeWithBackend adds a new instance that uses an existing worktree with a specific backend.
 // If backendName is empty, uses the default orchestrator backend.
-// This enables mixed-backend workflows like adversarial sessions with Claude implementer and Codex reviewer.
+// This enables mixed-backend workflows like adversarial sessions with different reviewer backends.
 func (o *Orchestrator) AddInstanceToWorktreeWithBackend(session *Session, task string, worktreePath string, branch string, backendName string) (*Instance, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -1365,7 +1365,7 @@ func (o *Orchestrator) newInstanceManager(instanceID, workdir, task, claudeSessi
 
 // newInstanceManagerWithBackend creates an instance manager with a specific backend.
 // This is used for mixed-backend workflows like adversarial sessions where the reviewer
-// may use a different backend (e.g., Codex) than the implementer (e.g., Claude).
+// may use a different backend than the implementer.
 func (o *Orchestrator) newInstanceManagerWithBackend(instanceID, workdir, task, claudeSessionID, backendName string) *instance.Manager {
 	cfg := o.instanceManagerConfig()
 

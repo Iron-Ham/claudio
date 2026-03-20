@@ -299,22 +299,6 @@ func (c *Config) validateAI() []ValidationError {
 		})
 	}
 
-	if c.AI.Codex.Command == "" {
-		errors = append(errors, ValidationError{
-			Field:   "ai.codex.command",
-			Value:   c.AI.Codex.Command,
-			Message: "must be non-empty",
-		})
-	}
-
-	if c.AI.Codex.ApprovalMode != "" && !slices.Contains(ValidCodexApprovalModes(), c.AI.Codex.ApprovalMode) {
-		errors = append(errors, ValidationError{
-			Field:   "ai.codex.approval_mode",
-			Value:   c.AI.Codex.ApprovalMode,
-			Message: fmt.Sprintf("must be one of: %s", strings.Join(ValidCodexApprovalModes(), ", ")),
-		})
-	}
-
 	return errors
 }
 

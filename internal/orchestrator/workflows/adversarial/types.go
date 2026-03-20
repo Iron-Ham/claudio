@@ -52,7 +52,6 @@ type Config struct {
 	MinPassingScore int `json:"min_passing_score"`
 	// ReviewerBackend specifies which AI backend to use for the reviewer role.
 	// If empty, uses the global ai.backend setting (same as implementer).
-	// Options: "claude", "codex"
 	ReviewerBackend string `json:"reviewer_backend,omitempty"`
 }
 

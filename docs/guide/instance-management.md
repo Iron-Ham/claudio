@@ -1,6 +1,6 @@
 # Instance Management
 
-Instances are the core unit of work in Claudio. Each instance is an AI backend process (Claude Code or Codex) working on a specific task in its own isolated environment.
+Instances are the core unit of work in Claudio. Each instance is a Claude Code process working on a specific task in its own isolated environment.
 
 ## Instance Lifecycle
 

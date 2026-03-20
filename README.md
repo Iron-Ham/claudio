@@ -1,13 +1,13 @@
 # Claudio
 
-A CLI/TUI tool for running multiple AI coding agents (Claude Code or Codex) simultaneously on a single project using git worktrees.
+A CLI/TUI tool for running multiple Claude Code instances simultaneously on a single project using git worktrees.
 
 [![Documentation](https://img.shields.io/badge/docs-mkdocs-blue)](https://iron-ham.github.io/claudio/)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Iron-Ham/claudio)](https://goreportcard.com/report/github.com/Iron-Ham/claudio)
 
 ## Overview
 
-Claudio enables parallel AI-assisted development by orchestrating multiple Claude Code or Codex instances, each working in isolated git worktrees. A central orchestrator coordinates the work, tracks what each instance is doing, and helps prevent conflicts.
+Claudio enables parallel AI-assisted development by orchestrating multiple Claude Code instances, each working in isolated git worktrees. A central orchestrator coordinates the work, tracks what each instance is doing, and helps prevent conflicts.
 
 ## Documentation
 
@@ -49,7 +49,7 @@ Claudio enables parallel AI-assisted development by orchestrating multiple Claud
 - Go 1.21+
 - Git
 - tmux
-- [Claude Code](https://claude.ai/claude-code) **or** [Codex](https://openai.com/codex) CLI installed and authenticated
+- [Claude Code](https://claude.ai/claude-code) CLI installed and authenticated
 - [GitHub CLI](https://cli.github.com/) (optional, for PR creation)
 
 ## Installation
@@ -492,22 +492,13 @@ Claudio requires a git repository. Initialize one with:
 git init
 ```
 
-### AI backend process not starting
+### Claude Code process not starting
 
-Ensure your selected backend CLI is installed and authenticated.
-
-Claude:
+Ensure the Claude Code CLI is installed and authenticated.
 
 ```bash
 claude --version
 claude auth status
-```
-
-Codex:
-
-```bash
-codex --version
-# Authenticate via the Codex CLI per its documentation
 ```
 
 ### Worktree conflicts
