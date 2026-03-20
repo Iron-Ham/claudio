@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Spec-Driven Planning (`--spec`)** - New `--spec` flag for ultraplan that converts an existing product spec (Notion page, GitHub issue, markdown file, etc.) into an ultraplan instead of open-ended codebase exploration. The planning agent fetches the spec, preserves its task structure faithfully, and enriches it with codebase-specific file paths.
 - **Remove All Instances Command** - Added `:D!` / `:remove!` command to remove all instances from the session at once, complementing the existing `:D` single-instance removal
 - **Automatic Tmux Session Recovery** - When a tmux server dies during a live session (macOS `/tmp` cleanup, crash, or kill), the capture loop now automatically detects the death and resumes the Claude session in a fresh tmux session using `--resume`. Recovery attempts are limited (default 3) and only triggered when a backend session ID exists. Includes `OnRecovery` callback for orchestrator state synchronization.
 - **Stable Tmux Socket Directory** - Moved tmux sockets from `/tmp/tmux-{uid}/` to `~/.claudio/sockets/` via `TMUX_TMPDIR` to prevent macOS periodic `/tmp` cleanup from killing active tmux servers. `ListClaudioSockets` checks both locations for backward compatibility.

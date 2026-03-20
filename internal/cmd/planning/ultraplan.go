@@ -94,13 +94,20 @@ Examples:
   claudio ultraplan --multi-pass --dry-run "Implement microservices architecture"
 
   # Enable adversarial review for higher quality task completion
-  claudio ultraplan --adversarial "Implement critical security features"`,
+  claudio ultraplan --adversarial "Implement critical security features"
+
+  # Convert an existing Notion spec into an ultraplan (requires Notion MCP configured)
+  claudio ultraplan --spec "https://notion.so/team/My-Feature-Spec-abc123"
+
+  # Convert a spec with a custom objective description
+  claudio ultraplan --spec "https://notion.so/team/My-Feature-Spec-abc123" "Implement the super-archive feature"`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runUltraplan,
 }
 
 var (
 	ultraplanPlanFile    string
+	ultraplanSpecURL     string
 	ultraplanMaxParallel int
 	ultraplanDryRun      bool
 	ultraplanNoSynthesis bool
@@ -113,6 +120,7 @@ var (
 func init() {
 	cfg := config.Get()
 	ultraplanCmd.Flags().StringVar(&ultraplanPlanFile, "plan", "", "Use existing plan file instead of planning phase")
+	ultraplanCmd.Flags().StringVar(&ultraplanSpecURL, "spec", "", "URL or path to existing spec — planning agent converts it to a plan instead of open-ended exploration")
 	ultraplanCmd.Flags().IntVar(&ultraplanMaxParallel, "max-parallel", cfg.Ultraplan.MaxParallel, "Maximum concurrent child sessions (0 = unlimited)")
 	ultraplanCmd.Flags().BoolVar(&ultraplanDryRun, "dry-run", false, "Run planning only, output plan without executing")
 	ultraplanCmd.Flags().BoolVar(&ultraplanNoSynthesis, "no-synthesis", false, "Skip synthesis phase after execution")
@@ -133,16 +141,27 @@ func runUltraplan(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get current directory: %w", err)
 	}
 
+	// Validate mutually exclusive flags
+	if ultraplanPlanFile != "" && ultraplanSpecURL != "" {
+		return fmt.Errorf("--plan and --spec cannot be used together: --plan skips planning, --spec guides it")
+	}
+	if ultraplanSpecURL != "" && ultraplanMultiPass {
+		return fmt.Errorf("--spec and --multi-pass cannot be used together: spec conversion uses a single planning pass")
+	}
+
 	// Get objective from args or prompt
 	var objective string
 	if len(args) > 0 {
 		objective = args[0]
-	} else if ultraplanPlanFile == "" {
-		// Prompt for objective if not provided and no plan file
+	} else if ultraplanPlanFile == "" && ultraplanSpecURL == "" {
+		// Prompt for objective if not provided and no plan file or spec URL
 		objective, err = promptUltraplanObjective()
 		if err != nil {
 			return err
 		}
+	} else if ultraplanSpecURL != "" {
+		// When --spec is provided without an explicit objective, use a descriptive default
+		objective = "Convert spec to ultraplan: " + ultraplanSpecURL
 	}
 
 	// Generate a new session ID for this ultraplan
@@ -261,6 +280,9 @@ func applyUltraplanFlagOverrides(cmd *cobra.Command, cfg *orchestrator.UltraPlan
 	cfg.NoSynthesis = ultraplanNoSynthesis
 	cfg.AutoApprove = ultraplanAutoApprove
 	cfg.Review = ultraplanReview
+	if ultraplanSpecURL != "" {
+		cfg.SpecURL = ultraplanSpecURL
+	}
 }
 
 // promptUltraplanObjective prompts the user to enter an objective
