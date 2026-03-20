@@ -875,6 +875,12 @@ func TestBuildTaskPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "api/middleware.go") {
 		t.Error("prompt missing file list")
 	}
+	if !strings.Contains(prompt, "Completion Protocol") {
+		t.Error("prompt missing completion protocol")
+	}
+	if !strings.Contains(prompt, ".claudio-task-complete.json") {
+		t.Error("prompt missing sentinel file name")
+	}
 }
 
 func TestBuildTaskPrompt_NoFiles(t *testing.T) {
@@ -886,6 +892,9 @@ func TestBuildTaskPrompt_NoFiles(t *testing.T) {
 	if strings.Contains(prompt, "## Files") {
 		t.Error("prompt should not contain Files section when no files specified")
 	}
+	if !strings.Contains(prompt, "Completion Protocol") {
+		t.Error("prompt missing completion protocol")
+	}
 }
 
 func TestBuildTaskPrompt_EmptyTaskID(t *testing.T) {
@@ -893,5 +902,8 @@ func TestBuildTaskPrompt_EmptyTaskID(t *testing.T) {
 
 	if strings.Contains(prompt, "Task ID") {
 		t.Error("prompt should not contain Task ID section when taskID is empty")
+	}
+	if strings.Contains(prompt, "Completion Protocol") {
+		t.Error("prompt should not contain completion protocol when taskID is empty")
 	}
 }
