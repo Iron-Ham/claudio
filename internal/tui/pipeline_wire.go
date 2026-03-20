@@ -15,6 +15,9 @@ func registerPipelineFactory(coordinator *orchestrator.Coordinator, orch *orches
 	coordinator.SetPipelineFactory(func(deps orchestrator.PipelineRunnerDeps) (orchestrator.ExecutionRunner, error) {
 		recorder := bridgewire.NewSessionRecorder(bridgewire.SessionRecorderDeps{
 			OnAssign: coordinator.AssignTaskInstance,
+			OnSentinelDetected: func(_, instanceID string) {
+				orch.SetInstanceStatus(instanceID, orchestrator.StatusFinishing)
+			},
 		})
 		return bridgewire.NewPipelineRunner(bridgewire.PipelineRunnerConfig{
 			Orch:        deps.Orch,

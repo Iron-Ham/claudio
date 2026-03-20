@@ -167,6 +167,8 @@ func (r *trackingRecorder) AssignTask(taskID, instanceID string) {
 	}
 }
 
+func (r *trackingRecorder) RecordSentinelDetected(_, _ string) {}
+
 func (r *trackingRecorder) RecordCompletion(taskID string, commitCount int) {
 	r.mu.Lock()
 	r.completed[taskID] = commitCount

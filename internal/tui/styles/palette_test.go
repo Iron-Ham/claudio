@@ -205,6 +205,7 @@ func TestPaletteColorConsistency(t *testing.T) {
 				"StatusComplete":    string(p.StatusComplete),
 				"StatusError":       string(p.StatusError),
 				"StatusCreatingPR":  string(p.StatusCreatingPR),
+				"StatusFinishing":   string(p.StatusFinishing),
 				"StatusStuck":       string(p.StatusStuck),
 				"StatusTimeout":     string(p.StatusTimeout),
 				"StatusInterrupted": string(p.StatusInterrupted),

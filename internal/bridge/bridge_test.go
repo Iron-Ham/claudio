@@ -130,6 +130,8 @@ func (r *mockRecorder) AssignTask(taskID, instanceID string) {
 	r.assigned[taskID] = instanceID
 }
 
+func (r *mockRecorder) RecordSentinelDetected(_, _ string) {}
+
 func (r *mockRecorder) RecordCompletion(taskID string, commitCount int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -843,6 +845,10 @@ func (r *signalingRecorder) AssignTask(taskID, instanceID string) {
 	r.inner.AssignTask(taskID, instanceID)
 }
 
+func (r *signalingRecorder) RecordSentinelDetected(taskID, instanceID string) {
+	r.inner.RecordSentinelDetected(taskID, instanceID)
+}
+
 func (r *signalingRecorder) RecordCompletion(taskID string, commitCount int) {
 	r.inner.RecordCompletion(taskID, commitCount)
 }
@@ -852,6 +858,126 @@ func (r *signalingRecorder) RecordFailure(taskID, reason string) {
 	select {
 	case r.failureCh <- taskID:
 	default:
+	}
+}
+
+// orderRecorder tracks the order of RecordSentinelDetected and RecordCompletion calls
+// to verify that sentinel detection is reported before completion.
+type orderRecorder struct {
+	inner      *mockRecorder
+	callOrder  []string
+	mu         sync.Mutex
+	completeCh chan string
+}
+
+func newOrderRecorder() *orderRecorder {
+	return &orderRecorder{
+		inner:      newMockRecorder(),
+		completeCh: make(chan string, 1),
+	}
+}
+
+func (r *orderRecorder) AssignTask(taskID, instanceID string) {
+	r.inner.AssignTask(taskID, instanceID)
+}
+
+func (r *orderRecorder) RecordSentinelDetected(taskID, instanceID string) {
+	r.mu.Lock()
+	r.callOrder = append(r.callOrder, "sentinel:"+taskID)
+	r.mu.Unlock()
+}
+
+func (r *orderRecorder) RecordCompletion(taskID string, commitCount int) {
+	r.mu.Lock()
+	r.callOrder = append(r.callOrder, "completion:"+taskID)
+	r.mu.Unlock()
+	r.inner.RecordCompletion(taskID, commitCount)
+	select {
+	case r.completeCh <- taskID:
+	default:
+	}
+}
+
+func (r *orderRecorder) RecordFailure(taskID, reason string) {
+	r.inner.RecordFailure(taskID, reason)
+}
+
+func (r *orderRecorder) CallOrder() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, len(r.callOrder))
+	copy(out, r.callOrder)
+	return out
+}
+
+func TestBridge_SentinelDetectedBeforeCompletion(t *testing.T) {
+	bus := event.NewBus()
+	tasks := []ultraplan.PlannedTask{
+		{ID: "t1", Title: "Task 1", Description: "Do thing 1"},
+	}
+	tt := newTestTeam(t, bus, tasks)
+
+	factory := newMockFactory()
+	checker := newMockChecker()
+	recorder := newOrderRecorder()
+
+	b := bridge.New(tt, factory, checker, recorder, bus,
+		bridge.WithPollInterval(10*time.Millisecond),
+	)
+
+	// Subscribe before Start to avoid missing the event.
+	startedCh := make(chan event.Event, 1)
+	subID := bus.Subscribe("bridge.task_started", func(e event.Event) {
+		select {
+		case startedCh <- e:
+		default:
+		}
+	})
+	defer bus.Unsubscribe(subID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := b.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer b.Stop()
+
+	// Wait for the bridge to claim the task.
+	select {
+	case <-startedCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for bridge.task_started event")
+	}
+
+	// Signal completion.
+	factory.mu.Lock()
+	var worktreePath string
+	for _, inst := range factory.instances {
+		worktreePath = inst.worktreePath
+		break
+	}
+	factory.mu.Unlock()
+
+	checker.MarkComplete(worktreePath)
+
+	// Wait for completion to be recorded.
+	select {
+	case <-recorder.completeCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for RecordCompletion")
+	}
+
+	// Verify that sentinel was recorded before completion.
+	order := recorder.CallOrder()
+	if len(order) < 2 {
+		t.Fatalf("expected at least 2 calls, got %d: %v", len(order), order)
+	}
+	if order[0] != "sentinel:t1" {
+		t.Errorf("first call = %q, want %q", order[0], "sentinel:t1")
+	}
+	if order[1] != "completion:t1" {
+		t.Errorf("second call = %q, want %q", order[1], "completion:t1")
 	}
 }
 

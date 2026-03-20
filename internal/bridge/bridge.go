@@ -371,7 +371,11 @@ func (b *Bridge) monitorInstance(taskID string, inst Instance) {
 			continue
 		}
 
-		// Instance wrote its sentinel file. Verify the work.
+		// Instance wrote its sentinel file — notify recorder so the UI
+		// can transition to "finishing" while verification runs.
+		b.recorder.RecordSentinelDetected(taskID, inst.ID())
+
+		// Verify the work.
 		success, commitCount, verifyErr := b.checker.VerifyWork(
 			taskID, inst.ID(), inst.WorktreePath(), inst.Branch(),
 		)

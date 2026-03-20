@@ -62,6 +62,7 @@ var (
 	StatusCreatingPR  = lipgloss.Color("#F472B6") // Pink (brighter for readability)
 	StatusStuck       = lipgloss.Color("#FB923C") // Orange - for stuck/no activity
 	StatusTimeout     = lipgloss.Color("#F87171") // Red (red-400, was #DC2626 - improved contrast)
+	StatusFinishing   = lipgloss.Color("#2DD4BF") // Teal - sentinel detected, verifying work
 	StatusInterrupted = lipgloss.Color("#FBBF24") // Yellow/Amber - for interrupted sessions
 
 	// Base styles
@@ -345,6 +346,8 @@ func StatusColor(status string) lipgloss.Color {
 		return StatusPending
 	case "preparing":
 		return StatusPreparing
+	case "finishing":
+		return StatusFinishing
 	case "waiting_input":
 		return StatusInput
 	case "paused":
@@ -375,6 +378,8 @@ func StatusIcon(status string) string {
 		return "○"
 	case "preparing":
 		return "◐" // Half-filled circle for async setup in progress
+	case "finishing":
+		return "◉"
 	case "waiting_input":
 		return "?"
 	case "paused":

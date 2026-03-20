@@ -102,9 +102,10 @@ func (c *judgeCompletionChecker) VerifyWork(_, _, worktreePath, _ string) (bool,
 
 // sessionRecorderDeps defines the callbacks for the session recorder.
 type sessionRecorderDeps struct {
-	OnAssign   func(taskID, instanceID string)
-	OnComplete func(taskID string, commitCount int)
-	OnFailure  func(taskID, reason string)
+	OnAssign           func(taskID, instanceID string)
+	OnSentinelDetected func(taskID, instanceID string)
+	OnComplete         func(taskID string, commitCount int)
+	OnFailure          func(taskID, reason string)
 }
 
 // sessionRecorder delegates to caller-provided callbacks.
@@ -119,6 +120,12 @@ func newSessionRecorder(deps sessionRecorderDeps) bridge.SessionRecorder {
 func (r *sessionRecorder) AssignTask(taskID, instanceID string) {
 	if r.deps.OnAssign != nil {
 		r.deps.OnAssign(taskID, instanceID)
+	}
+}
+
+func (r *sessionRecorder) RecordSentinelDetected(taskID, instanceID string) {
+	if r.deps.OnSentinelDetected != nil {
+		r.deps.OnSentinelDetected(taskID, instanceID)
 	}
 }
 

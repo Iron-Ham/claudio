@@ -96,6 +96,10 @@ type SessionRecorderDeps struct {
 	// OnAssign is called when a task is assigned to an instance.
 	OnAssign func(taskID, instanceID string)
 
+	// OnSentinelDetected is called when the instance writes its sentinel file
+	// (entering the finishing phase before verification completes).
+	OnSentinelDetected func(taskID, instanceID string)
+
 	// OnComplete is called when a task completes successfully.
 	OnComplete func(taskID string, commitCount int)
 
@@ -116,6 +120,12 @@ func NewSessionRecorder(deps SessionRecorderDeps) bridge.SessionRecorder {
 func (r *sessionRecorder) AssignTask(taskID, instanceID string) {
 	if r.deps.OnAssign != nil {
 		r.deps.OnAssign(taskID, instanceID)
+	}
+}
+
+func (r *sessionRecorder) RecordSentinelDetected(taskID, instanceID string) {
+	if r.deps.OnSentinelDetected != nil {
+		r.deps.OnSentinelDetected(taskID, instanceID)
 	}
 }
 
