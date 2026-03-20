@@ -36,6 +36,10 @@ type SessionRecorder interface {
 	// AssignTask records that a task has been assigned to an instance.
 	AssignTask(taskID, instanceID string)
 
+	// RecordSentinelDetected signals that the instance wrote its sentinel
+	// file and is entering the finishing phase (verification in progress).
+	RecordSentinelDetected(taskID, instanceID string)
+
 	// RecordCompletion records successful task completion.
 	RecordCompletion(taskID string, commitCount int)
 

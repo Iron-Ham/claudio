@@ -88,6 +88,7 @@ func TestThemeFileValidate(t *testing.T) {
 						Complete:    "#A78BFA",
 						Error:       "#F87171",
 						CreatingPR:  "#F472B6",
+						Finishing:   "#2DD4BF",
 						Stuck:       "#FB923C",
 						Timeout:     "#F87171",
 						Interrupted: "#FBBF24",

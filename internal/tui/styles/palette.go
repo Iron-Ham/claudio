@@ -93,6 +93,7 @@ type ColorPalette struct {
 	StatusComplete    lipgloss.Color
 	StatusError       lipgloss.Color
 	StatusCreatingPR  lipgloss.Color
+	StatusFinishing   lipgloss.Color
 	StatusStuck       lipgloss.Color
 	StatusTimeout     lipgloss.Color
 	StatusInterrupted lipgloss.Color
@@ -139,6 +140,7 @@ func DefaultPalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#A78BFA"), // Purple
 		StatusError:       lipgloss.Color("#F87171"), // Red
 		StatusCreatingPR:  lipgloss.Color("#F472B6"), // Pink
+		StatusFinishing:   lipgloss.Color("#2DD4BF"), // Teal
 		StatusStuck:       lipgloss.Color("#FB923C"), // Orange
 		StatusTimeout:     lipgloss.Color("#F87171"), // Red
 		StatusInterrupted: lipgloss.Color("#FBBF24"), // Yellow
@@ -183,6 +185,7 @@ func MonokaiPalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#AE81FF"), // Purple
 		StatusError:       lipgloss.Color("#F92672"), // Pink
 		StatusCreatingPR:  lipgloss.Color("#FD971F"), // Orange
+		StatusFinishing:   lipgloss.Color("#66D9EF"), // Cyan
 		StatusStuck:       lipgloss.Color("#FD971F"), // Orange
 		StatusTimeout:     lipgloss.Color("#F92672"), // Pink
 		StatusInterrupted: lipgloss.Color("#E6DB74"), // Yellow
@@ -227,6 +230,7 @@ func DraculaPalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#BD93F9"), // Purple
 		StatusError:       lipgloss.Color("#FF5555"), // Red
 		StatusCreatingPR:  lipgloss.Color("#FF79C6"), // Pink
+		StatusFinishing:   lipgloss.Color("#8BE9FD"), // Cyan
 		StatusStuck:       lipgloss.Color("#FFB86C"), // Orange
 		StatusTimeout:     lipgloss.Color("#FF5555"), // Red
 		StatusInterrupted: lipgloss.Color("#F1FA8C"), // Yellow
@@ -271,6 +275,7 @@ func NordPalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#B48EAD"), // Aurora purple
 		StatusError:       lipgloss.Color("#BF616A"), // Aurora red
 		StatusCreatingPR:  lipgloss.Color("#B48EAD"), // Purple
+		StatusFinishing:   lipgloss.Color("#88C0D0"), // Frost teal
 		StatusStuck:       lipgloss.Color("#D08770"), // Aurora orange
 		StatusTimeout:     lipgloss.Color("#BF616A"), // Red
 		StatusInterrupted: lipgloss.Color("#EBCB8B"), // Yellow
@@ -315,6 +320,7 @@ func ClaudeCodePalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#DA7756"), // Orange
 		StatusError:       lipgloss.Color("#EC7063"), // Red
 		StatusCreatingPR:  lipgloss.Color("#BB8FCE"), // Purple
+		StatusFinishing:   lipgloss.Color("#48C9B0"), // Teal
 		StatusStuck:       lipgloss.Color("#E59866"), // Light orange
 		StatusTimeout:     lipgloss.Color("#EC7063"), // Red
 		StatusInterrupted: lipgloss.Color("#F5B041"), // Amber
@@ -359,6 +365,7 @@ func SolarizedDarkPalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#6C71C4"), // Violet
 		StatusError:       lipgloss.Color("#DC322F"), // Red
 		StatusCreatingPR:  lipgloss.Color("#D33682"), // Magenta
+		StatusFinishing:   lipgloss.Color("#2AA198"), // Cyan
 		StatusStuck:       lipgloss.Color("#CB4B16"), // Orange
 		StatusTimeout:     lipgloss.Color("#DC322F"), // Red
 		StatusInterrupted: lipgloss.Color("#B58900"), // Yellow
@@ -403,6 +410,7 @@ func SolarizedLightPalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#6C71C4"), // Violet
 		StatusError:       lipgloss.Color("#DC322F"), // Red
 		StatusCreatingPR:  lipgloss.Color("#D33682"), // Magenta
+		StatusFinishing:   lipgloss.Color("#2AA198"), // Cyan
 		StatusStuck:       lipgloss.Color("#CB4B16"), // Orange
 		StatusTimeout:     lipgloss.Color("#DC322F"), // Red
 		StatusInterrupted: lipgloss.Color("#B58900"), // Yellow
@@ -447,6 +455,7 @@ func OneDarkPalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#C678DD"), // Purple
 		StatusError:       lipgloss.Color("#E06C75"), // Red
 		StatusCreatingPR:  lipgloss.Color("#C678DD"), // Purple
+		StatusFinishing:   lipgloss.Color("#56B6C2"), // Cyan
 		StatusStuck:       lipgloss.Color("#D19A66"), // Orange
 		StatusTimeout:     lipgloss.Color("#E06C75"), // Red
 		StatusInterrupted: lipgloss.Color("#E5C07B"), // Yellow
@@ -491,6 +500,7 @@ func GitHubDarkPalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#A371F7"), // Purple
 		StatusError:       lipgloss.Color("#F85149"), // Red
 		StatusCreatingPR:  lipgloss.Color("#DB61A2"), // Pink
+		StatusFinishing:   lipgloss.Color("#39D2C0"), // Teal
 		StatusStuck:       lipgloss.Color("#F0883E"), // Orange
 		StatusTimeout:     lipgloss.Color("#F85149"), // Red
 		StatusInterrupted: lipgloss.Color("#D29922"), // Yellow
@@ -535,6 +545,7 @@ func GruvboxPalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#D3869B"), // Purple
 		StatusError:       lipgloss.Color("#FB4934"), // Red
 		StatusCreatingPR:  lipgloss.Color("#D3869B"), // Purple
+		StatusFinishing:   lipgloss.Color("#8EC07C"), // Aqua
 		StatusStuck:       lipgloss.Color("#FE8019"), // Orange
 		StatusTimeout:     lipgloss.Color("#FB4934"), // Red
 		StatusInterrupted: lipgloss.Color("#FABD2F"), // Yellow
@@ -579,6 +590,7 @@ func TokyoNightPalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#BB9AF7"), // Purple
 		StatusError:       lipgloss.Color("#F7768E"), // Red
 		StatusCreatingPR:  lipgloss.Color("#FF9E64"), // Orange
+		StatusFinishing:   lipgloss.Color("#73DACA"), // Teal
 		StatusStuck:       lipgloss.Color("#FF9E64"), // Orange
 		StatusTimeout:     lipgloss.Color("#F7768E"), // Red
 		StatusInterrupted: lipgloss.Color("#E0AF68"), // Yellow
@@ -623,6 +635,7 @@ func CatppuccinPalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#CBA6F7"), // Mauve
 		StatusError:       lipgloss.Color("#F38BA8"), // Red
 		StatusCreatingPR:  lipgloss.Color("#F5C2E7"), // Pink
+		StatusFinishing:   lipgloss.Color("#94E2D5"), // Teal
 		StatusStuck:       lipgloss.Color("#FAB387"), // Peach
 		StatusTimeout:     lipgloss.Color("#F38BA8"), // Red
 		StatusInterrupted: lipgloss.Color("#F9E2AF"), // Yellow
@@ -667,6 +680,7 @@ func SynthwavePalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#FF7EDB"), // Pink
 		StatusError:       lipgloss.Color("#FE4450"), // Red
 		StatusCreatingPR:  lipgloss.Color("#B893CE"), // Purple
+		StatusFinishing:   lipgloss.Color("#72F1B8"), // Teal
 		StatusStuck:       lipgloss.Color("#F97E72"), // Orange
 		StatusTimeout:     lipgloss.Color("#FE4450"), // Red
 		StatusInterrupted: lipgloss.Color("#FEDE5D"), // Yellow
@@ -711,6 +725,7 @@ func AyuPalette() *ColorPalette {
 		StatusComplete:    lipgloss.Color("#D2A6FF"), // Purple
 		StatusError:       lipgloss.Color("#D95757"), // Red
 		StatusCreatingPR:  lipgloss.Color("#F28779"), // Orange (Ayu uses this as accent)
+		StatusFinishing:   lipgloss.Color("#95E6CB"), // Teal
 		StatusStuck:       lipgloss.Color("#FF8F40"), // Orange
 		StatusTimeout:     lipgloss.Color("#D95757"), // Red
 		StatusInterrupted: lipgloss.Color("#E6B450"), // Yellow

@@ -19,6 +19,7 @@ const (
 	StatusPending      InstanceStatus = "pending"
 	StatusPreparing    InstanceStatus = "preparing" // Worktree creation in progress (async setup)
 	StatusWorking      InstanceStatus = "working"
+	StatusFinishing    InstanceStatus = "finishing" // Sentinel file detected, verification in progress
 	StatusWaitingInput InstanceStatus = "waiting_input"
 	StatusPaused       InstanceStatus = "paused"
 	StatusCompleted    InstanceStatus = "completed"
@@ -255,7 +256,7 @@ func (s *Session) NeedsRecovery() bool {
 
 	// Check if any instances were in a working state
 	for _, inst := range s.Instances {
-		if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
+		if inst.Status == StatusWorking || inst.Status == StatusFinishing || inst.Status == StatusWaitingInput {
 			return true
 		}
 	}
@@ -267,7 +268,7 @@ func (s *Session) NeedsRecovery() bool {
 func (s *Session) GetInterruptedInstances() []*Instance {
 	var interrupted []*Instance
 	for _, inst := range s.Instances {
-		if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
+		if inst.Status == StatusWorking || inst.Status == StatusFinishing || inst.Status == StatusWaitingInput {
 			// Mark as interrupted if we're detecting a recovery scenario
 			interrupted = append(interrupted, inst)
 		}
@@ -280,7 +281,7 @@ func (s *Session) GetResumableInstances() []*Instance {
 	var resumable []*Instance
 	for _, inst := range s.Instances {
 		// Instances with backend session ID can be resumed if they were running or interrupted
-		if inst.ClaudeSessionID != "" && (inst.Status == StatusWorking || inst.Status == StatusWaitingInput || inst.Status == StatusPaused || inst.Status == StatusInterrupted) {
+		if inst.ClaudeSessionID != "" && (inst.Status == StatusWorking || inst.Status == StatusFinishing || inst.Status == StatusWaitingInput || inst.Status == StatusPaused || inst.Status == StatusInterrupted) {
 			resumable = append(resumable, inst)
 		}
 	}
@@ -292,7 +293,7 @@ func (s *Session) GetResumableInstances() []*Instance {
 func (s *Session) MarkInstancesInterrupted() {
 	now := time.Now()
 	for _, inst := range s.Instances {
-		if inst.Status == StatusWorking || inst.Status == StatusWaitingInput {
+		if inst.Status == StatusWorking || inst.Status == StatusFinishing || inst.Status == StatusWaitingInput {
 			inst.Status = StatusInterrupted
 			inst.InterruptedAt = &now
 		}

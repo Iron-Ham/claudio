@@ -63,6 +63,7 @@ type ThemeStatusColors struct {
 	Complete    string `yaml:"complete,omitempty"`
 	Error       string `yaml:"error,omitempty"`
 	CreatingPR  string `yaml:"creating_pr,omitempty"`
+	Finishing   string `yaml:"finishing,omitempty"`
 	Stuck       string `yaml:"stuck,omitempty"`
 	Timeout     string `yaml:"timeout,omitempty"`
 	Interrupted string `yaml:"interrupted,omitempty"`
@@ -160,6 +161,7 @@ func (t *ThemeFile) Validate() error {
 		"status.complete":    t.Colors.Status.Complete,
 		"status.error":       t.Colors.Status.Error,
 		"status.creating_pr": t.Colors.Status.CreatingPR,
+		"status.finishing":   t.Colors.Status.Finishing,
 		"status.stuck":       t.Colors.Status.Stuck,
 		"status.timeout":     t.Colors.Status.Timeout,
 		"status.interrupted": t.Colors.Status.Interrupted,
@@ -216,6 +218,7 @@ func (t *ThemeFile) ToPalette() *ColorPalette {
 	p.StatusComplete = colorOrDefault(t.Colors.Status.Complete, t.Colors.Primary)
 	p.StatusError = colorOrDefault(t.Colors.Status.Error, t.Colors.Error)
 	p.StatusCreatingPR = colorOrDefault(t.Colors.Status.CreatingPR, t.Colors.Primary)
+	p.StatusFinishing = colorOrDefault(t.Colors.Status.Finishing, t.Colors.Secondary)
 	p.StatusStuck = colorOrDefault(t.Colors.Status.Stuck, t.Colors.Warning)
 	p.StatusTimeout = colorOrDefault(t.Colors.Status.Timeout, t.Colors.Error)
 	p.StatusInterrupted = colorOrDefault(t.Colors.Status.Interrupted, t.Colors.Warning)
@@ -414,6 +417,7 @@ func paletteToThemeFile(name string, p *ColorPalette) *ThemeFile {
 				Complete:    string(p.StatusComplete),
 				Error:       string(p.StatusError),
 				CreatingPR:  string(p.StatusCreatingPR),
+				Finishing:   string(p.StatusFinishing),
 				Stuck:       string(p.StatusStuck),
 				Timeout:     string(p.StatusTimeout),
 				Interrupted: string(p.StatusInterrupted),

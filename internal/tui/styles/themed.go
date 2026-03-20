@@ -31,6 +31,7 @@ type ThemedStyles struct {
 	StatusComplete    lipgloss.Color
 	StatusError       lipgloss.Color
 	StatusCreatingPR  lipgloss.Color
+	StatusFinishing   lipgloss.Color
 	StatusStuck       lipgloss.Color
 	StatusTimeout     lipgloss.Color
 	StatusInterrupted lipgloss.Color
@@ -167,6 +168,7 @@ func NewThemedStyles(p *ColorPalette) *ThemedStyles {
 		StatusComplete:    p.StatusComplete,
 		StatusError:       p.StatusError,
 		StatusCreatingPR:  p.StatusCreatingPR,
+		StatusFinishing:   p.StatusFinishing,
 		StatusStuck:       p.StatusStuck,
 		StatusTimeout:     p.StatusTimeout,
 		StatusInterrupted: p.StatusInterrupted,
@@ -450,6 +452,8 @@ func (s *ThemedStyles) StatusColor(status string) lipgloss.Color {
 		return s.StatusPending
 	case "preparing":
 		return s.StatusPreparing
+	case "finishing":
+		return s.StatusFinishing
 	case "waiting_input":
 		return s.StatusInput
 	case "paused":
@@ -540,6 +544,7 @@ func syncGlobalStyles() {
 	StatusComplete = activeTheme.StatusComplete
 	StatusError = activeTheme.StatusError
 	StatusCreatingPR = activeTheme.StatusCreatingPR
+	StatusFinishing = activeTheme.StatusFinishing
 	StatusStuck = activeTheme.StatusStuck
 	StatusTimeout = activeTheme.StatusTimeout
 	StatusInterrupted = activeTheme.StatusInterrupted

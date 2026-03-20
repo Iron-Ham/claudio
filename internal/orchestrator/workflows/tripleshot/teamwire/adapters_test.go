@@ -303,17 +303,23 @@ func TestJudgeCompletionChecker_VerifyWork_NoFile(t *testing.T) {
 // --- sessionRecorder tests ---
 
 func TestSessionRecorder_AllCallbacks(t *testing.T) {
-	var assigned, completed, failed bool
+	var assigned, sentinel, completed, failed bool
 
 	recorder := newSessionRecorder(sessionRecorderDeps{
-		OnAssign:   func(_, _ string) { assigned = true },
-		OnComplete: func(_ string, _ int) { completed = true },
-		OnFailure:  func(_, _ string) { failed = true },
+		OnAssign:           func(_, _ string) { assigned = true },
+		OnSentinelDetected: func(_, _ string) { sentinel = true },
+		OnComplete:         func(_ string, _ int) { completed = true },
+		OnFailure:          func(_, _ string) { failed = true },
 	})
 
 	recorder.AssignTask("t1", "i1")
 	if !assigned {
 		t.Error("OnAssign not called")
+	}
+
+	recorder.RecordSentinelDetected("t1", "i1")
+	if !sentinel {
+		t.Error("OnSentinelDetected not called")
 	}
 
 	recorder.RecordCompletion("t1", 1)
@@ -332,6 +338,7 @@ func TestSessionRecorder_NilCallbacks(t *testing.T) {
 
 	// Should not panic with nil callbacks.
 	recorder.AssignTask("t1", "i1")
+	recorder.RecordSentinelDetected("t1", "i1")
 	recorder.RecordCompletion("t1", 1)
 	recorder.RecordFailure("t1", "reason")
 }

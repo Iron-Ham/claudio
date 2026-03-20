@@ -831,6 +831,8 @@ func instanceStatusAbbrev(status orchestrator.InstanceStatus) string {
 		return "PREP"
 	case orchestrator.StatusWorking:
 		return "WORK"
+	case orchestrator.StatusFinishing:
+		return "FIN."
 	case orchestrator.StatusWaitingInput:
 		return "WAIT"
 	case orchestrator.StatusPaused:

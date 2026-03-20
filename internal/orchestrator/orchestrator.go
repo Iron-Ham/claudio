@@ -2375,6 +2375,25 @@ func (o *Orchestrator) GetInstance(id string) *Instance {
 	return nil
 }
 
+// SetInstanceStatus atomically sets the status of an instance by ID.
+// Returns false if the instance was not found.
+func (o *Orchestrator) SetInstanceStatus(id string, status InstanceStatus) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	if o.session == nil {
+		return false
+	}
+
+	for _, inst := range o.session.Instances {
+		if inst.ID == id {
+			inst.Status = status
+			return true
+		}
+	}
+	return false
+}
+
 // GetInstanceDiff returns the git diff for an instance against main
 func (o *Orchestrator) GetInstanceDiff(worktreePath string) (string, error) {
 	return o.wt.GetDiffAgainstMain(worktreePath)

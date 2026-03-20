@@ -30,6 +30,7 @@ func TestThemedStyles_StatusColor(t *testing.T) {
 	}{
 		{"working", "#10B981"},
 		{"pending", "#9CA3AF"},
+		{"finishing", "#2DD4BF"},
 		{"waiting_input", "#F59E0B"},
 		{"paused", "#60A5FA"},
 		{"completed", "#A78BFA"},

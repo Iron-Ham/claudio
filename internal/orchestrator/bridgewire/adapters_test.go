@@ -85,6 +85,7 @@ func TestNewCompletionChecker_VerifyWorkFailure(t *testing.T) {
 
 func TestNewSessionRecorder(t *testing.T) {
 	var assignedTask, assignedInst string
+	var sentinelTask, sentinelInst string
 	var completedTask string
 	var completedCommits int
 	var failedTask, failedReason string
@@ -93,6 +94,10 @@ func TestNewSessionRecorder(t *testing.T) {
 		OnAssign: func(taskID, instanceID string) {
 			assignedTask = taskID
 			assignedInst = instanceID
+		},
+		OnSentinelDetected: func(taskID, instanceID string) {
+			sentinelTask = taskID
+			sentinelInst = instanceID
 		},
 		OnComplete: func(taskID string, commitCount int) {
 			completedTask = taskID
@@ -107,6 +112,11 @@ func TestNewSessionRecorder(t *testing.T) {
 	recorder.AssignTask("t1", "inst-1")
 	if assignedTask != "t1" || assignedInst != "inst-1" {
 		t.Errorf("AssignTask: got (%q, %q), want (%q, %q)", assignedTask, assignedInst, "t1", "inst-1")
+	}
+
+	recorder.RecordSentinelDetected("t1", "inst-1")
+	if sentinelTask != "t1" || sentinelInst != "inst-1" {
+		t.Errorf("RecordSentinelDetected: got (%q, %q), want (%q, %q)", sentinelTask, sentinelInst, "t1", "inst-1")
 	}
 
 	recorder.RecordCompletion("t2", 5)
@@ -125,6 +135,7 @@ func TestNewSessionRecorder_NilCallbacks(t *testing.T) {
 
 	// Should not panic with nil callbacks.
 	recorder.AssignTask("t1", "inst-1")
+	recorder.RecordSentinelDetected("t1", "inst-1")
 	recorder.RecordCompletion("t1", 1)
 	recorder.RecordFailure("t1", "reason")
 }
