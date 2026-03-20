@@ -210,6 +210,71 @@ func GetStrategy(name string) *PlanningStrategy {
 	return nil
 }
 
+// SpecConversionPromptTemplate is the prompt used when converting an existing spec into an ultraplan.
+// Instead of open-ended codebase exploration, it instructs the planning agent to fetch the spec,
+// preserve its task structure, and produce a valid plan JSON file.
+const SpecConversionPromptTemplate = `You are converting an existing product specification into an executable plan.
+
+## Spec Location
+%s
+
+## Instructions
+
+1. **Fetch** the spec at the location above using available tools (e.g., Notion MCP, web fetch, or file read)
+2. **Fetch each subtask or linked page** referenced from the spec to get full task descriptions
+3. **Convert** the spec's existing task breakdown into the plan JSON format below
+4. **Preserve** the spec's task structure faithfully — do NOT re-decompose, add, remove, or merge tasks unless a task is marked as completed or cancelled
+5. **Skip** tasks with status "Completed", "Cancelled", or "Done"
+6. **Map complexity** from the spec's sizing to the plan format:
+   - Small, Small-Medium, XS, S → "low"
+   - Medium, M → "medium"
+   - Medium-Large, Large, XL, L → "high"
+7. **Set** no_code: true for non-engineering tasks (Design, PM, QA-only, documentation-only)
+8. **Map dependencies** from the spec's dependency/blocking relationships to depends_on arrays using the task IDs you assign
+9. **Set** issue_url to each task's source URL (e.g., Notion page URL, GitHub issue URL) when available
+10. **Explore** the codebase to populate the "files" field for each engineering task — list the files each task will likely need to modify
+11. **Write your plan** to ` + "`" + "./" + PlanFileName + "`" + ` **in your current working directory** in JSON format
+12. **Use each task's full description** from the spec as the "description" field — include implementation details, requirements, prior art references, and testing expectations so the executing AI instance has complete context
+
+## Plan JSON Schema
+
+Write a JSON file with this structure:
+- "summary": Brief executive summary of the spec (string)
+- "tasks": Array of task objects, each with:
+  - "id": Unique identifier like "task-1-backend-api" or "task-2-ios-gate" (string)
+  - "title": Short title matching the spec's task name (string)
+  - "description": Full task description from the spec, enriched with file paths from codebase exploration (string)
+  - "files": Files this task will modify, discovered via codebase exploration (array of strings)
+  - "depends_on": IDs of tasks that must complete first, derived from the spec's dependency structure (array of strings, empty for independent tasks)
+  - "priority": Lower = higher priority within dependency level (number)
+  - "est_complexity": "low", "medium", or "high" (string)
+  - "issue_url": URL of the source task in the spec (string, optional)
+  - "no_code": true for non-engineering tasks (boolean, optional)
+- "insights": Key architectural findings from codebase exploration (array of strings)
+- "constraints": Risks or constraints mentioned in the spec (array of strings)
+
+## Guidelines
+
+- **Fidelity first**: The spec author made deliberate decisions about task granularity and dependencies — respect them
+- Each task description should be complete enough for independent execution by another AI instance
+- Include codebase-specific context (file paths, function names, existing patterns) discovered during exploration
+- If the spec has phases, encode the phase ordering through depends_on relationships rather than flattening it
+
+## Validation
+
+After writing the plan file, **validate it** by running:
+` + "```bash" + `
+claudio validate ` + PlanFileName + `
+` + "```" + `
+
+This ensures your plan has valid JSON syntax, correct structure, and no dependency cycles.
+If validation fails, fix the issues and run validation again until it passes.`
+
+// GetSpecConversionPrompt returns the prompt for converting an existing spec into a plan.
+func GetSpecConversionPrompt(specURL string) string {
+	return fmt.Sprintf(SpecConversionPromptTemplate, specURL)
+}
+
 // SynthesisCompletionFileName is the sentinel file written by the synthesis agent.
 const SynthesisCompletionFileName = ".claudio-synthesis-complete.json"
 

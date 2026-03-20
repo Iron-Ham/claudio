@@ -121,6 +121,61 @@ func TestGetRevisionPrompt(t *testing.T) {
 	}
 }
 
+func TestGetSpecConversionPrompt(t *testing.T) {
+	specURL := "https://notion.so/team/My-Feature-Spec-abc123"
+	prompt := GetSpecConversionPrompt(specURL)
+
+	if !strings.Contains(prompt, specURL) {
+		t.Error("Prompt should contain the spec URL")
+	}
+
+	if !strings.Contains(prompt, "Fetch") {
+		t.Error("Prompt should mention fetching the spec")
+	}
+
+	if !strings.Contains(prompt, "Preserve") {
+		t.Error("Prompt should mention preserving task structure")
+	}
+
+	if !strings.Contains(prompt, "no_code") {
+		t.Error("Prompt should mention no_code for non-engineering tasks")
+	}
+
+	if !strings.Contains(prompt, PlanFileName) {
+		t.Error("Prompt should mention the plan filename")
+	}
+
+	if !strings.Contains(prompt, "Fidelity first") {
+		t.Error("Prompt should emphasize fidelity to the spec")
+	}
+
+	// Should NOT contain open-ended exploration instructions
+	if strings.Contains(prompt, "Decompose") {
+		t.Error("Spec conversion prompt should not contain 'Decompose' — it should preserve, not re-decompose")
+	}
+}
+
+func TestGetSpecConversionPrompt_DifferentURLFormats(t *testing.T) {
+	tests := []struct {
+		name    string
+		specURL string
+	}{
+		{"notion URL", "https://notion.so/team/Spec-abc123"},
+		{"github issue", "https://github.com/org/repo/issues/42"},
+		{"local file path", "/path/to/spec.md"},
+		{"description with URL", "Feature spec at https://notion.so/abc — implement exactly as described"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prompt := GetSpecConversionPrompt(tt.specURL)
+			if !strings.Contains(prompt, tt.specURL) {
+				t.Errorf("Prompt should contain spec URL %q", tt.specURL)
+			}
+		})
+	}
+}
+
 func TestPlanningPromptTemplateFormat(t *testing.T) {
 	// Verify the template is valid by formatting it
 	objective := "Test <objective>"

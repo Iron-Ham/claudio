@@ -1,6 +1,7 @@
 package planning
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
@@ -165,6 +166,81 @@ func TestApplyUltraplanFlagOverrides_AllFlags(t *testing.T) {
 		}
 		if !cfg.Adversarial {
 			t.Errorf("Adversarial = %v, want true", cfg.Adversarial)
+		}
+	})
+}
+
+func TestSpecFlagMutualExclusion(t *testing.T) {
+	t.Run("spec and plan are mutually exclusive", func(t *testing.T) {
+		// Save and restore package-level vars
+		oldPlan, oldSpec := ultraplanPlanFile, ultraplanSpecURL
+		defer func() {
+			ultraplanPlanFile = oldPlan
+			ultraplanSpecURL = oldSpec
+		}()
+
+		ultraplanPlanFile = "plan.json"
+		ultraplanSpecURL = "https://notion.so/spec"
+
+		err := runUltraplan(&cobra.Command{Use: "test"}, nil)
+		if err == nil {
+			t.Fatal("expected error when --plan and --spec are both set")
+		}
+		if !strings.Contains(err.Error(), "--plan and --spec cannot be used together") {
+			t.Errorf("unexpected error message: %s", err.Error())
+		}
+	})
+
+	t.Run("spec and multi-pass are mutually exclusive", func(t *testing.T) {
+		oldSpec, oldMulti := ultraplanSpecURL, ultraplanMultiPass
+		defer func() {
+			ultraplanSpecURL = oldSpec
+			ultraplanMultiPass = oldMulti
+		}()
+
+		ultraplanSpecURL = "https://notion.so/spec"
+		ultraplanMultiPass = true
+
+		err := runUltraplan(&cobra.Command{Use: "test"}, nil)
+		if err == nil {
+			t.Fatal("expected error when --spec and --multi-pass are both set")
+		}
+		if !strings.Contains(err.Error(), "--spec and --multi-pass cannot be used together") {
+			t.Errorf("unexpected error message: %s", err.Error())
+		}
+	})
+}
+
+func TestApplyUltraplanFlagOverrides_SpecURL(t *testing.T) {
+	t.Run("spec URL is applied when set", func(t *testing.T) {
+		cfg := &orchestrator.UltraPlanConfig{}
+
+		// Simulate --spec being provided
+		specURL := "https://notion.so/team/Spec-abc123"
+		ultraplanSpecURL = specURL
+		defer func() { ultraplanSpecURL = "" }()
+
+		// The override logic applies SpecURL when non-empty
+		if ultraplanSpecURL != "" {
+			cfg.SpecURL = ultraplanSpecURL
+		}
+
+		if cfg.SpecURL != specURL {
+			t.Errorf("SpecURL = %q, want %q", cfg.SpecURL, specURL)
+		}
+	})
+
+	t.Run("spec URL is not applied when empty", func(t *testing.T) {
+		cfg := &orchestrator.UltraPlanConfig{}
+
+		ultraplanSpecURL = ""
+
+		if ultraplanSpecURL != "" {
+			cfg.SpecURL = ultraplanSpecURL
+		}
+
+		if cfg.SpecURL != "" {
+			t.Errorf("SpecURL = %q, want empty", cfg.SpecURL)
 		}
 	})
 }

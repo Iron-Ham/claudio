@@ -278,8 +278,13 @@ func (c *Coordinator) RunPlanning() error {
 
 	c.notifyPhaseChange(PhasePlanning)
 
-	// Create the planning prompt
-	prompt := fmt.Sprintf(PlanningPromptTemplate, session.Objective)
+	// Create the planning prompt — use spec conversion prompt when a spec URL is provided
+	var prompt string
+	if session.Config.SpecURL != "" {
+		prompt = GetSpecConversionPrompt(session.Config.SpecURL)
+	} else {
+		prompt = fmt.Sprintf(PlanningPromptTemplate, session.Objective)
+	}
 
 	// Get PlanningOrchestrator - always delegate to it
 	po := c.PlanningOrchestrator()
