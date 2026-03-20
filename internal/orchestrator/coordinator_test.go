@@ -3,7 +3,9 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/event"
@@ -2546,4 +2548,207 @@ func TestCoordinator_UsePipelineConfig(t *testing.T) {
 	if !session.Config.UsePipeline {
 		t.Error("UsePipeline should be true in config")
 	}
+}
+
+func TestCoordinator_AssignTaskInstance(t *testing.T) {
+	t.Run("assigns task and adds instance to correct subgroup", func(t *testing.T) {
+		cfg := DefaultUltraPlanConfig()
+		ultraSession := NewUltraPlanSession("Test objective", cfg)
+		ultraSession.Plan = &PlanSpec{
+			Objective: "Test objective",
+			Tasks: []PlannedTask{
+				{ID: "task-1", Title: "First task"},
+				{ID: "task-2", Title: "Second task"},
+			},
+			ExecutionOrder: [][]string{{"task-1", "task-2"}},
+		}
+		ultraSession.Phase = PhaseExecuting
+
+		baseSession := &Session{
+			Instances: make([]*Instance, 0),
+		}
+		ultraGroup := NewInstanceGroupWithType("Test", SessionTypeUltraPlan, "Test objective")
+		baseSession.AddGroup(ultraGroup)
+
+		manager := NewUltraPlanManager(nil, baseSession, ultraSession, nil)
+		coord := &Coordinator{
+			manager:     manager,
+			baseSession: baseSession,
+			logger:      logging.NopLogger(),
+		}
+
+		coord.AssignTaskInstance("task-1", "inst-1")
+
+		// Verify TaskToInstance was populated
+		if ultraSession.TaskToInstance["task-1"] != "inst-1" {
+			t.Errorf("TaskToInstance[task-1] = %q, want %q", ultraSession.TaskToInstance["task-1"], "inst-1")
+		}
+
+		// Verify instance was added to the group (in a "Group 1" subgroup)
+		assertGroupContains(t, ultraGroup, "inst-1")
+
+		// Verify it was routed to the correct subgroup
+		if len(ultraGroup.SubGroups) == 0 {
+			t.Fatal("expected subgroups to be created")
+		}
+		subgroup := ultraGroup.SubGroups[0]
+		if subgroup.Name != "Group 1" {
+			t.Errorf("subgroup.Name = %q, want %q", subgroup.Name, "Group 1")
+		}
+		if !subgroup.HasInstance("inst-1") {
+			t.Error("inst-1 not found in Group 1 subgroup")
+		}
+	})
+
+	t.Run("handles nil coordinator gracefully", func(t *testing.T) {
+		var coord *Coordinator
+		// Should not panic
+		coord.AssignTaskInstance("task-1", "inst-1")
+	})
+
+	t.Run("handles nil baseSession gracefully", func(t *testing.T) {
+		coord := &Coordinator{}
+		// Should not panic — nil baseSession guard fires before any work
+		coord.AssignTaskInstance("task-1", "inst-1")
+	})
+
+	t.Run("handles no matching group gracefully", func(t *testing.T) {
+		ultraSession := NewUltraPlanSession("Test", DefaultUltraPlanConfig())
+		baseSession := &Session{Instances: make([]*Instance, 0)}
+		// No group added → GetGroupBySessionType returns nil
+		manager := NewUltraPlanManager(nil, baseSession, ultraSession, nil)
+		coord := &Coordinator{
+			manager:     manager,
+			baseSession: baseSession,
+			logger:      logging.NopLogger(),
+		}
+		coord.AssignTaskInstance("task-1", "inst-1")
+
+		// TaskToInstance should be populated even though group routing failed
+		if ultraSession.TaskToInstance["task-1"] != "inst-1" {
+			t.Errorf("TaskToInstance[task-1] = %q, want %q", ultraSession.TaskToInstance["task-1"], "inst-1")
+		}
+	})
+
+	t.Run("falls back to parent group when subgroup routing fails", func(t *testing.T) {
+		cfg := DefaultUltraPlanConfig()
+		ultraSession := NewUltraPlanSession("Test", cfg)
+		// No plan = no execution order, so subgroup routing will fail for execution type
+		// But TaskToInstance IS set, so determineSubgroupType returns SubgroupTypeExecution
+		// and getTaskGroupIndex returns -1, causing addInstanceToSubgroup to return false
+		ultraSession.Phase = PhaseExecuting
+
+		baseSession := &Session{
+			Instances: make([]*Instance, 0),
+		}
+		ultraGroup := NewInstanceGroupWithType("Test", SessionTypeUltraPlan, "Test")
+		baseSession.AddGroup(ultraGroup)
+
+		manager := NewUltraPlanManager(nil, baseSession, ultraSession, nil)
+		coord := &Coordinator{
+			manager:     manager,
+			baseSession: baseSession,
+			logger:      logging.NopLogger(),
+		}
+
+		coord.AssignTaskInstance("task-1", "inst-1")
+
+		// TaskToInstance should still be populated
+		if ultraSession.TaskToInstance["task-1"] != "inst-1" {
+			t.Errorf("TaskToInstance[task-1] = %q, want %q", ultraSession.TaskToInstance["task-1"], "inst-1")
+		}
+
+		// Instance should be in the group (at the parent level since routing fails)
+		assertGroupContains(t, ultraGroup, "inst-1")
+	})
+
+	t.Run("handles multi-pass session type", func(t *testing.T) {
+		cfg := DefaultUltraPlanConfig()
+		cfg.MultiPass = true
+		ultraSession := NewUltraPlanSession("Test", cfg)
+		ultraSession.Plan = &PlanSpec{
+			ExecutionOrder: [][]string{{"task-1"}},
+			Tasks:          []PlannedTask{{ID: "task-1", Title: "First"}},
+		}
+		ultraSession.Phase = PhaseExecuting
+
+		baseSession := &Session{
+			Instances: make([]*Instance, 0),
+		}
+		multiGroup := NewInstanceGroupWithType("Test", SessionTypePlanMulti, "Test")
+		baseSession.AddGroup(multiGroup)
+
+		manager := NewUltraPlanManager(nil, baseSession, ultraSession, nil)
+		coord := &Coordinator{
+			manager:     manager,
+			baseSession: baseSession,
+			logger:      logging.NopLogger(),
+		}
+
+		coord.AssignTaskInstance("task-1", "inst-1")
+
+		assertGroupContains(t, multiGroup, "inst-1")
+	})
+
+	t.Run("concurrent calls do not race", func(t *testing.T) {
+		cfg := DefaultUltraPlanConfig()
+		ultraSession := NewUltraPlanSession("Test", cfg)
+		ultraSession.Plan = &PlanSpec{
+			Objective: "Test",
+			Tasks: []PlannedTask{
+				{ID: "task-1", Title: "T1"},
+				{ID: "task-2", Title: "T2"},
+				{ID: "task-3", Title: "T3"},
+				{ID: "task-4", Title: "T4"},
+			},
+			ExecutionOrder: [][]string{{"task-1", "task-2", "task-3", "task-4"}},
+		}
+		ultraSession.Phase = PhaseExecuting
+
+		baseSession := &Session{Instances: make([]*Instance, 0)}
+		ultraGroup := NewInstanceGroupWithType("Test", SessionTypeUltraPlan, "Test")
+		baseSession.AddGroup(ultraGroup)
+
+		manager := NewUltraPlanManager(nil, baseSession, ultraSession, nil)
+		coord := &Coordinator{
+			manager:     manager,
+			baseSession: baseSession,
+			logger:      logging.NopLogger(),
+		}
+
+		// Simulate concurrent bridge goroutines assigning tasks.
+		// Under -race this will detect any map read/write races.
+		var wg sync.WaitGroup
+		for i := 1; i <= 4; i++ {
+			wg.Add(1)
+			go func(n int) {
+				defer wg.Done()
+				taskID := fmt.Sprintf("task-%d", n)
+				instID := fmt.Sprintf("inst-%d", n)
+				coord.AssignTaskInstance(taskID, instID)
+			}(i)
+		}
+		wg.Wait()
+
+		// All 4 instances should be in the group
+		allIDs := ultraGroup.AllInstanceIDs()
+		if len(allIDs) != 4 {
+			t.Errorf("AllInstanceIDs() has %d entries, want 4", len(allIDs))
+		}
+		for i := 1; i <= 4; i++ {
+			assertGroupContains(t, ultraGroup, fmt.Sprintf("inst-%d", i))
+		}
+	})
+}
+
+// assertGroupContains is a test helper that asserts an instance ID exists
+// in the group's AllInstanceIDs (including subgroups).
+func assertGroupContains(t *testing.T, group *InstanceGroup, instanceID string) {
+	t.Helper()
+	for _, id := range group.AllInstanceIDs() {
+		if id == instanceID {
+			return
+		}
+	}
+	t.Errorf("%s not found in group %q AllInstanceIDs()", instanceID, group.Name)
 }

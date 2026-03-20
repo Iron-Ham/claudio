@@ -12,7 +12,9 @@ import (
 // equivalent TUI-side registration.
 func registerPipelineFactory(coordinator *orchestrator.Coordinator, orch *orchestrator.Orchestrator, logger *logging.Logger) {
 	coordinator.SetPipelineFactory(func(deps orchestrator.PipelineRunnerDeps) (orchestrator.ExecutionRunner, error) {
-		recorder := bridgewire.NewSessionRecorder(bridgewire.SessionRecorderDeps{})
+		recorder := bridgewire.NewSessionRecorder(bridgewire.SessionRecorderDeps{
+			OnAssign: coordinator.AssignTaskInstance,
+		})
 		return bridgewire.NewPipelineRunner(bridgewire.PipelineRunnerConfig{
 			Orch:        deps.Orch,
 			Session:     deps.Session,
