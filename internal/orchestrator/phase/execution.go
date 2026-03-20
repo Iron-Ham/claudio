@@ -714,6 +714,13 @@ func (e *ExecutionOrchestrator) startTask(taskID string) error {
 	// Get instance ID
 	instanceID := e.getInstanceID(inst)
 
+	// Record the task-to-instance mapping BEFORE adding to the group.
+	// addInstanceToSubgroup calls determineSubgroupType which checks
+	// TaskToInstance to route execution instances to the correct "Group N"
+	// subgroup. Without this ordering, the instance falls through to
+	// SubgroupTypeUnknown and lands at the parent group root.
+	e.notifyTaskStart(taskID, instanceID)
+
 	// Add instance to the ultraplan group for sidebar display
 	if e.execCtx != nil && e.execCtx.Coordinator != nil {
 		isMultiPass := false
@@ -733,8 +740,6 @@ func (e *ExecutionOrchestrator) startTask(taskID string) error {
 	if e.execCtx != nil && e.execCtx.Coordinator != nil {
 		e.execCtx.Coordinator.AddRunningTask(taskID, instanceID)
 	}
-
-	e.notifyTaskStart(taskID, instanceID)
 
 	// Start the instance
 	if err := e.phaseCtx.Orchestrator.StartInstance(inst); err != nil {

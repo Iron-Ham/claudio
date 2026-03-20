@@ -1001,6 +1001,52 @@ func (c *Coordinator) GetProgress() (completed, total int, phase UltraPlanPhase)
 	return len(session.CompletedTasks), len(session.Plan.Tasks), session.Phase
 }
 
+// AssignTaskInstance records the task-to-instance mapping and adds the instance
+// to the appropriate ultraplan sidebar group. This is used by the pipeline
+// execution path where the bridge creates instances outside the coordinator's
+// ExecutionOrchestrator. The method first populates TaskToInstance so that
+// subgroup routing (determineSubgroupType) can resolve the correct "Group N"
+// subgroup, then adds the instance to that subgroup.
+func (c *Coordinator) AssignTaskInstance(taskID, instanceID string) {
+	if c == nil || c.baseSession == nil || c.manager == nil {
+		return
+	}
+
+	// Serialize the entire assign-then-route sequence under c.mu.
+	// addInstanceToSubgroup reads session.TaskToInstance (via determineSubgroupType)
+	// which is written by AssignTaskToInstance. Without this lock, two concurrent
+	// bridge goroutines can race: one writing the map while the other iterates it
+	// — a fatal runtime error in Go.
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Record the mapping so subgroup routing can determine the correct group
+	c.manager.AssignTaskToInstance(taskID, instanceID)
+
+	// Add instance to the ultraplan group for sidebar display
+	session := c.manager.Session()
+	if session == nil {
+		c.logger.Debug("AssignTaskInstance: nil session, instance added to TaskToInstance but not grouped",
+			"task_id", taskID, "instance_id", instanceID)
+		return
+	}
+	sessionType := SessionTypeUltraPlan
+	if session.Config.MultiPass {
+		sessionType = SessionTypePlanMulti
+	}
+	ultraGroup := c.baseSession.GetGroupBySessionType(sessionType)
+	if ultraGroup == nil {
+		c.logger.Debug("AssignTaskInstance: no group found for session type, instance not grouped",
+			"task_id", taskID, "instance_id", instanceID, "session_type", string(sessionType))
+		return
+	}
+
+	// Route to the correct subgroup (e.g., "Group 1", "Group 2")
+	if !addInstanceToSubgroup(ultraGroup, session, instanceID) {
+		ultraGroup.AddInstance(instanceID)
+	}
+}
+
 // GetRunningTasks returns the currently running tasks and their instance IDs
 func (c *Coordinator) GetRunningTasks() map[string]string {
 	c.mu.RLock()
