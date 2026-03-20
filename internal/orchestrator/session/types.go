@@ -24,9 +24,9 @@ type SessionData struct {
 	Instances []*InstanceData `json:"instances"`
 
 	// Groups holds optional visual groupings of instances for the TUI.
-	// When GroupedInstanceView is enabled, instances are organized into groups
-	// rather than displayed as a flat list. Groups can have sub-groups for
-	// representing nested dependencies (e.g., in Plan/UltraPlan workflows).
+	// Instances are organized into groups rather than displayed as a flat list.
+	// Groups can have sub-groups for representing nested dependencies
+	// (e.g., in Plan/UltraPlan workflows).
 	Groups []*InstanceGroup `json:"groups,omitempty"`
 
 	// UltraPlan holds the ultra-plan session state (nil for regular sessions)

@@ -644,37 +644,9 @@ func New() Model {
 			Name: "Experimental",
 			Items: []ConfigItem{
 				{
-					Key:         "experimental.intelligent_naming",
-					Label:       "Intelligent Naming",
-					Description: "Use Claude to generate short, descriptive instance names (requires ANTHROPIC_API_KEY)",
-					Type:        "bool",
-					Category:    "experimental",
-				},
-				{
-					Key:         "experimental.terminal_support",
-					Label:       "Terminal Support",
-					Description: "Enable embedded terminal pane (:term, :t, :termdir commands)",
-					Type:        "bool",
-					Category:    "experimental",
-				},
-				{
-					Key:         "experimental.inline_plan",
-					Label:       "Inline MultiPlan",
-					Description: "Enable :multiplan command for multi-pass planning with 3 planners + assessor",
-					Type:        "bool",
-					Category:    "experimental",
-				},
-				{
-					Key:         "experimental.inline_ultraplan",
-					Label:       "Inline UltraPlan",
-					Description: "Enable :ultraplan command in standard TUI to start UltraPlan workflows",
-					Type:        "bool",
-					Category:    "experimental",
-				},
-				{
-					Key:         "experimental.grouped_instance_view",
-					Label:       "Grouped Instance View",
-					Description: "Enable visual grouping of instances by execution group in the sidebar",
+					Key:         "experimental.subprocess_mode",
+					Label:       "Subprocess Mode",
+					Description: "Use direct subprocess execution instead of tmux for pipeline instances",
 					Type:        "bool",
 					Category:    "experimental",
 				},
@@ -1351,11 +1323,7 @@ func (m *Model) resetCurrentToDefault() {
 		"logging.max_size_mb": defaults.Logging.MaxSizeMB,
 		"logging.max_backups": defaults.Logging.MaxBackups,
 		// Experimental
-		"experimental.intelligent_naming":    defaults.Experimental.IntelligentNaming,
-		"experimental.terminal_support":      defaults.Experimental.TerminalSupport,
-		"experimental.inline_plan":           defaults.Experimental.InlinePlan,
-		"experimental.inline_ultraplan":      defaults.Experimental.InlineUltraPlan,
-		"experimental.grouped_instance_view": defaults.Experimental.GroupedInstanceView,
+		"experimental.subprocess_mode": defaults.Experimental.SubprocessMode,
 	}
 
 	if defaultVal, ok := defaultValues[item.Key]; ok {

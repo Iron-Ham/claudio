@@ -1,8 +1,6 @@
-# Inline Planning (Experimental)
+# Inline Planning
 
 Inline planning brings the power of Plan and UltraPlan workflows directly into the standard Claudio TUI. Instead of running a separate command, you can create plans, organize tasks into groups, and execute them all from within your normal session.
-
-> **Note:** This feature is experimental. Enable it via the `experimental.inline_plan` and `experimental.inline_ultraplan` configuration options.
 
 ## Overview
 
@@ -17,30 +15,6 @@ Inline planning brings the power of Plan and UltraPlan workflows directly into t
 │  5. Confirm to spawn instances organized in groups                   │
 │  6. Monitor progress with visual group hierarchy                     │
 └─────────────────────────────────────────────────────────────────────┘
-```
-
-## Enabling Inline Planning
-
-Add these options to your config file (`~/.config/claudio/config.yaml`):
-
-```yaml
-experimental:
-  # Enable :plan command in TUI
-  inline_plan: true
-
-  # Enable :ultraplan command in TUI
-  inline_ultraplan: true
-
-  # Enable visual group organization in sidebar
-  grouped_instance_view: true
-```
-
-Or set via environment variables:
-
-```bash
-export CLAUDIO_EXPERIMENTAL_INLINE_PLAN=true
-export CLAUDIO_EXPERIMENTAL_INLINE_ULTRAPLAN=true
-export CLAUDIO_EXPERIMENTAL_GROUPED_INSTANCE_VIEW=true
 ```
 
 ## Quick Start
@@ -307,7 +281,6 @@ Plans use JSON format compatible with the `claudio plan` command:
 
 ### Groups not displaying
 
-- Ensure `experimental.grouped_instance_view` is enabled
 - Toggle with `:group show` command
 - Check that instances have group assignments
 

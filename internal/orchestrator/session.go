@@ -131,9 +131,9 @@ type Session struct {
 	Instances []*Instance `json:"instances"`
 
 	// Groups holds optional visual groupings of instances for the TUI.
-	// When GroupedInstanceView is enabled, instances are organized into groups
-	// rather than displayed as a flat list. Groups can have sub-groups for
-	// representing nested dependencies (e.g., in Plan/UltraPlan workflows).
+	// Instances are organized into groups rather than displayed as a flat list.
+	// Groups can have sub-groups for representing nested dependencies
+	// (e.g., in Plan/UltraPlan workflows).
 	// IMPORTANT: Always use thread-safe accessor methods (GetGroups, AddGroup, etc.)
 	// instead of direct access to avoid race conditions with TUI rendering.
 	Groups   []*InstanceGroup `json:"groups,omitempty"`

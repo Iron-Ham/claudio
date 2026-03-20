@@ -1325,10 +1325,11 @@ func (m Model) IsAddingTask() bool {
 	return m.addingTask
 }
 
-// IntelligentNamingEnabled returns whether intelligent naming is enabled in config
+// IntelligentNamingEnabled returns whether intelligent naming is enabled.
+// Always returns true — intelligent naming is now a default feature.
+// Actual name generation still requires ANTHROPIC_API_KEY to be set.
 func (m Model) IntelligentNamingEnabled() bool {
-	cfg := config.Get()
-	return cfg.Experimental.IntelligentNaming
+	return true
 }
 
 // -----------------------------------------------------------------------------

@@ -56,8 +56,6 @@ These shortcuts use a vim-style `g` prefix. Press `g` first, then the action key
 | `gr` | Retry failed tasks in current group |
 | `gf` | Force-start next group (ignore dependencies) |
 
-> **Note:** Group commands require `experimental.grouped_instance_view: true` in your config.
-
 ## Views
 
 | Key | Action |

@@ -361,31 +361,15 @@ Enable experimental features (disabled by default).
 
 ```yaml
 experimental:
-  # Use Claude (Anthropic API) to generate descriptive instance names
-  intelligent_naming: false
-
-  # Spawn 3 parallel attempts, judge selects best
-  triple_shot: false
-
-  # Enable :multiplan command in TUI
-  inline_plan: false
-
-  # Enable :ultraplan command in TUI
-  inline_ultraplan: false
-
-  # Visual group organization in sidebar
-  grouped_instance_view: false
+  # Use stream-json subprocess backend instead of tmux
+  subprocess_mode: false
 ```
 
 **Feature Descriptions:**
 
 | Feature | Description |
 |---------|-------------|
-| `intelligent_naming` | Claude (Anthropic API) generates short names for instances based on task and output |
-| `triple_shot` | Three parallel attempts per task with judge selection |
-| `inline_plan` | Enables `:multiplan` command (`:plan` always available) |
-| `inline_ultraplan` | Enables `:ultraplan` command in standard TUI |
-| `grouped_instance_view` | Organizes instances by group in sidebar |
+| `subprocess_mode` | Uses the stream-json subprocess backend instead of the default tmux backend |
 
 ---
 

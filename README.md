@@ -146,7 +146,7 @@ Press `:` to enter command mode for advanced operations:
 | `:a "task"` | Add a new instance |
 | `:plan "objective"` | Start inline plan generation |
 | `:ultraplan "objective"` | Start inline ultraplan workflow |
-| `:multiplan "objective"` | Multi-pass planning (requires experimental flag) |
+| `:multiplan "objective"` | Multi-pass planning |
 | `:tripleshot "task"` | Start tripleshot execution (aliases: `:triple`, `:3shot`) |
 | `:adversarial-retry` | Restart stuck adversarial role |
 | `:group create [name]` | Create a new instance group |
@@ -302,11 +302,7 @@ adversarial:
 
 # Experimental features
 experimental:
-  intelligent_naming: false
-  triple_shot: false
-  inline_plan: false
-  inline_ultraplan: false
-  grouped_instance_view: false
+  subprocess_mode: false
 ```
 
 ### Environment Variables

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stable Tmux Socket Directory** - Moved tmux sockets from `/tmp/tmux-{uid}/` to `~/.claudio/sockets/` via `TMUX_TMPDIR` to prevent macOS periodic `/tmp` cleanup from killing active tmux servers. `ListClaudioSockets` checks both locations for backward compatibility.
 
 ### Changed
+- **Ship Experimental Features** - Graduated intelligent naming, terminal support, inline multiplan, inline ultraplan, and grouped instance view from experimental to default. These features are now always enabled without configuration. Only subprocess mode remains experimental.
 - **Extract `createTmuxSession()` Helper** - Extracted duplicated tmux session setup from `Start()` and `StartWithResume()` into a reusable `createTmuxSession()` method, eliminating ~40 lines of duplication.
 - **Extract `buildInstanceCallbacks()` Helper** - Consolidated duplicated callback wiring between `newInstanceManager` and `newInstanceManagerWithBackend` into a shared method to prevent sync bugs when adding new callbacks.
 - **Log tmux session option errors** - Replaced silent `_ =` error discards in `createTmuxSession` and recovery paths with Debug/Warn-level logging for better diagnostics.

@@ -370,28 +370,10 @@ func (s *SparseCheckoutConfig) GetSparseDirectories() []string {
 
 // ExperimentalConfig controls experimental features that may change or be removed
 type ExperimentalConfig struct {
-	// IntelligentNaming uses Claude to generate short, descriptive instance names
-	// for the sidebar based on the task and Claude's initial output.
-	// Requires ANTHROPIC_API_KEY to be set. (default: false)
-	IntelligentNaming bool `mapstructure:"intelligent_naming"`
-
-	// TerminalSupport enables the embedded terminal pane feature.
-	// When enabled, :term, :t, and :termdir commands become available
-	// to interact with a terminal inside Claudio. (default: false)
-	TerminalSupport bool `mapstructure:"terminal_support"`
-
-	// InlinePlan enables the :plan command in the standard TUI, allowing users to
-	// start a Plan workflow directly from the main interface. (default: false)
-	InlinePlan bool `mapstructure:"inline_plan"`
-
-	// InlineUltraPlan enables the :ultraplan command in the standard TUI, allowing
-	// users to start an UltraPlan workflow directly from the main interface. (default: false)
-	InlineUltraPlan bool `mapstructure:"inline_ultraplan"`
-
-	// GroupedInstanceView enables visual grouping of instances by execution group
-	// in the TUI sidebar. Related tasks are organized together, with sub-groups
-	// for dependency chains. (default: false)
-	GroupedInstanceView bool `mapstructure:"grouped_instance_view"`
+	// SubprocessMode uses direct subprocess execution (claude --print --output-format stream-json)
+	// instead of tmux sessions for pipeline instances. This replaces screen scraping with typed
+	// NDJSON event parsing for more reliable completion detection. (default: false)
+	SubprocessMode bool `mapstructure:"subprocess_mode"`
 }
 
 // ResolveWorktreeDir returns the resolved worktree directory path.
@@ -535,11 +517,7 @@ func Default() *Config {
 			},
 		},
 		Experimental: ExperimentalConfig{
-			IntelligentNaming:   false, // Disabled by default until stable
-			TerminalSupport:     false, // Disabled by default until stable
-			InlinePlan:          false, // Controls :multiplan only; :plan is always available
-			InlineUltraPlan:     false, // Disabled by default until stable
-			GroupedInstanceView: false, // Disabled by default until stable
+			SubprocessMode: false, // Disabled by default until stable
 		},
 	}
 }
@@ -667,11 +645,7 @@ func SetDefaults() {
 	viper.SetDefault("paths.sparse_checkout.cone_mode", defaults.Paths.SparseCheckout.ConeMode)
 
 	// Experimental defaults
-	viper.SetDefault("experimental.intelligent_naming", defaults.Experimental.IntelligentNaming)
-	viper.SetDefault("experimental.terminal_support", defaults.Experimental.TerminalSupport)
-	viper.SetDefault("experimental.inline_plan", defaults.Experimental.InlinePlan)
-	viper.SetDefault("experimental.inline_ultraplan", defaults.Experimental.InlineUltraPlan)
-	viper.SetDefault("experimental.grouped_instance_view", defaults.Experimental.GroupedInstanceView)
+	viper.SetDefault("experimental.subprocess_mode", defaults.Experimental.SubprocessMode)
 }
 
 // Load reads the configuration from viper into a Config struct and validates it
