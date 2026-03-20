@@ -678,13 +678,6 @@ func New() Model {
 					Type:        "bool",
 					Category:    "experimental",
 				},
-				{
-					Key:         "experimental.subprocess_mode",
-					Label:       "Subprocess Mode",
-					Description: "Use direct subprocess execution instead of tmux for pipeline instances",
-					Type:        "bool",
-					Category:    "experimental",
-				},
 			},
 		},
 	}
@@ -1363,7 +1356,6 @@ func (m *Model) resetCurrentToDefault() {
 		"experimental.inline_plan":           defaults.Experimental.InlinePlan,
 		"experimental.inline_ultraplan":      defaults.Experimental.InlineUltraPlan,
 		"experimental.grouped_instance_view": defaults.Experimental.GroupedInstanceView,
-		"experimental.subprocess_mode":       defaults.Experimental.SubprocessMode,
 	}
 
 	if defaultVal, ok := defaultValues[item.Key]; ok {

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/spf13/viper"
 
 	"github.com/Iron-Ham/claudio/internal/config"
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
@@ -158,9 +157,7 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 		// Auto-enable grouped sidebar mode
 		m.autoEnableGroupedMode()
 
-		registerPipelineFactory(coordinator, m.orchestrator, m.logger,
-			viper.GetBool("experimental.subprocess_mode"),
-			viper.GetString("ai.claude.command"))
+		registerPipelineFactory(coordinator, m.orchestrator, m.logger)
 
 		m.ultraPlan = &view.UltraPlanState{
 			Coordinator:           coordinator,
@@ -208,9 +205,7 @@ func (m *Model) initInlineUltraPlanMode(result command.Result) {
 			return
 		}
 
-		registerPipelineFactory(coordinator, m.orchestrator, m.logger,
-			viper.GetBool("experimental.subprocess_mode"),
-			viper.GetString("ai.claude.command"))
+		registerPipelineFactory(coordinator, m.orchestrator, m.logger)
 
 		m.ultraPlan = &view.UltraPlanState{
 			Coordinator:           coordinator,
@@ -906,9 +901,7 @@ func (m *Model) handleUltraPlanObjectiveSubmit(objective string) {
 		return
 	}
 
-	registerPipelineFactory(coordinator, m.orchestrator, m.logger,
-		viper.GetBool("experimental.subprocess_mode"),
-		viper.GetString("ai.claude.command"))
+	registerPipelineFactory(coordinator, m.orchestrator, m.logger)
 
 	m.ultraPlan = &view.UltraPlanState{
 		Coordinator:           coordinator,

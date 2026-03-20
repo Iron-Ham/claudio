@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stop Command (`:x` / `:stop`)** - Removed the `:x` / `:stop` command and its `auto_pr_on_stop` config option. Use `:e` / `:exit` to stop instances, and `claudio pr` for PR creation
 - **Search Feature** - Removed the output search (`/`) feature from the TUI, including the `internal/tui/search/` package, key bindings (`/`, `n`/`N`, `Ctrl+/`), search bar, match highlighting, mode indicator, and help panel entries (#685)
 - **Conflict Detector** - Removed the legacy `internal/conflict` package and all TUI wiring (warning banner, `:c`/`:conflicts` command, conflict panel, sidebar indicators). This reactive fsnotify-based system produced false positives (especially for `CLAUDE.md` which every worktree modifies) and was fully superseded by the preventive `filelock.Registry` in Orchestration 2.0.
+- **Subprocess Mode** - Removed the experimental subprocess execution mode (`experimental.subprocess_mode`), including the `internal/streamjson/` package, `subprocessFactory`, and all related config/TUI/wiring plumbing. Pipeline instances now always use the tmux-based execution backend.
 
 ### Fixed
 - **Stale Display Early in Session** - Fixed capture loop never populating the output buffer when there's no scrollback (screen not yet full). A single `lastOutput` tracking variable was shared between visible-only and full captures; when a visible capture detected new content and set `lastOutput`, the subsequent forced full capture (which returns identical bytes when there's no scrollback) found no change and skipped the buffer write. Split into independent `lastVisibleOutput` and `lastFullOutput` so each capture type compares against its own history.
@@ -32,7 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Recovery handler race condition** - Fixed `handleInstanceRecovery` mutating shared `InstanceInfo` without holding the orchestrator lock, and added `findInstanceLocked` helper for safe instance lookup under write lock.
 - **Recovery TOCTOU race** - Consolidated precondition checks and counter increment in `attemptSessionRecovery` under a single lock acquisition to prevent concurrent callers from bypassing the attempt limit.
 - **SocketDir fallback** - `SocketDir()` now falls back to `os.TempDir()/claudio-sockets/` when `os.UserHomeDir()` fails (e.g., `HOME` unset in containers) instead of producing a root-level path.
-- **Subprocess Mode Permission Prompt** - Fixed subprocess execution mode triggering Claude Code's interactive "trust the folder" prompt by flowing backend config defaults (permission mode, model, max turns, tool restrictions) through to subprocess invocations. The tmux path inherits these from `ClaudeBackend`; the subprocess path bypassed `ClaudeBackend` entirely, so `--dangerously-skip-permissions` was never emitted.
 
 ## [0.17.0] - 2026-02-24
 

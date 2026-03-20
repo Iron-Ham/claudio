@@ -302,7 +302,6 @@ This is not exhaustive — update it when you add or discover undocumented packa
 - `internal/coordination/` — Hub that wires all Orchestration 2.0 components for a session *(has `AGENTS.md`)*
 - `internal/filelock/` — Advisory file lock registry for conflict prevention *(has `AGENTS.md`)*
 - `internal/instance/` — Claude Code instance lifecycle management
-- `internal/streamjson/` — NDJSON parser and subprocess runner for Claude Code's stream-json output format
 - `internal/mailbox/` — JSONL file-based inter-instance messaging *(has `AGENTS.md`)*
 - `internal/orchestrator/` — Session coordination, instance orchestration
 - `internal/scaling/` — Queue-depth-based elastic scaling policies *(has `AGENTS.md`)*
@@ -362,8 +361,6 @@ Patterns and conventions observed in this codebase that aren't covered by the ge
 - **Dynamic semaphore for resizable concurrency** — The bridge uses a `sync.Cond`-based semaphore instead of a channel because channels cannot be resized after creation. `SetLimit` calls `Broadcast` to wake all blocked goroutines so they can re-evaluate against the new limit. The `0 = unlimited` convention preserves backward compatibility.
 - **Config field → StartOptions override chain** — `ClaudeBackendConfig` stores persistent defaults; `StartOptions` provides per-invocation overrides. In `BuildStartCommand`, each flag uses a priority chain: `StartOptions` value > `ClaudeBackend` value > no flag. See `firstNonEmpty`/`firstPositive`/`mergeUnique` helpers in `internal/ai/backend.go`. This enables role-specific behavior (e.g., `PermissionMode: "plan"` for reviewers).
 - **Per-role factory creation in bridgewire** — `PipelineExecutor.attachBridges` creates a *per-team* `instanceFactory` when `RoleOverrides` contains an entry for the team's role. The factory carries `ai.StartOptions` that flow through `Orchestrator.StartInstanceWithOverrides → newInstanceManager → ManagerOptions.StartOverrides → Manager.Start()`. The default shared factory is used for teams without role overrides.
-- **Dual execution backends via factory swap** — `PipelineRunnerConfig.SubprocessMode` controls whether `NewPipelineRunner` creates `instanceFactory` (tmux) or `subprocessFactory` (stream-json) implementations of `bridge.InstanceFactory`. The bridge, completion checker, and event system are unchanged — only the factory swap is needed because both backends create the same worktrees and write the same sentinel files.
-- **Type-assert for optional cleanup on narrow interfaces** — `bridge.InstanceFactory` has no lifecycle method because the tmux factory doesn't need one. The subprocess factory does need `Stop()` for goroutine draining. `PipelineExecutor.Stop()` type-asserts `interface{ Stop() }` on the factory. Use this pattern when extending narrow interfaces with optional behavior without breaking existing implementations.
 - **Capture loop recovery pattern** — `Manager.captureLoop()` detects tmux server death at four distinct points (heartbeat check, session status query, unresponsive threshold, capture failure). All four sites call `attemptSessionRecovery()` before `handleSessionEnded()`. Recovery creates a fresh tmux session and resumes the Claude session via `--resume`. The persistent input handler auto-reconnects to the new session (same socket name) without explicit re-initialization.
 
 ---

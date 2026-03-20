@@ -72,9 +72,7 @@ func NewWithUltraPlan(orch *orchestrator.Orchestrator, session *orchestrator.Ses
 
 	// Register the pipeline runner factory so the Coordinator can lazily
 	// create a PipelineRunner when UsePipeline is enabled.
-	registerPipelineFactory(coordinator, orch, logger,
-		viper.GetBool("experimental.subprocess_mode"),
-		viper.GetString("ai.claude.command"))
+	registerPipelineFactory(coordinator, orch, logger)
 
 	return &App{
 		model:        model,
