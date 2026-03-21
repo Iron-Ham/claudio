@@ -24,7 +24,7 @@ func Decompose(plan *ultraplan.PlanSpec, cfg DecomposeConfig) (*DecomposeResult,
 
 	cfg = cfg.defaults()
 
-	groups := groupByFileAffinity(plan.Tasks)
+	groups := groupByAffinity(plan.Tasks)
 
 	// Apply MaxTeamSize: split oversized groups.
 	if cfg.MaxTeamSize > 0 {
@@ -91,15 +91,36 @@ func Decompose(plan *ultraplan.PlanSpec, cfg DecomposeConfig) (*DecomposeResult,
 	return result, nil
 }
 
-// groupByFileAffinity groups tasks by shared files using union-find.
-// Returns a slice of groups, each group being a sorted slice of task IDs.
-func groupByFileAffinity(tasks []ultraplan.PlannedTask) [][]string {
+// groupByAffinity groups tasks by shared files and dependency edges
+// using union-find. Tasks that share at least one file, or that have a
+// direct dependency relationship, land in the same group.
+//
+// Dependency unioning is essential because each team's TaskQueue can only
+// resolve dependencies within its own task set. If task B depends on task A
+// but they share no files, without this union they land in separate teams
+// and B's dependency is permanently unsatisfiable (isClaimable returns
+// false because the dep ID is absent from the local queue).
+func groupByAffinity(tasks []ultraplan.PlannedTask) [][]string {
 	ids := make([]string, len(tasks))
 	for i, t := range tasks {
 		ids[i] = t.ID
 	}
 
 	uf := newUnionFind(ids)
+
+	// Union tasks that share a dependency edge. This ensures all
+	// DependsOn references are resolvable within a single team's queue.
+	// Unknown dep IDs are skipped — upstream validation catches invalid
+	// references before Decompose is called; guarding here prevents
+	// silent union-find corruption via phantom "" root nodes.
+	for _, t := range tasks {
+		for _, depID := range t.DependsOn {
+			if _, ok := uf.parent[depID]; !ok {
+				continue
+			}
+			uf.Union(t.ID, depID)
+		}
+	}
 
 	// Build file → task ID index.
 	fileToTasks := make(map[string][]string)
