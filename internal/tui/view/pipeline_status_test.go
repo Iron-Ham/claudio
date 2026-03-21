@@ -204,6 +204,24 @@ func TestPipelineState_UpdateTeamCompleted(t *testing.T) {
 		}
 	})
 
+	t.Run("reconciles TasksTotal with backend counts", func(t *testing.T) {
+		p := &PipelineState{
+			Phase: "execution",
+			Teams: []TeamSnapshot{{
+				ID: "t1", Phase: "working",
+				TasksDone: 1, TasksTotal: 2, ActiveTasks: 1,
+			}},
+		}
+		// Backend reports 3 done — more than bridge tracked starts
+		p.UpdateTeamCompleted("t1", "", true, 3, 0)
+		if p.Teams[0].TasksTotal != 3 {
+			t.Errorf("TasksTotal = %d, want %d (should reconcile with backend)", p.Teams[0].TasksTotal, 3)
+		}
+		if p.Teams[0].ActiveTasks != 0 {
+			t.Errorf("ActiveTasks = %d, want 0 (team is done)", p.Teams[0].ActiveTasks)
+		}
+	})
+
 	t.Run("nil safety", func(t *testing.T) {
 		var p *PipelineState
 		p.UpdateTeamCompleted("t1", "n", true, 1, 0) // should not panic
@@ -338,6 +356,22 @@ func TestPipelineState_GetIndicator(t *testing.T) {
 		}
 		if ind.Label != "exec 5/15" {
 			t.Errorf("Label = %q, want %q", ind.Label, "exec 5/15")
+		}
+	})
+
+	t.Run("execution label after team completion reconciles counts", func(t *testing.T) {
+		p := &PipelineState{
+			Phase: "execution",
+			Teams: []TeamSnapshot{{ID: "t1", Phase: "working", TasksTotal: 2}},
+		}
+		// Simulate backend reporting more tasks than bridge tracked
+		p.UpdateTeamCompleted("t1", "", true, 3, 0)
+		ind := p.GetIndicator()
+		if ind == nil {
+			t.Fatal("GetIndicator() = nil, want non-nil")
+		}
+		if ind.Label != "exec 3/3" {
+			t.Errorf("Label = %q, want %q (done should never exceed total)", ind.Label, "exec 3/3")
 		}
 	})
 
