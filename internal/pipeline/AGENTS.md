@@ -10,7 +10,7 @@ See `doc.go` for package overview and API usage.
 The pipeline package implements Phase 3 of the Orchestrator of Orchestrators. It decomposes a `PlanSpec` into teams and orchestrates multi-phase execution.
 
 **Core Components:**
-- **Decomposer** — Groups tasks by file affinity using union-find, producing `team.Spec` instances for the execution phase plus optional planning, review, and consolidation teams.
+- **Decomposer** — Groups tasks by file affinity and dependency edges using union-find, producing `team.Spec` instances for the execution phase plus optional planning, review, and consolidation teams.
 - **Pipeline** — Runs a multi-phase session (planning → execution → review → consolidation → done). Each phase creates its own `team.Manager`, registers teams, runs them to completion, and advances to the next phase.
 
 **Phase Flow:**
@@ -34,6 +34,7 @@ Pipeline.Start(ctx)
 - **Store Manager in map BEFORE publishing phase events** — `runPhase` must call `p.managers[phase] = mgr` before publishing `PipelinePhaseChangedEvent`. Event handlers may call `p.Manager(phase)` and get nil if the order is wrong.
 - **Pipeline.run() goroutine must be tracked with WaitGroup** — `Stop()` calls `p.wg.Wait()` after cancelling context to guarantee the `run()` goroutine has exited. Without this, tests checking post-Stop state may race with the goroutine.
 - **fail() must receive phasesRun from caller** — The `fail()` helper publishes a `PipelineCompletedEvent`. It accepts a `phasesRun int` parameter rather than computing it, because the `run()` function already tracks this counter incrementally and passing it avoids redundant (and possibly wrong) recalculation.
+- **Decomposer must union on dependency edges, not just file edges** — Each team's `TaskQueue` resolves `DependsOn` only within its own task set (`isClaimable` does `q.tasks[depID]`). If a task in team B depends on a task in team A (different queues), the dependency is permanently unsatisfiable and the pipeline deadlocks. The decomposer unions tasks along `DependsOn` edges so all dependencies are resolvable within one team.
 
 ## Testing
 

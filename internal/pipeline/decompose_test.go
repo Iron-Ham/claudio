@@ -500,6 +500,139 @@ func TestDecompose_DefaultTeamSizeZeroDefaultsToOne(t *testing.T) {
 	}
 }
 
+func TestDecompose_DependencyGrouping(t *testing.T) {
+	// t1 and t2 have disjoint files. t3 depends on t1 but shares no files.
+	// Without dependency-based unioning, t3 would land in a separate team
+	// and its dependency on t1 would be permanently unsatisfiable.
+	plan := &ultraplan.PlanSpec{
+		ID: "p1",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Files: []string{"a.go"}},
+			{ID: "t2", Title: "Task 2", Files: []string{"b.go"}},
+			{ID: "t3", Title: "Task 3", Files: []string{"c.go"}, DependsOn: []string{"t1"}},
+		},
+	}
+
+	result, err := Decompose(plan, DecomposeConfig{})
+	if err != nil {
+		t.Fatalf("Decompose: %v", err)
+	}
+
+	// t1 and t3 must be in the same team (dependency edge).
+	// t2 is independent → separate team.
+	if len(result.ExecutionTeams) != 2 {
+		t.Fatalf("ExecutionTeams = %d, want 2", len(result.ExecutionTeams))
+	}
+
+	// Find the team containing t1.
+	var t1Team *team.Spec
+	for i := range result.ExecutionTeams {
+		for _, task := range result.ExecutionTeams[i].Tasks {
+			if task.ID == "t1" {
+				t1Team = &result.ExecutionTeams[i]
+				break
+			}
+		}
+	}
+	if t1Team == nil {
+		t.Fatal("could not find team containing t1")
+	}
+
+	ids := make(map[string]bool)
+	for _, task := range t1Team.Tasks {
+		ids[task.ID] = true
+	}
+	if !ids["t1"] || !ids["t3"] {
+		t.Errorf("dependency team should contain t1 and t3, got %v", ids)
+	}
+	if ids["t2"] {
+		t.Error("t2 should NOT be in t1's team (no shared files or deps)")
+	}
+}
+
+func TestDecompose_TransitiveDependencyGrouping(t *testing.T) {
+	// Chain: t3 → t2 → t1. No shared files. All must land in one team.
+	plan := &ultraplan.PlanSpec{
+		ID: "p1",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Files: []string{"a.go"}},
+			{ID: "t2", Title: "Task 2", Files: []string{"b.go"}, DependsOn: []string{"t1"}},
+			{ID: "t3", Title: "Task 3", Files: []string{"c.go"}, DependsOn: []string{"t2"}},
+		},
+	}
+
+	result, err := Decompose(plan, DecomposeConfig{})
+	if err != nil {
+		t.Fatalf("Decompose: %v", err)
+	}
+
+	if len(result.ExecutionTeams) != 1 {
+		t.Fatalf("ExecutionTeams = %d, want 1 (transitive dependency chain)", len(result.ExecutionTeams))
+	}
+	if len(result.ExecutionTeams[0].Tasks) != 3 {
+		t.Errorf("tasks = %d, want 3", len(result.ExecutionTeams[0].Tasks))
+	}
+}
+
+func TestDecompose_DisjointDepsAndFiles(t *testing.T) {
+	// Reproduces the ultraplan stuck scenario: two independent group-1 tasks
+	// with disjoint files, and a group-2 task depending on both.
+	plan := &ultraplan.PlanSpec{
+		ID: "p1",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1-swipe", Title: "Swipe Framework", Files: []string{"SwipeSettings.swift"}},
+			{ID: "t2-graphql", Title: "GraphQL Codegen", Files: []string{"schema.graphql"}},
+			{ID: "t3-wiring", Title: "Wire It Up", Files: []string{"Wiring.swift"}, DependsOn: []string{"t1-swipe", "t2-graphql"}},
+		},
+	}
+
+	result, err := Decompose(plan, DecomposeConfig{})
+	if err != nil {
+		t.Fatalf("Decompose: %v", err)
+	}
+
+	// All three must be in one team because t3 depends on both t1 and t2.
+	if len(result.ExecutionTeams) != 1 {
+		t.Fatalf("ExecutionTeams = %d, want 1 (cross-dep grouping)", len(result.ExecutionTeams))
+	}
+	if len(result.ExecutionTeams[0].Tasks) != 3 {
+		t.Errorf("tasks = %d, want 3", len(result.ExecutionTeams[0].Tasks))
+	}
+}
+
+func TestDecompose_UnknownDependencyIgnored(t *testing.T) {
+	// DependsOn references a task ID not in the plan. The decomposer
+	// should skip the unknown dep rather than corrupting the union-find
+	// with a phantom "" root node.
+	plan := &ultraplan.PlanSpec{
+		ID: "p1",
+		Tasks: []ultraplan.PlannedTask{
+			{ID: "t1", Title: "Task 1", Files: []string{"a.go"}},
+			{ID: "t2", Title: "Task 2", Files: []string{"b.go"}, DependsOn: []string{"nonexistent"}},
+		},
+	}
+
+	result, err := Decompose(plan, DecomposeConfig{})
+	if err != nil {
+		t.Fatalf("Decompose: %v", err)
+	}
+
+	// t1 and t2 share no files and the unknown dep should be ignored,
+	// so they land in separate teams.
+	if len(result.ExecutionTeams) != 2 {
+		t.Fatalf("ExecutionTeams = %d, want 2 (unknown dep ignored)", len(result.ExecutionTeams))
+	}
+
+	// Verify both tasks are present (no silent drops).
+	totalTasks := 0
+	for _, team := range result.ExecutionTeams {
+		totalTasks += len(team.Tasks)
+	}
+	if totalTasks != 2 {
+		t.Errorf("total tasks = %d, want 2", totalTasks)
+	}
+}
+
 // -- Union-Find unit tests ---------------------------------------------------
 
 func TestUnionFind_BasicOperations(t *testing.T) {
