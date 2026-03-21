@@ -41,7 +41,6 @@ type State struct {
 
 	// Phase-aware navigation state
 	NavigableInstances []string // Ordered list of navigable instance IDs
-	SelectedNavIdx     int      // Index into navigableInstances
 
 	// Group re-trigger mode
 	RetriggerMode bool // When true, next digit key triggers group re-trigger

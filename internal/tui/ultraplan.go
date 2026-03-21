@@ -109,9 +109,10 @@ func (m Model) isInstanceSelected(instanceID string) bool {
 	return false
 }
 
-// getNavigableInstances returns an ordered list of instance IDs that can be navigated to.
+// getNavigableInstances returns the set of instance IDs that can be navigated to.
 // Only includes instances from phases that have started or completed.
-// Order: Planning → Execution tasks (in order) → Synthesis → Consolidation
+// Note: The ordering of the returned slice is not used for navigation — navigation
+// order comes from getInstanceDisplayOrder(). Only set membership matters here.
 func (m *Model) getNavigableInstances() []string {
 	if m.ultraPlan == nil || m.ultraPlan.Coordinator == nil {
 		return nil
@@ -299,9 +300,22 @@ func (m *Model) navigateToNextInstance(direction int) bool {
 		return false
 	}
 
-	// Update the navigable instances list
+	// Build the navigable set from ultraplan-specific logic
 	m.updateNavigableInstances()
-	instances := m.ultraPlan.NavigableInstances
+	navigableSet := make(map[string]bool, len(m.ultraPlan.NavigableInstances))
+	for _, id := range m.ultraPlan.NavigableInstances {
+		navigableSet[id] = true
+	}
+
+	// Use the display order (matches visual sidebar rendering) filtered to navigable instances.
+	// This ensures h/l navigation direction matches the visual top-to-bottom order.
+	displayOrder := m.getInstanceDisplayOrder()
+	var instances []string
+	for _, id := range displayOrder {
+		if navigableSet[id] {
+			instances = append(instances, id)
+		}
+	}
 
 	if len(instances) == 0 {
 		return false
@@ -341,7 +355,6 @@ func (m *Model) navigateToNextInstance(direction int) bool {
 				m.pauseInstance(oldInst.ID)
 			}
 			m.activeTab = i
-			m.ultraPlan.SelectedNavIdx = nextIdx
 			m.ensureActiveVisible()
 			// Resume the new active instance's capture
 			m.resumeActiveInstance()
@@ -1050,6 +1063,8 @@ func (m *Model) handlePlanFileCheckResult(msg tuimsg.PlanFileCheckResultMsg) (te
 
 	// Set the plan
 	if err := m.ultraPlan.Coordinator.SetPlan(msg.Plan); err != nil {
+		m.errorMessage = fmt.Sprintf("Plan file check completed but plan is invalid: %v", err)
+		m.ultraPlan.Coordinator.Manager().SetPhase(orchestrator.PhaseFailed)
 		return m, nil
 	}
 
