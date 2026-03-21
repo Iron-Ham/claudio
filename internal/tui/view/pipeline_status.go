@@ -19,10 +19,6 @@ var (
 
 // TeamSnapshot holds a point-in-time snapshot of a team's status.
 // This is a TUI-local type with no backend imports.
-//
-// TasksTotal is an incremental count from bridge start events and may diverge
-// from TasksDone+TasksFailed after UpdateTeamCompleted, which overwrites
-// TasksDone/TasksFailed with backend-authoritative final counts.
 type TeamSnapshot struct {
 	ID          string
 	Name        string
@@ -117,6 +113,8 @@ func (p *PipelineState) UpdateTeamCompleted(teamID, teamName string, success boo
 			}
 			p.Teams[i].TasksDone = tasksDone
 			p.Teams[i].TasksFailed = tasksFailed
+			p.Teams[i].TasksTotal = tasksDone + tasksFailed
+			p.Teams[i].ActiveTasks = 0
 			if teamName != "" {
 				p.Teams[i].Name = teamName
 			}
