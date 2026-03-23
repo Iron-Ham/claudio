@@ -394,11 +394,16 @@ type UltraPlanSession struct {
 	TaskToInstance  map[string]string `json:"task_to_instance"`           // PlannedTask.ID -> Instance.ID
 	CompletedTasks  []string          `json:"completed_tasks"`
 	FailedTasks     []string          `json:"failed_tasks"`
-	CurrentGroup    int               `json:"current_group"` // Index into ExecutionOrder
-	Created         time.Time         `json:"created"`
-	StartedAt       *time.Time        `json:"started_at,omitempty"`
-	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
-	Error           string            `json:"error,omitempty"` // Error message if failed
+	// CurrentGroup is the highest execution group index with running tasks.
+	// Monotonic high-water-mark: never decreases. The legacy path increments
+	// sequentially via AdvanceGroupIfComplete; the pipeline path may jump
+	// forward when tasks from later groups start (see AssignTaskInstance).
+	// The TUI uses this to auto-expand the active sidebar group.
+	CurrentGroup int        `json:"current_group"`
+	Created      time.Time  `json:"created"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	Error        string     `json:"error,omitempty"` // Error message if failed
 
 	// Revision state (persisted for recovery and display)
 	Revision *RevisionState `json:"revision,omitempty"`
