@@ -2690,6 +2690,123 @@ func TestCoordinator_AssignTaskInstance(t *testing.T) {
 		assertGroupContains(t, multiGroup, "inst-1")
 	})
 
+	t.Run("advances CurrentGroup when task belongs to later group", func(t *testing.T) {
+		cfg := DefaultUltraPlanConfig()
+		ultraSession := NewUltraPlanSession("Test", cfg)
+		ultraSession.Plan = &PlanSpec{
+			Objective: "Test",
+			Tasks: []PlannedTask{
+				{ID: "task-1", Title: "T1"},
+				{ID: "task-2", Title: "T2"},
+				{ID: "task-3", Title: "T3"},
+			},
+			ExecutionOrder: [][]string{
+				{"task-1"}, // Group 1 (index 0)
+				{"task-2"}, // Group 2 (index 1)
+				{"task-3"}, // Group 3 (index 2)
+			},
+		}
+		ultraSession.Phase = PhaseExecuting
+
+		baseSession := &Session{Instances: make([]*Instance, 0)}
+		ultraGroup := NewInstanceGroupWithType("Test", SessionTypeUltraPlan, "Test")
+		baseSession.AddGroup(ultraGroup)
+
+		manager := NewUltraPlanManager(nil, baseSession, ultraSession, nil)
+		coord := &Coordinator{
+			manager:     manager,
+			baseSession: baseSession,
+			logger:      logging.NopLogger(),
+		}
+
+		// Assign a Group 1 task — CurrentGroup should stay at 0
+		coord.AssignTaskInstance("task-1", "inst-1")
+		if ultraSession.CurrentGroup != 0 {
+			t.Errorf("CurrentGroup = %d after Group 1 task, want 0", ultraSession.CurrentGroup)
+		}
+
+		// Assign a Group 2 task — CurrentGroup should advance to 1
+		coord.AssignTaskInstance("task-2", "inst-2")
+		if ultraSession.CurrentGroup != 1 {
+			t.Errorf("CurrentGroup = %d after Group 2 task, want 1", ultraSession.CurrentGroup)
+		}
+
+		// Assign a Group 3 task — CurrentGroup should advance to 2
+		coord.AssignTaskInstance("task-3", "inst-3")
+		if ultraSession.CurrentGroup != 2 {
+			t.Errorf("CurrentGroup = %d after Group 3 task, want 2", ultraSession.CurrentGroup)
+		}
+	})
+
+	t.Run("does not regress CurrentGroup when earlier group task starts", func(t *testing.T) {
+		cfg := DefaultUltraPlanConfig()
+		ultraSession := NewUltraPlanSession("Test", cfg)
+		ultraSession.Plan = &PlanSpec{
+			Objective: "Test",
+			Tasks: []PlannedTask{
+				{ID: "task-1", Title: "T1"},
+				{ID: "task-2", Title: "T2"},
+			},
+			ExecutionOrder: [][]string{
+				{"task-1"}, // Group 1 (index 0)
+				{"task-2"}, // Group 2 (index 1)
+			},
+		}
+		ultraSession.Phase = PhaseExecuting
+
+		baseSession := &Session{Instances: make([]*Instance, 0)}
+		ultraGroup := NewInstanceGroupWithType("Test", SessionTypeUltraPlan, "Test")
+		baseSession.AddGroup(ultraGroup)
+
+		manager := NewUltraPlanManager(nil, baseSession, ultraSession, nil)
+		coord := &Coordinator{
+			manager:     manager,
+			baseSession: baseSession,
+			logger:      logging.NopLogger(),
+		}
+
+		// Advance to Group 2 first
+		coord.AssignTaskInstance("task-2", "inst-2")
+		if ultraSession.CurrentGroup != 1 {
+			t.Fatalf("CurrentGroup = %d, want 1", ultraSession.CurrentGroup)
+		}
+
+		// Assigning a Group 1 task should NOT regress CurrentGroup
+		coord.AssignTaskInstance("task-1", "inst-1")
+		if ultraSession.CurrentGroup != 1 {
+			t.Errorf("CurrentGroup = %d after earlier group task, want 1 (should not regress)", ultraSession.CurrentGroup)
+		}
+	})
+
+	t.Run("leaves CurrentGroup unchanged when task not in any group", func(t *testing.T) {
+		cfg := DefaultUltraPlanConfig()
+		ultraSession := NewUltraPlanSession("Test", cfg)
+		// Plan has no execution order — getTaskGroupIndex returns -1
+		ultraSession.Plan = &PlanSpec{
+			Objective: "Test",
+			Tasks:     []PlannedTask{{ID: "task-1", Title: "T1"}},
+		}
+		ultraSession.Phase = PhaseExecuting
+
+		baseSession := &Session{Instances: make([]*Instance, 0)}
+		ultraGroup := NewInstanceGroupWithType("Test", SessionTypeUltraPlan, "Test")
+		baseSession.AddGroup(ultraGroup)
+
+		manager := NewUltraPlanManager(nil, baseSession, ultraSession, nil)
+		coord := &Coordinator{
+			manager:     manager,
+			baseSession: baseSession,
+			logger:      logging.NopLogger(),
+		}
+
+		coord.AssignTaskInstance("task-1", "inst-1")
+
+		// CurrentGroup should remain 0 since getTaskGroupIndex returns -1
+		if ultraSession.CurrentGroup != 0 {
+			t.Errorf("CurrentGroup = %d after unresolvable task, want 0", ultraSession.CurrentGroup)
+		}
+	})
+
 	t.Run("concurrent calls do not race", func(t *testing.T) {
 		cfg := DefaultUltraPlanConfig()
 		ultraSession := NewUltraPlanSession("Test", cfg)
@@ -2737,6 +2854,54 @@ func TestCoordinator_AssignTaskInstance(t *testing.T) {
 		}
 		for i := 1; i <= 4; i++ {
 			assertGroupContains(t, ultraGroup, fmt.Sprintf("inst-%d", i))
+		}
+	})
+
+	t.Run("concurrent calls advance CurrentGroup correctly under race", func(t *testing.T) {
+		cfg := DefaultUltraPlanConfig()
+		ultraSession := NewUltraPlanSession("Test", cfg)
+		ultraSession.Plan = &PlanSpec{
+			Objective: "Test",
+			Tasks: []PlannedTask{
+				{ID: "task-1", Title: "T1"},
+				{ID: "task-2", Title: "T2"},
+				{ID: "task-3", Title: "T3"},
+				{ID: "task-4", Title: "T4"},
+			},
+			ExecutionOrder: [][]string{
+				{"task-1"},
+				{"task-2"},
+				{"task-3"},
+				{"task-4"},
+			},
+		}
+		ultraSession.Phase = PhaseExecuting
+
+		baseSession := &Session{Instances: make([]*Instance, 0)}
+		ultraGroup := NewInstanceGroupWithType("Test", SessionTypeUltraPlan, "Test")
+		baseSession.AddGroup(ultraGroup)
+
+		manager := NewUltraPlanManager(nil, baseSession, ultraSession, nil)
+		coord := &Coordinator{
+			manager:     manager,
+			baseSession: baseSession,
+			logger:      logging.NopLogger(),
+		}
+
+		// Assign all 4 tasks concurrently from 4 different groups
+		var wg sync.WaitGroup
+		for i := 1; i <= 4; i++ {
+			wg.Add(1)
+			go func(n int) {
+				defer wg.Done()
+				coord.AssignTaskInstance(fmt.Sprintf("task-%d", n), fmt.Sprintf("inst-%d", n))
+			}(i)
+		}
+		wg.Wait()
+
+		// CurrentGroup should be at the highest group index (3)
+		if ultraSession.CurrentGroup != 3 {
+			t.Errorf("CurrentGroup = %d after concurrent assigns, want 3", ultraSession.CurrentGroup)
 		}
 	})
 }

@@ -1045,6 +1045,27 @@ func (c *Coordinator) AssignTaskInstance(taskID, instanceID string) {
 	if !addInstanceToSubgroup(ultraGroup, session, instanceID) {
 		ultraGroup.AddInstance(instanceID)
 	}
+
+	// Advance CurrentGroup if this task belongs to a later execution group.
+	// In the pipeline path, dependencies are resolved at the task level, so
+	// tasks from multiple groups can execute concurrently. The TUI uses
+	// CurrentGroup to auto-expand the active group in the sidebar and to
+	// determine which groups are navigable via h/l keys. Without this,
+	// CurrentGroup stays at 0 forever in the pipeline path because
+	// ExecutionOrchestrator.checkAndAdvanceGroup() is never called.
+	groupIdx := getTaskGroupIndex(session, instanceID)
+	if groupIdx < 0 {
+		c.logger.Debug("task not found in any execution group, CurrentGroup unchanged",
+			"task_id", taskID, "instance_id", instanceID)
+	} else if groupIdx > session.CurrentGroup {
+		c.logger.Info("advancing CurrentGroup for pipeline execution",
+			"task_id", taskID,
+			"instance_id", instanceID,
+			"from_group", session.CurrentGroup,
+			"to_group", groupIdx,
+		)
+		session.CurrentGroup = groupIdx
+	}
 }
 
 // GetRunningTasks returns the currently running tasks and their instance IDs
