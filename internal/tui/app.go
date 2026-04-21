@@ -21,7 +21,6 @@ import (
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
 	"github.com/Iron-Ham/claudio/internal/tui/panel"
 	"github.com/Iron-Ham/claudio/internal/tui/styles"
-	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	"github.com/Iron-Ham/claudio/internal/tui/update"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	"github.com/Iron-Ham/claudio/internal/ultraplan"
@@ -475,21 +474,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		wasReady := m.ready
-		m.terminalManager.SetSize(msg.Width, msg.Height)
+		m.width = msg.Width
+		m.height = msg.Height
 		m.ready = true
 
 		// Calculate the content area dimensions and resize tmux sessions
 		// Use the configured sidebar width to ensure tmux panels match the UI layout
 		cfg := config.Get()
 		contentWidth, contentHeight := CalculateContentDimensionsWithSidebarWidth(
-			m.terminalManager.Width(), m.terminalManager.Height(), cfg.TUI.SidebarWidth)
+			m.width, m.height, cfg.TUI.SidebarWidth)
 		if m.orchestrator != nil && contentWidth > 0 && contentHeight > 0 {
 			m.orchestrator.ResizeAllInstances(contentWidth, contentHeight)
-		}
-
-		// Resize terminal pane if visible
-		if m.terminalManager.IsVisible() {
-			m.resizeTerminal()
 		}
 
 		// Ensure active instance is still visible after resize
@@ -513,10 +508,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuimsg.TickMsg:
 		// Update outputs from instances
 		m.updateOutputs()
-		// Update terminal pane output if visible
-		if m.terminalManager.IsVisible() {
-			m.updateTerminalOutput()
-		}
 		// Check for phase changes that need notification (synthesis, consolidation pause)
 		m.checkForPhaseNotification()
 
@@ -941,8 +932,6 @@ func (m *Model) applyCommandResult(result command.Result) {
 	}
 	if result.Quitting != nil {
 		m.quitting = *result.Quitting
-		// Cleanup terminal pane if running
-		m.cleanupTerminal()
 	}
 	if result.AddingTask != nil {
 		m.addingTask = *result.AddingTask
@@ -958,56 +947,6 @@ func (m *Model) applyCommandResult(result command.Result) {
 	}
 	if result.FilterMode != nil {
 		m.filterMode = *result.FilterMode
-	}
-
-	// Handle terminal-related state changes
-	if result.EnterTerminalMode {
-		m.enterTerminalMode()
-	}
-	if result.ToggleTerminal {
-		sessionID := ""
-		if m.orchestrator != nil {
-			sessionID = m.orchestrator.SessionID()
-		}
-		m.toggleTerminalVisibility(sessionID)
-		if m.terminalManager.IsVisible() {
-			m.infoMessage = "Terminal pane opened. Press [:t] to focus, [`] to hide."
-		} else {
-			m.infoMessage = "Terminal pane closed."
-		}
-	}
-	if result.TerminalDirMode != nil {
-		newMode := terminal.DirMode(*result.TerminalDirMode)
-		currentMode := m.terminalManager.DirMode()
-		if newMode != currentMode {
-			m.terminalManager.SetDirMode(newMode)
-			process := m.terminalManager.Process()
-			if process != nil && process.IsRunning() {
-				targetDir := m.getTerminalDir()
-				if err := process.ChangeDirectory(targetDir); err != nil {
-					m.errorMessage = "Failed to change directory: " + err.Error()
-				} else {
-					if newMode == terminal.DirWorktree {
-						m.infoMessage = "Terminal: switched to worktree"
-					} else {
-						m.infoMessage = "Terminal: switched to invocation directory"
-					}
-				}
-			} else {
-				if newMode == terminal.DirWorktree {
-					m.infoMessage = "Terminal will use worktree when opened."
-				} else {
-					m.infoMessage = "Terminal will use invocation directory when opened."
-				}
-			}
-		} else {
-			// Already in the requested mode
-			if newMode == terminal.DirWorktree {
-				m.infoMessage = "Terminal is already in worktree mode."
-			} else {
-				m.infoMessage = "Terminal is already in invocation directory mode."
-			}
-		}
 	}
 
 	// Handle active tab adjustment after instance removal
@@ -1229,15 +1168,11 @@ func (m Model) View() string {
 	b.WriteString(header)
 	b.WriteString("\n")
 
-	// Get pane dimensions, accounting for dynamic footer elements
-	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
+	// Calculate main area dimensions, accounting for dynamic footer elements
 	cfg := config.Get()
-	effectiveSidebarWidth := CalculateEffectiveSidebarWidthWithConfig(dims.TerminalWidth, cfg.TUI.SidebarWidth)
-	mainContentWidth := dims.TerminalWidth - effectiveSidebarWidth - 3 // 3 for gap between panels
-
-	// Main area height is pre-calculated by terminal manager
-	// (accounts for header, footer, and terminal pane)
-	mainAreaHeight := dims.MainAreaHeight
+	effectiveSidebarWidth := CalculateEffectiveSidebarWidthWithConfig(m.width, cfg.TUI.SidebarWidth)
+	mainContentWidth := m.width - effectiveSidebarWidth - 3 // 3 for gap between panels
+	mainAreaHeight := m.mainAreaHeight(m.calculateExtraFooterLines())
 
 	// Sidebar + Content area (horizontal layout)
 	// Use view component for sidebar rendering - handles all modes including ultraplan
@@ -1274,12 +1209,6 @@ func (m Model) View() string {
 
 	mainArea := lipgloss.JoinHorizontal(lipgloss.Top, sidebarStyled, " ", contentStyled)
 	b.WriteString(mainArea)
-
-	// Terminal pane (if visible)
-	if m.terminalManager.IsVisible() {
-		b.WriteString("\n")
-		b.WriteString(m.renderTerminalPane())
-	}
 
 	// Info or error message if any
 	if m.infoMessage != "" {
@@ -1331,11 +1260,10 @@ func (m Model) renderUnifiedHeader() string {
 
 	// Build mode indicator state
 	modeState := &view.ModeIndicatorState{
-		CommandMode:     m.commandMode,
-		FilterMode:      m.filterMode,
-		InputMode:       m.inputMode,
-		TerminalFocused: m.terminalManager.IsFocused(),
-		AddingTask:      m.addingTask,
+		CommandMode: m.commandMode,
+		FilterMode:  m.filterMode,
+		InputMode:   m.inputMode,
+		AddingTask:  m.addingTask,
 	}
 
 	// Get the workflow status and mode indicator
@@ -1343,7 +1271,7 @@ func (m Model) renderUnifiedHeader() string {
 	modeIndicator := view.RenderModeIndicator(modeState)
 
 	// Calculate available width for layout
-	termWidth := m.terminalManager.Width()
+	termWidth := m.width
 
 	// If no workflow status and no mode indicator, render simple header
 	if workflowStatus == "" && modeIndicator == "" {
@@ -1401,40 +1329,6 @@ func (m Model) buildWorkflowStatusState() *view.WorkflowStatusState {
 		TripleShot:  m.tripleShot,
 		Adversarial: m.adversarial,
 	}
-}
-
-// renderTerminalPane renders the terminal pane at the bottom of the screen.
-func (m Model) renderTerminalPane() string {
-	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
-	if dims.TerminalPaneHeight == 0 {
-		return ""
-	}
-
-	// Build the terminal state for the view
-	process := m.terminalManager.Process()
-	state := view.TerminalState{
-		Output:         m.terminalManager.Output(),
-		TerminalMode:   m.terminalManager.IsFocused(),
-		InvocationDir:  m.terminalManager.GetDir(nil), // Pass nil to get invocation dir
-		IsWorktreeMode: m.terminalManager.DirMode() == terminal.DirWorktree,
-	}
-
-	// Set current directory
-	if process != nil {
-		state.CurrentDir = process.CurrentDir()
-	} else {
-		state.CurrentDir = state.InvocationDir
-	}
-
-	// Set instance ID if in worktree mode
-	if state.IsWorktreeMode {
-		if inst := m.activeInstance(); inst != nil {
-			state.InstanceID = inst.ID
-		}
-	}
-
-	termView := view.NewTerminalView(dims.TerminalWidth, dims.TerminalPaneHeight)
-	return termView.Render(state)
 }
 
 // renderContent renders the main content area
@@ -1593,7 +1487,7 @@ func (m Model) renderHelpPanel(width int) string {
 	helpPanel := panel.NewHelpPanel()
 	state := &panel.RenderState{
 		Width:        width - 4, // Account for content box padding
-		Height:       m.terminalManager.Height() - 4,
+		Height:       m.height - 4,
 		ScrollOffset: m.helpScroll,
 		Theme:        styles.NewTheme(),
 	}
@@ -1609,7 +1503,7 @@ func (m Model) renderDiffPanel(width int) string {
 	diffPanel := panel.NewDiffPanel()
 	state := &panel.RenderState{
 		Width:          width - 4, // Account for content box padding
-		Height:         m.terminalManager.Height() - 4,
+		Height:         m.height - 4,
 		ScrollOffset:   m.diffScroll,
 		Theme:          styles.NewTheme(),
 		ActiveInstance: m.activeInstance(),
@@ -1640,26 +1534,13 @@ func (m Model) calculateExtraFooterLines() int {
 
 // buildHelpBarState creates the view.HelpBarState from the current model state.
 func (m Model) buildHelpBarState() *view.HelpBarState {
-	state := &view.HelpBarState{
+	return &view.HelpBarState{
 		CommandMode:   m.commandMode,
 		CommandBuffer: m.commandBuffer,
 		InputMode:     m.inputMode,
 		ShowDiff:      m.showDiff,
 		FilterMode:    m.filterMode,
 	}
-
-	// Terminal manager may be nil in tests
-	if m.terminalManager != nil {
-		state.TerminalFocused = m.terminalManager.IsFocused()
-		state.TerminalVisible = m.terminalManager.IsVisible()
-		if m.terminalManager.DirMode() == terminal.DirWorktree {
-			state.TerminalDirMode = "worktree"
-		} else {
-			state.TerminalDirMode = "invoke"
-		}
-	}
-
-	return state
 }
 
 // renderCommandModeHelp renders the help bar when in command mode.
@@ -1683,7 +1564,7 @@ func (m Model) renderStatsPanel(width int) string {
 	// Build render state for the panel
 	state := &panel.RenderState{
 		Width:                width,
-		Height:               m.terminalManager.Height(),
+		Height:               m.height,
 		Theme:                styles.NewTheme(),
 		CostWarningThreshold: cfg.Resources.CostWarningThreshold,
 		CostLimit:            cfg.Resources.CostLimit,

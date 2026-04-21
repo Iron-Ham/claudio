@@ -19,15 +19,6 @@ type HelpBarState struct {
 	// InputMode indicates whether input forwarding mode is active
 	InputMode bool
 
-	// TerminalFocused indicates whether the terminal pane has focus
-	TerminalFocused bool
-
-	// TerminalVisible indicates whether the terminal pane is visible
-	TerminalVisible bool
-
-	// TerminalDirMode is the current terminal directory mode ("invoke" or "worktree")
-	TerminalDirMode string
-
 	// ShowDiff indicates whether the diff panel is visible
 	ShowDiff bool
 
@@ -96,7 +87,6 @@ func (v *HelpBarView) renderVerboseCommandHelp(state *HelpBarState) string {
 	line2 := styles.Secondary.Bold(true).Render("View:") + " " +
 		styles.HelpKey.Render("d/diff") + " " + styles.Muted.Render("changes") + "  " +
 		styles.HelpKey.Render("m/stats") + " " + styles.Muted.Render("metrics") + "  " +
-		styles.HelpKey.Render("t/term") + " " + styles.Muted.Render("terminal") + "  " +
 		styles.HelpKey.Render("h/help") + " " + styles.Muted.Render("full help") + "  " +
 		styles.HelpKey.Render("q/quit") + " " + styles.Muted.Render("exit")
 	lines = append(lines, line2)
@@ -115,18 +105,6 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 		badge := styles.ModeBadgeInput.Render("INPUT")
 		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
 			styles.Muted.Render("All keystrokes forwarded to AI backend")
-		return styles.HelpBar.Render(badge + "  " + help)
-	}
-
-	if state.TerminalFocused {
-		badge := styles.ModeBadgeTerminal.Render("TERMINAL")
-		dirMode := "invoke"
-		if state.TerminalDirMode == "worktree" {
-			dirMode = "worktree"
-		}
-		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
-			styles.HelpKey.Render("[Ctrl+Shift+T]") + " switch dir  " +
-			styles.Muted.Render("("+dirMode+")")
 		return styles.HelpBar.Render(badge + "  " + help)
 	}
 
@@ -159,13 +137,6 @@ func (v *HelpBarView) RenderHelp(state *HelpBarState) string {
 		styles.HelpKey.Render("[:q]") + " quit",
 	}
 
-	// Add terminal key based on visibility
-	if state.TerminalVisible {
-		keys = append(keys, styles.HelpKey.Render("[:t]")+" term "+styles.HelpKey.Render("[`]")+" hide")
-	} else {
-		keys = append(keys, styles.HelpKey.Render("[`]")+" term")
-	}
-
 	return styles.HelpBar.Render(badge + "  " + strings.Join(keys, "  "))
 }
 
@@ -177,19 +148,6 @@ func (v *HelpBarView) RenderTripleShotHelp(state *HelpBarState) string {
 		badge := styles.ModeBadgeInput.Render("INPUT")
 		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
 			styles.Muted.Render("All keystrokes forwarded to AI backend")
-		return styles.HelpBar.Render(badge + "  " + help)
-	}
-
-	// Check for terminal focused mode
-	if state != nil && state.TerminalFocused {
-		badge := styles.ModeBadgeTerminal.Render("TERMINAL")
-		dirMode := "invoke"
-		if state.TerminalDirMode == "worktree" {
-			dirMode = "worktree"
-		}
-		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
-			styles.HelpKey.Render("[Ctrl+Shift+T]") + " switch dir  " +
-			styles.Muted.Render("("+dirMode+")")
 		return styles.HelpBar.Render(badge + "  " + help)
 	}
 

@@ -6,7 +6,6 @@ import (
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
 	tuimsg "github.com/Iron-Ham/claudio/internal/tui/msg"
-	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -77,8 +76,8 @@ func (m *Model) createUltraplanView() *view.UltraplanView {
 		Session:      m.session,
 		UltraPlan:    m.ultraPlan,
 		ActiveTab:    m.activeTab,
-		Width:        m.terminalManager.Width(),
-		Height:       m.terminalManager.Height(),
+		Width:        m.width,
+		Height:       m.height,
 		Outputs:      m.outputManager.GetAllOutputs(),
 		GetInstance: func(id string) *orchestrator.Instance {
 			return m.orchestrator.GetInstance(id)
@@ -86,14 +85,7 @@ func (m *Model) createUltraplanView() *view.UltraplanView {
 		IsSelected: func(instanceID string) bool {
 			return m.isInstanceSelected(instanceID)
 		},
-		InputMode:       m.inputMode,
-		TerminalFocused: m.terminalManager.IsFocused(),
-		TerminalDirMode: func() string {
-			if m.terminalManager.DirMode() == terminal.DirWorktree {
-				return "worktree"
-			}
-			return "invoke"
-		}(),
+		InputMode: m.inputMode,
 	}
 	return view.NewUltraplanView(ctx)
 }

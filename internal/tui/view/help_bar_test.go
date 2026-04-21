@@ -73,22 +73,6 @@ func TestRenderHelp(t *testing.T) {
 			contains: []string{"INPUT", "Ctrl+]"},
 		},
 		{
-			name: "terminal focused shows terminal help",
-			state: &HelpBarState{
-				TerminalFocused: true,
-				TerminalDirMode: "invoke",
-			},
-			contains: []string{"TERMINAL", "Ctrl+]", "invoke"},
-		},
-		{
-			name: "terminal focused with worktree mode",
-			state: &HelpBarState{
-				TerminalFocused: true,
-				TerminalDirMode: "worktree",
-			},
-			contains: []string{"TERMINAL", "worktree"},
-		},
-		{
 			name: "diff view shows diff help",
 			state: &HelpBarState{
 				ShowDiff: true,
@@ -106,13 +90,6 @@ func TestRenderHelp(t *testing.T) {
 			name:     "normal mode shows default keys with NORMAL badge",
 			state:    &HelpBarState{},
 			contains: []string{"NORMAL", "cmd", "scroll", "switch", "help", "quit"},
-		},
-		{
-			name: "terminal visible shows hide option",
-			state: &HelpBarState{
-				TerminalVisible: true,
-			},
-			contains: []string{"hide"},
 		},
 	}
 
@@ -187,29 +164,6 @@ func TestRenderTripleShotHelp(t *testing.T) {
 		}
 	})
 
-	t.Run("terminal focused shows TERMINAL badge", func(t *testing.T) {
-		state := &HelpBarState{TerminalFocused: true, TerminalDirMode: "worktree"}
-		result := RenderTripleShotHelp(state)
-
-		// Should show TERMINAL badge
-		if !strings.Contains(result, "TERMINAL") {
-			t.Errorf("expected TERMINAL badge when terminal focused, got: %s", result)
-		}
-		// Should show dir mode
-		if !strings.Contains(result, "worktree") {
-			t.Errorf("expected worktree dir mode indicator, got: %s", result)
-		}
-	})
-
-	t.Run("input mode takes priority over terminal", func(t *testing.T) {
-		state := &HelpBarState{InputMode: true, TerminalFocused: true}
-		result := RenderTripleShotHelp(state)
-
-		// Input mode should take priority
-		if !strings.Contains(result, "INPUT") {
-			t.Errorf("expected INPUT badge (takes priority over TERMINAL), got: %s", result)
-		}
-	})
 }
 
 func TestHelpBarView(t *testing.T) {

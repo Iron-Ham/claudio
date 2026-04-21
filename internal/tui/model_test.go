@@ -1142,7 +1142,6 @@ func TestCalculateSidebarMaxScrollOffset(t *testing.T) {
 				}
 			}
 
-			// Create model using the constructor to properly initialize terminal manager
 			m := NewModel(nil, session, nil)
 			m.sidebarMode = tt.sidebarMode
 			m.groupViewState = tt.groupViewState

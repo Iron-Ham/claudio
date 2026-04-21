@@ -20,7 +20,6 @@ const (
 
 	// HeaderFooterReserved is the total vertical space reserved for
 	// header and footer chrome in the main TUI view.
-	// This is used by terminal.Manager.GetPaneDimensions().
 	HeaderFooterReserved = HeaderLines + HelpBarLines + ViewNewlines // 8
 )
 
@@ -124,12 +123,6 @@ var (
 			Foreground(TextColor).
 			Background(WarningColor).
 			Padding(0, 1)
-
-	ModeBadgeTerminal = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(TextColor).
-				Background(SecondaryColor).
-				Padding(0, 1)
 
 	ModeBadgeCommand = lipgloss.NewStyle().
 				Bold(true).
@@ -316,25 +309,6 @@ var (
 
 	FilterCheckboxEmpty = lipgloss.NewStyle().
 				Foreground(MutedColor)
-
-	// Terminal pane styles
-	TerminalPaneBorder = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(BorderColor).
-				Padding(0, 1)
-
-	TerminalPaneBorderFocused = lipgloss.NewStyle().
-					Border(lipgloss.RoundedBorder()).
-					BorderForeground(SecondaryColor).
-					Padding(0, 1)
-
-	TerminalHeader = lipgloss.NewStyle().
-			Foreground(MutedColor)
-
-	TerminalFocusIndicator = lipgloss.NewStyle().
-				Background(SecondaryColor).
-				Foreground(TextColor).
-				Bold(true)
 )
 
 // StatusColor returns the color for a given status

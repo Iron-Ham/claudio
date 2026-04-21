@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/orchestrator"
-	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -172,13 +171,13 @@ func TestPlanEditorMoveSelection(t *testing.T) {
 			}
 
 			m := Model{
-				terminalManager: terminal.NewManager(),
+				width:  80,
+				height: 50,
 				planEditor: &PlanEditorState{
 					active:          true,
 					selectedTaskIdx: tt.initialIdx,
 				},
 			}
-			m.terminalManager.SetSize(80, 50) // Set height for scroll calculations
 
 			m.planEditorMoveSelection(tt.delta, plan)
 
@@ -226,14 +225,14 @@ func TestPlanEditorEnsureVisible(t *testing.T) {
 			}
 
 			m := Model{
-				terminalManager: terminal.NewManager(),
+				width:  80,
+				height: tt.height,
 				planEditor: &PlanEditorState{
 					active:          true,
 					selectedTaskIdx: tt.selectedIdx,
 					scrollOffset:    tt.initialScroll,
 				},
 			}
-			m.terminalManager.SetSize(80, tt.height)
 
 			m.planEditorEnsureVisible(plan)
 
@@ -1536,9 +1535,8 @@ func TestEnterInlinePlanEditor(t *testing.T) {
 	state.AddSession("test-group", session)
 
 	m := Model{
-		inlinePlan:      state,
-		terminalManager: terminal.NewManager(),
-		inputMode:       true, // Start in input mode to verify it gets disabled
+		inlinePlan: state,
+		inputMode:  true, // Start in input mode to verify it gets disabled
 	}
 
 	m.enterInlinePlanEditor()
@@ -1689,8 +1687,7 @@ func TestRenderPlanEditorView_InlineMode(t *testing.T) {
 			active:     true,
 			inlineMode: true,
 		},
-		inlinePlan:      state,
-		terminalManager: terminal.NewManager(),
+		inlinePlan: state,
 	}
 
 	// Should not panic and return something
@@ -1706,8 +1703,7 @@ func TestRenderPlanEditorView_NoPlan(t *testing.T) {
 			active:     true,
 			inlineMode: true,
 		},
-		inlinePlan:      nil,
-		terminalManager: terminal.NewManager(),
+		inlinePlan: nil,
 	}
 
 	result := m.renderPlanEditorView(80)

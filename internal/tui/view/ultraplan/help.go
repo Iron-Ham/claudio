@@ -28,19 +28,6 @@ func (h *HelpRenderer) Render() string {
 		return styles.HelpBar.Width(h.ctx.Width).Render(badge + "  " + help)
 	}
 
-	// Terminal focused mode - shows TERMINAL badge
-	if h.ctx.TerminalFocused {
-		badge := styles.ModeBadgeTerminal.Render("TERMINAL")
-		dirMode := "invoke"
-		if h.ctx.TerminalDirMode == "worktree" {
-			dirMode = "worktree"
-		}
-		help := styles.HelpKey.Render("[Ctrl+]]") + " exit  " +
-			styles.HelpKey.Render("[Ctrl+Shift+T]") + " switch dir  " +
-			styles.Muted.Render("("+dirMode+")")
-		return styles.HelpBar.Width(h.ctx.Width).Render(badge + "  " + help)
-	}
-
 	if h.ctx.UltraPlan == nil || h.ctx.UltraPlan.Coordinator == nil {
 		return ""
 	}

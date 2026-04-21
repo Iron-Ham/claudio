@@ -65,13 +65,12 @@ type ThemedStyles struct {
 	HelpKey lipgloss.Style
 
 	// Mode badges
-	ModeBadgeNormal   lipgloss.Style
-	ModeBadgeInput    lipgloss.Style
-	ModeBadgeTerminal lipgloss.Style
-	ModeBadgeCommand  lipgloss.Style
-	ModeBadgeSearch   lipgloss.Style
-	ModeBadgeFilter   lipgloss.Style
-	ModeBadgeDiff     lipgloss.Style
+	ModeBadgeNormal  lipgloss.Style
+	ModeBadgeInput   lipgloss.Style
+	ModeBadgeCommand lipgloss.Style
+	ModeBadgeSearch  lipgloss.Style
+	ModeBadgeFilter  lipgloss.Style
+	ModeBadgeDiff    lipgloss.Style
 
 	// Output area
 	OutputArea lipgloss.Style
@@ -127,12 +126,6 @@ type ThemedStyles struct {
 	FilterCategoryDisabled lipgloss.Style
 	FilterCheckbox         lipgloss.Style
 	FilterCheckboxEmpty    lipgloss.Style
-
-	// Terminal pane styles
-	TerminalPaneBorder        lipgloss.Style
-	TerminalPaneBorderFocused lipgloss.Style
-	TerminalHeader            lipgloss.Style
-	TerminalFocusIndicator    lipgloss.Style
 
 	// Session type colors
 	SessionTypePlanColor       lipgloss.Color
@@ -240,12 +233,6 @@ func NewThemedStyles(p *ColorPalette) *ThemedStyles {
 		Bold(true).
 		Foreground(p.Text).
 		Background(p.Warning).
-		Padding(0, 1)
-
-	s.ModeBadgeTerminal = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(p.Text).
-		Background(p.Secondary).
 		Padding(0, 1)
 
 	s.ModeBadgeCommand = lipgloss.NewStyle().
@@ -422,24 +409,6 @@ func NewThemedStyles(p *ColorPalette) *ThemedStyles {
 	s.FilterCheckboxEmpty = lipgloss.NewStyle().
 		Foreground(p.Muted)
 
-	s.TerminalPaneBorder = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(p.Border).
-		Padding(0, 1)
-
-	s.TerminalPaneBorderFocused = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(p.Secondary).
-		Padding(0, 1)
-
-	s.TerminalHeader = lipgloss.NewStyle().
-		Foreground(p.Muted)
-
-	s.TerminalFocusIndicator = lipgloss.NewStyle().
-		Background(p.Secondary).
-		Foreground(p.Text).
-		Bold(true)
-
 	return s
 }
 
@@ -585,7 +554,6 @@ func syncGlobalStyles() {
 	// Update mode badges
 	ModeBadgeNormal = activeTheme.ModeBadgeNormal
 	ModeBadgeInput = activeTheme.ModeBadgeInput
-	ModeBadgeTerminal = activeTheme.ModeBadgeTerminal
 	ModeBadgeCommand = activeTheme.ModeBadgeCommand
 	ModeBadgeSearch = activeTheme.ModeBadgeSearch
 	ModeBadgeFilter = activeTheme.ModeBadgeFilter
@@ -645,10 +613,4 @@ func syncGlobalStyles() {
 	FilterCategoryDisabled = activeTheme.FilterCategoryDisabled
 	FilterCheckbox = activeTheme.FilterCheckbox
 	FilterCheckboxEmpty = activeTheme.FilterCheckboxEmpty
-
-	// Update terminal pane styles
-	TerminalPaneBorder = activeTheme.TerminalPaneBorder
-	TerminalPaneBorderFocused = activeTheme.TerminalPaneBorderFocused
-	TerminalHeader = activeTheme.TerminalHeader
-	TerminalFocusIndicator = activeTheme.TerminalFocusIndicator
 }

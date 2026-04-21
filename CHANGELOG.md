@@ -15,12 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Stable Tmux Socket Directory** - Moved tmux sockets from `/tmp/tmux-{uid}/` to `~/.claudio/sockets/` via `TMUX_TMPDIR` to prevent macOS periodic `/tmp` cleanup from killing active tmux servers. `ListClaudioSockets` checks both locations for backward compatibility.
 
 ### Changed
-- **Ship Experimental Features** - Graduated intelligent naming, terminal support, inline multiplan, inline ultraplan, and grouped instance view from experimental to default. These features are now always enabled without configuration. Only subprocess mode remains experimental.
+- **Ship Experimental Features** - Graduated intelligent naming, inline multiplan, inline ultraplan, and grouped instance view from experimental to default. These features are now always enabled without configuration. Only subprocess mode remains experimental.
 - **Extract `createTmuxSession()` Helper** - Extracted duplicated tmux session setup from `Start()` and `StartWithResume()` into a reusable `createTmuxSession()` method, eliminating ~40 lines of duplication.
 - **Extract `buildInstanceCallbacks()` Helper** - Consolidated duplicated callback wiring between `newInstanceManager` and `newInstanceManagerWithBackend` into a shared method to prevent sync bugs when adding new callbacks.
 - **Log tmux session option errors** - Replaced silent `_ =` error discards in `createTmuxSession` and recovery paths with Debug/Warn-level logging for better diagnostics.
 
 ### Removed
+- **Terminal Pane Feature** - Removed the in-TUI terminal pane. Deleted the `internal/tui/terminal/` package, the `view/terminal.go` view, the `` ` ``/`T`/`Ctrl+Shift+T` key bindings, the `:term`/`:t`/`:termdir` commands, the `TERMINAL` mode indicator/help badge, and the `input.ModeTerminal` routing case. Layout math that previously lived on the terminal manager now uses flat `width`/`height` fields on the TUI model.
 - **Codex Backend Support** - Removed Codex CLI backend support. Claudio now exclusively uses Claude Code as its AI backend. All Codex-specific configuration (`ai.codex.*`), backend implementation, validation, TUI settings, and documentation have been removed.
 - **Stop Command (`:x` / `:stop`)** - Removed the `:x` / `:stop` command and its `auto_pr_on_stop` config option. Use `:e` / `:exit` to stop instances, and `claudio pr` for PR creation
 - **Search Feature** - Removed the output search (`/`) feature from the TUI, including the `internal/tui/search/` package, key bindings (`/`, `n`/`N`, `Ctrl+/`), search bar, match highlighting, mode indicator, and help panel entries (#685)

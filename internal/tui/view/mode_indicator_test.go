@@ -38,22 +38,6 @@ func TestModeIndicatorView_GetModeInfo_InputMode(t *testing.T) {
 	}
 }
 
-func TestModeIndicatorView_GetModeInfo_TerminalMode(t *testing.T) {
-	v := NewModeIndicatorView()
-	state := &ModeIndicatorState{TerminalFocused: true}
-	info := v.GetModeInfo(state)
-
-	if info == nil {
-		t.Fatal("GetModeInfo for terminal mode should not return nil")
-	}
-	if info.Label != "TERMINAL" {
-		t.Errorf("GetModeInfo Label = %q, want %q", info.Label, "TERMINAL")
-	}
-	if !info.IsHighPriority {
-		t.Error("Terminal mode should be high priority")
-	}
-}
-
 func TestModeIndicatorView_GetModeInfo_FilterMode(t *testing.T) {
 	v := NewModeIndicatorView()
 	state := &ModeIndicatorState{FilterMode: true}
@@ -107,23 +91,6 @@ func TestModeIndicatorView_GetModeInfo_Priority(t *testing.T) {
 	}
 	if info.Label != "INPUT" {
 		t.Errorf("InputMode should take precedence, got Label = %q", info.Label)
-	}
-}
-
-func TestModeIndicatorView_GetModeInfo_TerminalPriorityOverCommand(t *testing.T) {
-	// Test that TerminalFocused takes precedence over command
-	v := NewModeIndicatorView()
-	state := &ModeIndicatorState{
-		TerminalFocused: true,
-		CommandMode:     true,
-	}
-	info := v.GetModeInfo(state)
-
-	if info == nil {
-		t.Fatal("GetModeInfo should not return nil")
-	}
-	if info.Label != "TERMINAL" {
-		t.Errorf("TerminalFocused should take precedence over command, got Label = %q", info.Label)
 	}
 }
 
@@ -190,17 +157,17 @@ func TestRenderModeIndicator(t *testing.T) {
 }
 
 func TestRenderModeIndicatorWithHint(t *testing.T) {
-	state := &ModeIndicatorState{TerminalFocused: true}
+	state := &ModeIndicatorState{InputMode: true}
 	result := RenderModeIndicatorWithHint(state)
 
 	if result == "" {
-		t.Error("RenderModeIndicatorWithHint should not return empty string for terminal mode")
+		t.Error("RenderModeIndicatorWithHint should not return empty string for input mode")
 	}
-	if !strings.Contains(result, "TERMINAL") {
-		t.Errorf("RenderModeIndicatorWithHint should contain 'TERMINAL', got %q", result)
+	if !strings.Contains(result, "INPUT") {
+		t.Errorf("RenderModeIndicatorWithHint should contain 'INPUT', got %q", result)
 	}
 	if !strings.Contains(result, "Ctrl+]") {
-		t.Errorf("RenderModeIndicatorWithHint should contain exit hint for terminal mode, got %q", result)
+		t.Errorf("RenderModeIndicatorWithHint should contain exit hint for input mode, got %q", result)
 	}
 }
 
@@ -222,7 +189,6 @@ func TestModeIndicatorView_AllModes_HaveNonEmptyLabels(t *testing.T) {
 		state *ModeIndicatorState
 	}{
 		{"InputMode", &ModeIndicatorState{InputMode: true}},
-		{"TerminalFocused", &ModeIndicatorState{TerminalFocused: true}},
 		{"FilterMode", &ModeIndicatorState{FilterMode: true}},
 		{"CommandMode", &ModeIndicatorState{CommandMode: true}},
 		{"AddingTask", &ModeIndicatorState{AddingTask: true}},

@@ -5,16 +5,14 @@ import (
 	"testing"
 
 	"github.com/Iron-Ham/claudio/internal/tui/command"
-	"github.com/Iron-Ham/claudio/internal/tui/terminal"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// testModel creates a Model with the commandHandler and terminalManager initialized for testing.
+// testModel creates a Model with the commandHandler initialized for testing.
 // This is necessary because tests construct Model directly instead of using NewModel.
 func testModel() Model {
 	return Model{
-		commandHandler:  command.New(),
-		terminalManager: terminal.NewManager(),
+		commandHandler: command.New(),
 	}
 }
 
@@ -524,7 +522,7 @@ func TestCommandAliasesRequiringInstance(t *testing.T) {
 		"D", "remove",
 		"kill",
 		// Utilities
-		"tmux", // Note: :t is now terminal focus, not an alias for tmux
+		"tmux",
 		"r", "pr",
 	}
 
@@ -546,66 +544,6 @@ func TestCommandAliasesRequiringInstance(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestTerminalFocusCommand(t *testing.T) {
-	t.Run("t command attempts focus when terminal visible", func(t *testing.T) {
-		// Note: enterTerminalMode() requires a running terminal process to actually
-		// set focused=true. This test verifies the command path is correct.
-		m := testModel()
-		m.terminalManager.SetLayout(terminal.LayoutVisible)
-		result, _ := m.executeCommand("t")
-		model := result.(Model)
-
-		// Should show info message (even without running process)
-		if model.infoMessage == "" {
-			t.Error("expected info message about terminal focus")
-		}
-		if model.errorMessage != "" {
-			t.Errorf("unexpected error message: %q", model.errorMessage)
-		}
-	})
-
-	t.Run("t command shows error when terminal not visible", func(t *testing.T) {
-		m := testModel()
-		// Terminal manager starts with LayoutHidden by default
-		result, _ := m.executeCommand("t")
-		model := result.(Model)
-
-		if model.terminalManager.IsFocused() {
-			t.Error("expected focused to remain false when terminal not visible")
-		}
-		if model.errorMessage == "" {
-			t.Error("expected error message when terminal not visible")
-		}
-	})
-
-	t.Run("t key in normal mode does NOT enter terminal mode", func(t *testing.T) {
-		// This is a regression test to ensure 't' key doesn't trigger terminal mode
-		// directly - it should only work via command mode (:t)
-		m := testModel()
-		m.terminalManager.SetLayout(terminal.LayoutVisible)
-		m.commandMode = false
-
-		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}}
-		result, _ := m.handleKeypress(msg)
-		model := result.(Model)
-
-		if model.terminalManager.IsFocused() {
-			t.Error("expected focused to remain false - 't' key should not trigger terminal mode in normal mode")
-		}
-	})
-
-	t.Run("t command is recognized as valid command", func(t *testing.T) {
-		m := testModel()
-		result, _ := m.executeCommand("t")
-		model := result.(Model)
-
-		// Should NOT be an unknown command error
-		if model.errorMessage != "" && len(model.errorMessage) >= 7 && model.errorMessage[:7] == "Unknown" {
-			t.Error("command 't' was not recognized")
-		}
-	})
 }
 
 func TestRenderCommandModeHelp(t *testing.T) {
@@ -732,10 +670,8 @@ func TestCommandModePriorityOverOtherModes(t *testing.T) {
 func TestHelpPanelContainsAllCommands(t *testing.T) {
 	m := testModel()
 	// Set terminal size large enough to show all help content without scrolling
-	// The help panel truncates based on terminal height, so we need enough height
-	// to display all sections (Navigation, Instance Control, Instance Management,
-	// View Commands, Terminal Pane, Input Mode, Search, Inline Planning, Session)
-	m.terminalManager.SetSize(120, 200)
+	m.width = 120
+	m.height = 200
 
 	// Render the help panel
 	helpContent := m.renderHelpPanel(100)

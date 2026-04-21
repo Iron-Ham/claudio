@@ -16,9 +16,6 @@ type ModeIndicatorState struct {
 	// InputMode indicates input forwarding mode is active
 	InputMode bool
 
-	// TerminalFocused indicates the terminal pane has focus
-	TerminalFocused bool
-
 	// AddingTask indicates task input mode is active
 	AddingTask bool
 }
@@ -61,18 +58,6 @@ func (v *ModeIndicatorView) GetModeInfo(state *ModeIndicatorState) *ModeInfo {
 				Bold(true).
 				Foreground(styles.TextColor).
 				Background(styles.WarningColor).
-				Padding(0, 1),
-			IsHighPriority: true,
-		}
-	}
-
-	if state.TerminalFocused {
-		return &ModeInfo{
-			Label: "TERMINAL",
-			Style: lipgloss.NewStyle().
-				Bold(true).
-				Foreground(styles.TextColor).
-				Background(styles.SecondaryColor).
 				Padding(0, 1),
 			IsHighPriority: true,
 		}

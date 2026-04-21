@@ -30,7 +30,6 @@ type Dependencies interface {
 	InstanceCount() int
 
 	// State queries
-	IsTerminalVisible() bool
 	IsDiffVisible() bool
 	GetDiffContent() string
 	IsUltraPlanMode() bool
@@ -88,11 +87,6 @@ type Result struct {
 	// -1 = decrement if needed, 0 = no change needed, positive = specific check needed
 	ActiveTabAdjustment int
 	EnsureActiveVisible bool
-
-	// Terminal-related state changes
-	EnterTerminalMode bool
-	ToggleTerminal    bool // signals that terminal visibility should be toggled
-	TerminalDirMode   *int // 0 = invocation, 1 = worktree
 
 	// Mode transition - Triple-Shot
 	StartTripleShot *bool // Request to switch to triple-shot mode
@@ -273,18 +267,6 @@ func (h *Handler) registerCommands() {
 	h.argCommands["r"] = cmdPRWithArgs
 	h.argCommands["pr"] = cmdPRWithArgs
 
-	// Terminal pane commands
-	h.commands["t"] = cmdTerminalFocus
-	h.commands["term"] = cmdTerminal
-	h.commands["terminal"] = cmdTerminal
-	h.commands["termdir worktree"] = cmdTerminalDirWorktree
-	h.commands["termdir wt"] = cmdTerminalDirWorktree
-	h.commands["termdir project"] = cmdTerminalDirProject
-	h.commands["termdir proj"] = cmdTerminalDirProject
-	// Legacy aliases for backward compatibility
-	h.commands["termdir invoke"] = cmdTerminalDirProject
-	h.commands["termdir invocation"] = cmdTerminalDirProject
-
 	// Ultraplan commands
 	h.commands["cancel"] = cmdUltraPlanCancel
 	h.argCommands["ultraplan"] = cmdUltraPlan
@@ -360,7 +342,6 @@ func (h *Handler) buildCategories() {
 		{
 			Name: "Terminal",
 			Commands: []CommandInfo{
-				{ShortKey: "t", LongKey: "term", Description: "Focus/toggle terminal pane", Category: "terminal"},
 				{ShortKey: "", LongKey: "tmux", Description: "Show tmux attach command", Category: "terminal"},
 			},
 		},
@@ -774,30 +755,6 @@ func cmdStats(_ Dependencies) Result {
 func cmdFilter(_ Dependencies) Result {
 	filterMode := true
 	return Result{FilterMode: &filterMode}
-}
-
-func cmdTerminal(_ Dependencies) Result {
-	return Result{ToggleTerminal: true}
-}
-
-func cmdTerminalFocus(deps Dependencies) Result {
-	if deps.IsTerminalVisible() {
-		return Result{
-			EnterTerminalMode: true,
-			InfoMessage:       "Terminal focused. Press Ctrl+] to exit.",
-		}
-	}
-	return Result{ErrorMessage: "Terminal not visible. Use :term to open it first."}
-}
-
-func cmdTerminalDirWorktree(_ Dependencies) Result {
-	mode := 1 // TerminalDirWorktree
-	return Result{TerminalDirMode: &mode}
-}
-
-func cmdTerminalDirProject(_ Dependencies) Result {
-	mode := 0 // TerminalDirProject (the directory where Claudio was started)
-	return Result{TerminalDirMode: &mode}
 }
 
 func cmdTmux(deps Dependencies) Result {
