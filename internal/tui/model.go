@@ -12,7 +12,7 @@ import (
 	"github.com/Iron-Ham/claudio/internal/tui/filter"
 	"github.com/Iron-Ham/claudio/internal/tui/input"
 	"github.com/Iron-Ham/claudio/internal/tui/output"
-	"github.com/Iron-Ham/claudio/internal/tui/terminal"
+	"github.com/Iron-Ham/claudio/internal/tui/styles"
 	"github.com/Iron-Ham/claudio/internal/tui/view"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -33,19 +33,6 @@ const (
 	// Using 3 as a conservative estimate to ensure items stay visible.
 	sidebarLinesPerItemGrouped = 3
 )
-
-// modelInstanceProvider adapts the Model to the terminal.ActiveInstanceProvider interface.
-type modelInstanceProvider struct {
-	model *Model
-}
-
-// WorktreePath returns the worktree path of the active instance.
-func (p modelInstanceProvider) WorktreePath() string {
-	if inst := p.model.activeInstance(); inst != nil {
-		return inst.WorktreePath
-	}
-	return ""
-}
 
 // PlanEditorState holds the state for the interactive plan editor
 type PlanEditorState struct {
@@ -261,8 +248,9 @@ type Model struct {
 	// Input routing
 	inputRouter *input.Router
 
-	// Terminal pane manager (owns dimensions and layout calculations)
-	terminalManager *terminal.Manager
+	// Terminal window dimensions (updated on tea.WindowSizeMsg).
+	width  int
+	height int
 
 	// Ultra-plan mode (nil if not in ultra-plan mode)
 	ultraPlan *UltraPlanState
@@ -624,32 +612,19 @@ func NewModel(orch *orchestrator.Orchestrator, session *orchestrator.Session, lo
 		tuiLogger = logger.WithPhase("tui")
 	}
 
-	// Get invocation directory from orchestrator
-	invocationDir := ""
-	if orch != nil {
-		invocationDir = orch.BaseDir()
-	}
-
-	// Create terminal manager with configuration
-	termMgr := terminal.NewManagerWithConfig(terminal.ManagerConfig{
-		InvocationDir: invocationDir,
-		Logger:        tuiLogger,
-	})
-
 	outputFilter := filter.New()
 	outputManager := output.NewManager()
 	outputManager.SetFilterFunc(outputFilter.Apply)
 
 	return Model{
-		orchestrator:    orch,
-		session:         session,
-		logger:          tuiLogger,
-		startTime:       time.Now(),
-		commandHandler:  command.New(),
-		inputRouter:     input.NewRouter(),
-		outputManager:   outputManager,
-		terminalManager: termMgr,
-		outputFilter:    outputFilter,
+		orchestrator:   orch,
+		session:        session,
+		logger:         tuiLogger,
+		startTime:      time.Now(),
+		commandHandler: command.New(),
+		inputRouter:    input.NewRouter(),
+		outputManager:  outputManager,
+		outputFilter:   outputFilter,
 	}
 }
 
@@ -671,8 +646,6 @@ func (m *Model) syncRouterState() {
 		m.inputRouter.SetMode(input.ModeFilter)
 	case m.inputMode:
 		m.inputRouter.SetMode(input.ModeInput)
-	case m.terminalManager.IsFocused():
-		m.inputRouter.SetMode(input.ModeTerminal)
 	case m.addingTask:
 		m.inputRouter.SetMode(input.ModeTaskInput)
 	case m.commandMode:
@@ -896,10 +869,24 @@ func (m Model) findInstanceIndexByID(id string) int {
 	return -1
 }
 
+// mainAreaHeight returns the height available for the main content area
+// (sidebar + content), accounting for header, footer, and any extra
+// dynamic footer lines such as error messages or conflict warnings.
+func (m Model) mainAreaHeight(extraFooterLines int) int {
+	if extraFooterLines < 0 {
+		extraFooterLines = 0
+	}
+	h := m.height - styles.HeaderFooterReserved - extraFooterLines
+	const minMainAreaHeight = 10
+	if h < minMainAreaHeight {
+		h = minMainAreaHeight
+	}
+	return h
+}
+
 // sidebarVisibleItemCount returns the number of items that can fit in the sidebar viewport.
 func (m *Model) sidebarVisibleItemCount() int {
-	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
-	availableLines := max(dims.MainAreaHeight-sidebarReservedLines, 3)
+	availableLines := max(m.mainAreaHeight(m.calculateExtraFooterLines())-sidebarReservedLines, 3)
 
 	linesPerItem := sidebarLinesPerItemFlat
 	if m.sidebarMode == view.SidebarModeGrouped {
@@ -1017,12 +1004,10 @@ func (m Model) calculateSidebarMaxScrollOffset() int {
 
 // getOutputMaxLines returns the maximum number of lines visible in the output area
 func (m Model) getOutputMaxLines() int {
-	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
-
 	// Calculate overhead based on the active instance's actual properties
 	overhead := m.calculateInstanceOverhead()
 
-	maxLines := dims.MainAreaHeight - overhead
+	maxLines := m.mainAreaHeight(m.calculateExtraFooterLines()) - overhead
 	if maxLines < 5 {
 		maxLines = 5
 	}
@@ -1211,85 +1196,6 @@ func isWordChar(r rune) bool {
 }
 
 // -----------------------------------------------------------------------------
-// Terminal pane helper methods
-// -----------------------------------------------------------------------------
-
-// IsTerminalMode returns true if the terminal pane has input focus.
-func (m Model) IsTerminalMode() bool {
-	return m.terminalManager.IsFocused()
-}
-
-// IsTerminalVisible returns true if the terminal pane is visible.
-func (m Model) IsTerminalVisible() bool {
-	return m.terminalManager.IsVisible()
-}
-
-// TerminalPaneHeight returns the current terminal pane height (0 if hidden).
-func (m Model) TerminalPaneHeight() int {
-	dims := m.terminalManager.GetPaneDimensions(0)
-	return dims.TerminalPaneHeight
-}
-
-// getTerminalDir returns the directory path for the terminal based on current mode.
-func (m Model) getTerminalDir() string {
-	return m.terminalManager.GetDir(modelInstanceProvider{model: &m})
-}
-
-// toggleTerminalVisibility toggles the terminal pane on or off.
-// If turning on and process doesn't exist, it will be created lazily.
-func (m *Model) toggleTerminalVisibility(sessionID string) {
-	errMsg, warnMsg := m.terminalManager.Toggle(sessionID)
-	if errMsg != "" {
-		m.errorMessage = errMsg
-	} else if warnMsg != "" {
-		m.infoMessage = warnMsg
-	}
-}
-
-// enterTerminalMode enters terminal input mode (keys go to terminal).
-func (m *Model) enterTerminalMode() {
-	m.terminalManager.EnterMode()
-}
-
-// exitTerminalMode exits terminal input mode.
-func (m *Model) exitTerminalMode() {
-	m.terminalManager.ExitMode()
-}
-
-// switchTerminalDir toggles between worktree and invocation directory modes.
-func (m *Model) switchTerminalDir() {
-	infoMsg, errMsg := m.terminalManager.SwitchDir(modelInstanceProvider{model: m})
-	if errMsg != "" {
-		m.errorMessage = errMsg
-	} else if infoMsg != "" {
-		m.infoMessage = infoMsg
-	}
-}
-
-// updateTerminalOutput captures current terminal output.
-func (m *Model) updateTerminalOutput() {
-	m.terminalManager.UpdateOutput()
-}
-
-// resizeTerminal updates the terminal dimensions.
-func (m *Model) resizeTerminal() {
-	m.terminalManager.Resize()
-}
-
-// cleanupTerminal stops the terminal process (called on quit).
-func (m *Model) cleanupTerminal() {
-	m.terminalManager.Cleanup()
-}
-
-// updateTerminalOnInstanceChange updates terminal directory if in worktree mode.
-// Called when the active instance changes.
-func (m *Model) updateTerminalOnInstanceChange() {
-	if errMsg := m.terminalManager.UpdateOnInstanceChange(modelInstanceProvider{model: m}); errMsg != "" {
-		m.errorMessage = errMsg
-	}
-}
-
-// -----------------------------------------------------------------------------
 // DashboardState interface implementation
 // These methods implement the view.DashboardState interface, allowing the Model
 // to be passed to view components for rendering.
@@ -1310,14 +1216,14 @@ func (m Model) SidebarScrollOffset() int {
 	return m.sidebarScrollOffset
 }
 
-// TerminalWidth returns the terminal width.
+// TerminalWidth returns the terminal window width.
 func (m Model) TerminalWidth() int {
-	return m.terminalManager.Width()
+	return m.width
 }
 
-// TerminalHeight returns the terminal height.
+// TerminalHeight returns the terminal window height.
 func (m Model) TerminalHeight() int {
-	return m.terminalManager.Height()
+	return m.height
 }
 
 // IsAddingTask returns whether the user is currently adding a new task

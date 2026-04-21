@@ -31,11 +31,6 @@ func (m Model) handleKeypress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleInputMode(msg)
 	}
 
-	// Handle terminal mode - forward keys to the terminal pane's tmux session
-	if m.terminalManager.IsFocused() {
-		return m.handleTerminalMode(msg)
-	}
-
 	// Handle task input mode
 	if m.addingTask {
 		return m.handleTaskInput(msg)
@@ -76,32 +71,6 @@ func (m Model) handleInputMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				input.SendKeyToTmux(mgr, msg)
 			}
 		}
-	}
-	return m, nil
-}
-
-// -----------------------------------------------------------------------------
-// Terminal Mode Handler (terminal pane passthrough)
-// -----------------------------------------------------------------------------
-
-// handleTerminalMode forwards keys to the terminal pane's tmux session.
-func (m Model) handleTerminalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Ctrl+] exits terminal mode (same escape as input mode)
-	if msg.Type == tea.KeyCtrlCloseBracket {
-		m.exitTerminalMode()
-		return m, nil
-	}
-
-	// Forward the key to the terminal pane's tmux session
-	// Check if this is a paste operation
-	if msg.Paste && msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
-		if err := m.terminalManager.SendPaste(string(msg.Runes)); err != nil {
-			if m.logger != nil {
-				m.logger.Warn("failed to paste to terminal", "error", err)
-			}
-		}
-	} else {
-		m.terminalManager.SendKey(msg)
 	}
 	return m, nil
 }
@@ -511,12 +480,6 @@ func (m Model) handleNormalModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter", "i":
 		return m.handleEnterInputMode()
 
-	case "`", "T":
-		return m.handleToggleTerminal()
-
-	case "ctrl+shift+t":
-		return m.handleSwitchTerminalDir()
-
 	case "esc":
 		return m.handleEscape()
 
@@ -612,7 +575,6 @@ func (m Model) handleNextInstance() (tea.Model, tea.Cmd) {
 	if newTab >= 0 {
 		m.switchToInstance(newTab)
 		m.ensureActiveVisible()
-		m.updateTerminalOnInstanceChange()
 		// Log focus change
 		if m.logger != nil {
 			if inst := m.activeInstance(); inst != nil {
@@ -659,7 +621,6 @@ func (m Model) handlePrevInstance() (tea.Model, tea.Cmd) {
 	if newTab >= 0 {
 		m.switchToInstance(newTab)
 		m.ensureActiveVisible()
-		m.updateTerminalOnInstanceChange()
 		// Log focus change
 		if m.logger != nil {
 			if inst := m.activeInstance(); inst != nil {
@@ -679,24 +640,6 @@ func (m Model) handleEnterInputMode() (tea.Model, tea.Cmd) {
 		if mgr != nil && mgr.TmuxSessionExists() {
 			m.inputMode = true
 		}
-	}
-	return m, nil
-}
-
-// handleToggleTerminal toggles terminal pane visibility.
-func (m Model) handleToggleTerminal() (tea.Model, tea.Cmd) {
-	sessionID := ""
-	if m.orchestrator != nil {
-		sessionID = m.orchestrator.SessionID()
-	}
-	m.toggleTerminalVisibility(sessionID)
-	return m, nil
-}
-
-// handleSwitchTerminalDir switches terminal directory mode.
-func (m Model) handleSwitchTerminalDir() (tea.Model, tea.Cmd) {
-	if m.terminalManager.IsVisible() {
-		m.switchTerminalDir()
 	}
 	return m, nil
 }
@@ -898,7 +841,7 @@ func (m Model) handleGoToTop() (tea.Model, tea.Cmd) {
 func (m Model) handleGoToBottom() (tea.Model, tea.Cmd) {
 	if m.showDiff {
 		lines := strings.Split(m.diffContent, "\n")
-		maxLines := m.terminalManager.Height() - 14
+		maxLines := m.height - 14
 		if maxLines < 5 {
 			maxLines = 5
 		}
@@ -1044,9 +987,8 @@ func (m Model) openBranchSelector() (tea.Model, tea.Cmd) {
 	m.branchScrollOffset = 0
 
 	// Calculate visible height for branch selector (reserve space for UI elements)
-	dims := m.terminalManager.GetPaneDimensions(m.calculateExtraFooterLines())
 	// Reserve: search line, scroll indicators, count line, padding
-	m.branchSelectorHeight = dims.MainAreaHeight - 10
+	m.branchSelectorHeight = m.mainAreaHeight(m.calculateExtraFooterLines()) - 10
 	if m.branchSelectorHeight < 5 {
 		m.branchSelectorHeight = 5
 	}
@@ -1283,8 +1225,6 @@ func (m Model) CurrentInputMode() input.Mode {
 		return input.ModeFilter
 	case m.inputMode:
 		return input.ModeInput
-	case m.terminalManager.IsFocused():
-		return input.ModeTerminal
 	case m.addingTask:
 		return input.ModeTaskInput
 	case m.commandMode:

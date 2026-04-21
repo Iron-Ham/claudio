@@ -23,9 +23,6 @@ const (
 	// ModeInput forwards keys to the active instance's tmux session.
 	ModeInput
 
-	// ModeTerminal forwards keys to the terminal pane's tmux session.
-	ModeTerminal
-
 	// ModeTaskInput handles task description entry.
 	ModeTaskInput
 
@@ -47,8 +44,6 @@ func (m Mode) String() string {
 		return "filter"
 	case ModeInput:
 		return "input"
-	case ModeTerminal:
-		return "terminal"
 	case ModeTaskInput:
 		return "task-input"
 	case ModePlanEditor:
@@ -300,8 +295,6 @@ func (r *Router) effectiveMode() Mode {
 		return ModeFilter
 	case ModeInput:
 		return ModeInput
-	case ModeTerminal:
-		return ModeTerminal
 	case ModeTaskInput:
 		return ModeTaskInput
 	case ModeCommand:
@@ -330,12 +323,7 @@ func (r *Router) ShouldExitModeOnEscape() bool {
 
 // ShouldExitModeOnCtrlBracket returns true if the current mode exits on Ctrl+].
 func (r *Router) ShouldExitModeOnCtrlBracket() bool {
-	switch r.mode {
-	case ModeInput, ModeTerminal:
-		return true
-	default:
-		return false
-	}
+	return r.mode == ModeInput
 }
 
 // IsBufferedMode returns true if the current mode uses a text buffer.
@@ -350,12 +338,7 @@ func (r *Router) IsBufferedMode() bool {
 
 // IsForwardingMode returns true if keys should be forwarded to tmux.
 func (r *Router) IsForwardingMode() bool {
-	switch r.mode {
-	case ModeInput, ModeTerminal:
-		return true
-	default:
-		return false
-	}
+	return r.mode == ModeInput
 }
 
 // TransitionToNormal transitions back to normal mode.
@@ -378,11 +361,6 @@ func (r *Router) TransitionToFilter() {
 // TransitionToInput enters input mode (tmux forwarding).
 func (r *Router) TransitionToInput() {
 	r.mode = ModeInput
-}
-
-// TransitionToTerminal enters terminal mode (terminal pane forwarding).
-func (r *Router) TransitionToTerminal() {
-	r.mode = ModeTerminal
 }
 
 // TransitionToTaskInput enters task input mode.

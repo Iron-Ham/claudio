@@ -21,12 +21,6 @@ type RenderContext struct {
 	// InputMode indicates whether input forwarding mode is active.
 	// Used by help bar rendering to show appropriate mode badge.
 	InputMode bool
-
-	// TerminalFocused indicates whether the terminal pane has focus.
-	TerminalFocused bool
-
-	// TerminalDirMode is the current terminal directory mode ("invoke" or "worktree").
-	TerminalDirMode string
 }
 
 // State holds ultra-plan specific UI state.

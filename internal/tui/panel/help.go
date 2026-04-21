@@ -232,15 +232,6 @@ func DefaultHelpSections() []HelpSection {
 			},
 		},
 		{
-			Title: "Terminal Pane",
-			Items: []HelpItem{
-				{Key: "`  :term", Description: "Toggle terminal pane"},
-				{Key: ":t", Description: "Focus terminal for typing"},
-				{Key: "Ctrl+]", Description: "Exit terminal mode"},
-				{Key: "Ctrl+Shift+T", Description: "Switch terminal directory"},
-			},
-		},
-		{
 			Title: "Input Mode",
 			Items: []HelpItem{
 				{Key: "i  Enter", Description: "Enter input mode (talk to AI backend)"},

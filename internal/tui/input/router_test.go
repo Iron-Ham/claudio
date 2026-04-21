@@ -15,7 +15,6 @@ func TestMode_String(t *testing.T) {
 		{ModeCommand, "command"},
 		{ModeFilter, "filter"},
 		{ModeInput, "input"},
-		{ModeTerminal, "terminal"},
 		{ModeTaskInput, "task-input"},
 		{ModePlanEditor, "plan-editor"},
 		{ModeUltraPlan, "ultra-plan"},
@@ -47,7 +46,7 @@ func TestNewRouter(t *testing.T) {
 func TestRouter_SetMode(t *testing.T) {
 	r := NewRouter()
 
-	modes := []Mode{ModeCommand, ModeFilter, ModeInput, ModeTerminal, ModeTaskInput, ModeNormal}
+	modes := []Mode{ModeCommand, ModeFilter, ModeInput, ModeTaskInput, ModeNormal}
 
 	for _, mode := range modes {
 		r.SetMode(mode)
@@ -230,7 +229,6 @@ func TestRouter_Transitions(t *testing.T) {
 		{"TransitionToCommand", r.TransitionToCommand, ModeCommand},
 		{"TransitionToFilter", r.TransitionToFilter, ModeFilter},
 		{"TransitionToInput", r.TransitionToInput, ModeInput},
-		{"TransitionToTerminal", r.TransitionToTerminal, ModeTerminal},
 		{"TransitionToTaskInput", r.TransitionToTaskInput, ModeTaskInput},
 		{"TransitionToNormal", r.TransitionToNormal, ModeNormal},
 	}
@@ -259,7 +257,6 @@ func TestRouter_TransitionClearsBuffer(t *testing.T) {
 		{"TransitionToTaskInput", (*Router).TransitionToTaskInput, true},
 		{"TransitionToFilter", (*Router).TransitionToFilter, false},
 		{"TransitionToInput", (*Router).TransitionToInput, false},
-		{"TransitionToTerminal", (*Router).TransitionToTerminal, false},
 	}
 
 	for _, tt := range tests {
@@ -287,7 +284,6 @@ func TestRouter_ShouldExitModeOnEscape(t *testing.T) {
 		{ModeCommand, true},
 		{ModeFilter, true},
 		{ModeInput, false},
-		{ModeTerminal, false},
 		{ModeTaskInput, true},
 		{ModePlanEditor, false},
 		{ModeUltraPlan, false},
@@ -315,7 +311,6 @@ func TestRouter_ShouldExitModeOnCtrlBracket(t *testing.T) {
 		{ModeCommand, false},
 		{ModeFilter, false},
 		{ModeInput, true},
-		{ModeTerminal, true},
 		{ModeTaskInput, false},
 		{ModePlanEditor, false},
 		{ModeUltraPlan, false},
@@ -343,7 +338,6 @@ func TestRouter_IsBufferedMode(t *testing.T) {
 		{ModeCommand, true},
 		{ModeFilter, true},
 		{ModeInput, false},
-		{ModeTerminal, false},
 		{ModeTaskInput, true},
 		{ModePlanEditor, false},
 		{ModeUltraPlan, false},
@@ -371,7 +365,6 @@ func TestRouter_IsForwardingMode(t *testing.T) {
 		{ModeCommand, false},
 		{ModeFilter, false},
 		{ModeInput, true},
-		{ModeTerminal, true},
 		{ModeTaskInput, false},
 		{ModePlanEditor, false},
 		{ModeUltraPlan, false},
@@ -495,7 +488,6 @@ func TestRouter_EffectiveMode_Priority(t *testing.T) {
 	r.RegisterHandler(ModeNormal, makeHandler(ModeNormal))
 	r.RegisterHandler(ModeFilter, makeHandler(ModeFilter))
 	r.RegisterHandler(ModeInput, makeHandler(ModeInput))
-	r.RegisterHandler(ModeTerminal, makeHandler(ModeTerminal))
 	r.RegisterHandler(ModeTaskInput, makeHandler(ModeTaskInput))
 	r.RegisterHandler(ModeCommand, makeHandler(ModeCommand))
 	r.RegisterHandler(ModePlanEditor, makeHandler(ModePlanEditor))
@@ -515,13 +507,6 @@ func TestRouter_EffectiveMode_Priority(t *testing.T) {
 	r.Route(msg)
 	if calledMode != ModeInput {
 		t.Errorf("Input mode: called %v, want ModeInput", calledMode)
-	}
-
-	// Test terminal mode
-	r.SetMode(ModeTerminal)
-	r.Route(msg)
-	if calledMode != ModeTerminal {
-		t.Errorf("Terminal mode: called %v, want ModeTerminal", calledMode)
 	}
 
 	// Test task input mode

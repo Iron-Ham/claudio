@@ -28,7 +28,6 @@ func TestHelpPanel_Render(t *testing.T) {
 				"Instance Management",
 				"Adversarial Mode",
 				"View Commands",
-				"Terminal Pane",
 				"Input Mode",
 				"Session",
 			},
@@ -192,7 +191,6 @@ func TestDefaultHelpSections(t *testing.T) {
 		"Planning Modes (experimental)",
 		"Group Management",
 		"View Commands",
-		"Terminal Pane",
 		"Input Mode",
 		"Session",
 	}

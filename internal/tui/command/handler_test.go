@@ -34,7 +34,6 @@ type mockDeps struct {
 	session               *orchestrator.Session
 	activeInstance        *orchestrator.Instance
 	instanceCount         int
-	terminalVisible       bool
 	diffVisible           bool
 	diffContent           string
 	ultraPlanMode         bool
@@ -56,7 +55,6 @@ func (m *mockDeps) GetOrchestrator() *orchestrator.Orchestrator { return m.orche
 func (m *mockDeps) GetSession() *orchestrator.Session           { return m.session }
 func (m *mockDeps) ActiveInstance() *orchestrator.Instance      { return m.activeInstance }
 func (m *mockDeps) InstanceCount() int                          { return m.instanceCount }
-func (m *mockDeps) IsTerminalVisible() bool                     { return m.terminalVisible }
 func (m *mockDeps) IsDiffVisible() bool                         { return m.diffVisible }
 func (m *mockDeps) GetDiffContent() string                      { return m.diffContent }
 func (m *mockDeps) IsUltraPlanMode() bool                       { return m.ultraPlanMode }
@@ -166,7 +164,7 @@ func TestCategoriesContainAllShortcuts(t *testing.T) {
 	}
 
 	// Verify key shortcuts are documented
-	expectedShortcuts := []string{"s", "e", "p", "R", "a", "D", "C", "d", "m", "f", "t", "r", "h", "q", "q!"}
+	expectedShortcuts := []string{"s", "e", "p", "R", "a", "D", "C", "d", "m", "f", "r", "h", "q", "q!"}
 	for _, key := range expectedShortcuts {
 		if !shortKeys[key] {
 			t.Errorf("shortcut %q not found in categories", key)
@@ -727,106 +725,6 @@ func TestDiffCommand(t *testing.T) {
 	})
 }
 
-func TestTerminalCommands(t *testing.T) {
-	t.Run("term toggles terminal visibility", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-
-		result := h.Execute("term", deps)
-		if !result.ToggleTerminal {
-			t.Error("expected ToggleTerminal to be true")
-		}
-	})
-
-	t.Run("terminal alias", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-
-		result := h.Execute("terminal", deps)
-		if !result.ToggleTerminal {
-			t.Error("expected ToggleTerminal to be true")
-		}
-	})
-
-	t.Run("t focuses terminal when visible", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-		deps.terminalVisible = true
-
-		result := h.Execute("t", deps)
-		if !result.EnterTerminalMode {
-			t.Error("expected EnterTerminalMode to be true")
-		}
-		if result.InfoMessage == "" {
-			t.Error("expected info message about terminal focus")
-		}
-	})
-
-	t.Run("t shows error when terminal not visible", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-		deps.terminalVisible = false
-
-		result := h.Execute("t", deps)
-		if result.EnterTerminalMode {
-			t.Error("expected EnterTerminalMode to be false")
-		}
-		if result.ErrorMessage == "" {
-			t.Error("expected error message when terminal not visible")
-		}
-	})
-
-	t.Run("termdir worktree sets mode", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-
-		result := h.Execute("termdir worktree", deps)
-		if result.TerminalDirMode == nil || *result.TerminalDirMode != 1 {
-			t.Error("expected TerminalDirMode to be set to 1 (worktree)")
-		}
-	})
-
-	t.Run("termdir wt alias", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-
-		result := h.Execute("termdir wt", deps)
-		if result.TerminalDirMode == nil || *result.TerminalDirMode != 1 {
-			t.Error("expected TerminalDirMode to be set to 1 (worktree)")
-		}
-	})
-
-	t.Run("termdir project sets mode", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-
-		result := h.Execute("termdir project", deps)
-		if result.TerminalDirMode == nil || *result.TerminalDirMode != 0 {
-			t.Error("expected TerminalDirMode to be set to 0 (project)")
-		}
-	})
-
-	t.Run("termdir proj alias", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-
-		result := h.Execute("termdir proj", deps)
-		if result.TerminalDirMode == nil || *result.TerminalDirMode != 0 {
-			t.Error("expected TerminalDirMode to be set to 0 (project)")
-		}
-	})
-
-	t.Run("termdir invoke legacy alias", func(t *testing.T) {
-		h := New()
-		deps := newMockDeps()
-
-		result := h.Execute("termdir invoke", deps)
-		if result.TerminalDirMode == nil || *result.TerminalDirMode != 0 {
-			t.Error("expected TerminalDirMode to be set to 0 (project)")
-		}
-	})
-}
-
 func TestInstanceControlCommandsNoInstance(t *testing.T) {
 	// All instance control commands should return "No instance selected" when no instance
 	commands := []string{
@@ -978,11 +876,6 @@ func TestAllCommandsRecognized(t *testing.T) {
 		"f", "F", "filter",
 		// Utilities
 		"tmux", "r", "pr",
-		// Terminal
-		"t", "term", "terminal",
-		"termdir worktree", "termdir wt",
-		"termdir project", "termdir proj",
-		"termdir invoke", "termdir invocation",
 		// Ultraplan
 		"cancel",
 		// Plan mode
